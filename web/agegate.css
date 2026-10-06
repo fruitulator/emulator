@@ -1,0 +1,177 @@
+
+.agegate {
+  --ag-space-around-card:      16px;
+  --ag-space-inside-top:       28px;
+  --ag-space-inside-sides:     28px;
+  --ag-space-under-symbol:      16px;
+  --ag-space-under-heading:    14px;
+  --ag-space-between-paras:    12px;
+  --ag-space-under-text:       24px;
+  --ag-space-above-buttons:    16px;
+  --ag-space-between-buttons:  10px;
+  --ag-space-under-buttons:    24px;
+  --ag-symbol-size:             88px;
+  --ag-heading-size:           26px;
+  --ag-text-size:              15px;
+  --ag-text-width:             44ch;
+}
+@media (max-width: 520px) {
+  .agegate {
+    --ag-space-around-card:     0px;
+    --ag-space-inside-top:      20px;
+    --ag-space-inside-sides:    16px;
+    --ag-space-under-symbol:     14px;
+    --ag-space-under-heading:   12px;
+    --ag-space-between-paras:   10px;
+    --ag-space-under-text:      20px;
+    --ag-space-above-buttons:   12px;
+    --ag-space-under-buttons:   16px;
+    --ag-symbol-size:            64px;
+    --ag-heading-size:          22px;
+    --ag-text-size:             14px;
+  }
+}
+
+html:not(.age-ok) body > :not(.agegate) {
+  visibility: hidden !important;
+}
+
+.agegate {
+  --ag-bg: var(--shell, #000);
+  --ag-card: var(--surface, #1d1d1d);
+  --ag-line: var(--hairline, rgba(255, 255, 255, 0.12));
+  --ag-text: var(--text, #fff);
+  --ag-muted: var(--muted, #919191);
+  --ag-outline: rgba(255, 255, 255, 0.32);
+  --ag-outline-hot: rgba(255, 255, 255, 0.55);
+  --ag-hover: var(--surface-2, #262626);
+  --ag-shadow: 0 30px 80px rgba(0, 0, 0, 0.75);
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ag-space-around-card);
+  overflow-y: auto;
+  background: var(--ag-bg);
+  color: var(--ag-text);
+  font-family: var(--ui, system-ui, sans-serif);
+  visibility: visible;
+}
+@media (prefers-color-scheme: light) {
+  .agegate {
+    --ag-bg: #f2f2f2;
+    --ag-card: #ffffff;
+    --ag-line: rgba(0, 0, 0, 0.12);
+    --ag-text: #111111;
+    --ag-muted: #555555;
+    --ag-outline: rgba(0, 0, 0, 0.35);
+    --ag-outline-hot: rgba(0, 0, 0, 0.6);
+    --ag-hover: #ececec;
+    --ag-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+  }
+}
+
+.agegate-box {
+  box-sizing: border-box;
+  width: min(500px, 100%);
+  max-height: calc(100vh - 2 * var(--ag-space-around-card));
+  max-height: calc(100dvh - 2 * var(--ag-space-around-card));
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--ag-card);
+  border: 1px solid var(--ag-line);
+  border-radius: var(--r-card, 10px);
+  box-shadow: var(--ag-shadow);
+  outline: none;
+  overflow: hidden;
+}
+.agegate-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--ag-space-inside-top) var(--ag-space-inside-sides) var(--ag-space-under-text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.agegate-mark {
+  display: block;
+  flex: none;
+  width: var(--ag-symbol-size);
+  height: var(--ag-symbol-size);
+  margin-bottom: var(--ag-space-under-symbol);
+}
+.agegate-title {
+  margin: 0 0 var(--ag-space-under-heading);
+  font-family: var(--display, system-ui, sans-serif);
+  font-size: var(--ag-heading-size);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+.agegate-text {
+  margin: 0;
+  max-width: var(--ag-text-width);
+  font-size: var(--ag-text-size);
+  line-height: 1.5;
+  color: var(--ag-muted);
+}
+.agegate-text + .agegate-text {
+  margin-top: var(--ag-space-between-paras);
+}
+.agegate-text a {
+  color: var(--ag-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agegate-text strong {
+  color: var(--ag-text);
+  font-weight: 700;
+}
+.agegate-btns {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ag-space-between-buttons);
+  padding: var(--ag-space-above-buttons) var(--ag-space-inside-sides) var(--ag-space-under-buttons);
+  border-top: 1px solid var(--ag-line);
+}
+.agegate .agegate-btns .ui-btn {
+  width: 100%;
+  height: 48px;
+  padding: 0 18px;
+  font-size: 16px;
+  white-space: normal;
+}
+.agegate .agegate-btns .ui-btn.secondary {
+  color: var(--ag-text);
+  border-color: var(--ag-outline);
+  background: transparent;
+}
+.agegate .agegate-btns .ui-btn.secondary:hover {
+  background: var(--ag-hover);
+  border-color: var(--ag-outline-hot);
+}
+@media (max-width: 520px) {
+  .agegate-box {
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .agegate-scroll {
+    padding-top: max(var(--ag-space-inside-top), env(safe-area-inset-top));
+    justify-content: safe center;
+  }
+  .agegate-btns {
+    padding-bottom: max(var(--ag-space-under-buttons), env(safe-area-inset-bottom));
+  }
+}

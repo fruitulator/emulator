@@ -1,0 +1,64 @@
+:root {
+  --shell: #000000;
+  --surface: #1d1d1d;
+  --surface-2: #262626;
+  --surface-3: #333333;
+  --void: #0a0a0a;
+  --hairline: rgba(255, 255, 255, 0.12);
+  --scrim: rgba(0, 0, 0, 0.7);
+  --text: #ffffff;
+  --muted: #919191;
+  --muted-dim: #767676;
+  --accent: #e11d2a;
+  --accent-hot: #ff3b46;
+  --on-accent: #ffffff;
+  --danger: #ff6060;
+  --on: #3fa860;
+  --on-bg: #2e7d46;
+  --on-text: #eafff0;
+  --warn: #e0a526;
+  --on-warn: #1b1300;
+
+  --display: 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --ui: 'Roboto Condensed', system-ui, -apple-system, sans-serif;
+  --readout: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+
+  --gutter: clamp(14px, 2.2vw, 32px);
+  --page: 1600px;
+
+  --title-overlap: 34px;
+
+  --r-card: 10px;
+  --r-ctl: 2px;
+  --r-chip: 2px;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  src: url('/fonts/roboto-condensed-300.woff2') format('woff2');
+  font-weight: 300;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  src: url('/fonts/roboto-condensed-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  src: url('/fonts/roboto-condensed-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  src: url('/fonts/roboto-condensed-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Share Tech Mono';
+  src: url('/fonts/share-tech-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}

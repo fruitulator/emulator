@@ -1,0 +1,67 @@
+.ui-avatar {
+  --avatar-h: var(--home-h, 38px);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--avatar-h);
+  min-width: var(--avatar-h);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--ui);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease;
+}
+.ui-avatar.with-pill {
+  padding-left: 14px;
+  background: var(--surface-2);
+}
+.ui-avatar:hover {
+  background: var(--surface-3);
+}
+.ui-avatar-pill {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-avatar-pill[hidden] {
+  display: none;
+}
+.ui-avatar-face {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: var(--avatar-h);
+  height: var(--avatar-h);
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+  font-family: var(--display);
+  font-size: calc(var(--avatar-h) * 0.46);
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+.ui-avatar-face svg {
+  width: 58%;
+  height: 58%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sheet-row .sheet-amount {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}

@@ -1,0 +1,204 @@
+#aboutBackdrop,
+.ui-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 23;
+}
+.ui-dialog-backdrop.ui-dialog-frost {
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  backdrop-filter: blur(22px) saturate(1.25);
+}
+#aboutPanel,
+.ui-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(16px, 7vh, 72px) var(--gutter);
+  pointer-events: none;
+}
+#aboutPanel > *,
+.ui-dialog > * {
+  pointer-events: auto;
+}
+.about-bar,
+#aboutScroll,
+.ui-dialog-scroll {
+  box-sizing: border-box;
+  width: min(620px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.about-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 20px;
+  border-radius: var(--r-card) var(--r-card) 0 0;
+  border-bottom: 0;
+  flex: none;
+}
+.ui-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.about-bar h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 19px;
+  letter-spacing: 0.02em;
+}
+#aboutScroll,
+.ui-dialog-scroll {
+  border-radius: 0 0 var(--r-card) var(--r-card);
+  border-top: 1px solid var(--hairline);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 20px 22px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.75);
+}
+.about-body,
+.ui-dialog-body {
+  font-family: var(--ui);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.about-brand {
+  display: flex;
+  justify-content: center;
+  padding: 22px 0 14px;
+}
+.about-brand .logo-img {
+  display: block;
+  height: clamp(22px, 7vw, 32px);
+  width: auto;
+}
+.about-body p,
+.ui-dialog-body p {
+  margin: 10px 0;
+}
+.about-body a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--muted-dim);
+  text-underline-offset: 3px;
+}
+.about-body a:hover {
+  text-decoration-color: var(--accent-hot);
+}
+.about-sec {
+  margin-top: 24px;
+}
+.about-sec h3 {
+  margin: 0 0 4px;
+  font-family: var(--display);
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-hot);
+}
+.about-row {
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--hairline);
+}
+.about-row .about-who {
+  margin: 0 0 6px;
+}
+.about-row .about-thanks {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+.about-body code {
+  font-family: var(--readout);
+  font-size: 0.92em;
+  color: var(--text);
+}
+.about-build {
+  margin: 24px 0 0 !important;
+  font-family: var(--readout);
+  font-size: 11px;
+  color: var(--muted-dim);
+  user-select: text;
+}
+@media (max-width: 620px) {
+  #aboutPanel,
+  .ui-dialog {
+    padding: 0;
+  }
+  .about-bar,
+  #aboutScroll,
+  .ui-dialog-scroll {
+    width: 100%;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+  #aboutScroll,
+  .ui-dialog-scroll {
+    flex: 1;
+  }
+}
+#errorPopup,
+.ui-alert {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#errorBox,
+.ui-alert-box {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 18px 20px;
+  max-width: min(420px, 88vw);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+#errorMsg,
+.ui-alert-msg {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--danger);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+#errorHint,
+.ui-alert-hint {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-align: center;
+}
+#errorBtns,
+.ui-alert-btns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ui-alert-msg.ui-alert-info {
+  color: var(--text);
+}
+.ui-alert-btns.ui-alert-choices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+}
+@media (max-width: 360px) {
+  .ui-alert-btns.ui-alert-choices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

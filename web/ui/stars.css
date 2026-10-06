@@ -1,0 +1,11 @@
+.ui-stars-chip { display: inline-flex; align-items: center; gap: 4px; }
+.ui-stars-chip svg { width: 11px; height: 11px; fill: currentColor; stroke: none; }
+.ui-stars { display: inline-flex; gap: 2px; margin-left: auto; }
+.ui-star { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 999px;
+  background: none; color: var(--muted); cursor: pointer; }
+.ui-star svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.ui-star.on { color: var(--accent); }
+.ui-star.on svg { fill: currentColor; }
+.ui-star:hover { background: var(--surface-3); }
+.ui-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ui-star:disabled { cursor: default; opacity: 0.5; }

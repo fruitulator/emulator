@@ -1,0 +1,8 @@
+.ui-tabs { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface-2);
+  max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.ui-tabs::-webkit-scrollbar { display: none; }
+.ui-tab { flex: none; padding: 7px 14px; border: 0; border-radius: 999px; background: none; color: var(--muted);
+  font: 600 13px/1 var(--display, inherit); letter-spacing: 0.02em; cursor: pointer; white-space: nowrap; }
+.ui-tab:hover { color: var(--text); }
+.ui-tab.on { background: var(--accent); color: #fff; }
+.ui-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

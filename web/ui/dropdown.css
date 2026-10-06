@@ -1,0 +1,140 @@
+.dd {
+  position: relative;
+}
+.menu-card:has(.dd.open) {
+  overflow: visible;
+}
+.dd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 7px 0 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-ctl);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  color: var(--text);
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 200ms ease;
+}
+.dd-btn:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
+}
+.dd.open .dd-btn {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
+  box-shadow: 0 0 0 1px rgba(225, 29, 42, 0.35), 0 0 18px rgba(225, 29, 42, 0.28);
+}
+.dd-chev {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--muted);
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), color 150ms ease;
+}
+.dd-btn:hover .dd-chev,
+.dd.open .dd-chev {
+  color: var(--text);
+}
+.dd.open .dd-chev {
+  transform: rotate(180deg);
+}
+.dd-list {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 25;
+  min-width: max(100%, 172px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: rgba(20, 20, 20, 0.72);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  backdrop-filter: blur(22px) saturate(1.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  transform-origin: top left;
+  transform: translateY(-8px) scale(0.98);
+  opacity: 0;
+  visibility: hidden;
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, visibility 0s 240ms;
+}
+.dd.open .dd-list,
+.dd-list.open {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, visibility 0s;
+}
+.dd-list.dd-float {
+  position: fixed;
+  z-index: 40;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.dd-list.dd-up {
+  transform-origin: bottom left;
+  transform: translateY(8px) scale(0.98);
+}
+.dd-list.dd-up.open {
+  transform: none;
+}
+.dd-list:focus {
+  outline: none;
+}
+.dd-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 6px;
+  font-family: var(--ui);
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease, transform 120ms ease, color 120ms ease;
+}
+.dd-opt.active {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text);
+  transform: translateX(3px);
+}
+.dd-opt[aria-selected="true"] {
+  color: var(--text);
+}
+.dd-tick {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+.dd-opt[aria-selected="true"] .dd-tick {
+  background: var(--accent-hot);
+  box-shadow: 0 0 8px rgba(255, 59, 70, 0.8);
+}
+.dd.open .dd-opt,
+.dd-list.open .dd-opt {
+  animation: menu-rise 340ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: var(--d, 0ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dd-btn, .dd-chev, .dd-list, .dd-opt, .dd-tick {
+    transition: none !important;
+    animation: none !important;
+  }
+}

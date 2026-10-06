@@ -1,0 +1,1355 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title data-str="index.fruitulator">Fruitulator</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='50' y='50' text-anchor='middle' dominant-baseline='central' font-size='80'%3E%F0%9F%8D%92%3C/text%3E%3C/svg%3E" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="fruitulator" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <style>
+    </style>
+    <style>@import "/web/ui/tokens.css";</style>
+    <style>@import "/web/ui/logo.css";</style>
+    <style>
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          transition-duration: 0.01ms !important;
+          animation-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+        .spinner {
+          animation-duration: 2s !important;
+        }
+      }
+      html {
+        overscroll-behavior-x: none;
+        scrollbar-gutter: stable;
+        scrollbar-color: var(--surface-3) transparent;
+      }
+      * {
+        scrollbar-width: thin;
+      }
+      *::-webkit-scrollbar {
+        width: 9px;
+        height: 9px;
+      }
+      *::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      *::-webkit-scrollbar-thumb {
+        background: var(--surface-3);
+        border-radius: 5px;
+      }
+      *::-webkit-scrollbar-thumb:hover {
+        background: #4b4b4b;
+      }
+      *::-webkit-scrollbar-corner {
+        background: transparent;
+      }
+      body {
+        margin: 0;
+        background: var(--shell);
+        color: var(--text);
+        font-family: var(--ui);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        min-height: 100dvh;
+      }
+      header,
+      #library,
+      #statusbar {
+        width: 100%;
+        max-width: var(--page);
+        padding-inline: var(--gutter);
+        margin: 0.5rem 0;
+      
+      }
+      header {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      h1 {
+        margin: 0;
+        aspect-ratio: var(--mark-ar);
+        height: clamp(20px, 0.6vw + 17px, 28px);
+      }
+      .logo-img {
+        display: block;
+        height: 100%;
+        width: auto;
+      }
+      h1 .logo-img {
+        width: 100%;
+        height: auto;
+      }
+
+      .brand {
+        --brand-w: clamp(260px, 26vw, 360px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      body:has(#library:not([hidden])) h1 {
+        width: var(--brand-w);
+        height: auto;
+      }
+      body:has(#library:not([hidden])) header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+      }
+      body:has(#library:not([hidden])) header .brand {
+        grid-column: 2;
+        grid-row: 1;
+      }
+      body:has(#library:not([hidden])) header .tools {
+        position: absolute;
+        top: calc(8px + env(safe-area-inset-top));
+        right: calc(12px + env(safe-area-inset-right));
+        z-index: 7;
+      }
+      body:has(#library:not([hidden])) header .tools {
+        gap: 2px;
+      }
+      body:has(#library:not([hidden])) header .tools .iconbtn {
+        width: 34px;
+        height: 34px;
+        color: var(--muted);
+      }
+      body:has(#library:not([hidden])) header .tools .iconbtn:hover {
+        color: var(--text);
+      }
+      body:has(#library:not([hidden])) header .tools .iconbtn svg {
+        width: 17px;
+        height: 17px;
+      }
+      .tools {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .tagline {
+        display: none;
+        margin: 5px 0 0;
+        font-family: var(--ui);
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        line-height: 1;
+        white-space: nowrap;
+        color: var(--muted-dim);
+      }
+      .brand .tagline {
+        font-size: 11px;
+      }
+      body:has(#stage:not([hidden])) header .brand {
+        display: none;
+      }
+      body:not(.orbit-mode):has(#library:not([hidden])) h1 {
+        cursor: pointer;
+      }
+      #status {
+        font-family: var(--readout);
+        font-size: 12px;
+        color: var(--muted-dim);
+      }
+      #stage {
+        width: 100%;
+        flex: 1 1 0;
+        min-height: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        touch-action: none;
+        overflow: hidden;
+        position: relative;
+      }
+      #screen {
+        position: absolute;
+        inset: 0;
+        margin: auto;
+      }
+      canvas {
+        background: var(--void);
+        border-radius: 6px;
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        touch-action: none;
+        transform-origin: 50% 50%;
+      }
+    </style>
+    <style>@import "/web/ui/buttons.css";</style>
+    <style>
+      .iconbtn.about {
+        color: var(--muted);
+      }
+      .iconbtn.about:hover {
+        color: var(--text);
+      }
+    </style>
+    <style>@import "/web/ui/dialog.css";</style>
+    <style>
+      #vfd-strip {
+        position: fixed;
+        top: 64px;
+        left: 0;
+        z-index: 18;
+        padding: 6px 56px 6px 6px;
+        background: linear-gradient(#0c0c0c, #030303);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #vfd-strip.dragging {
+        cursor: grabbing;
+      }
+      #vfd-strip canvas {
+        display: block;
+      }
+      #vfd-strip .vfd-close {
+        position: absolute;
+        top: 50%;
+        right: 4px;
+        width: 24px;
+        height: 24px;
+        margin-top: -12px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--r-ctl);
+        background: transparent;
+        color: var(--muted);
+        font: 18px/24px var(--ui);
+        cursor: pointer;
+      }
+      #vfd-strip .vfd-flip {
+        right: 30px;
+        font-size: 15px;
+      }
+      #vfd-strip .vfd-close:hover {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.1);
+      }
+    </style>
+    <style>@import "/web/ui/drawer.css";</style>
+    <style>
+      .menu-brand {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px 20px 10px;
+      }
+      .menu-brand .logo-img {
+        height: 40px;
+      }
+      .menu-brand .tagline {
+        font-size: 11px;
+      }
+      #menu.open .menu-brand {
+        animation: menu-rise 340ms cubic-bezier(0.22, 1, 0.36, 1) 40ms backwards;
+      }
+      #soundGroup {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #menu > #volSlider,
+      #menu > #brightSlider {
+        display: none;
+      }
+      #schemBtn[aria-pressed="true"] {
+        color: var(--accent);
+      }
+      #lens {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 2;
+        pointer-events: none;
+        border-radius: 50%;
+        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
+      }
+    </style>
+    <style>@import "/web/ui/menu.css";</style>
+    <style>
+      .menu-key {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 13px;
+        width: 100%;
+      }
+      .menu-key span {
+        white-space: nowrap;
+      }
+      .menu-key select {
+        flex: 1;
+        min-width: 0;
+        background: var(--surface);
+        color: inherit;
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 13px;
+      }
+      .ctl-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        background: var(--surface);
+        padding: 8px 10px;
+        border-radius: 6px;
+      }
+      .ctl-title {
+        font-size: 12px;
+        color: var(--muted);
+        margin-right: 4px;
+        width: 100%;
+      }
+    </style>
+    <style>@import "/web/ui/schematic.css";</style>
+    <style>
+      button {
+        background: var(--surface-2);
+        color: var(--text);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-ctl);
+        padding: 7px 13px;
+        font-family: var(--ui);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+      }
+      button:hover {
+        background: var(--surface-3);
+      }
+      button.cell {
+        padding: 4px 0;
+        font-size: 9px;
+        border-radius: 2px;
+      }
+      button.on,
+      button.held {
+        background: var(--on-bg);
+        border-color: var(--on);
+        color: var(--on-text);
+      }
+      button.lit {
+        background: color-mix(in srgb, var(--accent) 55%, #000);
+        border-color: var(--accent);
+        color: var(--on-text);
+        box-shadow: 0 0 10px var(--accent-hot);
+      }
+      button.lit.held {
+        background: color-mix(in srgb, var(--accent) 68%, #000);
+      }
+      #library {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+    </style>
+    <style>@import "/web/ui/search.css";</style>
+    <style>
+      #lib-meta {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      #lib-actions {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-left: auto;
+      }
+      #lib-actions .iconbtn {
+        background: var(--surface-2);
+        color: var(--text);
+      }
+      #lib-actions .iconbtn:hover {
+        background: var(--surface-3);
+      }
+      #sort-wrap {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+    </style>
+    <style>@import "/web/ui/dropdown.css";</style>
+    <style>
+      .rail-nav {
+        position: absolute;
+        top: 33%;
+        transform: translateY(-50%);
+        z-index: 10;
+        width: 68px;
+        height: 68px;
+        padding: 0;
+        border-radius: 50%;
+        background: transparent;
+        border: 1px solid transparent;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
+      }
+      .rail-nav svg {
+        width: 34px;
+        height: 34px;
+        stroke-width: 2;
+        filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.9));
+      }
+      .rail-nav:hover {
+        background: rgba(255, 255, 255, 0.92);
+        border-color: transparent;
+        color: #000;
+      }
+      .rail-nav:hover svg {
+        filter: none;
+      }
+      .rail-nav:disabled {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #tiles {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      #orbit-wrap {
+        position: relative;
+        margin-inline: calc(-1 * var(--gutter));
+      }
+      #orbit-stage {
+        --slotw: clamp(180px, 24vw, 260px);
+        --sloth: calc(var(--slotw) * 1.25);
+        position: relative;
+        height: calc(var(--sloth) + 86px);
+        perspective: 1500px;
+        perspective-origin: 50% 34%;
+        overflow: hidden;
+        outline: none;
+        cursor: grab;
+        touch-action: pan-y;
+      }
+      #orbit-stage:focus-visible {
+        box-shadow: inset 0 0 0 1px rgba(225, 29, 42, 0.45);
+      }
+      #orbit-stage.dragging {
+        cursor: grabbing;
+      }
+      #orbit-stage::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 120px;
+        z-index: 6;
+        pointer-events: none;
+        background: linear-gradient(180deg,
+          rgba(0, 0, 0, 0) 0%, var(--shell) 100%);
+      }
+      #orbit-ring {
+        position: absolute;
+        left: 50%;
+        top: 26px;
+        width: var(--slotw);
+        height: var(--sloth);
+        margin-left: calc(var(--slotw) / -2);
+        transform-style: preserve-3d;
+        transition: transform 0.6s cubic-bezier(0.22, 0.75, 0.3, 1);
+      }
+      #orbit-stage.dragging #orbit-ring {
+        transition: none;
+      }
+      .orbit-card {
+        position: absolute;
+        inset: 0;
+        border-radius: var(--r-card);
+        overflow: hidden;
+        background: linear-gradient(180deg, #17171a 0%, #0d0d0f 42%, #050506 100%);
+        backface-visibility: hidden;
+        transition: filter 0.6s cubic-bezier(0.22, 0.75, 0.3, 1),
+          opacity 0.6s ease;
+        cursor: pointer;
+        -webkit-box-reflect: below 10px
+          linear-gradient(transparent 62%, rgba(255, 255, 255, 0.14));
+      }
+      #orbit-stage.dragging .orbit-card {
+        transition: none;
+      }
+      .orbit-card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        pointer-events: none;
+        border-radius: inherit;
+        background: linear-gradient(180deg,
+          rgba(0, 0, 0, 0.26) 0%, rgba(0, 0, 0, 0) 10%,
+          rgba(0, 0, 0, 0) 80%, rgba(0, 0, 0, 0.38) 100%);
+      }
+      .orbit-card .art {
+        position: absolute;
+        inset: 0;
+        aspect-ratio: auto;
+        border-radius: var(--r-card);
+      }
+      .orbit-card.cannot-run .art-img,
+      .orbit-card.cannot-run .art-blur,
+      .orbit-card.cannot-run .art-placeholder {
+        filter: grayscale(0.9) brightness(0.55);
+      }
+      #orbit-floor {
+        position: absolute;
+        left: 50%;
+        bottom: -6px;
+        width: min(760px, 86%);
+        height: 130px;
+        transform: translateX(-50%);
+        background: radial-gradient(52% 100% at 50% 100%,
+          rgba(225, 29, 42, 0.12), transparent 72%);
+        pointer-events: none;
+      }
+      #orbit-prev,
+      #orbit-next {
+        top: 38%;
+      }
+      #orbit-prev {
+        left: 8px;
+      }
+      #orbit-next {
+        right: 8px;
+      }
+      #orbit-caption {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 4px var(--gutter) 6px;
+        text-align: center;
+        position: relative;
+        z-index: 1;
+        margin-top: -30px;
+      }
+      #orbit-cap-text {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        min-height: 54px;
+        transition: opacity 0.28s cubic-bezier(0.22, 0.75, 0.3, 1),
+          transform 0.32s cubic-bezier(0.22, 0.75, 0.3, 1);
+      }
+      #orbit-cap-text.out {
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.14s ease-in, transform 0.14s ease-in;
+      }
+      #orbit-title {
+        margin: 0;
+        font-family: var(--display);
+        font-size: clamp(18px, 2.4vw, 26px);
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      #orbit-sub {
+        margin: 0;
+      }
+      #orbit-chips:empty {
+        display: none;
+      }
+      #orbit-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 2px;
+      }
+      #orbit-play {
+        background: var(--accent);
+        color: var(--on-accent);
+        transition: background 0.15s ease, box-shadow 0.2s ease;
+      }
+      #orbit-play:hover {
+        background: var(--accent-hot);
+        box-shadow: 0 0 18px rgba(225, 29, 42, 0.5);
+      }
+      #orbit-play.blocked {
+        background: var(--surface-3);
+        color: var(--muted);
+      }
+      #orbit-play.blocked:hover {
+        box-shadow: none;
+      }
+      body.orbit-mode #search-wrap,
+      body.orbit-mode #lib-meta {
+        display: none;
+      }
+      body.orbit-mode:has(#library:not([hidden])) header {
+        justify-content: center;
+        padding-top: clamp(30px, 4vh, 48px);
+      }
+      body.orbit-mode:has(#library:not([hidden])) .brand {
+        --brand-w: clamp(260px, 34vw, 520px);
+      }
+      body.orbit-mode:has(#library:not([hidden])) #statusbar,
+      body.orbit-mode:has(#library:not([hidden])) header #cacheNote,
+      body.orbit-mode:has(#library:not([hidden])) header #offlineNote {
+        display: none;
+      }
+      header #to-library {
+        display: none;
+      }
+      body.orbit-mode:has(#library:not([hidden])) header #to-library {
+        display: inline-flex;
+      }
+      header #to-orbit {
+        display: none;
+      }
+      body:not(.orbit-mode):has(#library:not([hidden])) header #to-orbit {
+        display: inline-flex;
+      }
+      header #to-arcade {
+        display: none;
+      }
+      body:has(#library:not([hidden])) header #to-arcade {
+        display: inline-flex;
+      }
+
+      body:not(.orbit-mode):has(#library:not([hidden])) header {
+        grid-template-columns: auto minmax(0, 1fr);
+        margin-top: 0;
+      }
+      body:not(.orbit-mode):has(#library:not([hidden])) header .brand {
+        --brand-h: clamp(24px, 2vw, 28px);
+        --brand-w: min(calc(var(--brand-h) * var(--mark-ar)), calc(100vw - 2 * var(--gutter) - 90px));
+        --brand-pad: 8px;
+        grid-column: 1;
+        justify-self: start;
+        align-items: flex-start;
+        margin-top: var(--brand-pad);
+      }
+      @media (orientation: landscape) and (max-height: 560px) {
+        .brand,
+        body.orbit-mode:has(#library:not([hidden])) .brand {
+          --brand-w: clamp(140px, 40vh, 260px);
+        }
+        body.orbit-mode:has(#library:not([hidden])) header {
+          padding-top: 2px;
+          margin-block: 2px;
+        }
+        #orbit-stage {
+          --slotw: min(24vw, clamp(96px, calc((100dvh - 194px) / 1.25), 260px));
+          height: calc(var(--sloth) + 60px);
+        }
+        #orbit-ring {
+          top: 8px;
+        }
+        #orbit-caption {
+          gap: 5px;
+          padding-block: 2px 4px;
+        }
+        #orbit-cap-text {
+          min-height: 0;
+          gap: 3px;
+        }
+        #orbit-title {
+          font-size: 15px;
+        }
+        #orbit-actions {
+          margin-top: 6px;
+        }
+        #orbit-play {
+          padding: 7px 18px;
+          font-size: 12px;
+        }
+      }
+    </style>
+    <style>@import "/web/ui/list.css";</style>
+    <style>
+      .readout,
+      #lib-quota,
+      #status {
+        font-family: var(--readout);
+        font-size: 11px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--muted-dim);
+      }
+      #statusbar {
+        position: sticky;
+        bottom: 0;
+        z-index: 8;
+        margin: auto 0 -8px;
+        padding-block: 10px;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px 18px;
+        border-top: 1px solid var(--hairline);
+        background: var(--shell);
+        box-shadow: 0 0 0 100vmax var(--shell);
+        clip-path: inset(0 -100vmax);
+      }
+      body:has(#library:not([hidden])) header #cacheNote,
+      body:has(#library:not([hidden])) header #offlineNote {
+        display: none;
+      }
+      #lib-offline {
+        font-family: var(--readout);
+        font-size: 11px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      body:has(#cacheNote:not([hidden])) #statusbar::after {
+        content: "saving to library…";
+        font-family: var(--readout);
+        font-size: 11px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      #statusbar .meter {
+        flex: none;
+        width: clamp(48px, 14vw, 220px);
+      }
+      #lib-quota {
+        white-space: nowrap;
+      }
+      #lib-quota > span:not(.meter) {
+        flex: none;
+      }
+      #lib-quota {
+        flex: 0 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 14px;
+        margin: 0;
+        padding: 0;
+        background: none;
+        border: 0;
+        cursor: pointer;
+        text-align: left;
+        transition: color 0.18s;
+      }
+      #lib-quota:hover,
+      #lib-quota:focus-visible {
+        color: var(--muted);
+      }
+      #lib-quota:empty {
+        cursor: default;
+      }
+      #lib-quota .more {
+        opacity: 0.6;
+      }
+      .meter {
+        flex: 1;
+        max-width: 220px;
+        height: 2px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .meter span {
+        display: block;
+        min-width: 6px;
+        height: 100%;
+        background: var(--accent);
+        box-shadow: 0 0 8px var(--accent-hot);
+      }
+      .ghost {
+        flex: 0 0 auto;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        border: 1px solid var(--hairline);
+        background: transparent;
+        color: var(--muted);
+        opacity: 0.8;
+        transition: opacity 0.16s ease, background 0.15s ease, border-color 0.15s ease,
+          color 0.15s ease;
+      }
+      .ghost:hover {
+        opacity: 1;
+        color: var(--text);
+        background: var(--surface-2);
+        border-color: rgba(255, 255, 255, 0.28);
+      }
+    </style>
+    <style>@import "/web/ui/empty.css";</style>
+    <style>
+      #status {
+        flex: 1 1 140px;
+        min-width: 0;
+        margin: 0;
+        text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      @media (max-width: 760px) {
+        #statusbar {
+          flex-direction: column;
+          flex-wrap: nowrap;
+          align-items: center;
+          gap: 6px;
+        }
+        #status {
+          flex: none;
+          width: 100%;
+          min-height: 13px;
+          text-align: center;
+        }
+      }
+      body:has(#stage:not([hidden])) header #soundGroup {
+        margin-left: auto;
+      }
+      @media (pointer: coarse) {
+        body:has(#stage:not([hidden])) header #burgerBtn {
+          order: 1;
+        }
+        body:has(#stage:not([hidden])) #menu {
+          left: auto;
+          right: 0;
+          transform: translateX(100%);
+          border-right: 0;
+          border-left: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        body:has(#stage:not([hidden])) #menu.open {
+          transform: none;
+        }
+      }
+
+      body:has(#stage:not([hidden])) header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        margin: 0.5rem auto;
+        z-index: 5;
+        flex-wrap: nowrap;
+        pointer-events: none;
+      }
+      body:has(#stage:not([hidden])) header #burgerBtn,
+      body:has(#stage:not([hidden])) header #soundGroup {
+        pointer-events: auto;
+      }
+      body:has(#stage:not([hidden])) header::before {
+        content: "";
+        position: absolute;
+        inset-inline: calc(50% - 50vw);
+        top: -16px;
+        bottom: -28px;
+        z-index: -1;
+        pointer-events: none;
+        background: linear-gradient(180deg,
+          rgba(0, 0, 0, 0.62) 0%,
+          rgba(0, 0, 0, 0.40) 45%,
+          rgba(0, 0, 0, 0) 100%);
+      }
+
+      body:has(#stage:not([hidden])) #statusbar {
+        display: none;
+      }
+      body:has(#stage:not([hidden])) header .iconbtn svg {
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
+      }
+      body:has(#stage:not([hidden])) {
+        padding-block: 0;
+      }
+      body.dropping::after {
+        content: "Drop a game folder or a .zip to add it";
+        position: fixed;
+        inset: 10px;
+        z-index: 40;
+        border: 2px dashed var(--accent);
+        border-radius: var(--r-card);
+        background: rgba(225, 29, 42, 0.06);
+        color: var(--accent);
+        font-family: var(--display);
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+    </style>
+    <style>@import "/web/ui/sheet.css";</style>
+    <style>@import "/web/ui/avatar.css";</style>
+    <style>
+      .toggle {
+        width: 42px;
+        height: 25px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.13);
+        position: relative;
+        flex: 0 0 auto;
+        margin-left: auto;
+        transition: background 0.18s;
+      }
+      .toggle::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 19px;
+        height: 19px;
+        border-radius: 50%;
+        background: #fff;
+        transition: left 0.18s;
+      }
+      .toggle[data-on="true"] {
+        background: var(--accent);
+      }
+      .toggle[data-on="true"]::after {
+        left: 20px;
+      }
+    </style>
+    <style>@import "/web/ui/toast.css";</style>
+    <style>@import "/web/ui/dock.css";</style>
+    <style>@import "/web/ui/stars.css";</style>
+    <style>@import "/web/ui/tabs.css";</style>
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+      #library,
+      #stage {
+        transition: opacity 0.22s ease;
+        opacity: 1;
+      }
+      #library.screen-out,
+      #stage.screen-out {
+        opacity: 0;
+      }
+      header {
+        transition: opacity 0.22s ease;
+      }
+      body.mode-fade header,
+      body.mode-fade #library {
+        opacity: 0;
+      }
+      #busy {
+        position: fixed;
+        inset: 0;
+        z-index: 15;
+        background: rgba(0, 0, 0, 0.42);
+        -webkit-backdrop-filter: blur(18px) saturate(1.4);
+        backdrop-filter: blur(18px) saturate(1.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        padding: var(--gutter);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.18s ease, visibility 0s linear 0.18s;
+      }
+      #busy.show {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity 0.18s ease;
+      }
+      #busyBox {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        box-sizing: border-box;
+        min-width: min(360px, 100%);
+        max-width: 100%;
+        padding: 28px 32px 24px;
+        border-radius: 16px;
+        background: rgba(20, 20, 20, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        transform: translateY(8px) scale(0.98);
+        transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #busy.show #busyBox {
+        transform: none;
+      }
+      html:has(#busy.show) {
+        overflow: hidden;
+      }
+      .spinner {
+        width: 44px;
+        height: 44px;
+        will-change: transform;
+        animation: spin 1s linear infinite;
+        animation-play-state: paused;
+      }
+      #busy.show .spinner {
+        animation-play-state: running;
+      }
+      .spinner circle {
+        fill: none;
+        stroke-width: 4;
+      }
+      .spinner .track {
+        stroke: var(--hairline);
+      }
+      .spinner .arc {
+        stroke: var(--accent);
+        stroke-linecap: round;
+        stroke-dasharray: 30 90;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      #busyMsg {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.8em;
+        color: var(--text);
+        font-size: 14px;
+        line-height: 1.4;
+        max-width: 46ch;
+        text-align: center;
+      }
+      #busyMsg > span {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+      }
+      #busyBar {
+        width: min(320px, 70vw);
+        height: 4px;
+        border-radius: 2px;
+        background: var(--hairline);
+        overflow: hidden;
+      }
+      #busyBar i {
+        display: block;
+        width: 0;
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.2s ease;
+      }
+      #cacheNote,
+      #offlineNote {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      #errorAction {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--on-text);
+      }
+      #errorAction:hover {
+        background: color-mix(in srgb, var(--accent) 82%, #000);
+      }
+      #importReport {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        background: var(--scrim);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #importReportBox {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 8px;
+        padding: 18px 20px;
+        width: min(460px, 88vw);
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #importReportTitle {
+        margin: 0;
+        font-size: 15px;
+      }
+      #importReportSummary {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      #importReportSummary .quiet {
+        color: var(--muted);
+      }
+      #importReportSummary .bad {
+        color: var(--danger);
+      }
+      #importReportFailedList {
+        margin: 0;
+        padding: 0 0 0 4px;
+        list-style: none;
+        max-height: 30vh;
+        overflow-y: auto;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      #importReportOrphanNote {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      #importReportBtns {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      #importReportOk {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--on-text);
+      }
+      #importReportOk:hover {
+        background: color-mix(in srgb, var(--accent) 82%, #000);
+      }
+      #veil {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        background: #000;
+        pointer-events: none;
+        animation: veil-failsafe 400ms ease 6s forwards;
+      }
+      @keyframes veil-failsafe {
+        to { opacity: 0; visibility: hidden; }
+      }
+      body.boot-settled #veil {
+        animation: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 700ms ease, visibility 0s 700ms;
+      }
+      body.boot-settled:not(.orbit-mode) #veil,
+      body:not(.orbit-return):has(#stage:not([hidden])) #veil {
+        animation: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: none;
+      }
+      body.orbit-return #veil {
+        animation: none;
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 220ms ease;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        body.boot-settled #veil,
+        body.orbit-return #veil { transition: none; }
+      }
+    </style>
+    <style>@import "/web/ui/extras.css";</style>
+  </head>
+  <body>
+    <div id="veil"></div>
+    <header>
+      <button id="burgerBtn" class="iconbtn" hidden aria-label="Engineer menu" data-str-aria-label="index.engineer_menu"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <div class="brand">
+        <h1><img class="logo-img" src="/icons/fruitulator-cherries.svg?v=1" alt="Fruitulator"  data-str-alt="index.fruitulator"/></h1>
+        <p class="tagline" data-str="index.fruit_machine_emulator">Fruit Machine Emulator</p>
+      </div>
+      <div class="tools">
+      <input id="zipfile" type="file" multiple />
+      <input id="folder" type="file" webkitdirectory multiple />
+      <span id="cacheNote" hidden data-str="index.saving_to_library">saving to library…</span>
+      <span id="offlineNote" hidden></span>
+      <button id="to-library" class="iconbtn" type="button" aria-label="Open the library" title="Library" data-str-title="index.library" data-str-aria-label="index.open_the_library"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16M8 8v12M12 6v14M16 6l4 14"/></svg></button>
+      <button id="to-orbit" class="iconbtn" type="button" hidden aria-label="Back to the carousel" title="Home" data-str-title="index.home" data-str-aria-label="index.back_to_the_carousel"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></button>
+      <a id="to-arcade" class="iconbtn" href="/arcade/" hidden aria-label="Arcades" title="Arcades" data-str-title="index.arcades" data-str-aria-label="index.arcades"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="2.5" width="12" height="19" rx="1.5"/><rect x="8.5" y="5" width="7" height="7" rx="0.5"/><path d="M8.5 15.5h7"/></svg></a>
+      <button id="aboutBtn" class="iconbtn upload about" aria-label="About Fruitulator" aria-haspopup="dialog" aria-expanded="false" data-str-aria-label="index.about_fruitulator"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 16.5v-5"/><path d="M12 7.8h.01"/></svg></button>
+      </div>
+      <div class="game-only" id="soundGroup" hidden>
+        <button id="schemBtn" class="iconbtn" hidden aria-label="System status" aria-pressed="false" data-str-aria-label="index.system_status"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.5 12h4.2l3-7.5 4.6 15 3-7.5h4.2"/></svg></button>
+      </div>
+    </header>
+    <div id="busy" role="dialog" aria-modal="true" aria-labelledby="busyMsg">
+      <div id="busyBox">
+        <svg class="spinner" viewBox="0 0 44 44" aria-hidden="true" focusable="false">
+          <circle class="track" cx="22" cy="22" r="19" />
+          <circle class="arc" cx="22" cy="22" r="19" />
+        </svg>
+        <div id="busyMsg"><span data-str="index.loading">loading…</span></div>
+        <div id="busyBar" hidden><i></i></div>
+        <button id="busyStop" hidden data-str="index.stop">Stop</button>
+      </div>
+    </div>
+    <div id="errorPopup" hidden>
+      <div id="errorBox">
+        <div id="errorMsg"></div>
+        <div id="errorHint" hidden></div>
+        <div id="errorBtns">
+          <button id="errorAction" hidden></button>
+          <button id="errorDismiss" data-str="index.dismiss">Dismiss</button>
+        </div>
+      </div>
+    </div>
+    <div id="importReport" hidden role="dialog" aria-modal="true" aria-labelledby="importReportTitle">
+      <div id="importReportBox">
+        <h3 id="importReportTitle"></h3>
+        <ul id="importReportSummary"></ul>
+        <ul id="importReportFailedList" hidden></ul>
+        <p id="importReportOrphanNote" hidden></p>
+        <div id="importReportBtns">
+          <button id="importReportRemove" hidden data-str="index.remove_failed_imports">Remove failed imports</button>
+          <button id="importReportOk" data-str="index.ok">OK</button>
+        </div>
+      </div>
+    </div>
+    <div id="menuBackdrop" hidden></div>
+    <div id="schemBackdrop" hidden></div>
+    <div id="schemPanel" hidden role="dialog" aria-modal="true" aria-label="System status" data-str-aria-label="index.system_status"></div>
+    <div id="aboutBackdrop" hidden></div>
+    <div id="aboutPanel" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <div class="about-bar">
+        <h2 id="aboutTitle" data-str="index.about">About</h2>
+        <button id="aboutClose" class="iconbtn" aria-label="Close" data-str-aria-label="index.close"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div id="aboutScroll"></div>
+    </div>
+    <nav id="menu" hidden>
+      <div class="menu-brand"><img class="logo-img" src="/icons/fruitulator-cherries.svg?v=1" alt="Fruitulator"  data-str-alt="index.fruitulator"/><p class="tagline" data-str="index.fruit_machine_emulator">Fruit Machine Emulator</p></div>
+      <input id="volSlider" type="range" min="0" max="100" value="80" aria-label="Volume"  data-str-aria-label="index.volume"/>
+      <input id="brightSlider" type="range" min="40" max="160" value="100" aria-label="Brightness"  data-str-aria-label="index.brightness"/>
+      <div id="menuBody"><div id="menuContent"></div><div id="menuSub"></div></div>
+    </nav>
+    <div id="menuFly" aria-live="polite"></div>
+    <section id="library" hidden>
+      <div id="search-wrap">
+        <div id="search-bar" role="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+          <input id="lib-search" type="search" placeholder="Search your games…"
+                 aria-label="Search your games" autocomplete="off" spellcheck="false"  data-str-aria-label="index.search_your_games_2" data-str-placeholder="index.search_your_games"/>
+          <kbd id="search-kbd" aria-hidden="true"></kbd>
+          <button id="search-close" type="button" aria-label="Close search" data-str-aria-label="index.close_search"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+      </div>
+      <div id="lib-meta">
+        <div id="sort-wrap">
+          <span id="sort-label" data-str="index.view">View</span>
+          <select id="lib-sort" aria-labelledby="sort-label">
+            <option value="played" data-str="index.played">Played</option>
+            <option value="newest" data-str="index.newest">Newest</option>
+            <option value="oldest" data-str="index.oldest">Oldest</option>
+            <option value="name" data-str="index.name">Name</option>
+            <option value="platform" data-str="index.platform">Platform</option>
+            <option value="maker" data-str="index.manufacturer">Manufacturer</option>
+          </select>
+        </div>
+        <div id="lib-actions">
+          <button id="searchBtn" class="iconbtn upload" aria-label="Search your games" data-str-aria-label="index.search_your_games_2"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg></button>
+          <button id="addBtn" class="iconbtn upload" aria-label="Add games" aria-haspopup="dialog" data-str-aria-label="index.add_games"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
+      </div>
+      <div id="orbit-wrap" hidden>
+        <div id="orbit-stage" tabindex="0" aria-label="Game carousel - arrow keys turn, Enter plays" data-str-aria-label="index.game_carousel_arrow_keys_turn">
+          <div id="orbit-ring"></div>
+          <div id="orbit-floor"></div>
+        </div>
+        <button id="orbit-prev" class="rail-nav" type="button" aria-label="Previous game" data-str-aria-label="index.previous_game"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <button id="orbit-next" class="rail-nav" type="button" aria-label="Next game" data-str-aria-label="index.next_game"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5l7 7-7 7"/></svg></button>
+        <div id="orbit-caption">
+          <div id="orbit-cap-text">
+            <h2 id="orbit-title"></h2>
+            <div id="orbit-chips" class="chips"></div>
+            <p id="orbit-sub" class="readout"></p>
+          </div>
+          <div id="orbit-actions">
+            <button id="orbit-play" type="button" class="btn" data-str="index.play">Play</button>
+          </div>
+        </div>
+      </div>
+      <div id="tiles"></div>
+      <div id="lib-empty" hidden>
+        <p id="lib-empty-msg" data-str="index.no_games_yet">No games yet.</p>
+        <div id="lib-empty-actions">
+          <button id="emptyAdd" type="button" class="btn" data-str="index.add_games">Add games</button>
+        </div>
+        <p id="lib-empty-hint" data-str="index.or_drop_a_game_folder">…or drop a game folder, .zip or .punnet anywhere on this page.</p>
+      </div>
+      <p id="lib-saving" hidden data-str="index.saving_a_game_to_the">Saving a game to the library…</p>
+    </section>
+    <footer id="statusbar">
+      <button id="lib-quota" type="button" aria-haspopup="dialog" title="Storage" data-str-title="index.storage"></button>
+      <span id="status" data-str="index.no_game_loaded">no game loaded</span>
+      <span id="lib-offline" hidden></span>
+    </footer>
+    <div id="sheet-scrim" hidden></div>
+    <div id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grab"></div>
+      <h3 id="sheet-title"></h3>
+      <div id="sheet-rows"></div>
+    </div>
+    <div id="stopnote" hidden role="status">
+      <span id="stopnote-msg"></span>
+      <button id="stopnote-state" type="button" hidden data-str="index.download_state">Download State</button>
+      <button id="stopnote-more" type="button" data-str="index.system_status">System status</button>
+      <button id="stopnote-close" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss">×</button>
+    </div>
+    <div id="soundnote" hidden role="status">
+      <span data-str="index.sound_is_paused_by_the">Sound is paused by the browser.</span>
+      <button id="soundnote-go" type="button" data-str="index.turn_sound_on">Turn sound on</button>
+      <button id="soundnote-close" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss">×</button>
+    </div>
+    <div id="stage" hidden><canvas id="screen" width="800" height="480"></canvas></div>
+    <script type="module" src="/web/boot.ts"></script>
+  </body>
+</html>

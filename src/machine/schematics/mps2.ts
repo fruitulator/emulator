@@ -1,0 +1,100 @@
+import type { Schematic } from '../schematic';
+import { plot } from './plot';
+
+export const MPS2_SCHEMATIC: Schematic = plot({
+  system: 'MPS2',
+  title: 'MPS2',
+  source: 'JPM MPS2 - TMS9995 - simplified board diagram',
+  rows: [
+    {
+      kind: 'cells',
+      band: 'edge',
+      cells: [
+        { id: 'lamps' },
+        { id: 'switches' },
+        { id: 'sevenseg' },
+        { id: 'meters' },
+        { id: 'coins' },
+      ],
+    },
+    {
+      kind: 'cells',
+      band: 'io',
+      cells: [
+        { id: 'ppi26' },
+        { id: 'ppi21' },
+        { id: 'ppi22' },
+        { id: 'ppi25' },
+      ],
+    },
+    {
+      kind: 'cells',
+      band: 'core',
+      cells: [
+        { id: 'ram', span: 1.1 },
+        { id: 'rom', span: 1.5 },
+        { id: 'sn', span: 1.1 },
+      ],
+    },
+    {
+      kind: 'bus',
+      rails: [
+        { id: 'bus-data', label: 'DATA', rail: 'data' },
+        { id: 'bus-addr', label: 'ADDRESS', rail: 'address' },
+        { id: 'bus-ctrl', label: 'CONTROL', rail: 'control' },
+        { id: 'bus-cru', label: 'CRU SERIAL', rail: 'serial' },
+      ],
+    },
+    {
+      kind: 'cells',
+      band: 'core',
+      height: 60,
+      cells: [
+        { id: 'cpu', span: 2.2 },
+        { id: 'uart1', span: 1.3 },
+        { id: 'uart2', span: 1.3 },
+        { id: 'status', span: 1.3 },
+        { id: 'ls259', span: 1.3 },
+      ],
+    },
+    { kind: 'rail', id: 'periph-rail', label: 'CABINET LOOM', rail: 'serial' },
+    {
+      kind: 'cells',
+      band: 'peripheral',
+      cells: [
+        { id: 'reels' },
+        { id: 'hopper' },
+        { id: 'coinmech' },
+      ],
+    },
+  ],
+  edges: [
+    { from: 'lamps', to: 'ppi25', kind: 'control' },
+    { from: 'sevenseg', to: 'ppi25', kind: 'control' },
+    { from: 'sevenseg', to: 'ppi26', kind: 'control' },
+    { from: 'meters', to: 'ppi26', kind: 'control' },
+    { from: 'switches', to: 'ppi21', kind: 'control' },
+    { from: 'switches', to: 'ppi22', kind: 'control' },
+    { from: 'coins', to: 'ppi21', kind: 'control' },
+    { from: 'ppi26', to: 'bus-data', kind: 'data' },
+    { from: 'ppi21', to: 'bus-data', kind: 'data' },
+    { from: 'ppi22', to: 'bus-data', kind: 'data' },
+    { from: 'ppi25', to: 'bus-data', kind: 'data' },
+    { from: 'ram', to: 'bus-data', kind: 'data' },
+    { from: 'ram', to: 'bus-addr', kind: 'address' },
+    { from: 'rom', to: 'bus-data', kind: 'data' },
+    { from: 'rom', to: 'bus-addr', kind: 'address' },
+    { from: 'sn', to: 'ppi22', kind: 'data' },
+    { from: 'cpu', to: 'bus-data', kind: 'data' },
+    { from: 'cpu', to: 'bus-addr', kind: 'address' },
+    { from: 'cpu', to: 'bus-ctrl', kind: 'control' },
+    { from: 'cpu', to: 'bus-cru', kind: 'serial' },
+    { from: 'uart1', to: 'bus-cru', kind: 'serial' },
+    { from: 'uart2', to: 'bus-cru', kind: 'serial' },
+    { from: 'status', to: 'bus-cru', kind: 'serial' },
+    { from: 'ls259', to: 'bus-cru', kind: 'serial' },
+    { from: 'periph-rail', to: 'reels', kind: 'serial' },
+    { from: 'periph-rail', to: 'hopper', kind: 'control' },
+    { from: 'periph-rail', to: 'coinmech', kind: 'control' },
+  ],
+});

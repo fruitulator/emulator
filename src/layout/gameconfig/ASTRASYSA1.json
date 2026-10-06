@@ -1,0 +1,399 @@
+{
+  "system": "ASTRASYSA1",
+  "source": "Oasis WindowsNetProjects/OasisEditor/Upstream/mfme-fml-decoder-master/src/GameConfig/Maps/ASTRASYSA1GameConfigMap.cs, transcribed 2026-09-14 (BB-2)",
+  "controls": {
+    "Caption": {
+      "kind": "text",
+      "storage": "fml",
+      "tag": "0x0C",
+      "encoding": "ascii-null-padded",
+      "readOnly": true
+    },
+    "Cash": {
+      "kind": "switch-number",
+      "storage": "fml",
+      "tag": "0x20",
+      "encoding": "u32-le"
+    },
+    "Service": {
+      "kind": "switch-number",
+      "storage": "fml",
+      "tag": "0x1F",
+      "encoding": "u32-le"
+    },
+    "Refill": {
+      "kind": "switch-number",
+      "storage": "fml",
+      "tag": "0x2B",
+      "encoding": "u32-le"
+    },
+    "Test": {
+      "kind": "switch-number",
+      "storage": "fml",
+      "tag": "0x3F",
+      "encoding": "u32-le"
+    },
+    "Top Up": {
+      "kind": "switch-number",
+      "storage": "fml",
+      "tags": [
+        "0x71",
+        "0xA4"
+      ],
+      "encoding": "mirrored-u32-le"
+    },
+    "DM Type": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x89",
+      "encoding": "u32-le",
+      "values": {
+        "1": 0,
+        "2": 1
+      }
+    },
+    "FPGA Type": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x7C",
+      "encoding": "u32-le",
+      "values": {
+        "1": 0,
+        "2": 1
+      }
+    },
+    "Multiplex Type": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x7D",
+      "encoding": "u32-le",
+      "values": {
+        "1": 0,
+        "2": 1
+      }
+    },
+    "Hopper Opto": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x7E",
+      "encoding": "u32-le",
+      "values": {
+        "Normal": 0,
+        "Inverted": 1,
+        "Reversed": 2,
+        "Rev Inv": 3
+      }
+    },
+    "ID Detect": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x7F",
+      "encoding": "u32-le",
+      "values": {
+        "None": 0,
+        "Reel4": 1,
+        "Matrix": 2
+      }
+    },
+    "Reel 56 Optos": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x99",
+      "encoding": "u32-le",
+      "values": {
+        "Type 1": 0,
+        "Type 2": 1
+      }
+    },
+    "SEC": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x1E",
+      "encoding": "u32-le",
+      "values": {
+        "No": 0,
+        "Yes": 1
+      }
+    },
+    "NV4 Note": {
+      "kind": "radio",
+      "storage": "fml",
+      "tag": "0x31",
+      "encoding": "u32-le",
+      "values": {
+        "No": 0,
+        "Yes": 1
+      }
+    },
+    "Network Id": {
+      "kind": "dropdown",
+      "storage": "fml",
+      "tag": "0x75",
+      "encoding": "u32-le",
+      "values": {
+        "None": 0,
+        "Master": 1,
+        "Slave 2": 2,
+        "Slave 3": 3,
+        "Slave 4": 4,
+        "Slave 5": 5,
+        "Slave 6": 6,
+        "Slave 7": 7,
+        "Slave 8": 8,
+        "Slave 9": 9,
+        "Slave 10": 10,
+        "Slave 11": 11,
+        "Community1": 12,
+        "Community2": 13,
+        "Community3": 14,
+        "Community4": 15,
+        "Community5": 16,
+        "Community6": 17
+      }
+    },
+    "Meters": {
+      "kind": "meter-grid",
+      "storage": "fml",
+      "tag": "0xA0",
+      "bytes": 512,
+      "confirmedEffectCodes": {
+        "Meter": 13
+      },
+      "meterTriacBlock": {
+        "byteOffset": 0,
+        "rowCount": 16,
+        "rowStride": 16,
+        "rowLayout": {
+          "meterIn": 0,
+          "meterOut": 4,
+          "triacIn": 8,
+          "triacOut": 12
+        },
+        "indexing": "row i (0-based) holds Meter (i+1) and Triac (i+1)"
+      },
+      "secBlock": {
+        "byteOffset": 256,
+        "entryCount": 32,
+        "entryStride": 8,
+        "entryLayout": {
+          "in": 0,
+          "out": 4
+        },
+        "indexing": "entry i (0-based) holds Sec (i+1)"
+      }
+    },
+    "Meter Effects": {
+      "kind": "effect-grid",
+      "storage": "fml",
+      "tag": "0x6D",
+      "rows": 16,
+      "confirmedEffectCodes": {
+        "Meter": 13
+      }
+    },
+    "Triac Effects": {
+      "kind": "effect-grid",
+      "storage": "fml",
+      "tag": "0x6A",
+      "rows": 16,
+      "confirmedEffectCodes": {
+        "": 0,
+        "2p Slide": 42,
+        "10p Slide": 5,
+        "20p Slide": 18,
+        "50p Slide": 19,
+        "£1 Slide": 34,
+        "Misc Slide": 35,
+        "Token Slide": 6,
+        "Meter": 13,
+        "Lockout On": 16,
+        "Lockout Off": 17,
+        "Sol/Wiper On": 20,
+        "Sol/Wiper Off": 21,
+        "Motor On": 1,
+        "Solenoid On": 2,
+        "Solenoid Off": 3
+      }
+    },
+    "Name In Manager": {
+      "kind": "text",
+      "storage": "fml",
+      "tag": "0x2C",
+      "encoding": "ascii-null-padded",
+      "bytes": 101
+    },
+    "Version": {
+      "kind": "text",
+      "storage": "fml",
+      "tag": "0x0D",
+      "encoding": "ascii-null-padded"
+    },
+    "DIP": {
+      "kind": "dip-banks",
+      "storage": "gam",
+      "probed": true,
+      "banks": {
+        "DIP1": {
+          "gamLine": "DIP 1",
+          "bits": 8
+        },
+        "DIP2": {
+          "gamLine": "DIP 2",
+          "bits": 8
+        }
+      },
+      "stringLayout": {
+        "order": "lsb-first",
+        "index0": "UI switch 1 (LSB)",
+        "index7": "UI switch 8 (MSB)",
+        "on": "1",
+        "off": "0"
+      }
+    },
+    "Stake": {
+      "kind": "dropdown",
+      "storage": "gam",
+      "gamLine": "Stake",
+      "values": {
+        "": 0,
+        "5p": 1,
+        "10p": 2,
+        "20p": 3,
+        "25p": 4,
+        "30p": 5,
+        "50p": 6,
+        "£1": 7
+      }
+    },
+    "Prize": {
+      "kind": "dropdown",
+      "storage": "gam",
+      "gamLine": "Jackpot",
+      "values": {
+        "": 0,
+        "£3": 1,
+        "£4": 2,
+        "£5": 3,
+        "£6": 4,
+        "£6T": 5,
+        "£8": 6,
+        "£8T": 7,
+        "£10": 8,
+        "£15": 9,
+        "£25": 10,
+        "£25LBO": 11,
+        "£35": 12,
+        "£70": 13,
+        "£100": 14
+      }
+    },
+    "%": {
+      "kind": "dropdown",
+      "storage": "gam",
+      "gamLine": "Percentage",
+      "values": {
+        "": 0,
+        "70%": 1,
+        "72%": 2,
+        "74%": 3,
+        "76%": 4,
+        "78%": 5,
+        "80%": 6,
+        "82%": 7,
+        "84%": 8,
+        "86%": 9,
+        "88%": 10,
+        "90%": 11,
+        "92%": 12,
+        "94%": 13,
+        "96%": 14,
+        "98%": 15
+      }
+    },
+    "DataPak": {
+      "kind": "dropdown",
+      "storage": "gam",
+      "gamLine": "DataPak",
+      "values": {
+        "No": 0,
+        "Yes": 1,
+        "LoopBack": 2
+      }
+    },
+    "EffectsReels": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": true,
+      "values": {
+        "unchecked": 0,
+        "checked": 1
+      },
+      "gamLine": "Effects <bitmask>",
+      "mask": 1
+    },
+    "EffectsMeters": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": true,
+      "values": {
+        "unchecked": 0,
+        "checked": 1
+      },
+      "gamLine": "Effects <bitmask>",
+      "mask": 2
+    },
+    "EffectsTriacs": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": true,
+      "values": {
+        "unchecked": 0,
+        "checked": 1
+      },
+      "gamLine": "Effects <bitmask>",
+      "mask": 4
+    },
+    "EffectsButtons": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": true,
+      "values": {
+        "unchecked": 0,
+        "checked": 1
+      },
+      "gamLine": "Effects <bitmask>",
+      "mask": 8
+    },
+    "EffectsCoins": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": true,
+      "values": {
+        "unchecked": 0,
+        "checked": 1
+      },
+      "gamLine": "Effects <bitmask>",
+      "mask": 16
+    },
+    "Lo Tech": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": false
+    },
+    "WIP": {
+      "kind": "checkbox",
+      "storage": "gam",
+      "defaultChecked": false
+    },
+    "Rating": {
+      "kind": "text",
+      "storage": "gam",
+      "encoding": "gam-line"
+    },
+    "Tags": {
+      "kind": "text",
+      "storage": "gam",
+      "encoding": "gam-line"
+    }
+  }
+}

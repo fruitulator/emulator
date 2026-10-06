@@ -1,0 +1,92 @@
+import type { Schematic } from '../schematic';
+import { plot } from './plot';
+
+export const SC4_SCHEMATIC: Schematic = plot({
+  system: 'SCORPION4',
+  title: 'Scorpion 4',
+  source: 'Bell-Fruit Scorpion 4 - MC68307 - simplified board diagram',
+  rows: [
+    {
+      kind: 'cells',
+      band: 'edge',
+      cells: [
+        { id: 'lamps' },
+        { id: 'switches' },
+        { id: 'meters' },
+        { id: 'coins' },
+      ],
+    },
+    { kind: 'cells', band: 'io', cells: [{ id: 'mux', span: 6 }, { id: 'psu' }] },
+    {
+      kind: 'cells',
+      band: 'core',
+      cells: [
+        { id: 'ram', span: 0.95 },
+        { id: 'rom', span: 1.3 },
+        { id: 'eeprom', span: 0.8 },
+        { id: 'sec', span: 1.25 },
+        { id: 'ymz', span: 1.4 },
+        { id: 'alpha', span: 0.95 },
+        { id: 'alpha2', span: 0.95 },
+      ],
+    },
+    {
+      kind: 'bus',
+      rails: [
+        { id: 'bus-data', label: 'DATA', rail: 'data' },
+        { id: 'bus-addr', label: 'ADDRESS', rail: 'address' },
+        { id: 'bus-ctrl', label: 'CONTROL', rail: 'control' },
+      ],
+    },
+    {
+      kind: 'cells',
+      band: 'core',
+      height: 60,
+      cells: [
+        { id: 'cpu', span: 2.2 },
+        { id: 'sim', span: 1.6 },
+        { id: 'duart', span: 1.6 },
+        { id: 'clubmeter', span: 1.4 },
+      ],
+    },
+    { kind: 'cells', band: 'edge', cells: [{ id: 'cctalk' }, { id: 'i2c' }, { id: 'bdm' }] },
+    { kind: 'rail', id: 'periph-rail', label: 'CABINET LOOM', rail: 'serial' },
+    {
+      kind: 'cells',
+      band: 'peripheral',
+      cells: [
+        { id: 'reels' },
+        { id: 'hopper' },
+        { id: 'hopper2' },
+      ],
+    },
+  ],
+  edges: [
+    { from: 'lamps', to: 'mux', kind: 'control' },
+    { from: 'switches', to: 'mux', kind: 'control' },
+    { from: 'meters', to: 'mux', kind: 'control' },
+    { from: 'coins', to: 'mux', kind: 'control' },
+    { from: 'mux', to: 'bus-data', kind: 'data' },
+    { from: 'ram', to: 'bus-data', kind: 'data' },
+    { from: 'ram', to: 'bus-addr', kind: 'address' },
+    { from: 'rom', to: 'bus-data', kind: 'data' },
+    { from: 'rom', to: 'bus-addr', kind: 'address' },
+    { from: 'eeprom', to: 'bus-ctrl', kind: 'control' },
+    { from: 'sec', to: 'bus-ctrl', kind: 'control' },
+    { from: 'ymz', to: 'bus-data', kind: 'data' },
+    { from: 'alpha', to: 'bus-ctrl', kind: 'control' },
+    { from: 'alpha2', to: 'bus-ctrl', kind: 'control' },
+    { from: 'cpu', to: 'bus-data', kind: 'data' },
+    { from: 'cpu', to: 'bus-addr', kind: 'address' },
+    { from: 'cpu', to: 'bus-ctrl', kind: 'control' },
+    { from: 'sim', to: 'bus-addr', kind: 'address' },
+    { from: 'duart', to: 'bus-data', kind: 'data' },
+    { from: 'clubmeter', to: 'bus-ctrl', kind: 'control' },
+    { from: 'duart', to: 'cctalk', kind: 'serial' },
+    { from: 'sim', to: 'i2c', kind: 'serial' },
+    { from: 'cpu', to: 'bdm', kind: 'serial' },
+    { from: 'periph-rail', to: 'reels', kind: 'control' },
+    { from: 'periph-rail', to: 'hopper', kind: 'serial' },
+    { from: 'periph-rail', to: 'hopper2', kind: 'serial' },
+  ],
+});
