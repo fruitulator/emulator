@@ -20,8 +20,6 @@ import type { BoardPart } from './parts';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 
-const h8OwnRegister = (a: number): boolean =>
-  (a >= 0xffffec && a <= 0xffffef) || a === 0xfffff1 || a === 0xfffff3;
 import { ROM_UNPLACED } from './pairplacer';
 import { COIN_RAW } from './coinraw';
 import { COIN_NOTES } from './layoutcoins';
@@ -335,6 +333,7 @@ export class Epoch implements Machine {
       write16: (a, v) => this.write16(a, v),
     };
     this.dev = new H83002(board);
+    this.dev.onUnassigned = (a) => this.strays.hit(a);
     this.asic = new EpochAsic(this.dev.intc);
     this.asic.onDisplayReset = () => {
       (this.display as EpochAlpha).dot.reset();
@@ -599,7 +598,7 @@ export class Epoch implements Machine {
       if (off === DIP_BANK_2) return this.dips[0] & 0xff;
       return this.ram[off];
     }
-    if (!h8OwnRegister(a)) this.strays.hit(a);
+    this.strays.hit(a);
     return 0;
   }
 
@@ -630,7 +629,7 @@ export class Epoch implements Machine {
       else if (off === OUTPUT_BASE + 7) this.writeHopperDrive(val);
       return;
     }
-    if (a >= this.romLength && !h8OwnRegister(a)) this.strays.hit(a);
+    if (a >= this.romLength) this.strays.hit(a);
   }
 
   private writeHopperDrive(val: number): void {

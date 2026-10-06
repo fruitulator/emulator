@@ -56,19 +56,77 @@ export interface CabGeometry {
   bitmaps?: (Omit<CabBitmap, 'image' | 'overlay'> & { image?: number; overlay?: number })[];
 }
 
+function pixelsOf(img: unknown): { w: number; h: number; px: Uint8ClampedArray } | null {
+  const i = img as { width?: unknown; height?: unknown; data?: unknown };
+  if (!(i.data instanceof Uint8ClampedArray)) return null;
+  if (typeof i.width !== 'number' || typeof i.height !== 'number') return null;
+  return { w: i.width, h: i.height, px: i.data };
+}
+
+function hashPixels(px: Uint8ClampedArray): number {
+  let h = 0x811c9dc5;
+  if (px.byteOffset % 4 === 0 && px.byteLength % 4 === 0) {
+    const u = new Uint32Array(px.buffer, px.byteOffset, px.byteLength >> 2);
+    for (let k = 0; k < u.length; k++) h = Math.imul(h ^ u[k], 0x01000193);
+  } else {
+    for (let k = 0; k < px.length; k++) h = Math.imul(h ^ px[k], 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function samePixels(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
+  if (a.length !== b.length) return false;
+  for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 export function dehydrateCabinet<A>(cab: Cabinet<A>): {
   geo: CabGeometry;
   assets: { id: number; image: A }[];
 } {
   const ids = new Map<A, number>();
   const assets: { id: number; image: A }[] = [];
+  type Px = { id: number; px: Uint8ClampedArray; hash?: number };
+  const bySize = new Map<string, Px[]>();
+  const byHash = new Map<string, Px[]>();
+  const hashed = (size: string, e: Px): void => {
+    if (e.hash !== undefined) return;
+    e.hash = hashPixels(e.px);
+    const k = `${size}#${e.hash}`;
+    const list = byHash.get(k);
+    if (list) list.push(e); else byHash.set(k, [e]);
+  };
   const idFor = (c: A): number => {
     let id = ids.get(c);
-    if (id === undefined) {
+    if (id !== undefined) return id;
+    const p = pixelsOf(c);
+    if (p) {
+      const size = `${p.w}x${p.h}`;
+      const same = bySize.get(size);
+      if (same) {
+        for (const e of same) hashed(size, e);
+        const h = hashPixels(p.px);
+        const match = byHash.get(`${size}#${h}`)?.find((e) => samePixels(e.px, p.px));
+        if (match) {
+          ids.set(c, match.id);
+          return match.id;
+        }
+        id = assets.length;
+        const e: Px = { id, px: p.px };
+        same.push(e);
+        e.hash = h;
+        const k = `${size}#${h}`;
+        const list = byHash.get(k);
+        if (list) list.push(e); else byHash.set(k, [e]);
+      } else {
+        id = assets.length;
+        bySize.set(size, [{ id, px: p.px }]);
+      }
+    } else {
       id = assets.length;
-      ids.set(c, id);
-      assets.push({ id, image: c });
     }
+    ids.set(c, id);
+    assets.push({ id, image: c });
     return id;
   };
 

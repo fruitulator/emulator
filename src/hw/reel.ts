@@ -249,6 +249,10 @@ export class Reel {
     let steps = this.mOldPhase - this.mPhase;
     if (steps < -4) steps += 8;
     if (steps > 4) steps -= 8;
+    if (steps === 4 || steps === -4) {
+      steps = 0;
+      this.mPhase = this.mOldPhase;
+    }
     this.mOldPhase = this.mPhase;
     this.mOldPattern = pattern;
     const max = this.stepsPerRevolution;

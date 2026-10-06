@@ -287,7 +287,6 @@ export class Sys1 implements Machine {
       this.nmiPending = false;
       return 0xff;
     }
-    this.strays.hit(a);
     return 0xff;
   }
 

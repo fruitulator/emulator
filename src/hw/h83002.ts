@@ -6,6 +6,17 @@ import { H8Timer16 } from './h8timer16';
 import { H8Sci } from './h8sci';
 import { H8Watchdog } from './h8watchdog';
 
+const ASSIGNED = ((): Uint8Array => {
+  const t = new Uint8Array(256);
+  const on = (lo: number, hi = lo): void => { for (let i = lo; i <= hi; i++) t[i] = 1; };
+  on(0x20, 0x3f); on(0x60, 0xaf); on(0xb0, 0xb5); on(0xb8, 0xbd);
+  on(0xc5); on(0xc7); on(0xc9); on(0xcb); on(0xcd, 0xd4); on(0xd6); on(0xda);
+  on(0xe0, 0xe9); on(0xec, 0xef); on(0xf1, 0xf6); on(0xf8, 0xf9);
+  return t;
+})();
+
+const isUnassigned = (off: number): boolean => ASSIGNED[off] === 0;
+
 export class H83002 implements Bus16 {
   readonly cpu: H8;
   readonly intc: H8Intc;
@@ -23,9 +34,16 @@ export class H83002 implements Bus16 {
   readonly portA = new H8Port(0x00, 0x00);
   readonly portB = new H8Port(0x00, 0x00);
 
+  wcer = 0xff;
+  brcr = 0xfe;
+
   private readonly iram = new Uint8Array(0x200);
 
   readonly unmodelled = new Map<number, number>();
+
+  readonly unassigned = new Map<number, number>();
+
+  onUnassigned?: (address: number) => void;
 
   constructor(private readonly board: Bus16) {
     this.cpu = new H8(this);
@@ -43,6 +61,8 @@ export class H83002 implements Bus16 {
     this.timer.reset();
     this.watchdog.reset(this.cpu.totalCycles);
     for (const s of this.sci) s.reset();
+    this.wcer = 0xff;
+    this.brcr = 0xfe;
     for (const p of [this.port4, this.port6, this.port7, this.port8,
       this.port9, this.portA, this.portB]) p.reset();
   }
@@ -55,42 +75,51 @@ export class H83002 implements Bus16 {
   }
 
   private internal(a: number): boolean {
-    if (a < 0xfffd10) return false;
-    if (a < 0xffff10) return true;
-    const off = a & 0xff;
-    return (off >= 0x20 && off < 0x40)
-      || (off >= 0x60 && off < 0xa0)
-      || (off >= 0xa8 && off <= 0xab) || off === 0xad
-      || (off >= 0xb0 && off <= 0xb5) || (off >= 0xb8 && off <= 0xbd)
-      || (off >= 0xc5 && off <= 0xda)
-      || (off >= 0xe0 && off <= 0xe9)
-      || off === 0xf2
-      || (off >= 0xf4 && off <= 0xf6) || off === 0xf8 || off === 0xf9;
+    return a >= 0xfffd10 && (a < 0xffff10 || a >= 0xffff1c);
+  }
+
+  private touchUnassigned(a: number): void {
+    this.unassigned.set(a, (this.unassigned.get(a) ?? 0) + 1);
+    this.onUnassigned?.(a);
   }
 
   read8(addr: number): number {
     const a = addr & 0xffffff;
-    return this.internal(a) ? this.internalRead(a) : this.board.read8(a);
+    if (!this.internal(a)) return this.board.read8(a);
+    if (a >= 0xffff1c && isUnassigned(a & 0xff)) { this.touchUnassigned(a); return 0; }
+    return this.internalRead(a);
   }
 
   write8(addr: number, val: number): void {
     const a = addr & 0xffffff;
-    if (this.internal(a)) this.internalWrite(a, val & 0xff);
-    else this.board.write8(a, val & 0xff);
+    if (!this.internal(a)) { this.board.write8(a, val & 0xff); return; }
+    if (a >= 0xffff1c && isUnassigned(a & 0xff)) { this.touchUnassigned(a); return; }
+    this.internalWrite(a, val & 0xff);
+  }
+
+  private wordTouchesUnassigned(a: number): boolean {
+    if (a < 0xffff1c) return false;
+    const hi = isUnassigned(a & 0xff); const lo = isUnassigned((a + 1) & 0xff);
+    if (!hi && !lo) return false;
+    if (hi) this.touchUnassigned(a);
+    if (lo) this.touchUnassigned(a + 1);
+    return true;
   }
 
   read16(addr: number): number {
     const a = addr & 0xfffffe;
-    if (!this.internal(a) && !this.internal(a + 1)) return this.board.read16(a);
+    if (!this.internal(a)) return this.board.read16(a);
+    if (this.wordTouchesUnassigned(a)) return 0;
     return (this.read8(a) << 8) | this.read8(a + 1);
   }
 
   write16(addr: number, val: number): void {
     const a = addr & 0xfffffe;
-    if (!this.internal(a) && !this.internal(a + 1)) {
+    if (!this.internal(a)) {
       this.board.write16(a, val & 0xffff);
       return;
     }
+    if (this.wordTouchesUnassigned(a)) return;
     if (a === 0xffffa8) { this.watchdog.write16(this.cpu.totalCycles, val & 0xffff); return; }
     if (a === 0xffffaa) return;
     this.write8(a, (val >> 8) & 0xff);
@@ -109,7 +138,9 @@ export class H83002 implements Bus16 {
     if (off >= 0xb8 && off <= 0xbd) return this.sci[1].read(off - 0xb8);
     if (off >= 0xc5 && off <= 0xda) return this.portRead(off);
     switch (off) {
+      case 0xef: return 0;
       case 0xf2: return this.cpu.syscr;
+      case 0xf3: return this.brcr;
       case 0xf4: return this.intc.iscrR();
       case 0xf5: return this.intc.ierR();
       case 0xf6: return this.intc.isrR();
@@ -147,7 +178,9 @@ export class H83002 implements Bus16 {
       return;
     }
     switch (off) {
+      case 0xef: this.wcer = val; return;
       case 0xf2: this.cpu.syscr = val; this.cpu.updateIrqFilter(); return;
+      case 0xf3: this.brcr = val; return;
       case 0xf4: this.intc.iscrW(val); return;
       case 0xf5: this.intc.ierW(val); return;
       case 0xf6: this.intc.isrW(val); return;
