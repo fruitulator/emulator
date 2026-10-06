@@ -3,7 +3,7 @@ import type { PlatformView } from './platform';
 import type { CabLamp } from './dat';
 import { controlNaming, type NameSource } from './controlname';
 import { acceptorResolve } from './platform';
-import { shortcutLabel } from './shortcuts';
+import { capShortcuts, shortcutLabel } from './shortcuts';
 import { card } from './ui/rows';
 import { str } from './i18n';
 
@@ -67,10 +67,12 @@ export function machineControls(
       controls.set(id, c);
     }
     c.lamps.push(lp);
-    const key = shortcutLabel(lp.shortcut);
-    if (!key) continue;
-    if (!winner.has(key)) winner.set(key, id);
-    if (!c.keys.includes(key)) c.keys.push(key);
+    for (const vk of capShortcuts(lp)) {
+      const key = shortcutLabel(vk);
+      if (!key) continue;
+      if (!winner.has(key)) winner.set(key, id);
+      if (!c.keys.includes(key)) c.keys.push(key);
+    }
   }
   const rows = [...controls.values()]
     .filter((c) => c.keys.length)

@@ -27,6 +27,8 @@ export class Ay8910 implements AudioSource {
 
   readonly regs = new Uint8Array(16);
 
+  portAOut = 0;
+
   private readonly variant: AyVariant;
   readonly toneClock: number;
 
@@ -59,6 +61,7 @@ export class Ay8910 implements AudioSource {
   reset(): void {
     this.flush();
     this.regs.fill(0);
+    this.portAOut = 0;
     this.regs[7] = 0x3f;
     this.address = 0;
     this.toneCount[0] = this.toneCount[1] = this.toneCount[2] = 0;
@@ -95,6 +98,8 @@ export class Ay8910 implements AudioSource {
   writeReg(reg: number, v: number): void {
     this.flush();
     const r = reg & 0x0f;
+    if (r === 7 && ~this.regs[7] & v & 0x40) this.portAOut = this.regs[14];
+    else if (r === 14 && this.regs[7] & 0x40) this.portAOut = v & 0xff;
     this.regs[r] = v & 0xff;
     if (r === 13) {
       this.envStep = 0;

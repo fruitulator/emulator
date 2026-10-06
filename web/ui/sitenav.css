@@ -1,5 +1,4 @@
 .ui-sitenav { display: inline-flex; align-items: center; gap: 2px; }
 .ui-sitenav[hidden] { display: none; }
-.ui-sitenav .iconbtn { width: 34px; height: 34px; color: var(--muted); }
+.ui-sitenav .iconbtn { color: var(--muted); }
 .ui-sitenav .iconbtn:hover { color: var(--text); }
-.ui-sitenav .iconbtn svg { width: 17px; height: 17px; }

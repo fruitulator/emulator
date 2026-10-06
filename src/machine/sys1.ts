@@ -11,6 +11,7 @@ import { MeterConfirm } from '../hw/meterconfirm';
 import type { ReelGeometry } from './layoutreels';
 import type { LayoutSwitch } from './layoutswitches';
 import type { BoardPart } from './parts';
+import type { SlideEffect } from '../layout/fmlconfig';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 
@@ -361,7 +362,12 @@ export class Sys1 implements Machine {
     if (a !== this.lastIc25A) {
       this.lastIc25A = a;
       const t = a & 0x7f;
-      for (let i = 0; i < 7; i++) if ((t & ~this.triacs) & (1 << i)) this.triacPulses[i]++;
+      for (let i = 0; i < 7; i++) {
+        if ((t & ~this.triacs) & (1 << i)) {
+          this.triacPulses[i]++;
+          this.bookSlide(i);
+        }
+      }
       this.triacs = t;
       for (let i = 0; i < 8; i++) this.lamps[0x60 + i] = (a >> i) & 1 ? 0xff : 0;
     }
@@ -502,6 +508,22 @@ export class Sys1 implements Machine {
   }
 
   readonly cashLedger: CashLedger = newCashLedger();
+
+  private readonly slidePence: SlideEffect[] = new Array(7).fill(null);
+  readonly slideEjects = new Uint32Array(7);
+
+  setSlidePence(slides: readonly SlideEffect[]): void {
+    for (let i = 0; i < 7; i++) this.slidePence[i] = slides[i] ?? null;
+  }
+
+  private bookSlide(i: number): void {
+    const p = this.slidePence[i];
+    if (p === null || p === undefined) return;
+    this.slideEjects[i]++;
+    if (typeof p === 'number') this.cashLedger.outPence += p;
+    else if (p === 'token') this.cashLedger.unpricedTokenOut++;
+    else this.cashLedger.unpricedOut++;
+  }
 
   private static readonly COIN_PENCE: (number | null)[] = [20, 10, null, 50, 100];
 

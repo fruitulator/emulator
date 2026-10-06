@@ -250,6 +250,7 @@ export interface CabLamp<A = ImageBitmap> {
   enableLatched?: boolean;
   enableLamps?: number[];
   shortcut?: number;
+  shortcut2?: number;
   cap?: boolean;
   blend?: boolean;
   multi?: boolean;
@@ -268,6 +269,7 @@ export interface CabLamp<A = ImageBitmap> {
     dx?: number;
     dy?: number;
     lamp: number;
+    litOnly?: true;
     input?: number;
   };
   offState?: { nums: number[]; canvas: A; down?: A };

@@ -442,7 +442,7 @@ export class M1ab implements Bus, Machine {
         return 0xff;
       default:
         if (a !== 0x2400 && a !== 0x240a) this.strays.hit(a);
-        return 0xff;
+        return 0;
     }
   }
 

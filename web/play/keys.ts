@@ -1,7 +1,7 @@
 import { hasInput, type CabLamp, type Rect } from '../dat';
 import type { PlatformView } from '../platform';
 import { KeyHintLayer, keyHints, type HintPlace } from '../keyhints';
-import { browserActivatesOnKey, chordCaps, enterWorksTheControl, keyBelongsToTheMachine, matchesShortcut } from '../shortcuts';
+import { browserActivatesOnKey, chordCaps, enterWorksTheControl, keyBelongsToTheMachine, capShortcuts, matchesShortcut } from '../shortcuts';
 import type { KeyTableRow } from '../keytable';
 import { str } from '../i18n';
 
@@ -39,7 +39,7 @@ export function boundKeys(lamps: readonly CabLamp[]): readonly number[] {
   let got = boundCache.get(lamps);
   if (!got) {
     const vks = new Set<number>();
-    for (const lp of lamps) if (lp.shortcut !== undefined && works(lp)) vks.add(lp.shortcut);
+    for (const lp of lamps) if (works(lp)) for (const vk of capShortcuts(lp)) vks.add(vk);
     got = [...vks];
     boundCache.set(lamps, got);
   }
@@ -67,7 +67,7 @@ export class PlayKeys {
     if (!lamps || !this.surface.running()) return null;
     for (const lp of lamps) {
       if (lp.shortcut === undefined || !this.surface.pressable(lp)) continue;
-      if (matchesShortcut(lp.shortcut, ev as KeyboardEvent)) return lp;
+      for (const vk of capShortcuts(lp)) if (matchesShortcut(vk, ev as KeyboardEvent)) return lp;
     }
     return null;
   }

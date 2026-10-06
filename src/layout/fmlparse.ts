@@ -298,7 +298,7 @@ const LABEL = m({
   0x3b: ['u32', ''], 0x3f: ['text', 'Label'], 0x36: ['bitmap', 'Overlay'],
   0x39: ['i32', 'Lamp'], 0x01: ['color', 'BackgroundColour'], 0x02: ['bool', 'Transparent'],
   0x27: ['font', 'Font'],
-  0x38: ['u32', ''], 0x1c: ['u32', ''],
+  0x38: ['u32', ''], 0x1c: ['u32', 'DefinedLampCount'],
 });
 
 const BITMAP_TAGS: Record<number, [Role, string]> = {
@@ -518,7 +518,7 @@ const DEFAULTS: Record<number, Record<string, number>> = {
   0x05: { Lamp1Colour: 0xffffff00, Lamp2Colour: 0xffffff00, OffColour: 0xffffff00,
     CoinNoteId: -1 },
   0x07: { DigitWidth: 17, Columns: 16 },
-  0x0a: { BackgroundColour: 0xfff0f0f0, Transparent: 1 },
+  0x0a: { BackgroundColour: 0xfff0f0f0, Transparent: 1, DefinedLampCount: 0, Lamp: -2 },
   0x0e: { OnColour: 0xffff0000, OffColour: 0xff303030,
     BgColour: 0xff000000, Thickness: 3, Spacing: 1 },
   0x12: { SelectedSegmentIndex: 0xffffffff },

@@ -207,6 +207,11 @@ button.menu-row:hover .row-chev {
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
+.key-hint .key-sep {
+  margin: 0 4px;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 400;
+}
 .key-hint.inline {
   position: static;
   transform: none;

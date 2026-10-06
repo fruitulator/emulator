@@ -3,7 +3,7 @@ import type { GameFile, LayoutProps } from '../src/machine/registry';
 
 export const CONTAINER_VERSION = 1;
 
-export const DECODE_VERSION = 154;
+export const DECODE_VERSION = 157;
 
 export type ChunkType = 'META' | 'SRCS' | 'CABJ' | 'IMGS' | 'THMB' | 'STAT' | 'SPAR';
 

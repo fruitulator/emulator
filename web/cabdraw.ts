@@ -448,7 +448,8 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       }
       if (lp.legend) {
         const lit = lp.legend.lamp >= 0 && m.layoutLamp(lp.legend.lamp);
-        const text = (lit ? lp.legend.on ?? lp.legend.off : lp.legend.off ?? lp.legend.on) ?? '';
+        const text = lp.legend.litOnly && !lit ? ''
+          : (lit ? lp.legend.on ?? lp.legend.off : lp.legend.off ?? lp.legend.on) ?? '';
         const nudge = lp.legend.input !== undefined && inputHeld(lp.legend.input) ? 1 : 0;
         if (lp.legend.fill !== undefined) {
           ctx.fillStyle = argbToCss(lp.legend.fill);

@@ -119,6 +119,12 @@ const DEFAULT_MECH = 'SR5i';
 const DEFAULT_HOPPER = 'SCH 2';
 const DEFAULT_NOTE = 'JCM EBA';
 
+function deviceAt(addr: number, model: string): CcTalkDevice {
+  const dev = deviceFor(model)!;
+  dev.address = addr;
+  return dev;
+}
+
 export class Sc5 implements Bus16, Machine {
   static readonly snapshotConfig: readonly string[] = ['nvram'];
   readonly digitKind: DigitKind = 'sc4';
@@ -250,9 +256,10 @@ export class Sc5 implements Bus16, Machine {
   }
 
   private bus = new Map<number, CcTalkDevice>([
-    [CC_MECH, deviceFor(DEFAULT_MECH)!],
-    [CC_HOPPER, deviceFor(DEFAULT_HOPPER)!],
-    [CC_NOTE, deviceFor(DEFAULT_NOTE)!],
+    [CC_MECH, deviceAt(CC_MECH, DEFAULT_MECH)],
+    [CC_HOPPER, deviceAt(CC_HOPPER, DEFAULT_HOPPER)],
+    [CC_HOPPER2, deviceAt(CC_HOPPER2, DEFAULT_HOPPER)],
+    [CC_NOTE, deviceAt(CC_NOTE, DEFAULT_NOTE)],
   ]);
 
   ccTalkParts: Record<number, CcTalkDevice> = {};

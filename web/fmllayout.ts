@@ -192,15 +192,15 @@ function winlinesOffsetOf(
 
 function inputGates(
   c: ParsedComponent, own: readonly number[] = [],
-): { shortcut?: number; enableLamp?: number; enableLamps?: number[] } {
-  const out: { shortcut?: number; enableLamp?: number; enableLamps?: number[] } = {};
+): { shortcut?: number; shortcut2?: number; enableLamp?: number; enableLamps?: number[] } {
+  const out: { shortcut?: number; shortcut2?: number; enableLamp?: number; enableLamps?: number[] } = {};
+  const keys: number[] = [];
   for (const n of [1, 2]) {
     const vk = val(c, `Shortcut${n}`);
-    if (val(c, `Shortcut${n}Enabled`) && vk && shortcutKnown(vk)) {
-      out.shortcut = vk;
-      break;
-    }
+    if (val(c, `Shortcut${n}Enabled`) && vk && shortcutKnown(vk) && !keys.includes(vk)) keys.push(vk);
   }
+  if (keys[0] !== undefined) out.shortcut = keys[0];
+  if (keys[1] !== undefined) out.shortcut2 = keys[1];
   const inhibit = val(c, 'InhibitLamp');
   if (val(c, 'Lockout') && inhibit !== undefined && inhibit >= 0) out.enableLamp = inhibit;
   else if (val(c, 'Lockout') && own.length) out.enableLamps = [...new Set(own)];
@@ -847,6 +847,8 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const off = (c.texts.get('OffText') ?? c.texts.get('Label'))?.trim();
     const on = c.texts.get('On1Text')?.trim();
     const fill = isLabelComp && !val(c, 'Transparent') ? val(c, 'BackgroundColour') : undefined;
+    const labelLit = isLabelComp && val(c, 'DefinedLampCount') !== 0;
+    const legendLamp = isLabelComp ? (labelLit ? val(c, 'Lamp')! : -1) : c.number;
     if (!off && !on && fill === undefined) continue;
     if (c.width <= 0 || c.height <= 0) continue;
     const colour = c.values.get('FontColour') ?? 0xff000000;
@@ -863,7 +865,8 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         dy: val(c, 'YOffset') || undefined,
         points: c.values.get('FontSize'),
         style: c.values.get('FontStyle'),
-        lamp: c.number,
+        lamp: legendLamp,
+        ...(labelLit ? { litOnly: true } : {}),
         ...(inputId(c) !== undefined ? { input: inputId(c) } : {}),
       },
     });
@@ -1095,7 +1098,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       offDim: bareGraphic ? { nums, alpha: 0.5 } : undefined,
       blend: pool ? true : undefined,
       multi: val(c, 'Blend') ? true : undefined,
-      ...inputGates(c, acceptor ? nums.filter((n) => n >= 0) : []),
+      ...inputGates(c, acceptor || btn !== undefined ? nums.filter((n) => n >= 0) : []),
       ...(btn ? { cap: true, ...capName(c) } : {}),
     });
   }
@@ -1261,7 +1264,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       ...(lamp2 ? { multi: true } : {}),
       ...(offPic ? { offState: { nums: [onLamp, ...(lamp2 ? [c.subs![1]] : [])].filter((n) => n >= 0), canvas: offPic } } : {}),
       ...(btn !== undefined ? { button: btn } : {}),
-      ...inputGates(c, coin !== undefined && coin >= 0 ? (c.subs ?? []).filter((n) => n >= 0) : []),
+      ...inputGates(c, (c.subs ?? []).filter((n) => n >= 0)),
       cap: true,
       ...capName(c),
       ...(coin !== undefined && coin >= 0

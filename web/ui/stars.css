@@ -9,3 +9,5 @@
 .ui-star:hover { background: var(--surface-3); }
 .ui-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ui-star:disabled { cursor: default; opacity: 0.5; }
+.menu-row.menu-rate { flex-wrap: wrap; row-gap: 2px; }
+.menu-row.menu-rate > .ui-stars { flex: 0 0 100%; margin-left: 0; padding-left: 28px; box-sizing: border-box; }

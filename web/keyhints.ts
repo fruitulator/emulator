@@ -97,6 +97,19 @@ export function separateLabels(boxes: LabelBox[], gap = 2, passes = 40): void {
   }
 }
 
+function fillKeys(el: HTMLElement, keys: readonly string[]): void {
+  el.replaceChildren();
+  keys.forEach((k, i) => {
+    if (i) {
+      const sep = document.createElement('span');
+      sep.className = 'key-sep';
+      sep.textContent = '/';
+      el.append(sep);
+    }
+    el.append(document.createTextNode(k));
+  });
+}
+
 export class KeyHintLayer {
   private readonly el: HTMLDivElement;
   constructor(host: HTMLElement) {
@@ -124,7 +137,7 @@ export class KeyHintLayer {
       }
       const tag = document.createElement('span');
       tag.className = 'key-hint';
-      tag.textContent = h.keys.join(' ');
+      fillKeys(tag, h.keys);
       this.el.append(tag);
       placed.push({ tag, x: at.x - host.left, y: at.y - host.top });
     }
@@ -142,7 +155,7 @@ export class KeyHintLayer {
         l.textContent = h.label;
         const k = document.createElement('span');
         k.className = 'key-hint inline';
-        k.textContent = h.keys.join(' ');
+        fillKeys(k, h.keys);
         r.append(l, k);
         box.append(r);
       }

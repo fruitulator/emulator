@@ -126,9 +126,24 @@ export class Sc1 implements Bus, Machine {
 
   triacLatch = 0;
 
+  private triacWord = 0;
+
   readonly slideEjects = new Uint32Array(8);
   get triacLevels(): number {
-    return this.triacLatch & 0xff;
+    return this.triacWord;
+  }
+
+  private driveSlides(): void {
+    const pa = ~this.ay.portAOut & 0xff;
+    const word = this.triacLatch ? (pa & 0x0f) | ((pa & 0xc0) >> 2) : 0;
+    const rising = word & ~this.triacWord;
+    this.triacWord = word;
+    for (let b = 0; b < 8; b++) {
+      if (rising & (1 << b)) {
+        this.slideEjects[b]++;
+        this.bookSlide(b);
+      }
+    }
   }
 
   readonly slidePence: SlideEffect[] = [null, null, null, null, null, null, null, null];
@@ -433,6 +448,7 @@ export class Sc1 implements Bus, Machine {
     this.meterLatch = 0;
     this.meterBank.reset();
     this.triacLatch = 0;
+    this.triacWord = 0;
     this.ay.reset();
     this.upd.reset();
     this.ackQueue = [];
@@ -562,14 +578,8 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a === 0x2800) {
-      const rising = v & ~this.triacLatch;
       this.triacLatch = v;
-      for (let b = 0; b < 8; b++) {
-        if (rising & (1 << b)) {
-          this.slideEjects[b]++;
-          this.bookSlide(b);
-        }
-      }
+      this.driveSlides();
       return;
     }
     if (a === 0x2a00) {
@@ -594,6 +604,7 @@ export class Sc1 implements Bus, Machine {
     }
     if (a === 0x3001) {
       this.ay.write(v);
+      if (this.triacLatch) this.driveSlides();
       return;
     }
     if (a >= 0x3101 && a <= 0x3201) {

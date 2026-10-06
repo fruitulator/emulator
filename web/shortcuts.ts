@@ -39,6 +39,13 @@ function keySpec(vk: number): KeySpec | null {
   return named[vk] ?? null;
 }
 
+export function capShortcuts(lp: { shortcut?: number; shortcut2?: number }): number[] {
+  const out: number[] = [];
+  if (lp.shortcut !== undefined) out.push(lp.shortcut);
+  if (lp.shortcut2 !== undefined && lp.shortcut2 !== lp.shortcut) out.push(lp.shortcut2);
+  return out;
+}
+
 export function matchesShortcut(vk: number, ev: KeyboardEvent): boolean {
   const spec = keySpec(vk);
   if (!spec) return false;

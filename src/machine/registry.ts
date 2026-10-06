@@ -1928,7 +1928,7 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
       });
     }
 
-    const sc5Fitted = props?.peripherals ?? fittedPeripheralsFrom(game.layout, game.gam?.system ?? '');
+    const sc5Fitted = props?.peripherals ?? fittedPeripheralsFrom(game.layout, 'SCORPION5');
     m.setPeripherals(sc5Fitted);
     const desBox = (control: string): boolean | null =>
       sc5Leds ? readCheckboxSetting(sc5Leds, 'SCORPION5', control) : null;
@@ -1963,8 +1963,8 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
     if (sc5Fitted.hoppers[1] === null || sc5Fitted.hoppers[1] === undefined) {
       noteBoardDefault(m, {
         axis: 'hopper',
-        text: 'hopper 2: none fitted - the layout names none',
-        ifWrong: 'Firmware that pays from a second hopper reports it missing.',
+        text: 'hopper 2: SCH 2 - the layout names none',
+        ifWrong: 'Firmware written for another second hopper may report it missing or faulty.',
         node: TAILORED_IDS.hopper,
       });
     }
@@ -2289,6 +2289,15 @@ const sys1: Platform = {
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const payload = decodedLayout(game.layout);
     m.setStepMode((payload && readNumber(payload, 'SYS1', 'Step Mode')) ?? 0);
+    const sys1Slides = payload && triacSlidePence(payload, 'SYS1');
+    if (sys1Slides) m.setSlidePence(sys1Slides);
+    if (!sys1Slides?.some((x) => x !== null)) {
+      noteBoardDefault(m, {
+        axis: 'meter',
+        text: 'payout slides not named by the layout - money out not booked',
+        ifWrong: 'Bookkeeping shows no money out for this machine; play is not affected.',
+      });
+    }
     m.reset();
     game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
     return m;
