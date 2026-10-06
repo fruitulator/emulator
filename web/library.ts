@@ -25,7 +25,7 @@ export {
   NEVER_PLAYED, activity, addedBucket, ageBucket, byTitle, displayTitle, playedBucket, systemLabel,
 } from './gamelist';
 
-declare const __HAS_ARCADE__: boolean;
+import { siteNav } from './ui/sitenav';
 
 export interface LibraryHandlers {
   onOpen(hash: string, resume: boolean): void;
@@ -580,7 +580,7 @@ export function wireLibraryControls(h: LibraryHandlers): void {
     if (!lib.hidden && ringReady) setView('orbit');
   });
   document.getElementById('to-library')!.addEventListener('click', () => setView('grid'));
-  document.getElementById('to-arcade')!.hidden = !(typeof __HAS_ARCADE__ !== 'undefined' && __HAS_ARCADE__);
+  document.getElementById('aboutBtn')!.before(siteNav({ here: 'games' }));
   document.getElementById('to-orbit')!.addEventListener('click', () => {
     if (ringReady) setView('orbit');
   });

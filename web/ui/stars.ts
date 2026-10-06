@@ -12,9 +12,9 @@ function starSvg(): SVGSVGElement {
   return s;
 }
 
-export function ratingChip(rating: number, ratings: number): HTMLElement | null {
+export function ratingChip(rating: number, ratings: number, o: { count?: boolean } = {}): HTMLElement | null {
   if (!ratings) return null;
-  const c = chip(str('ui.stars.rating_n', { 0: rating.toFixed(1), 1: ratings }));
+  const c = chip(o.count === false ? rating.toFixed(1) : str('ui.stars.rating_n', { 0: rating.toFixed(1), 1: ratings }));
   c.classList.add('ui-stars-chip');
   c.prepend(starSvg());
   return c;

@@ -22,6 +22,13 @@ export function tileGrid(cards: HTMLElement[] = []): HTMLDivElement {
   return grid;
 }
 
+export function tileStrip(cards: HTMLElement[] = []): HTMLDivElement {
+  const strip = document.createElement('div');
+  strip.className = 'tile-strip';
+  strip.append(...cards);
+  return strip;
+}
+
 export interface TileCardOptions {
   label: string;
   art: HTMLElement;
@@ -142,7 +149,7 @@ export function emptyState(o: {
 }
 
 export function actionButton(
-  label: string, kind: 'primary' | 'secondary' | 'tertiary', onClick: () => void, icon?: string,
+  label: string, kind: 'primary' | 'secondary' | 'tertiary', onClick: (ev: MouseEvent) => void, icon?: string,
 ): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';

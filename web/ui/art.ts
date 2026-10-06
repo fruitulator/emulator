@@ -78,3 +78,20 @@ export function releaseArtwork(frame: HTMLElement): void {
   artObserver?.unobserve(frame);
   clearArtwork(frame);
 }
+
+export function thumbStack(hashes: string[], alt: (hash: string) => string, max = 3): HTMLElement | null {
+  if (!hashes.length) return null;
+  const stack = document.createElement('div');
+  stack.className = 'ui-thumbstack';
+  for (const h of hashes.slice(0, max)) stack.append(artwork(h, alt(h), () => undefined));
+  return stack;
+}
+
+export function thumbMosaic(hashes: string[], alt: string, onTap: () => void): HTMLElement {
+  if (hashes.length < 2) return artwork(hashes[0] ?? null, alt, onTap);
+  const frame = document.createElement('div');
+  frame.className = 'art ui-thumbmosaic';
+  frame.addEventListener('click', onTap);
+  for (const h of hashes.slice(0, 4)) frame.append(artwork(h, alt, () => undefined));
+  return frame;
+}

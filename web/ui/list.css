@@ -23,6 +23,19 @@
   grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 15vw, 200px), 1fr));
   gap: 16px;
 }
+.tile-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(150px, 15vw, 200px);
+  gap: 16px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  padding-bottom: 4px;
+}
+.tile-strip::-webkit-scrollbar { display: none; }
+.tile-strip > * { scroll-snap-align: start; }
 .tiles-small .tile-grid {
   grid-template-columns: repeat(auto-fill, minmax(clamp(104px, 10vw, 136px), 1fr));
   gap: 12px;
@@ -346,3 +359,27 @@
   background: var(--accent);
   border-color: var(--accent);
 }
+
+.ui-thumbstack {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+.ui-thumbstack > .art {
+  width: 34px;
+  aspect-ratio: 4 / 5;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 0 1.5px rgba(0, 0, 0, 0.9);
+}
+.ui-thumbstack > .art + .art { margin-left: -14px; }
+.ui-thumbstack .art-placeholder { font-size: 16px; }
+.art.ui-thumbmosaic {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+}
+.ui-thumbmosaic > .art { aspect-ratio: auto; border-radius: 0; min-height: 0; }

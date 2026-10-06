@@ -64,6 +64,7 @@ export interface Alert {
 
 export function openAlert(o: {
   message: string; lines?: string[]; buttons: { button: HTMLButtonElement; run: () => void }[]; onClose?: () => void;
+  keysThrough?: boolean;
 }): Alert {
   const root = document.createElement('div');
   root.className = 'ui-alert';
@@ -91,8 +92,8 @@ export function openAlert(o: {
   btns.className = 'ui-alert-btns';
   let closed = false;
   const onKey = (ev: KeyboardEvent): void => {
-    ev.stopPropagation();
-    if (ev.key === 'Escape') close();
+    if (ev.key === 'Escape') { ev.stopPropagation(); close(); return; }
+    if (!o.keysThrough) ev.stopPropagation();
   };
   const remove = (): void => {
     if (closed) return;

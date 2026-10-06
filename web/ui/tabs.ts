@@ -1,6 +1,7 @@
 export interface TabBar<T extends string> {
   el: HTMLElement;
   readonly value: T;
+  set(id: T): void;
 }
 
 export function tabBar<T extends string>(o: {
@@ -46,5 +47,5 @@ export function tabBar<T extends string>(o: {
   });
   el.append(...buttons);
   show();
-  return { el, get value() { return value; } };
+  return { el, get value() { return value; }, set(id: T) { value = id; show(); } };
 }
