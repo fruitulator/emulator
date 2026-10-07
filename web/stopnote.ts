@@ -144,6 +144,8 @@ export class StopNote {
   private actBtn: HTMLButtonElement | null = null;
   private actRun: (() => void) | null = null;
   private closeRun: (() => void) | null = null;
+  private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  private closeBtn: HTMLButtonElement | null = null;
 
   constructor(
     root: Document | HTMLElement = document,
@@ -158,6 +160,7 @@ export class StopNote {
     this.msg = q('stopnote-msg');
     const more = q('stopnote-more') as HTMLButtonElement | null;
     const close = q('stopnote-close') as HTMLButtonElement | null;
+    this.closeBtn = close;
     this.stateBtn = q('stopnote-state') as HTMLButtonElement | null;
     this.moreBtn = more;
     this.actBtn = q('stopnote-act') as HTMLButtonElement | null;
@@ -188,9 +191,17 @@ export class StopNote {
     return text;
   }
 
-  notice(text: string, action?: { label: string; run: () => void }, onClose?: () => void): void {
+  notice(text: string, action?: { label: string; run: () => void }, onClose?: () => void, hideAfterMs?: number): void {
     this.reason = null;
     this.closeRun = onClose ?? null;
+    if (this.hideTimer !== null) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+    if (this.closeBtn) this.closeBtn.hidden = hideAfterMs !== undefined;
+    if (hideAfterMs !== undefined) {
+      this.hideTimer = setTimeout(() => {
+        this.hideTimer = null;
+        if (this.shown && this.reason === null && this.lastText === text) this.hide();
+      }, hideAfterMs);
+    }
     if (!this.buttonsBefore) {
       this.buttonsBefore = { more: this.moreBtn?.hidden ?? true, state: this.stateBtn?.hidden ?? true };
     }
@@ -240,6 +251,7 @@ export class StopNote {
   private restoreButtons(): void {
     this.actRun = null;
     if (this.actBtn) this.actBtn.hidden = true;
+    if (this.closeBtn) this.closeBtn.hidden = false;
     if (!this.buttonsBefore) return;
     if (this.moreBtn) this.moreBtn.hidden = this.buttonsBefore.more;
     if (this.stateBtn) this.stateBtn.hidden = this.buttonsBefore.state;
