@@ -740,6 +740,10 @@ export class AceSp implements Bus, Machine {
     this.rom.set(high.subarray(0, 0x8000), 0x8000);
   }
 
+  batteryRam(): Uint8Array {
+    return this.batteryImage();
+  }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, 0x2000);
   }
@@ -754,11 +758,15 @@ export class AceSp implements Bus, Machine {
   }
 
   powerCycle(): void {
+    this.nvram = this.batteryImage();
+    this.reset();
+  }
+
+  private batteryImage(): Uint8Array {
     const nv = this.nvram ? this.nvram.slice() : new Uint8Array(0x2000);
     nv.set(this.internalRam.subarray(0, Math.min(this.internalRam.length, nv.length - 0x40)), 0x40);
     nv.set(this.ram.subarray(0, Math.min(this.ram.length, nv.length - 0x140)), 0x140);
-    this.nvram = nv;
-    this.reset();
+    return nv;
   }
 
   reset(): void {

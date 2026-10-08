@@ -136,6 +136,7 @@ export type EmuResponse =
       snap: Snapshot;
       cycles: number;
       trigger: AutosaveTrigger;
+      nvram?: Uint8Array;
     }
   | {
       type: 'bench';

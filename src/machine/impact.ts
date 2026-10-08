@@ -832,6 +832,8 @@ export class Impact implements Bus16, Machine {
     this.upd.loadRom(data);
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, RAM_SIZE);
     this.ram.set(this.nvram);

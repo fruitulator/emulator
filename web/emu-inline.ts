@@ -421,7 +421,7 @@ export class InlineEmu implements Emu {
     if (!m) return null;
     try {
       const snap = captureStateRaw(m, this.gameName);
-      return { snap, cycles: snap.cycles, at: Date.now() };
+      return { snap, cycles: snap.cycles, at: Date.now(), nvram: m.batteryRam?.() ?? undefined };
     } catch (e) {
       console.warn('[emu] inline autosave capture failed', e);
       return null;

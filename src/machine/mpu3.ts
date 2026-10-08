@@ -169,6 +169,8 @@ export class Mpu3 implements Bus, Machine {
     noteRomCut(this, Math.max(total, placed), 0x8000);
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, 0x400); }
+
   loadNvram(data: Uint8Array): void {
     this.ram.set(data.subarray(0, Math.min(0x400, data.length)));
   }

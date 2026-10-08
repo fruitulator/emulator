@@ -138,6 +138,7 @@ export interface Machine {
   run(cycles: number): number;
   reset(): void;
   powerCycle?(): void;
+  batteryRam?(): Uint8Array | null;
   readonly optionKeys?: readonly OptionKey[];
   readonly switchPanel?: readonly CabinetSwitch[];
   readonly capNames?: ReadonlyMap<number, NamedCap>;

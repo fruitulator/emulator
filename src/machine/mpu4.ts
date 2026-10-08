@@ -1810,6 +1810,8 @@ export class Mpu4 implements Bus, Machine {
     return this.romPaging === 1 || this.romPaging === 2 ? 1 : 0;
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(); }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, this.ram.length);
     this.ram.set(this.nvram);

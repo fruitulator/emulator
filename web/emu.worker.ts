@@ -94,7 +94,8 @@ function pushAutosave(now: number, trigger: AutosaveTrigger): void {
   }
   try {
     const snap = captureStateRaw(machine, gameName);
-    post({ type: 'autosave', epoch, snap, cycles: snap.cycles, trigger });
+    const nvram = machine.batteryRam?.() ?? undefined;
+    post({ type: 'autosave', epoch, snap, cycles: snap.cycles, trigger, nvram });
   } catch (e) {
     console.warn('[emu] autosave capture failed', e);
   }

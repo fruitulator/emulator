@@ -291,6 +291,8 @@ export class Sys80 implements Machine {
 
   protected static readonly DIL_ID_BASE = 64;
 
+  batteryRam(): Uint8Array { return this.memory.slice(RAM_LO, RAM_HI); }
+
   powerCycle(): void {
     this.reset();
   }

@@ -50,6 +50,7 @@ export interface AutosaveBlob {
   snap: Snapshot;
   cycles: number;
   at: number;
+  nvram?: Uint8Array;
 }
 
 export interface Emu {
@@ -213,7 +214,7 @@ export class WorkerEmu implements Emu {
       }
       case 'autosave':
         if (msg.epoch === this.epoch) {
-          this.autosave = { snap: msg.snap, cycles: msg.cycles, at: Date.now() };
+          this.autosave = { snap: msg.snap, cycles: msg.cycles, at: Date.now(), nvram: msg.nvram };
           this.onAutosave?.(this.autosave, msg.trigger);
         }
         break;

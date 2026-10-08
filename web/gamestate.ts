@@ -7,15 +7,20 @@ import { serializeState, type Snapshot } from './snapshot';
 import { viewFor } from './platform';
 import { hasOperatedSwitches, layoutNamedInputs, namedInputId } from './switchids';
 
+import { boardStamp } from './boardstamp';
+
 declare const __BUILD_ID__: string;
 
-export function stateRecord(blob: AutosaveBlob, hash: string, savedAt = Date.now()): StateRec {
+export function stateRecord(blob: AutosaveBlob, hash: string, savedAt = Date.now(), system?: string): StateRec {
   const data = deflateSync(strToU8(JSON.stringify(serializeState(blob.snap))));
-  return { hash, schema: SCHEMA_VERSION, savedAt, cycles: blob.cycles, build: __BUILD_ID__, data };
+  return {
+    hash, schema: SCHEMA_VERSION, savedAt, cycles: blob.cycles, build: __BUILD_ID__,
+    stamp: boardStamp(system), nvram: blob.nvram, data,
+  };
 }
 
-export function deflatedRecord(data: Uint8Array, cycles: number, hash: string, savedAt = Date.now()): StateRec {
-  return { hash, schema: SCHEMA_VERSION, savedAt, cycles, build: __BUILD_ID__, data };
+export function deflatedRecord(data: Uint8Array, cycles: number, hash: string, savedAt = Date.now(), system?: string): StateRec {
+  return { hash, schema: SCHEMA_VERSION, savedAt, cycles, build: __BUILD_ID__, stamp: boardStamp(system), data };
 }
 
 export function decodeState(rec: StateRec): Snapshot {

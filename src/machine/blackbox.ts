@@ -134,6 +134,8 @@ export class BlackBox implements Bus, Machine {
     noteRomCut(this, Math.max(total, placed), this.rom.length);
   }
 
+  batteryRam(): Uint8Array { return this.nvram.slice(0, 64); }
+
   loadNvram(data: Uint8Array): void {
     for (let i = 0; i < 64 && i < data.length; i++) this.nvram[i] = data[i] & 0x0f;
   }

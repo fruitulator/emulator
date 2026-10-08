@@ -9,7 +9,7 @@ import { InlineEmu } from './emu-inline';
 import { StallWatch } from './stallwatch';
 import { HwBridge } from './hwbridge';
 import type { MachineInfo } from './emu-protocol';
-import { ledgerPayoutPercent } from './emu-protocol';
+import { ledgerPayoutPercent, type CashLedger } from './emu-protocol';
 import { buildStamp, logInputLabels, saveBlob, saveFile } from './downloads';
 import { renderAbout } from './about';
 import { DownloadMenu } from './panelmenu';
@@ -57,8 +57,8 @@ import {
 import { isQuotaError, requestStoragePersist } from './persist';
 import { EraseBlockedError, eraseEverything } from './reset';
 import {
-  SCHEMA_VERSION, deleteGame, getMeta, listGames,
-  putMeta, putThumb, type GameMeta,
+  SCHEMA_VERSION, deleteGame, getMeta, getMoney, listGames,
+  putMeta, putMoney, putThumb, type GameMeta,
 } from './store';
 import { localStateStore, type StateStore } from './statestore';
 import { currentLayoutProps, isPakBytes } from './gamepak';
@@ -88,6 +88,9 @@ import {
   savePanelSwitch, stateRecord,
 } from './gamestate';
 import { settleSavedState } from './resumeask';
+import { boardStamp } from './boardstamp';
+import { addReading, emptyRecord, readMoneyTotals, type MoneyTotals } from './moneyrecord';
+import { showToast } from './ui/toast';
 import type { Snapshot } from './snapshot';
 import { Audio } from './audio';
 import { CabinetEffects } from './effects';
@@ -355,6 +358,7 @@ function startGame(
   snapshot?: Snapshot,
   bootFresh?: () => void,
 ): void {
+  stopMoneyWatch();
   session.game = game;
   effects.load(game);
   const booted = ++session.boot;
@@ -396,6 +400,11 @@ function startGame(
       }
       status.textContent = game.name;
       running = true;
+      if (pendingResetNotice) {
+        pendingResetNotice = false;
+        showToast(str('main.this_update_had_to_reset'), { sticky: true });
+      }
+      if (session.hash) startMoneyWatch(session.hash);
       stopParts = stopNoteParts(info.boardDefaults);
       if (stopParts.length) console.log(`[fruitulator] ${unbuiltLogText(stopParts)}`);
       hwBridge?.gameLoaded(game.name, info.system, info.coins);
@@ -994,7 +1003,7 @@ function updateThumb(reason: string, hash: string | null = session.hash): void {
 function writeAutosave(cached: AutosaveBlob, hash: string, reason: string): void {
   if (libraryErased) return;
   const now = Date.now();
-  const rec = stateRecord(cached, hash, now);
+  const rec = stateRecord(cached, hash, now, session.game?.system);
   const data = rec.data;
   void stateStore.put(hash, rec)
     .catch((e) => {
@@ -1007,6 +1016,55 @@ function writeAutosave(cached: AutosaveBlob, hash: string, reason: string): void
     `[library] auto-saved on ${reason} (${Math.round(data.length / 1024)} kB, `
       + `${((now - cached.at) / 1000).toFixed(1)}s old)`,
   );
+}
+
+let pendingResetNotice = false;
+
+const MONEY_WATCH_MS = 1000;
+const moneyWatch = {
+  hash: '', rec: null as MoneyTotals | null, last: null as CashLedger | null, timer: 0, busy: false,
+};
+function startMoneyWatch(hash: string): void {
+  stopMoneyWatch();
+  const w = moneyWatch;
+  w.hash = hash;
+  w.rec = null;
+  w.last = null;
+  getMoney(hash).then((kept) => {
+    if (w.hash !== hash) return;
+    w.rec = readMoneyTotals(kept, Date.now()) ?? emptyRecord(Date.now());
+    w.timer = window.setInterval(() => { if (running) void moneyReading(hash); }, MONEY_WATCH_MS);
+    void moneyReading(hash);
+  }, (e: unknown) => console.warn('[library] money record read failed', e));
+}
+async function moneyReading(hash: string): Promise<void> {
+  const w = moneyWatch;
+  if (w.hash !== hash || w.busy || !w.rec) return;
+  w.busy = true;
+  try {
+    const l = await emu.ledger();
+    if (w.hash !== hash || !l || !w.rec) return;
+    if (w.last) {
+      const next = addReading(w.rec, w.last, l, Date.now());
+      if (next.at !== w.rec.at || next.restarts !== w.rec.restarts) {
+        w.rec = next;
+        await putMoney(hash, next);
+      }
+    }
+    w.last = l;
+  } catch (e) {
+    console.warn('[library] money record write failed', e);
+  } finally {
+    w.busy = false;
+  }
+}
+function stopMoneyWatch(): void {
+  const w = moneyWatch;
+  if (!w.hash) return;
+  const hash = w.hash;
+  window.clearInterval(w.timer);
+  w.timer = 0;
+  void moneyReading(hash).finally(() => { if (w.hash === hash) { w.hash = ''; w.rec = null; w.last = null; } });
 }
 
 const autosave = new PlayAutosave<AutosaveBlob>({
@@ -1087,11 +1145,15 @@ async function openFromLibrary(hash: string, resume: boolean, variant?: string):
           }
 
           let snapshot: Snapshot | undefined;
-          const rec = await settleSavedState(await statePromise, __BUILD_ID__, { dropState: (h) => stateStore.delete(h) });
-          if (rec) {
+          const settled = await settleSavedState(await statePromise, boardStamp(game.system), { dropState: (h) => stateStore.delete(h) });
+          if (settled.kind === 'resume') {
             showBusy(str('main.restoring_saved_state'));
             await nextPaint();
-            snapshot = decodeState(rec);
+            snapshot = decodeState(settled.rec);
+          } else if (settled.kind === 'battery') {
+            game.nvram = settled.nvram;
+          } else if (settled.hadSave) {
+            pendingResetNotice = true;
           }
 
           session.hash = hash;
@@ -1321,6 +1383,7 @@ async function showLibrary(): Promise<void> {
     void document.exitFullscreen().catch(() => {  });
   }
   autosave.moment('leave');
+  stopMoneyWatch();
   emu.pause();
   running = false;
   if (onFirstFrameDrawn) {
@@ -1384,6 +1447,7 @@ function exitToLibrary(): void {
 }
 
 function abandonGame(): void {
+  stopMoneyWatch();
   session.game = null;
   session.hash = null;
   session.meta = null;
@@ -1639,6 +1703,10 @@ function buildMenu(info: MachineInfo): void {
     const tokInV = stat(str('main.tokens_in'));
     const tokInRowEl = tokInV.parentElement!;
     const pctV = stat(str('main.payout'));
+    const allInV = stat(str('main.money_in_since_added'));
+    const allInRowEl = allInV.parentElement!;
+    const allOutV = stat(str('main.money_out_since_added'));
+    const allOutRowEl = allOutV.parentElement!;
     const money = (p: number): string =>
       `${p < 0 ? '-' : ''}£${(Math.abs(p) / 100).toFixed(2)}`;
     refreshMenuLive = () => {
@@ -1664,6 +1732,12 @@ function buildMenu(info: MachineInfo): void {
         tokInRowEl.hidden = tokInParts.length === 0;
         const pct = ledgerPayoutPercent(l);
         pctV.textContent = pct === null ? '-' : `${pct.toFixed(1)}%`;
+        const rec = moneyWatch.rec;
+        allInRowEl.hidden = allOutRowEl.hidden = !rec;
+        if (rec) {
+          allInV.textContent = money(rec.total.inPence);
+          allOutV.textContent = money(rec.total.outPence);
+        }
       });
     };
     refreshMenuLive();

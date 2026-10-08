@@ -102,6 +102,8 @@ export class Sru extends Sys80 {
     v20LoadRamFile(this.memory.subarray(0x1400, 0x1800), nvram);
   }
 
+  override batteryRam(): Uint8Array { return this.memory.slice(0x1400, 0x1800); }
+
   override powerCycle(): void {
     this.reset();
   }

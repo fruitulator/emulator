@@ -58,11 +58,15 @@ export interface StateRec {
   savedAt: number;
   cycles: number;
   build?: string;
+  stamp?: string;
+  nvram?: Uint8Array;
   data: Uint8Array;
 }
 
+export interface MoneyStoreRec { hash: string; record: unknown }
+
 const DB_NAME = 'fruitulator';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -81,6 +85,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('arcade')) {
         db.createObjectStore('arcade', { keyPath: 'hash' });
+      }
+      if (!db.objectStoreNames.contains('money')) {
+        db.createObjectStore('money', { keyPath: 'hash' });
       }
       if (!db.objectStoreNames.contains('thumbs')) {
         db.createObjectStore('thumbs', { keyPath: 'hash' });
@@ -222,6 +229,14 @@ export async function deleteState(hash: string): Promise<void> {
   await op('states', 'readwrite', (s) => s.delete(hash));
 }
 
+export async function getMoney(hash: string): Promise<unknown> {
+  return (await op<MoneyStoreRec | undefined>('money', 'readonly', (s) => s.get(hash)))?.record ?? null;
+}
+
+export async function putMoney(hash: string, record: unknown): Promise<void> {
+  await op('money', 'readwrite', (s) => s.put({ hash, record } satisfies MoneyStoreRec));
+}
+
 export async function stateHashes(): Promise<Set<string>> {
   return new Set(await op<string[]>('states', 'readonly', (s) => s.getAllKeys() as IDBRequest<string[]>));
 }
@@ -229,12 +244,13 @@ export async function stateHashes(): Promise<Set<string>> {
 export async function deleteGame(hash: string): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const t = db.transaction(['games', 'paks', 'states', 'thumbs', 'arcade'], 'readwrite');
+    const t = db.transaction(['games', 'paks', 'states', 'thumbs', 'arcade', 'money'], 'readwrite');
     t.objectStore('games').delete(hash);
     t.objectStore('paks').delete(hash);
     t.objectStore('thumbs').delete(hash);
     t.objectStore('states').delete(hash);
     t.objectStore('arcade').delete(hash);
+    t.objectStore('money').delete(hash);
     t.oncomplete = () => resolve();
     t.onerror = () => reject(t.error ?? new Error('delete failed'));
     t.onabort = () => reject(t.error ?? new Error('delete aborted'));

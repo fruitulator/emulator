@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { precachePlugin } from './tools/vite-precache.mjs';
+import { boardStamps } from './tools/importgraph.mjs';
 
 const commit = (() => {
   try {
@@ -96,6 +97,7 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     __BUILD_ID__: JSON.stringify(commit),
+    __BOARD_STAMPS__: JSON.stringify(boardStamps(dirname(fileURLToPath(import.meta.url)))),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     __HAS_ARCADE__: JSON.stringify(hasArcade && mode !== 'production' && mode !== 'live'),
   },

@@ -599,6 +599,8 @@ export class Sc1 implements Bus, Machine {
     this.updFitted = true;
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, RAM_SIZE);
     this.ram.set(this.nvram);

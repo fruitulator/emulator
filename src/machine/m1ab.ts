@@ -397,6 +397,8 @@ export class M1ab implements Bus, Machine {
     this.upd.setResetLine(true);
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   loadNvram(data: Uint8Array): void {
     this.ram.set(this.rom.subarray(0, RAM_SIZE));
     v20LoadRamFile(this.ram, data);

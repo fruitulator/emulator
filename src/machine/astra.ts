@@ -245,6 +245,8 @@ export class Astra implements Bus16, Machine {
     this.tokenPayout = findAstraTokenPayout(this.rom, Math.min(ROM_SIZE, 2 * half));
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, RAM_SIZE);
   }

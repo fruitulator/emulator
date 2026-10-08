@@ -239,6 +239,8 @@ export class Sys1 implements Machine {
 
   private static readonly DIL_ID_BASE = 64;
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   powerCycle(): void {
     this.reset();
   }

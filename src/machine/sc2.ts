@@ -739,6 +739,8 @@ export class Sc2 implements Bus, Machine {
     { label: 'Percentage key', strobe: 6, mask: 0x0f },
   ];
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, RAM_SIZE);
     this.ram.set(this.nvram);

@@ -446,6 +446,8 @@ export class Mps2 implements Machine {
     if (r && this.jpmReels.reels[i]?.present) r.position = this.jpmReels.reels[i].pos;
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(RAM_LO, RAM_LO + 0x800); }
+
   powerCycle(): void {
     this.reset();
   }

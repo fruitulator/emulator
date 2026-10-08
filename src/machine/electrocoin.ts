@@ -385,6 +385,8 @@ export class Electrocoin implements Machine {
     return rows;
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+
   powerCycle(): void {
     this.reset();
   }

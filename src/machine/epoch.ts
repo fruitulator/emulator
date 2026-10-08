@@ -448,6 +448,8 @@ export class Epoch implements Machine {
     return rom;
   }
 
+  batteryRam(): Uint8Array { return this.ram.slice(); }
+
   loadNvram(bytes: Uint8Array): void {
     this.ram.set(bytes.subarray(0, this.ram.length));
   }
