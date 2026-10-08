@@ -1,4 +1,4 @@
-import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, DigitKind } from './machine';
+import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinWiringStatus, DigitKind } from './machine';
 import { newCashLedger, dilSwitchLabel } from './machine';
 import { Reel } from '../hw/reel';
 import { Z80, type Z80Io } from '../cpu/z80';
@@ -12,7 +12,10 @@ import type { ReelGeometry } from './layoutreels';
 import type { LayoutSwitch } from './layoutswitches';
 import type { BoardPart } from './parts';
 import type { SlideEffect } from '../layout/fmlconfig';
-import { noteRomCut } from './boarddefaults';
+import { noteBoardDefault, noteRomCut } from './boarddefaults';
+import type { DeclaredCoin } from './layoutcoins';
+import { detectPrices, linesOf, wiringKey, wiringStateFor, type CoinLine, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
+import { locateSys1Coins, locateSys1Payouts, locateSys1Solenoids, type Sys1Payouts, type Sys1Solenoids, sys1CoinLines, sys1CoinTable, sys1DryRun, sys1LineScripts, sys1MeterUnit, sys1ScriptLine, sys1TokenSequence, type Sys1CoinCode, type Sys1Mem } from './sys1coins';
 import { StrayCounter } from './strayaccess';
 
 const CLOCK = 4_000_000;
@@ -80,7 +83,7 @@ class Ppi {
 }
 
 export class Sys1 implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult', 'refusingCache', 'solenoidCache', 'payoutCache'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -263,6 +266,9 @@ export class Sys1 implements Machine {
     this.optos = this.opticByte();
     this.coinTimer = 0;
     this.coinInput = -1;
+    this.coinNext = -1;
+    this.judgeWait.fill(0);
+    this.judging = false;
   }
 
   private read(a: number): number {
@@ -364,6 +370,8 @@ export class Sys1 implements Machine {
       for (let i = 0; i < 7; i++) {
         if ((t & ~this.triacs) & (1 << i)) {
           this.triacPulses[i]++;
+          this.gridTotals.in += this.triacInMult[i]!;
+          this.gridTotals.out += this.triacOutMult[i]!;
           this.bookSlide(i);
         }
       }
@@ -433,7 +441,14 @@ export class Sys1 implements Machine {
     const c = this.cpu.step();
     this.cycles += c;
     const confirmed = this.meterBank.advance(1, METER_TICK_INSTRUCTIONS);
-    if (confirmed) for (let i = 0; i < 8; i++) if (confirmed & (1 << i)) this.meters[i]++;
+    if (confirmed) {
+      for (let i = 0; i < 8; i++) {
+        if (!(confirmed & (1 << i))) continue;
+        this.meters[i]++;
+        this.gridTotals.in += this.meterInMult[i]!;
+        this.gridTotals.out += this.meterOutMult[i]!;
+      }
+    }
     this.bd1.tick(c);
     this.irqCount += c;
     this.nmiCount += c;
@@ -444,9 +459,16 @@ export class Sys1 implements Machine {
       if (was > COIN_GAP && this.coinTimer <= COIN_GAP && this.coinInput >= 0) {
         this.layoutInput(this.coinInput, false);
         this.coinInput = -1;
+        if (this.coinNext >= 0) {
+          this.coinInput = this.coinNext;
+          this.coinNext = -1;
+          this.layoutInput(this.coinInput, true);
+          this.coinTimer = COIN_HOLD + COIN_GAP;
+        }
       }
       if (this.coinTimer < 0) this.coinTimer = 0;
     }
+    if (this.judging) this.judgeCoinStep(c);
     return c;
   }
 
@@ -516,25 +538,383 @@ export class Sys1 implements Machine {
   }
 
   private bookSlide(i: number): void {
-    const p = this.slidePence[i];
-    if (p === null || p === undefined) return;
+    const p = this.payoutOf(i);
+    if (p === null) return;
     this.slideEjects[i]++;
+    if (!this.booksMoney) return;
     if (typeof p === 'number') this.cashLedger.outPence += p;
     else if (p === 'token') this.cashLedger.unpricedTokenOut++;
-    else this.cashLedger.unpricedOut++;
+    else if (p === 'unpriced') this.cashLedger.unpricedOut++;
+    else this.cashLedger.tokenOutPence += p.token;
+  }
+
+  payoutOf(i: number): number | { token: number } | 'token' | 'unpriced' | null {
+    const id = this.payoutLines().get(i);
+    if (id === undefined) return null;
+    const prog = this.programPayouts();
+    if (prog) {
+      const c = prog.coins.get(id);
+      if (!c) return 'unpriced';
+      const pence = Math.round(c.units * prog.unit);
+      return c.token ? { token: pence } : pence;
+    }
+    return this.slidePence[i] ?? null;
+  }
+
+  private programPayouts(): { coins: Sys1Payouts['coins']; unit: number } | null {
+    const f = this.payoutsFound();
+    if ('refused' in f) return null;
+    const unit = this.meterUnit();
+    return unit === null ? null : { coins: f.coins, unit };
+  }
+  private payoutCache: { rom: Uint8Array; p: Sys1Payouts | Refusal; unit: number | null } | null = null;
+  private payoutsFound(): Sys1Payouts | Refusal {
+    if (this.payoutCache?.rom !== this.rom) {
+      const code = this.coinCode();
+      this.payoutCache = { rom: this.rom, p: code ? locateSys1Payouts(code, this.programMem) : { refused: 'the program\'s coin code was not found' }, unit: null };
+    }
+    return this.payoutCache.p;
+  }
+  private meterUnit(): number | null {
+    this.payoutsFound();
+    const cache = this.payoutCache!;
+    if (cache.unit !== null) return cache.unit;
+    const code = this.coinCode();
+    if (!code) return null;
+    const r = sys1LineScripts(code, this.programMem, (k) => this.programVerdict(k));
+    if ('refused' in r) return null;
+    const prices = detectPrices(r.table);
+    if (!(prices instanceof Map)) return null;
+    cache.unit = sys1MeterUnit(r.table, r.scripts, prices);
+    return cache.unit;
+  }
+  get payoutCoinsRefusal(): string | null {
+    const f = this.payoutsFound();
+    if ('refused' in f) return f.refused;
+    return this.meterUnit() === null ? 'the program\'s meter unit was not read' : null;
+  }
+  payoutLinesUnpriced(): number[] {
+    const prog = this.programPayouts();
+    if (!prog) return [];
+    return [...this.payoutLines()].filter(([, id]) => !prog.coins.has(id)).map(([i]) => i).sort((a, b) => a - b);
+  }
+
+  payoutLines(): ReadonlyMap<number, number> {
+    const s = this.solenoidsFound();
+    return 'refused' in s ? Sys1.NO_LINES : s.lines;
+  }
+  private static readonly NO_LINES: ReadonlyMap<number, number> = new Map();
+  private solenoidCache: { rom: Uint8Array; s: Sys1Solenoids | Refusal } | null = null;
+  private solenoidsFound(): Sys1Solenoids | Refusal {
+    if (this.solenoidCache?.rom !== this.rom) this.solenoidCache = { rom: this.rom, s: locateSys1Solenoids(this.programMem) };
+    return this.solenoidCache.s;
+  }
+  get payoutLinesRefusal(): string | null {
+    const s = this.solenoidsFound();
+    return 'refused' in s ? s.refused : null;
+  }
+  slideLinesUnpaid(): number[] {
+    const out: number[] = [];
+    const paid = this.payoutLines();
+    for (let i = 0; i < 7; i++) if (this.slidePence[i] !== null && this.slidePence[i] !== undefined && !paid.has(i)) out.push(i);
+    return out;
   }
 
   private static readonly COIN_PENCE: (number | null)[] = [20, 10, null, 50, 100];
 
   insertCoin(bit: number): void {
     if (this.coinTimer > 0 || bit < 0 || bit > 63) return;
-    this.coinInput = bit;
-    this.layoutInput(bit, true);
+    const code = this.coinCode();
+    const seq = code && bit < code.lines ? sys1TokenSequence(code, this.programMem, bit) : null;
+    this.coinInput = seq ? seq[0] : bit;
+    this.coinNext = seq ? seq[1] : -1;
+    this.layoutInput(this.coinInput, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;
-    const p = Sys1.COIN_PENCE[bit];
-    if (typeof p === 'number') this.cashLedger.inPence += p;
+    const v = this.programVerdict(bit);
+    this.refusingCache = null;
+    if (code && bit < code.lines && v !== 'refused') {
+      this.judgeWait[bit] = Sys1.JUDGE_UNSEEN;
+      this.judgeSeen[bit] = false;
+      this.judgeTaken[bit] = false;
+      this.judging = true;
+    }
+    this.bookDropped(bit, v);
   }
   private coinTimer = 0;
   private coinInput = -1;
+  private coinNext = -1;
   get coinBusy(): boolean { return this.coinTimer > 0; }
+
+  private coinCodeCache: { rom: Uint8Array; c: Sys1CoinCode | Refusal } | null = null;
+  private coinCodeFound(): Sys1CoinCode | Refusal {
+    if (this.coinCodeCache?.rom !== this.rom) this.coinCodeCache = { rom: this.rom, c: locateSys1Coins(this.programMem) };
+    return this.coinCodeCache.c;
+  }
+  private coinCode(): Sys1CoinCode | null {
+    const c = this.coinCodeFound();
+    return 'refused' in c ? null : c;
+  }
+
+  private readonly programMem: Sys1Mem = (a) => (a < ROM_TOP ? this.rom[a]! : a < 0xa000 ? this.ram[a & (RAM_SIZE - 1)]! : 0xff);
+
+  private dryIo(): { read(a: number): number; write(a: number, v: number): void } {
+    let sel = this.ay.selectedAddress;
+    let mixer = this.ay.regs[7]!;
+    return {
+      read: (a) => {
+        if (!(a & 0x40)) return a & 3 ? this.ic24.read(a & 3) : this.ic24.read(0);
+        if (!(a & 0x20)) return this.ic25.read(a & 3);
+        if (!(a & 0x10)) {
+          const reg = a & 3;
+          if (reg === 0) return ~(this.matrix[0]! ^ 0x80) & 0xff;
+          if (reg === 1) return this.strobe >= 1 && this.strobe <= 6 ? ~this.matrix[this.strobe]! & 0xff : 0xff;
+          return 0xff;
+        }
+        if (!(a & 0x200)) {
+          if (sel === 0x0e && !(mixer & 0x40)) return ~this.dip1 & 0xff;
+          if (sel === 0x0f && !(mixer & 0x80)) return ~this.dip2 & 0xff;
+          return sel === 7 ? mixer : this.ay.regs[sel & 15]!;
+        }
+        return 0xff;
+      },
+      write: (a, v) => {
+        if (!(a & 0x20) || !(a & 0x40) || (a & 0x200)) return;
+        if (a & 1) { if (sel === 7) mixer = v & 0xff; } else sel = v & 15;
+      },
+    };
+  }
+
+  private programVerdict(line: number): number | 'refused' | null {
+    const code = this.coinCode();
+    if (!code) return null;
+    if (line >= code.lines || !(sys1CoinLines(code, this.programMem) & (1 << line))) return 'refused';
+    return sys1DryRun(code, { rom: this.rom, ram: this.ram, cpu: this.cpu, io: this.dryIo() }, line);
+  }
+
+  private readCoinTable(): CoinLineTable | Refusal {
+    const code = this.coinCode();
+    if (!code) return this.coinCodeFound() as Refusal;
+    return sys1CoinTable(code, this.programMem, (k) => this.programVerdict(k));
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? null : t;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
+  }
+
+  private programCoinOf(line: number, script: number): SlotCoin | 0 | null {
+    const code = this.coinCode();
+    if (!code) return null;
+    const l = sys1ScriptLine(code, this.programMem, line, script);
+    if (!l) return 0;
+    const t = this.readCoinTable();
+    if ('refused' in t) return null;
+    const lines: CoinLine[] = [...t.lines.filter((x) => x.line !== line), l];
+    const prices = detectPrices({ ...t, lines });
+    if (!(prices instanceof Map)) return null;
+    const p = prices.get(line);
+    if (p === undefined) return null;
+    return l.token ? { token: p } : p;
+  }
+
+  private verdictCoin(line: number, v: number | 'refused' | null): SlotCoin | 0 | 'refused' | null {
+    if (v === 'refused') return 'refused';
+    if (v === null) return null;
+    return this.programCoinOf(line, v);
+  }
+
+  private bookDropped(line: number, v: number | 'refused' | null): void {
+    if (line < this.judgeVerdict.length) this.judgeVerdict[line] = v === 'refused' ? -1 : v === null ? -2 : v;
+    const l = this.cashLedger;
+    const [i0, t0, u0] = [l.inPence, l.tokenInPence, l.unpricedTokenIn];
+    const c = this.verdictCoin(line, v);
+    if (c === 'refused') this.coinsRefused++;
+    else if (this.wiring) this.bookWiredCoin(line, c);
+    else this.bookProgramCoin(line, c);
+    if (line < this.judgeIn.length) {
+      this.judgeIn[line] = l.inPence - i0;
+      this.judgeToken[line] = l.tokenInPence - t0;
+      this.judgeUnpriced[line] = l.unpricedTokenIn - u0;
+    }
+  }
+
+  private unbookDropped(line: number): void {
+    const l = this.cashLedger;
+    l.inPence -= this.judgeIn[line]!;
+    l.tokenInPence -= this.judgeToken[line]!;
+    l.unpricedTokenIn -= this.judgeUnpriced[line]!;
+    this.judgeIn[line] = this.judgeToken[line] = this.judgeUnpriced[line] = 0;
+    if (this.judgeVerdict[line] === -1) this.coinsRefused--;
+  }
+
+  private judgeCoinStep(cycles: number): void {
+    const code = this.coinCode();
+    if (!code) { this.judgeWait.fill(0); this.judging = false; return; }
+    const pc = this.cpu.pc;
+    const atDispatch = pc === code.dispatch;
+    const atRet = pc === code.ret;
+    let any = false;
+    for (let k = 0; k < code.lines; k++) {
+      if (this.judgeWait[k]! <= 0) continue;
+      const n = this.ram[(code.pending + k) & (RAM_SIZE - 1)]!;
+      if (n !== 0 && !this.judgeSeen[k]) { this.judgeSeen[k] = true; this.judgeWait[k] = Sys1.JUDGE_UNDECIDED; }
+      if (this.judgeSeen[k] && n === 0) this.judgeTaken[k] = true;
+      if (this.judgeTaken[k] && (atDispatch || atRet)) {
+        this.judgeWait[k] = 0;
+        this.decide(k, atDispatch ? this.cpu.hl : 'refused');
+        continue;
+      }
+      this.judgeWait[k] = this.judgeWait[k]! - cycles;
+      if (this.judgeWait[k]! <= 0) {
+        this.judgeWait[k] = 0;
+        if (!this.judgeSeen[k]) this.decide(k, 'refused');
+        continue;
+      }
+      any = true;
+    }
+    this.judging = any;
+  }
+
+  private decide(line: number, v: number | 'refused'): void {
+    const now = v === 'refused' ? -1 : v;
+    this.refusingCache = null;
+    if (now === this.judgeVerdict[line]) return;
+    this.unbookDropped(line);
+    this.bookDropped(line, v);
+  }
+
+  private static readonly JUDGE_UNSEEN = Math.floor(CLOCK * 0.6);
+  private static readonly JUDGE_UNDECIDED = Math.floor(CLOCK * 5);
+  private judging = false;
+  private readonly judgeWait = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly judgeSeen = [false, false, false, false, false, false, false, false];
+  private readonly judgeTaken = [false, false, false, false, false, false, false, false];
+  private readonly judgeVerdict = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly judgeIn = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly judgeToken = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly judgeUnpriced = [0, 0, 0, 0, 0, 0, 0, 0];
+
+  private bookProgramCoin(line: number, c: SlotCoin | 0 | null): void {
+    if (c === 0) return;
+    if (c === null) {
+      noteBoardDefault(this, {
+        axis: 'coin',
+        text: 'the program\'s coin table was not read - a coin books the board\'s price for its line',
+        ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
+      });
+      const p = Sys1.COIN_PENCE[line];
+      if (typeof p === 'number') this.cashLedger.inPence += p;
+      return;
+    }
+    if (typeof c === 'number') this.cashLedger.inPence += c;
+    else if (c.token === null) this.cashLedger.unpricedTokenIn++;
+    else this.cashLedger.tokenInPence += c.token;
+  }
+
+  coinsRefused = 0;
+
+  get coinRefusing(): number {
+    const c = this.refusingCache;
+    if (c && this.cycles >= c.at && this.cycles - c.at < Sys1.REFUSING_TTL) return c.mask;
+    let m = 0;
+    if (this.coinCode()) {
+      for (let k = 0; k < 8; k++) {
+        const v = this.verdictCoin(k, this.programVerdict(k));
+        if (v === 'refused' || v === 0) m |= 1 << k;
+      }
+    }
+    this.refusingCache = { at: this.cycles, mask: m };
+    return m;
+  }
+  private refusingCache: { at: number; mask: number } | null = null;
+  private static readonly REFUSING_TTL = CLOCK;
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private bookWiredCoin(line: number, taken: SlotCoin | 0 | null): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(line)) return;
+    const c = w.coins.get(line);
+    if (c === undefined) { this.bookProgramCoin(line, taken); return; }
+    if (taken === 0) return;
+    if (taken !== null) {
+      const agrees = typeof c === 'number'
+        ? typeof taken === 'number' && taken === c
+        : typeof taken === 'object' && (c.token === null || c.token === taken.token);
+      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
+    this.cashLedger.tokenInPence += c.token;
+  }
+
+  private coinSlots: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const slots = new Set<number>();
+    for (const c of list) {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      let line: number;
+      if (c.line !== null) line = c.line;
+      else if (c.button !== null && c.button >= 0) line = c.button;
+      else line = c.token ? Sys1.UNPLACED_TOKEN_SLOT : Sys1.UNPLACED_SLOT;
+      if (line < 0 || line > 63) continue;
+      if (c.pence === null) slots.add(line);
+    }
+    this.coinSlots = [...slots].sort((a, b) => a - b);
+  }
+
+  private static readonly UNPLACED_SLOT = 4;
+  private static readonly UNPLACED_TOKEN_SLOT = 2;
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private readonly meterInMult = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly meterOutMult = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly triacInMult = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly triacOutMult = [0, 0, 0, 0, 0, 0, 0, 0];
+
+  setMeterMoneyMap(map: {
+    meterIn: readonly number[]; meterOut: readonly number[];
+    triacIn: readonly number[]; triacOut: readonly number[];
+  }): void {
+    for (let i = 0; i < 8; i++) {
+      this.meterInMult[i] = map.meterIn[i] ?? 0;
+      this.meterOutMult[i] = map.meterOut[i] ?? 0;
+      this.triacInMult[i] = map.triacIn[i] ?? 0;
+      this.triacOutMult[i] = map.triacOut[i] ?? 0;
+    }
+  }
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in, out: this.gridTotals.out };
+  }
+  private readonly gridTotals = { in: 0, out: 0 };
 }

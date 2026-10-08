@@ -1,5 +1,5 @@
 import type { Bus16 } from '../cpu/bus68k';
-import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind } from './machine';
+import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
 import { H83002 } from '../hw/h83002';
@@ -24,6 +24,9 @@ import { ROM_UNPLACED } from './pairplacer';
 import { COIN_RAW } from './coinraw';
 import { COIN_NOTES } from './layoutcoins';
 import type { LayoutSwitch } from './layoutswitches';
+import type { DeclaredCoin } from './layoutcoins';
+import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState } from './coinwiring';
+import { epochCoinTable, epochShutLines, epochSlotLine } from './epochcoins';
 
 const YMZ_BASE = 0xfffc00;
 const YMZ_END = 0xfffc04;
@@ -64,6 +67,8 @@ const DIP_BANK_1 = 0x121a;
 const DIP_BANK_2 = 0x121b;
 
 export class Epoch implements Machine {
+  static readonly snapshotConfig: readonly string[] = ['layoutCoins', 'wiring'];
+
   readonly digitKind: DigitKind = 'sc4';
   readonly clockHz = 16_000_000;
 
@@ -359,6 +364,9 @@ export class Epoch implements Machine {
 
     this.sec.fitV20(true);
     this.sec.onCount = (meter, delta) => {
+      this.gridTotals.in += (this.moneyGrid.secIn[meter] ?? 0) * delta;
+      this.gridTotals.out += (this.secOutMult[meter] ?? 0) * delta;
+      if (!this.booksMoney) return;
       const mult = this.secLedgerMult[meter] ?? 0;
       if (mult && delta > 0) this.cashLedger.outPence += mult * delta * Epoch.SEC_UNIT_PENCE;
     };
@@ -504,7 +512,7 @@ export class Epoch implements Machine {
         const token = coin?.token === true;
         if (!token) this.hopperOutPence += fresh * (pence ?? 0);
         this.hopperEjects[h] += fresh;
-        if (!this.pricesOut()) {
+        if (!this.pricesOut() && this.booksMoney) {
           if (pence === null) this.cashLedger.unpricedOut += fresh;
           else if (token) this.cashLedger.tokenOutPence += fresh * pence;
           else this.cashLedger.outPence += fresh * pence;
@@ -544,7 +552,9 @@ export class Epoch implements Machine {
         if (!(this.meterWord & (1 << b)) || this.meterHold[b] === 0) continue;
         if (--this.meterHold[b] === 0) {
           this.meterCounts[b]++;
-          this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
+          this.gridTotals.in += this.moneyGrid.meterIn[b] ?? 0;
+          this.gridTotals.out += this.moneyGrid.meterOut[b] ?? 0;
+          if (this.booksMoney) this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
         }
       }
     }
@@ -828,10 +838,15 @@ export class Epoch implements Machine {
       return;
     }
     const coin = t.records[index];
-    if (!coin) return;
+    if (!coin || this.coin.busy) return;
     const mode = this.mechMode();
     const code = coin.codes[mode] ?? 0;
-    if (code !== 0 && !this.coin.busy && coin.pence !== null) {
+    if (code === 0) {
+      this.coinsRefused++;
+      return;
+    }
+    if (this.wiring) this.bookWiredCoin(index, coin.pence, coin.token, true);
+    else if (coin.pence !== null) {
       if (coin.token) this.cashLedger.tokenInPence += coin.pence;
       else this.cashLedger.inPence += coin.pence;
     }
@@ -843,12 +858,95 @@ export class Epoch implements Machine {
     const raw = COIN_RAW[id];
     const note = COIN_NOTES.get(id);
     if (raw === undefined || !note || (raw & ~0x3e) !== 0) return;
-    if (!this.coin.busy && note.pence !== null) {
+    if (this.coin.busy) return;
+    if (this.wiring) this.bookWiredCoin(id, note.pence, note.token, false);
+    else if (note.pence !== null) {
       if (note.token) this.cashLedger.tokenInPence += note.pence;
       else this.cashLedger.inPence += note.pence;
     }
     this.coin.insertCode(raw >> 1);
   }
+
+  coinsRefused = 0;
+
+  private layoutCoins: DeclaredCoin[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    this.layoutCoins = [...list];
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    const chutes = this.coinChutes ?? [];
+    const out = new Set<number>();
+    for (const c of this.layoutCoins) {
+      if (c.pence !== null) continue;
+      const line = epochSlotLine(c, chutes);
+      if (line !== null && line >= 0) out.add(line);
+    }
+    return [...out].sort((a, b) => a - b);
+  }
+
+  private readCoinTable(): CoinLineTable | { refused: string } {
+    return epochCoinTable(this.coinTables);
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? null : t;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
+  }
+
+  get coinLinesShut(): number {
+    return epochShutLines(this.coinTables, this.mechMode());
+  }
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[]; state: StepState } | null = null;
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiring = { coins, conflicts, state: 'waiting' };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    return { state: w.state, step: w.state === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return this.wiring?.state !== 'disagrees';
+  }
+
+  private bookWiredCoin(line: number, pence: number | null, token: boolean, checked: boolean): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(line)) return;
+    const c = w.coins.get(line);
+    if (c === undefined) {
+      if (pence === null) return;
+      if (token) this.cashLedger.tokenInPence += pence;
+      else this.cashLedger.inPence += pence;
+      return;
+    }
+    if (checked && pence !== null) {
+      const agrees = typeof c === 'number'
+        ? !token && pence === c
+        : token && (c.token === null || c.token === pence);
+      w.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
+    this.cashLedger.tokenInPence += c.token;
+  }
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in, out: this.gridTotals.out };
+  }
+  private readonly gridTotals = { in: 0, out: 0 };
 
   mechMode(): number {
     const t = this.coinTables;

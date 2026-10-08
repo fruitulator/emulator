@@ -1,5 +1,11 @@
-import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, AudioSource, DigitKind } from './machine';
+import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, AudioSource, DigitKind, CoinChute, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
+import type { DeclaredCoin } from './layoutcoins';
+import {
+  coinReachesRow, locatePhoenixCoins, phoenixCoins, phxCoinOf, phxCoinTable, phxIdHits, phxReadLines, phxSlotId,
+  TOKEN_IN_METER, TOKEN_OUT_METER, type PhxCoin, type PhxCoinCode,
+} from './phoenixcoins';
 import { Z180 } from '../cpu/z180';
 import type { Z80Io } from '../cpu/z80';
 import { I8255 } from '../hw/i8255';
@@ -32,8 +38,6 @@ const COIN_HOLD_LINE = Math.round(0.07 * CLOCK);
 const COIN_TAIL = Math.round(0.005 * CLOCK);
 const COIN_GAP = Math.round(0.1 * CLOCK);
 const COIN_HOLD = Math.round(0.1 * CLOCK);
-const coinReachesRow = (id: number): boolean =>
-  id >= 0 && id < COIN_RAW.length && !(id >= 0x1e && id <= 0x20) && !(id >= 0x27 && id <= 0x32);
 const OKI_RATE = 0x1d97;
 
 const PCT_KEY = [0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf];
@@ -86,7 +90,7 @@ class Ppi {
 }
 
 export class Phoenix implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -187,9 +191,14 @@ export class Phoenix implements Machine {
     return this.meterInPence.length ? this.ledger : undefined;
   }
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+    this.meterInRaw = [...inMult];
+    this.meterOutRaw = [...outMult];
     this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
   }
+
+  private get tokenInMeter(): number { return this.coinCode() ? TOKEN_IN_METER : -1; }
+  private get tokenOutMeter(): number { return this.coinCode() ? TOKEN_OUT_METER : -1; }
 
   setSwitches(sw: LayoutSwitch[]): void {
     this.switches = sw;
@@ -255,6 +264,9 @@ export class Phoenix implements Machine {
     this.coinMask = 0;
     this.coinNext = 0;
     this.coinHeld = false;
+    this.judgeId.fill(-1);
+    this.judgeWait.fill(0);
+    this.judging = false;
   }
 
   private read(a: number): number {
@@ -441,8 +453,17 @@ export class Phoenix implements Machine {
       if (--this.meterCount[i] === 0) {
         this.meterHeld &= ~(1 << i);
         this.meters[i]++;
-        this.ledger.inPence += this.meterInPence[i] ?? 0;
-        this.ledger.outPence += this.meterOutPence[i] ?? 0;
+        this.gridTotals.in += this.meterInRaw[i] ?? 0;
+        this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+        if (!this.booksMoney) continue;
+        if (!this.wiredIn) {
+          const p = this.meterInPence[i] ?? 0;
+          if (i === this.tokenInMeter) this.ledger.tokenInPence += p;
+          else this.ledger.inPence += p;
+        }
+        const q = this.meterOutPence[i] ?? 0;
+        if (i === this.tokenOutMeter) this.ledger.tokenOutPence += q;
+        else this.ledger.outPence += q;
       }
     }
   }
@@ -502,6 +523,7 @@ export class Phoenix implements Machine {
         }
       }
     }
+    if (this.judging) this.judgeCoinStep(c);
     return c;
   }
 
@@ -557,8 +579,14 @@ export class Phoenix implements Machine {
     if (id >= 0x100 && id < 0x180) raw = id;
     else if (coinReachesRow(id)) raw = COIN_RAW[id];
     else return;
+    const coins = this.coinsInForce();
+    if (coins) {
+      const reads = phxReadLines(coins);
+      if (![...reads].some((l) => phxIdHits(id, l))) { this.coinsRefused++; return; }
+    }
     this.coinNext = raw >>> 12;
     this.pressCoin(raw & 0xfff);
+    if (this.wiring && coins) this.pend(id);
   }
 
   private pressCoin(code: number): void {
@@ -579,4 +607,194 @@ export class Phoenix implements Machine {
   private coinHeld = false;
   private coinReleaseAt = 0;
   get coinBusy(): boolean { return this.coinTimer > 0 || this.coinNext !== 0; }
+
+  private coinCodeCache: PhxCoinCode | Refusal | null = null;
+  private coinCodeFound(): PhxCoinCode | Refusal {
+    return (this.coinCodeCache ??= locatePhoenixCoins(this.rom, this.phoenix2));
+  }
+  private coinCode(): PhxCoinCode | null {
+    const c = this.coinCodeFound();
+    return 'refused' in c ? null : c;
+  }
+
+  private coinsInForce(): PhxCoin[] | null {
+    const code = this.coinCode();
+    if (!code) return null;
+    if (this.coinsCache) return this.coinsCache;
+    const c = phoenixCoins(code, this.rom, this.ram, this.cpu.sp);
+    if ('refused' in c) return null;
+    if (code.shape === 'inline' && c.every((x) => x.value > 0)) this.coinsCache = c;
+    return c;
+  }
+  private coinsCache: PhxCoin[] | null = null;
+
+  get coinLineTable(): CoinLineTable | null {
+    const code = this.coinCode();
+    const coins = this.coinsInForce();
+    return code && coins ? phxCoinTable(code, coins, this.drawnCoins) : null;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const c = this.coinCodeFound();
+    if ('refused' in c) return c.refused;
+    const coins = phoenixCoins(c, this.rom, this.ram, this.cpu.sp);
+    return 'refused' in coins ? coins.refused : null;
+  }
+
+  private priced(): Map<number, SlotCoin> | null {
+    const t = this.coinLineTable;
+    if (!t) return null;
+    const c = detectCoins(t);
+    return c instanceof Map ? c : null;
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    const coins = this.priced();
+    if (!coins) return undefined;
+    const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
+    return [...coins].map(([bit, coin]): CoinChute => (typeof coin === 'number'
+      ? { label: label(coin), bit, pence: coin }
+      : { label: coin.token === null ? 'Token' : `${label(coin.token)} token`, bit, pence: coin.token, token: true }))
+      .sort((a, b) => (b.pence ?? -1) - (a.pence ?? -1) || a.bit - b.bit);
+  }
+
+  coinsRefused = 0;
+
+  private static readonly JUDGE_WAIT = Math.round(1.5 * CLOCK);
+  private readonly judgeId = new Array<number>(4).fill(-1);
+  private readonly judgeWait = new Array<number>(4).fill(0);
+  private judging = false;
+
+  private pend(id: number): void {
+    const k = this.judgeId.indexOf(-1);
+    if (k < 0) { this.coinsRefused++; return; }
+    this.judgeId[k] = id;
+    this.judgeWait[k] = Phoenix.JUDGE_WAIT;
+    this.judging = true;
+  }
+
+  private pendingFor(coins: readonly PhxCoin[], c: PhxCoin): number {
+    let k = -1;
+    for (let i = 0; i < this.judgeId.length; i++) {
+      const id = this.judgeId[i]!;
+      if (id < 0 || phxCoinOf(coins, id) !== c) continue;
+      if (k < 0 || this.judgeWait[i]! < this.judgeWait[k]!) k = i;
+    }
+    return k;
+  }
+
+  private judgeCoinStep(cycles: number): void {
+    const code = this.coinCode();
+    if (!code || !this.wiring) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; return; }
+    const pc = this.cpu.pc;
+    if (pc === code.take || code.noCredit.includes(pc)) {
+      const coins = this.coinsInForce();
+      let c: PhxCoin | undefined;
+      if (coins && code.shape === 'inline') {
+        const token = this.cpu.hl !== code.cashCounter;
+        const hit = coins.filter((x) => x.value === this.cpu.a && x.token === token);
+        c = hit.length === 1 ? hit[0] : undefined;
+      } else if (coins) {
+        c = coins.find((x) => x.record === this.cpu.ix);
+      }
+      if (c && coins) {
+        const k = this.pendingFor(coins, c);
+        const credited = pc === code.take && c.value > 0;
+        if (k >= 0) {
+          if (credited) this.bookTaken(this.judgeId[k]!, c, code);
+          this.judgeId[k] = -1;
+          this.judgeWait[k] = 0;
+        } else if (credited) {
+          this.bookTaken(-1, c, code);
+        }
+      }
+    }
+    let any = false;
+    for (let k = 0; k < this.judgeId.length; k++) {
+      if (this.judgeId[k]! < 0) continue;
+      this.judgeWait[k] = this.judgeWait[k]! - cycles;
+      if (this.judgeWait[k]! <= 0) {
+        this.coinsRefused++;
+        this.judgeId[k] = -1;
+        this.judgeWait[k] = 0;
+        continue;
+      }
+      any = true;
+    }
+    this.judging = any;
+  }
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private get wiredIn(): boolean {
+    return !!this.wiring && this.coinCode() !== null;
+  }
+
+  private bookTaken(id: number, c: PhxCoin, code: PhxCoinCode): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || (id >= 0 && w.conflicts.includes(id))) return;
+    const pence = c.value * code.unit;
+    const taken: SlotCoin = c.token ? { token: pence } : pence;
+    const coins = this.coinsInForce() ?? [];
+    const line = this.coinLineTable?.lines.find((l) => phxCoinOf(coins, l.line)?.line === c.line)?.line;
+    const wired = (id >= 0 ? w.coins.get(id) : undefined) ?? (line === undefined ? undefined : w.coins.get(line));
+    if (wired === undefined) { this.bookCoin(taken); return; }
+    const agrees = typeof wired === 'number'
+      ? !c.token && wired === pence
+      : c.token && (wired.token === null || wired.token === pence);
+    this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+    if (agrees) this.bookCoin(wired);
+  }
+
+  private bookCoin(c: SlotCoin): void {
+    if (typeof c === 'number') this.ledger.inPence += c;
+    else if (c.token === null) this.ledger.unpricedTokenIn++;
+    else this.ledger.tokenInPence += c.token;
+  }
+
+  private coinSlots: number[] = [];
+  private drawnCoins: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const slots = new Set<number>();
+    const drawn = new Set<number>();
+    for (const c of list) {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      const id = phxSlotId(c);
+      drawn.add(id);
+      if (c.pence === null) slots.add(id);
+    }
+    this.coinSlots = [...slots].sort((a, b) => a - b);
+    this.drawnCoins = [...drawn].sort((a, b) => a - b);
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private meterInRaw: number[] = [];
+  private meterOutRaw: number[] = [];
+  private readonly gridTotals = { in: 0, out: 0 };
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in, out: this.gridTotals.out };
+  }
 }

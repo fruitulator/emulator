@@ -1,6 +1,6 @@
 import { COIN_RAW } from './coinraw';
 import type { Bus16 } from '../cpu/bus68k';
-import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind } from './machine';
+import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus } from './machine';
 import type { BoardPart } from './parts';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
@@ -24,6 +24,12 @@ import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { ROM_UNPLACED } from './pairplacer';
 import { findAstraTokenPayout, astraTokenPence, type AstraTokenPayout } from '../hw/astratoken';
+import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState, wiringKey, wiringStateFor } from './coinwiring';
+import type { DeclaredCoin } from './layoutcoins';
+import {
+  locateAstraCoinCode, astraCoins, astraCodeOf, astraCodeLocked, astraCoinTable, astraBoardMeter,
+  type AstraCoinCode, type AstraCoins, type AstraCoin, type AstraMem,
+} from './astracoins';
 
 export const ASTRA_CLOCK = 32_768 * 4 * 64 * 2;
 
@@ -69,7 +75,7 @@ const coinPattern = (raw: number): number =>
   ((raw & 1) << 2) | ((raw & 2) << 3) | ((raw & 4) << 1) | ((raw & 8) >> 2) | ((raw & 0x10) >> 4);
 
 export class Astra implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'wiring', 'programMem'];
 
   readonly digitKind: DigitKind = 'byte64';
   readonly cpu: M68000;
@@ -165,11 +171,11 @@ export class Astra implements Bus16, Machine {
     const outMult = this.secOutMult[meter] ?? 0;
     if (inMult) {
       this.secTotals.in += inMult * delta;
-      if (!this.meterInPence.some((p) => p > 0)) this.cashLedger.inPence += Math.max(0, inMult) * delta * Astra.SEC_UNIT_PENCE;
+      if (!this.meterInPence.some((p) => p > 0) && !this.wiring) this.cashLedger.inPence += Math.max(0, inMult) * delta * Astra.SEC_UNIT_PENCE;
     }
     if (outMult) {
       this.secTotals.out += outMult * delta;
-      this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Astra.SEC_UNIT_PENCE;
+      if (this.booksMoney) this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Astra.SEC_UNIT_PENCE;
     }
   }
   private readonly paidBooked = [0, 0];
@@ -374,6 +380,9 @@ export class Astra implements Bus16, Machine {
 
   insertCoin(id: number): void {
     if (this.coinTimer > 0) return;
+    const taken = this.programCoinOn(id);
+    if (taken === 'refused') this.coinsRefused++;
+    else if (this.wiring) this.bookWiredCoin(id, taken);
     if (id >= 0x100 && id < 0x180) {
       this.coinRow = (id & 0x78) >> 3;
       this.coinMask = 1 << (id & 7);
@@ -398,6 +407,170 @@ export class Astra implements Bus16, Machine {
   get coinBusy(): boolean {
     return this.coinTimer > 0;
   }
+
+  coinsRefused = 0;
+
+  private coinCodeCache: { rom: Uint8Array; t: AstraCoinCode | { refused: string } } | null = null;
+  private coinCode(): AstraCoinCode | { refused: string } {
+    if (this.coinCodeCache?.rom !== this.rom) this.coinCodeCache = { rom: this.rom, t: locateAstraCoinCode(this.rom) };
+    return this.coinCodeCache.t;
+  }
+
+  private readonly programMem: AstraMem = (a) => {
+    const cs = this.cs(a >>> 0);
+    if (cs < 0) return 0;
+    if ((cs & 3) === 0) return this.rom[a & (ROM_SIZE - 1)]!;
+    if ((cs & 3) === 1) return this.ram[a & (RAM_SIZE - 1)]!;
+    return 0;
+  };
+
+  private programCoins(): AstraCoins | { refused: string } {
+    const c = this.coinCode();
+    return 'refused' in c ? c : astraCoins(c, this.rom, this.programMem);
+  }
+
+  private patternOf(id: number): number | null {
+    if (id >= 0x100 && id < 0x180) return (id & 0x78) >> 3 === 2 ? 1 << (id & 7) : null;
+    if (!coinReachesRow(id)) return null;
+    const raw = COIN_RAW[id]!;
+    if (raw & 0x100) return (raw & 0x78) >> 3 === 2 ? 1 << (raw & 7) : null;
+    return id < 7 ? coinPattern(raw) : raw & 0xff;
+  }
+
+  private programCoinOn(id: number): AstraCoin | 'refused' | null {
+    const p = this.patternOf(id);
+    if (p === null) return null;
+    const c = this.programCoins();
+    if ('refused' in c) return null;
+    const k = astraCodeOf(c.code, this.rom, p | (this.matrix[2]! & ~p));
+    if (k === null) return 'refused';
+    return c.coins.get(k) ?? 'refused';
+  }
+
+  private tableIds(c: AstraCoins): number[] {
+    const bits = c.code.mask === 0x3f ? 6 : 5;
+    return [...this.cabinetLines, 0, 1, 2, 3, 4, 5, 6, ...Array.from({ length: bits }, (_, i) => 0x0f + i)];
+  }
+
+  private readCoinTable(): CoinLineTable | { refused: string } {
+    const c = this.programCoins();
+    if ('refused' in c) return c;
+    return astraCoinTable(c, this.rom, this.tableIds(c), (id) => this.patternOf(id));
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? null : t;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
+  }
+
+  get coinLinesShut(): number {
+    const c = this.programCoins();
+    if ('refused' in c) return 0;
+    let m = 0;
+    for (const id of this.tableIds(c)) {
+      if (id >= 32) continue;
+      const p = this.patternOf(id);
+      const k = p === null ? null : astraCodeOf(c.code, this.rom, p);
+      if (k !== null && astraCodeLocked(c.code, this.rom, this.programMem, k)) m |= 1 << id;
+    }
+    return m >>> 0;
+  }
+
+  private tokenMeters(): number[] {
+    const c = this.programCoins();
+    if ('refused' in c) return [];
+    const cashLogical = new Set<number>();
+    for (const x of c.coins.values()) if (!x.token) for (const l of x.meters) cashLogical.add(l);
+    const out = new Set<number>();
+    for (const x of c.coins.values()) {
+      if (!x.token) continue;
+      for (const l of x.meters) {
+        if (cashLogical.has(l)) continue;
+        const b = astraBoardMeter(c, this.rom, this.programMem, l);
+        if (b !== null) out.add(b);
+      }
+    }
+    return [...out];
+  }
+
+  private coinSlots: number[] = [];
+  private cabinetLines: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const slots = new Set<number>();
+    const drawn = new Set<number>();
+    for (const c of list) {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      let line: number;
+      if (c.line !== null) line = c.line;
+      else if (c.note !== null && c.note !== 0x47) line = c.note;
+      else if (c.note === 0x47 && c.button !== null && c.button >= 0) line = 0x100 | (c.button & 0x7f);
+      else line = Astra.DEFAULT_COIN_ID;
+      drawn.add(line);
+      if (c.pence === null) slots.add(line);
+    }
+    this.cabinetLines = [...drawn].sort((a, b) => a - b);
+    this.coinSlots = [...slots].sort((a, b) => a - b);
+  }
+
+  private static readonly DEFAULT_COIN_ID = 5;
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private bookWiredCoin(id: number, taken: AstraCoin | null): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(id)) return;
+    const c = w.coins.get(id);
+    if (c === undefined) {
+      if (taken === null) return;
+      if (taken.token) this.cashLedger.tokenInPence += taken.pence;
+      else this.cashLedger.inPence += taken.pence;
+      return;
+    }
+    if (taken !== null) {
+      const agrees = typeof c === 'number'
+        ? !taken.token && taken.pence === c
+        : taken.token && (c.token === null || c.token === taken.pence);
+      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
+    this.cashLedger.tokenInPence += c.token;
+  }
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in + this.secTotals.in, out: this.gridTotals.out + this.secTotals.out };
+  }
+  private readonly gridTotals = { in: 0, out: 0 };
 
   powerCycle(): void {
     this.nvram = this.ram.slice();
@@ -481,7 +654,7 @@ export class Astra implements Bus16, Machine {
         const token = h === 1 ? this.tokenCoinPence() : null;
         if (h !== 1) this.hopperOutPence += fresh * (ASTRA_HOPPER_PENCE[h] ?? 0);
         this.hopperEjects[h] += fresh;
-        if (!this.pricesOut()) {
+        if (!this.pricesOut() && this.booksMoney) {
           const pence = ASTRA_HOPPER_PENCE[h];
           if (token !== null) this.cashLedger.tokenOutPence += token * fresh;
           else if (pence === null) this.cashLedger.unpricedTokenOut += fresh;
@@ -564,7 +737,14 @@ export class Astra implements Bus16, Machine {
         if (!(this.meterWord & (1 << b)) || this.meterHold[b] === 0) continue;
         if (--this.meterHold[b] !== 0) continue;
         this.meterCounts[b]++;
-        this.cashLedger.inPence += this.meterInPence[b] ?? 0;
+        this.gridTotals.in += this.meterInMultRaw[b] ?? 0;
+        this.gridTotals.out += this.meterOutMultRaw[b] ?? 0;
+        if (!this.booksMoney) continue;
+        const inP = this.meterInPence[b] ?? 0;
+        if (inP && !this.wiring) {
+          if (this.tokenMeters().includes(b)) this.cashLedger.tokenInPence += inP;
+          else this.cashLedger.inPence += inP;
+        }
         this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
       }
     }

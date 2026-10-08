@@ -126,7 +126,7 @@ function deviceAt(addr: number, model: string): CcTalkDevice {
 }
 
 export class Sc5 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: Mcf5206e;
@@ -292,6 +292,7 @@ export class Sc5 implements Bus16, Machine {
     this.applyDesKeys();
     this.applyBnvKey();
     this.applyDesFitted();
+    this.applyMechCurrency();
     this.hookLedger();
     this.syncCcTalkParts();
     this.resetPeripherals();
@@ -299,6 +300,18 @@ export class Sc5 implements Bus16, Machine {
 
   private desFitted: { mech: boolean | null; note: boolean | null; hopper1: boolean | null; hopper2: boolean | null } =
     { mech: null, note: null, hopper1: null, hopper2: null };
+
+  private mechCurrency: number | null = null;
+
+  setCoinMechCurrency(c: number | null): void {
+    this.mechCurrency = c;
+    this.applyMechCurrency();
+  }
+
+  private applyMechCurrency(): void {
+    const mech = this.bus.get(CC_MECH);
+    if (this.mechCurrency !== null && mech instanceof Sr5iMech) mech.currency = this.mechCurrency;
+  }
 
   setDesFitted(f: Partial<typeof this.desFitted>): void {
     this.desFitted = { ...this.desFitted, ...f };
@@ -354,9 +367,6 @@ export class Sc5 implements Bus16, Machine {
   }
 
   readonly cashLedger = newCashLedger();
-  private static readonly CHANNEL_PENCE = new Map<number, number>([
-    [6, 200], [1, 100], [2, 50], [3, 20], [4, 10], [7, 5],
-  ]);
 
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
@@ -1604,11 +1614,25 @@ export class Sc5 implements Bus16, Machine {
 
   insertCoin(bit: number): void {
     const channel = (bit & 0x0f) || 1;
-    if (!this.mech) return;
-    if (this.coinTooSoon()) return;
+    if (!this.mech) { this.coinsRefused++; return; }
+    if (this.coinTooSoon()) { this.coinsRefused++; return; }
     this.lastCoinAt = this.busNow >>> 0;
-    if (!this.mech.insert(channel)) return;
-    this.cashLedger.inPence += Sc5.CHANNEL_PENCE.get(channel) ?? 0;
+    if (!this.mech.insert(channel)) { this.coinsRefused++; return; }
+    this.cashLedger.inPence += this.mech.pence(channel) ?? 0;
+  }
+
+  coinsRefused = 0;
+
+  get unnamedCoinLines(): readonly number[] {
+    return [];
+  }
+
+  get coinLineTable(): null {
+    return null;
+  }
+
+  get coinLineTableRefusal(): string {
+    return 'the coin mech is serial and names each coin itself';
   }
 
   get coinBusy(): boolean {

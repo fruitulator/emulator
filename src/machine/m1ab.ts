@@ -1,6 +1,6 @@
 import { placeRomFlat } from './pairplacer';
 import type { Bus } from '../cpu/bus';
-import type { CabinetSwitch, CoinChute, Machine } from './machine';
+import type { CabinetSwitch, CoinChute, CoinWiringStatus, Machine } from './machine';
 import { newCashLedger, dilSwitchLabel } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
@@ -23,13 +23,16 @@ import { DataPak } from '../hw/datapak';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { Mixer } from '../hw/mixer';
 import { LampHistory } from '../hw/lamphistory';
-import { noteRomCut } from './boarddefaults';
+import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { MaygayDongle } from '../hw/m1dongle';
 import { COIN_RAW } from './coinraw';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { lockoutRefuses, lockoutRefusing, type CoinLockoutWiring } from '../hw/coinlockout';
 import { v20LoadRamFile } from './v20ramfile';
+import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
+import { readM1abCoinTable, type M1abCoinRead, type M1abLineCoin } from './m1abcoins';
+import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 
 export const M1AB_METER_ROLES = [
   'cash-in', 'cash-out', 'token-in', 'token-out', 'refill',
@@ -116,7 +119,7 @@ export class M1ab implements Bus, Machine {
   private readonly latchLamp = new SwitchedLamps(1);
   static readonly LATCH_LAMP = 0x206;
 
-  static readonly snapshotConfig: readonly string[] = ['necFitted', 'necBankBlock', 'mixer'];
+  static readonly snapshotConfig: readonly string[] = ['necFitted', 'necBankBlock', 'mixer', 'wiring', 'coinSlots', 'coinTableCache', 'lockoutCache'];
 
   readonly latch = new Uint8Array(8);
 
@@ -163,14 +166,22 @@ export class M1ab implements Bus, Machine {
   fittedMeters = 0x3f;
   lockouts = 0;
 
-  static readonly LOCKOUT: CoinLockoutWiring = {
-    openSense: 1, mask: 0x3f, bits: [0, 1, 2, 3, null, null, null, null],
-  };
+  get lockoutWiring(): CoinLockoutWiring {
+    const t = this.readCoinTable();
+    if (this.lockoutCache?.t !== t) {
+      const masks = 'refused' in t ? [] : t.lockouts.map((m, line) => (line === M1ab.TOKEN_LINE ? null : m));
+      this.lockoutCache = { t, w: { openSense: 1, mask: 0x3f, bits: [], masks } };
+    }
+    return this.lockoutCache.w;
+  }
+  private lockoutCache: { t: object; w: CoinLockoutWiring } | null = null;
 
   coinsRefused = 0;
 
   get coinRefusing(): number {
-    return lockoutRefusing(M1ab.LOCKOUT, this.lockouts, 8, (n) => 1 << n);
+    let none = 0;
+    for (let line = 0; line < 8; line++) if (this.programCoinOn(line) === 'none') none |= 1 << line;
+    return lockoutRefusing(this.lockoutWiring, this.lockouts, 8, (n) => 1 << n) | none;
   }
 
   private hoppersWord = 0x50;
@@ -224,6 +235,7 @@ export class M1ab implements Bus, Machine {
     this.meterCount[i]++;
     this.meterTotals.in += this.meterInMult[i];
     this.meterTotals.out += this.meterOutMult[i];
+    if (this.wiring && i === M1ab.CASH_IN_METER) this.wiring.check.count(1, this.wiringState.now);
   }
   get meterLevels(): number { return this.meters & (this.hopperFitted() ? 0x3b : 0x7f); }
   private readonly meterInMult = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -266,7 +278,8 @@ export class M1ab implements Bus, Machine {
       if (!((rising >> i) & 1)) continue;
       this.slideCoins[i]++;
       const price = this.slidePence[i];
-      if (typeof price === 'number') this.cashLedger.outPence += price;
+      if (!this.booksMoney) {  }
+      else if (typeof price === 'number') this.cashLedger.outPence += price;
       else if (price === 'token') this.cashLedger.tokenOutPence += this.tokenPence;
       else if (price === 'unpriced') this.cashLedger.unpricedOut++;
     }
@@ -407,39 +420,43 @@ export class M1ab implements Bus, Machine {
   }
 
   private readIo(a: number): number {
-    if (a >= 0x2030 && a <= 0x2031) return this.kbd.read(a & 1);
-    if (a >= 0x2040 && a <= 0x2041) return this.kbd2.read(a & 1);
-    if (a >= 0x2070 && a <= 0x207f) return this.duart.read(a & 0x0f);
-    if (a >= 0x20a0 && a <= 0x20a3) return this.pia.read(a & 3);
-    switch (a) {
+    switch (a & 0xfff0) {
+      case 0x2030:
+        this.foldHopperSense();
+        return (a & 1) ? 0 : this.kbd.read(0);
+      case 0x2040: return (a & 1) ? 0 : this.kbd2.read(0);
+      case 0x2070: return this.duart.read(a & 0x0f);
+      case 0x20a0: return this.pia.read(a & 3);
       case 0x20b0: return this.meterStatus();
-      case 0x2404: case 0x2405:
+    }
+    switch (a) {
+      case 0x2404:
         this.okiControl &= ~1;
         this.okiCtl.control(this.okiControl);
-        return 0xff;
-      case 0x2406: case 0x2407:
+        return 0;
+      case 0x2406:
         this.okiControl |= 1;
         this.okiCtl.control(this.okiControl);
-        return 0xff;
+        return 0;
       case 0x2408:
         if (this.necFitted) {
           this.necPlaying = false;
           this.necBusy = false;
           this.necSilence();
         }
-        return 0xff;
+        return 0;
       case 0x240c:
         if (this.necFitted) this.cpu.setFIRQ(false);
-        return 0xff;
+        return 0;
       case 0x240e:
         if (this.necFitted && !this.necBusy) this.cpu.setFIRQ(true);
-        return 0xff;
+        return 0;
       case 0x2410:
         this.cpu.setFIRQ(false);
-        return 0xff;
+        return 0;
       case 0x2412:
         if (this.okiCtl.nar) this.cpu.setFIRQ(true);
-        return 0xff;
+        return 0;
       default:
         if (a !== 0x2400 && a !== 0x240a) this.strays.hit(a);
         return 0;
@@ -610,16 +627,18 @@ export class M1ab implements Bus, Machine {
   private static readonly JACKPOT_WIRE = [0, 8, 6, 5, 7, 9, 10, 12, 13, 1, 2, 3, 4, 11, 14];
   private static readonly REV = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
-  private hopperSense(): number {
-    if (!this.hopperFitted() || !this.hopper.opto) return 0;
-    return (this.hoppersWord & 0x50) === 0x40 ? 0x80 : 0x14;
+  private foldHopperSense(): void {
+    if (!this.hopperFitted()) return;
+    const bits = (this.hoppersWord & 0x50) === 0x40 ? 0x80 : 0x14;
+    const row = M1ab.MATRIX_TO_ROW[3];
+    if (this.hopper.opto) this.inputs.switches[row] |= bits;
+    else this.inputs.switches[row] &= ~bits & 0xff;
   }
 
   private sensorRow(strobe: number): number {
     const matrix = this.inputs.switches[strobe ^ 4];
     switch (strobe) {
       case 0: return this.dip1;
-      case 1: return matrix | this.hopperSense();
       case 3:
         return ((this.jackpotWire << 1) | matrix | ((M1ab.REV[this.stakeWire & 0x0f] & 0x0c) << 3)) & 0xff;
       case 4: return this.dip2;
@@ -716,20 +735,158 @@ export class M1ab implements Bus, Machine {
       this.insertCoinNote(bit - M1ab.NOTE_LINE);
       return;
     }
-    if (lockoutRefuses(M1ab.LOCKOUT, this.lockouts, 1 << (bit & 7))) { this.coinsRefused++; return; }
+    if (lockoutRefuses(this.lockoutWiring, this.lockouts, 1 << (bit & 7))) { this.coinsRefused++; return; }
+    const taken = this.programCoinOn(bit & 7);
+    if (taken === 'none') { this.coinsRefused++; return; }
     this.coinMask = 1 << (bit & 7);
     this.coinCycles = M1ab.COIN_DWELL;
     this.inputs.switches[3] |= this.coinMask;
-    this.bookCoinLine(bit & 7);
+    this.bookCoinLine(bit & 7, taken);
   }
 
-  private bookCoinLine(line: number): void {
-    const pence = this.coinLinePence[line];
-    if (pence === null || pence === undefined) return;
-    if (line === M1ab.TOKEN_LINE) this.cashLedger.tokenInPence += pence;
-    else this.cashLedger.inPence += pence;
+  private programCoinOn(line: number): M1abLineCoin {
+    const t = this.readCoinTable();
+    return 'refused' in t ? null : t.coins[line] ?? 'none';
+  }
+
+  private bookCoinLine(line: number, taken: M1abLineCoin): void {
+    if (this.wiring) { this.bookWiredCoin(line, taken); return; }
+    this.bookProgramCoin(line, taken);
+  }
+
+  private bookProgramCoin(line: number, taken: M1abLineCoin): void {
+    if (taken === 'none') return;
+    if (taken === null) {
+      noteBoardDefault(this, {
+        axis: 'coin',
+        text: 'the program\'s coin descriptors were not read - a coin books the board\'s price for its line',
+        ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
+      });
+      const pence = this.coinLinePence[line];
+      if (pence === null || pence === undefined) return;
+      if (line === M1ab.TOKEN_LINE) this.cashLedger.tokenInPence += pence;
+      else this.cashLedger.inPence += pence;
+      return;
+    }
+    if (taken.token) this.cashLedger.tokenInPence += taken.pence;
+    else this.cashLedger.inPence += taken.pence;
   }
   get coinBusy(): boolean { return this.coinCycles > 0; }
+
+  private wiring: {
+    coins: Map<number, SlotCoin>;
+    conflicts: number[];
+    check: MeterUnitCheck;
+    checked: Set<number> | null;
+  } | null = null;
+
+  private wiringState: { key: string; now: number; check: MeterCheckState } = M1ab.freshWiringState('');
+
+  private static freshWiringState(key: string): { key: string; now: number; check: MeterCheckState } {
+    return { key, now: 0, check: meterCheckState() };
+  }
+
+  private static readonly CASH_IN_METER = 0;
+  private static readonly METER_UNIT_PENCE = 10;
+  private static readonly WIRING_SLACK = 5;
+  private static bankedLines(t: M1abCoinRead): number[] {
+    const out: number[] = [];
+    t.coins.forEach((c, line) => { if (c && c !== 'none' && !c.token && c.pence % M1ab.METER_UNIT_PENCE !== 0) out.push(line); });
+    return out;
+  }
+  private static readonly WIRING_QUIET = 2 * CPU_CLOCK;
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    const t = this.readCoinTable();
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), M1ab.freshWiringState);
+    this.wiring = {
+      coins,
+      conflicts,
+      check: new MeterUnitCheck(M1ab.METER_UNIT_PENCE, M1ab.WIRING_SLACK, M1ab.WIRING_QUIET, this.wiringState.check),
+      checked: 'refused' in t ? null : new Set([...t.cashMetered, ...M1ab.bankedLines(t)]),
+    };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return this.wiring?.check.state !== 'disagrees';
+  }
+
+  private checks(line: number, pence: number | null): boolean {
+    const set = this.wiring!.checked;
+    if (set) return set.has(line);
+    return line !== M1ab.TOKEN_LINE && (pence === null || pence >= M1ab.METER_UNIT_PENCE);
+  }
+
+  private bookWiredCoin(line: number, taken: M1abLineCoin): void {
+    const w = this.wiring!;
+    const tell = (pence: number | null): void => {
+      if (this.checks(line, pence)) w.check.coin(pence, this.wiringState.now);
+    };
+    if (!this.booksMoney || w.conflicts.includes(line)) { tell(null); return; }
+    const c = w.coins.get(line);
+    if (c === undefined) {
+      this.bookProgramCoin(line, taken);
+      tell(taken === null ? this.coinLinePence[line] ?? null : taken === 'none' ? null : taken.pence);
+      return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; tell(c); return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; tell(null); return; }
+    this.cashLedger.tokenInPence += c.token;
+    tell(c.token);
+  }
+
+  private tickWiring(cycles: number): void {
+    const s = this.wiringState;
+    s.now += cycles;
+    this.wiring!.check.tick(s.now);
+  }
+
+  private coinSlots: { line: number; token: boolean }[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const out = new Map<number, boolean>();
+    for (const c of list) {
+      if (c.pence !== null) continue;
+      if (c.named?.name.startsWith('ccTalk')) continue;
+      if (c.note !== null && c.note < 7) continue;
+      const mask = coinRowPattern(c, M1ab.COIN_ROW);
+      if (mask === undefined || mask === 0 || (mask & (mask - 1)) !== 0) continue;
+      const line = 31 - Math.clz32(mask);
+      out.set(line, (out.get(line) ?? false) || c.token);
+    }
+    this.coinSlots = [...out].sort((a, b) => a[0] - b[0]).map(([line, token]) => ({ line, token }));
+  }
+
+  private static readonly COIN_ROW = 0;
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots.map((s) => s.line);
+  }
+
+  private coinTableCache: { rom: Uint8Array; t: M1abCoinRead | { refused: string } } | null = null;
+  private readCoinTable(): M1abCoinRead | { refused: string } {
+    if (this.coinTableCache?.rom !== this.rom) this.coinTableCache = { rom: this.rom, t: readM1abCoinTable(this.rom) };
+    return this.coinTableCache.t;
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    if ('refused' in t) return null;
+    const tokens = new Set(this.coinSlots.filter((s) => s.token).map((s) => s.line));
+    return { ...t.table, lines: t.table.lines.map((l) => (tokens.has(l.line) ? { ...l, token: true } : l)) };
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
+  }
 
   static readonly NOTE_LINE = 0x200;
 
@@ -771,16 +928,23 @@ export class M1ab implements Bus, Machine {
   private insertCoinNote(note: number): void {
     const pattern = this.coinNotePattern(note);
     if (pattern === undefined) return;
-    if (lockoutRefuses(M1ab.LOCKOUT, this.lockouts, pattern & 0x1f)) { this.coinsRefused++; return; }
+    if (lockoutRefuses(this.lockoutWiring, this.lockouts, pattern & 0x1f)) { this.coinsRefused++; return; }
+    const single = pattern & 0x1f;
+    const taken = single !== 0 && (single & (single - 1)) === 0 ? this.programCoinOn(31 - Math.clz32(single)) : null;
+    if (taken === 'none') { this.coinsRefused++; return; }
     this.coinMask = pattern;
     this.coinCycles = M1ab.COIN_DWELL;
     this.inputs.switches[3] |= pattern;
     const lines = pattern & 0x1f;
     if (lines !== 0 && (lines & (lines - 1)) === 0) {
-      this.bookCoinLine(31 - Math.clz32(lines));
+      this.bookCoinLine(31 - Math.clz32(lines), taken);
       return;
     }
     const slot = this.cabinetNotes.get(note);
+    if (this.wiring) {
+      this.wiring.check.coin(slot && !slot.token && slot.pence !== null && this.booksMoney ? slot.pence : undefined, this.wiringState.now);
+      if (!this.booksMoney) return;
+    }
     if (!slot || slot.pence === null) return;
     if (slot.token) this.cashLedger.tokenInPence += slot.pence;
     else this.cashLedger.inPence += slot.pence;
@@ -947,6 +1111,7 @@ export class M1ab implements Bus, Machine {
       this.inputs.switches[3] &= ~this.coinMask & 0xff;
       this.coinCycles = 0;
     }
+    if (this.wiring) this.tickWiring(cycles);
 
     this.mainsCycles += cycles;
     if (this.mainsCycles >= M1ab.MAINS_PERIOD) {
@@ -960,7 +1125,8 @@ export class M1ab implements Bus, Machine {
     this.hopper.tick(cycles);
     if (this.hopper.paid > this.hopperPaidBooked) {
       const fresh = this.hopper.paid - this.hopperPaidBooked;
-      if (this.hopperCoinPence === null) this.cashLedger.unpricedOut += fresh;
+      if (!this.booksMoney) {  }
+      else if (this.hopperCoinPence === null) this.cashLedger.unpricedOut += fresh;
       else this.cashLedger.outPence += fresh * this.hopperCoinPence;
       this.hopperPaidBooked = this.hopper.paid;
     }

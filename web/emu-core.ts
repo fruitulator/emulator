@@ -1,12 +1,16 @@
 import type { Machine, NamedCoin } from '../src/machine/machine';
+import { slotlessLines, type CoinLineTable, type CoinMeasurement } from '../src/machine/coinwiring';
+import { measureCoinLines } from '../src/machine/coinmeasure';
+import { applyState, captureState } from './snapshot';
+import { readCoinWiring, type CoinWiring } from './coinask';
 import type { FrameLayout } from '../src/machine/framestate';
 import type { Game } from '../src/machine/registry';
 import type { Schematic, SchematicNode } from '../src/machine/schematic';
 import type { UnservedComponent } from '../src/machine/unserved';
 import { TAILORED_IDS, bucketIoCounts } from '../src/machine/schematic';
 import { applyParts } from '../src/machine/parts';
-import { acceptorResolve, viewFor } from './platform';
-import { declaredCoins } from '../src/machine/layoutcoins';
+import { acceptorResolve, coinInputLine, viewFor } from './platform';
+import { declaredCoins, layoutInputButtons } from '../src/machine/layoutcoins';
 import { boardDefaultsOf, noteBoardDefault } from '../src/machine/boarddefaults';
 import { schematicFor } from '../src/machine/schematics';
 import { Sc4 } from '../src/machine/sc4';
@@ -106,6 +110,9 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       : {}),
     ...(m.coinChutes ? { coins: m.coinChutes.map((c) => ({ ...c })) } : {}),
     ...(m.unnamedCoinLines?.length ? { unnamedCoins: [...m.unnamedCoinLines] } : {}),
+    ...(m.nameCoin ? { namesCoins: true } : {}),
+    ...coinTableInfo(m),
+    ...slotCoinLinesOf(game, m, resolved),
     ...(m.coinPortLines
       ? { coinPort: { compare: m.coinPortLines.compare, lines: m.coinPortLines.lines.map((l) => ({ ...l })) } }
       : {}),
@@ -296,6 +303,32 @@ export function applyNamedCoins(m: Machine, named: Record<string, NamedCoin> | u
   for (const [line, coin] of Object.entries(named)) m.nameCoin(Number(line), coin);
 }
 
+export function applyCoinWiring(m: Machine, wiring: CoinWiring | undefined): void {
+  if (!wiring || !m.setCoinWiring) return;
+  const w = readCoinWiring(wiring);
+  if (Object.keys(w).length) m.setCoinWiring(w);
+}
+
+function slotCoinLinesOf(game: Game, m: Machine, resolved: readonly { line: number; kind?: string }[]): { drawnCoins?: number[]; slotlessCoins: number[] } {
+  const inputs = layoutInputButtons(game.layout);
+  if (!inputs) return { slotlessCoins: [] };
+  const view = viewFor(game.system);
+  const chutes = m.coinChutes ?? view.coins;
+  const drawn = new Set<number>();
+  for (const r of resolved) if (r.kind !== 'note' && r.line >= 0) drawn.add(r.line);
+  for (const b of inputs) { const line = coinInputLine(view, b, chutes); if (line >= 0) drawn.add(line); }
+  const table = m.coinLineTable;
+  return { drawnCoins: [...drawn].sort((a, b) => a - b), slotlessCoins: table ? slotlessLines(table, drawn) : [] };
+}
+
+function coinTableInfo(m: Machine): { coinTable?: CoinLineTable; coinTableRefusal?: string } {
+  if (m.coinLineTable === undefined) return {};
+  const t = m.coinLineTable;
+  if (t) return { coinTable: JSON.parse(JSON.stringify(t)) as CoinLineTable };
+  const why = m.coinLineTableRefusal;
+  return why ? { coinTableRefusal: why } : {};
+}
+
 export function powerCycleOrThrow(m: Machine): void {
   if (!m.powerCycle) throw new Error('this board cannot be restarted with its memory kept');
   m.powerCycle();
@@ -305,6 +338,7 @@ export interface BlankRebuildSettings {
   optionKeys?: Record<string, number>;
   panelSwitches?: Record<string, boolean>;
   namedCoins?: Record<string, NamedCoin>;
+  coinWiring?: CoinWiring;
   wasm?: boolean;
   noRegions?: boolean;
 }
@@ -316,6 +350,7 @@ export function rebuildWithBlankMemory(
   applyOptionKeyState(m, o.optionKeys);
   applyPanelSwitchState(m, o.panelSwitches);
   applyNamedCoins(m, o.namedCoins);
+  applyCoinWiring(m, o.coinWiring);
   if (old) carryCashLedger(old, m);
   if (o.noRegions) {
     (m as { cpu?: { setRegionsEnabled?: (on: boolean) => void } }).cpu?.setRegionsEnabled?.(false);
@@ -326,6 +361,40 @@ export function rebuildWithBlankMemory(
     (m as { useWasmCore?: () => void }).useWasmCore?.();
   }
   return m;
+}
+
+export interface MeasureSettings {
+  optionKeys?: Record<string, number>;
+  panelSwitches?: Record<string, boolean>;
+  namedCoins?: Record<string, NamedCoin>;
+  wasm?: boolean;
+  noRegions?: boolean;
+}
+
+export function measureRunningCoins(
+  build: (game: Game) => Machine, game: Game, live: Machine, name: string, o: MeasureSettings,
+  lines: readonly number[], at: Date,
+): CoinMeasurement {
+  const snap = captureState(live, name);
+  return measureCoinLines(() => {
+    const m = build(game);
+    applyOptionKeyState(m, o.optionKeys);
+    applyState(m, snap);
+    applyPanelSwitchState(m, o.panelSwitches);
+    applyNamedCoins(m, o.namedCoins);
+    if (o.noRegions) {
+      (m as { cpu?: { setRegionsEnabled?: (on: boolean) => void } }).cpu?.setRegionsEnabled?.(false);
+    }
+    if (o.wasm === false) (m as { useInterpreter?: () => void }).useInterpreter?.();
+    else if (o.wasm === true) (m as { useWasmCore?: () => void }).useWasmCore?.();
+    return m;
+  }, lines, at);
+}
+
+export function measureLogLine(r: CoinMeasurement, wallMs: number): string {
+  if ('refused' in r) return `coin lines not measured: ${r.refused}`;
+  const each = r.lines.map((l) => `${l.line}=${l.inCounts}${l.outCounts ? `/${l.outCounts}` : ''}${l.closed === 'cap' ? '+' : ''}`).join(' ');
+  return `coin lines measured (counts in per coin, control ${r.control.inCounts}): ${each} in ${Math.round(wallMs)} ms`;
 }
 
 export function blankMemoryGame(game: Game): Game {

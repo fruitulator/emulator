@@ -166,6 +166,12 @@ export function parkedForDraw(still: number | undefined): boolean {
   return (still ?? 0) >= 2;
 }
 
+export function reelKey(r: { travel: number; position: number; subStep?: number; bounce?: number }, still: number | undefined): number {
+  const parked = parkedForDraw(still);
+  const sub = parked ? 0 : Math.round((r.subStep ?? 0) * 255) + 256;
+  return mix(mix(mix(mix(mix(0, r.travel | 0), r.position | 0), bounceKey(r)), parked ? 1 : 0), sub);
+}
+
 export function reelCentreRow(
   effective: number, stops: number, parked: boolean,
   snapFrom = effective,
@@ -199,7 +205,7 @@ export function buildRenderIndex(
         const i = reelIndex(m, reel);
         const r = m.reels[i];
         if (!r) return 0;
-        let h = mix(mix(mix(mix(0, r.travel | 0), r.position | 0), bounceKey(r)), c.stillFrames[i] >= 2 ? 1 : 0);
+        let h = reelKey(r, c.stillFrames[i]);
         for (const n of zoneLamps) h = mix(h, lampBit(m, n));
         return h;
       },
@@ -236,7 +242,7 @@ export function buildRenderIndex(
       key: (m, c) => {
         const i = reelIndex(m, fr);
         const r = m.reels[i];
-        return r ? mix(mix(mix(mix(0, r.travel | 0), r.position | 0), bounceKey(r)), c.frStill[i] >= 2 ? 1 : 0) : 0;
+        return r ? reelKey(r, c.frStill[i]) : 0;
       },
     });
   });
@@ -248,7 +254,7 @@ export function buildRenderIndex(
       key: (m, c) => {
         const i = reelIndex(m, fr);
         const r = m.reels[i];
-        return r ? mix(mix(mix(mix(0, r.travel | 0), r.position | 0), bounceKey(r)), c.stillFrames[i] >= 2 ? 1 : 0) : 0;
+        return r ? reelKey(r, c.stillFrames[i]) : 0;
       },
     });
   }

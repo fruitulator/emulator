@@ -6,6 +6,7 @@ import { MENU_ICONS } from './ui/icons';
 import { hasOperatedSwitches, layoutNamedInputs, namedInputId, testLabelsForPanel, testRowsForPanel } from './switchids';
 import { reelBounceOn, setReelBounceOn } from './bouncepref';
 import { str } from './i18n';
+import { PANEL_SHOW } from './ui/drawer';
 
 function button(label: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
@@ -17,9 +18,25 @@ function button(label: string, onClick: () => void): HTMLButtonElement {
 export function coinsPanel(
   info: MachineInfo, view: PlatformView, system: string | undefined,
   onCoin: (c: { label: string; bit: number }) => void,
+  own?: () => OwnCoins | null,
 ): HTMLElement {
   const coins = document.createElement('div');
   coins.className = 'menu-grid';
+  const fill = (): boolean => {
+    const mine = own?.();
+    if (!mine) return false;
+    coins.replaceChildren();
+    for (const c of mine.coins) coins.append(button(c.label, () => { onCoin(c); fill(); }));
+    if (mine.note) {
+      const p = document.createElement('div');
+      p.className = 'menu-row menu-kbd';
+      p.textContent = mine.note;
+      coins.append(p);
+    }
+    return true;
+  };
+  if (own) coins.addEventListener(PANEL_SHOW, () => { fill(); });
+  if (fill()) return coins;
   const list = machineCoins(info, view);
   for (const c of list) coins.append(button(c.label, () => onCoin(c)));
   if (!list.length) {
@@ -32,6 +49,8 @@ export function coinsPanel(
   }
   return coins;
 }
+
+export interface OwnCoins { coins: readonly { label: string; bit: number }[]; note?: string }
 
 export function machineCoins(info: MachineInfo | null | undefined, view: PlatformView): readonly { label: string; bit: number }[] {
   return info?.coins ?? view.coins;

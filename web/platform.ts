@@ -19,6 +19,7 @@ export interface PlatformView {
     tokenNote: number;
     tokenLine: number;
     directRows?: readonly number[];
+    directIds?: boolean;
   };
   acceptorByChute?: boolean;
   acceptorCoinPort?: { row: number };
@@ -27,6 +28,7 @@ export interface PlatformView {
     coinChannel?: readonly (number | null)[];
     note?: boolean;
     parallelNote?: boolean;
+    only?: boolean;
   };
   inputNames?: Readonly<Record<number, string>>;
   unread?: boolean;
@@ -235,7 +237,7 @@ const scorpion5: PlatformView = {
   matrix: { strobes: 32, bits: 5 },
   coinBit: 1,
   tokenBit: 1,
-  serialAcceptor: { coinChannel: [1, 2, 3, 4, 5, 6, 7, 8], note: true },
+  serialAcceptor: { coinChannel: [1, 2, 3, 4, 5, 6, 7, 8], note: true, only: true },
 };
 
 const epoch: PlatformView = {
@@ -326,6 +328,7 @@ const sys5: PlatformView = {
   coinBit: 13,
   tokenBit: 14,
   coinRegister: { maskRow: 7, lineOfBit: { 7: [-1, -1, 10, 11, 12, 13, 14, -1] }, tokenNote: -1, tokenLine: -1 },
+  acceptorCoinPort: { row: 7 },
 };
 
 const sys85: PlatformView = {
@@ -402,6 +405,14 @@ const sys80: PlatformView = {
   coinBit: 22,
   tokenBit: -1,
   acceptorLineIsButton: true,
+  coinRegister: {
+    maskRow: 2,
+    lineOfBit: {
+      0: [0, 1, 2, 3, 4, 5, 6, 7], 1: [8, 9, 10, 11, 12, 13, 14, 15],
+      2: [16, 17, 18, 19, 20, 21, 22, 23], 3: [24, 25, 26, 27, 28, 29, 30, 31],
+    },
+    tokenNote: -1, tokenLine: -1,
+  },
   nonSwitchInputs: [0, 1, 2, 3, 5, 16, 19, 20, 21, 22, 23, 24, 25],
   inputNames: {
     0: 'REEL 1 OPTO', 1: 'REEL 2 OPTO', 2: 'REEL 3 OPTO', 3: 'REEL 4 OPTO',
@@ -485,6 +496,16 @@ const sys1: PlatformView = {
   coinBit: 4,
   tokenBit: 2,
   acceptorLineIsButton: true,
+  coinRegister: {
+    maskRow: 0,
+    lineOfBit: {
+      0: [0, 1, 2, 3, 4, 5, 6, 7], 1: [8, 9, 10, 11, 12, 13, 14, 15],
+      2: [16, 17, 18, 19, 20, 21, 22, 23], 3: [24, 25, 26, 27, 28, 29, 30, 31],
+      4: [32, 33, 34, 35, 36, 37, 38, 39], 5: [40, 41, 42, 43, 44, 45, 46, 47],
+      6: [48, 49, 50, 51, 52, 53, 54, 55],
+    },
+    tokenNote: -1, tokenLine: -1,
+  },
   nonSwitchInputs: [0, 1, 2, 3, 4, 5],
   inputNames: {
     0: '20P IN', 1: '10P IN', 2: 'COIN LINE 2', 3: '50P IN', 4: '£1 IN', 5: 'DOOR',
@@ -512,6 +533,11 @@ const proconn: PlatformView = {
   coinBit: 37,
   tokenBit: -1,
   acceptorLineIsNote: true,
+  coinRegister: {
+    maskRow: 6,
+    lineOfBit: { 6: [0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16] },
+    tokenNote: -1, tokenLine: -1, directIds: true,
+  },
   nonSwitchInputs: [37],
   inputNames: { 37: 'METER SENSE' },
 };
@@ -538,6 +564,16 @@ const electrocoin: PlatformView = {
   coinBit: 4,
   tokenBit: 3,
   acceptorLineIsButton: true,
+  coinRegister: {
+    maskRow: -1,
+    lineOfBit: {
+      0: [0, 1, 2, 3, 4, 5, 6, 7], 1: [8, 9, 10, 11, 12, 13, 14, 15],
+      2: [16, 17, 18, 19, 20, 21, 22, 23], 3: [24, 25, 26, 27, 28, 29, 30, 31],
+      4: [32, 33, 34, 35, 36, 37, 38, 39], 5: [40, 41, 42, 43, 44, 45, 46, 47],
+      6: [48, 49, 50, 51, 52, 53, 54, 55], 7: [56, 57, 58, 59, 60, 61, 62, 63],
+    },
+    tokenNote: -1, tokenLine: -1,
+  },
   nonSwitchInputs: [3, 4, 5, 6, 7],
   inputNames: { 3: 'TOKEN IN', 4: '£1 IN', 5: '50P IN', 6: '20P IN', 7: '10P IN' },
 };
@@ -556,6 +592,11 @@ const phoenix: PlatformView = {
   coinBit: 0x104,
   tokenBit: 0x100,
   acceptorLineIsNote: true,
+  coinRegister: {
+    maskRow: 0,
+    lineOfBit: { 0: [0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16] },
+    tokenNote: -1, tokenLine: -1, directIds: true,
+  },
   nonSwitchInputs: [0, 1, 2, 3, 4],
 };
 
@@ -567,6 +608,7 @@ const mpu3: PlatformView = {
   coinBit: -1,
   tokenBit: -1,
   acceptorLineIsNote: true,
+  coinRegister: { maskRow: -1, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
 };
 
 const mpu4video: PlatformView = { ...mpu4, playButtons: [] };
@@ -653,6 +695,10 @@ export function acceptorResolve(
 ): { line: number; fromCabinet: boolean; kind?: 'note'; parallel?: boolean } {
   const a = lp.acceptor ?? {};
   const btn = lp.button ?? -1;
+  if (view.serialAcceptor?.only && lp.acceptor !== undefined
+    && !(a.note !== undefined && (CC_NOTE_CHANNEL.has(a.note) || parallelNoteChannel(a.note) !== undefined || ccCoinChannel(a.note) !== undefined))) {
+    return { line: -1, fromCabinet: true };
+  }
   if (a.line !== undefined) return { line: a.line, fromCabinet: true };
   if (a.note !== undefined) {
     const noteChannel = CC_NOTE_CHANNEL.get(a.note);
@@ -743,7 +789,27 @@ export function coinInputLine(
   const reg = view.coinRegister;
   if (!reg || !Number.isInteger(button) || button < 0 || button >= 128) return -1;
   const line = reg.lineOfBit[(button >> 3) & 15]?.[button & 7];
-  if (line === undefined || line === null || line < 0) return -1;
-  if (reg.directRows?.includes((button >> 3) & 15)) return line;
-  return coins.some((c) => c.bit === line) || line === view.tokenBit ? line : -1;
+  if (line === null) return -1;
+  if (line !== undefined && line >= 0) {
+    if (reg.directRows?.includes((button >> 3) & 15)) return line;
+    if (coins.some((c) => c.bit === line) || line === view.tokenBit) return line;
+  }
+  const direct = 0x100 | button;
+  return reg.directIds && coins.some((c) => c.bit === direct) ? direct : -1;
+}
+
+export function stampCoinInputs(
+  lamps: readonly { acceptor?: unknown; button?: number; coinInput?: number }[],
+  view: Pick<PlatformView, 'coinRegister' | 'coins' | 'tokenBit'>,
+  coins: readonly { bit: number }[] = view.coins,
+): number {
+  let n = 0;
+  for (const lp of lamps) {
+    if (lp.acceptor) { n++; continue; }
+    const line = lp.button === undefined ? -1 : coinInputLine(view, lp.button, coins);
+    if (line < 0) { delete lp.coinInput; continue; }
+    lp.coinInput = line;
+    n++;
+  }
+  return n;
 }

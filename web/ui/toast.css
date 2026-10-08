@@ -31,6 +31,25 @@
   flex: 1 1 12em;
   min-width: 0;
 }
+#stopnote:not(:has(button:not([hidden]))) {
+  padding-right: 26px;
+}
+#stopnote-icon {
+  flex: none;
+  display: inline-flex;
+  margin-left: -10px;
+  width: 22px;
+  height: 22px;
+  color: #111;
+}
+#stopnote-icon .stopnote-icon-svg {
+  display: inline-flex;
+  animation: stopnote-icon-turn 2s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+}
+@keyframes stopnote-icon-turn {
+  0%, 55% { transform: rotate(0); }
+  100% { transform: rotate(180deg); }
+}
 #stopnote-act,
 #stopnote-state,
 #stopnote-more,
@@ -182,6 +201,12 @@
 #stopnote.leaving {
   animation: toast-goodbye 0.22s cubic-bezier(0.4, 0, 1, 1) both;
 }
+#stopnote.open.passing {
+  animation: toast-pop 0.9s ease-out both;
+}
+#stopnote.open.settled {
+  animation: none;
+}
 @keyframes toast-announce {
   from {
     opacity: 0;
@@ -218,6 +243,50 @@
     transform: translate(-50%, 0) scale(1);
   }
 }
+@keyframes toast-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 24px) scale(0.8);
+  }
+  22% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.15);
+  }
+  44% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  66% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+@keyframes toast-pop-top {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -24px) scale(0.8);
+  }
+  22% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.15);
+  }
+  44% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  66% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
 @keyframes toast-goodbye-top {
   from {
     opacity: 1;
@@ -244,11 +313,18 @@
     transform: translateX(-50%);
   }
   #stopnote.open,
+  #stopnote.open.passing,
   .ui-toast.open {
     animation: toast-fade-in 0.15s linear both;
+  }
+  #stopnote.open.settled {
+    animation: none;
   }
   #stopnote.leaving,
   .ui-toast.leaving {
     animation: toast-fade-out 0.15s linear both;
+  }
+  #stopnote-icon .stopnote-icon-svg {
+    animation: none;
   }
 }

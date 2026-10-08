@@ -14,7 +14,6 @@ import {
 } from './gamelist';
 import { closeSheet, confirmInSheet, sheetRow, showSheet } from './ui/sheet';
 import { showToast } from './ui/toast';
-import { answersSummary, readCoinAnswers } from './coinask';
 
 export { closeSheet };
 import { APPLE, primaryModifier } from './shortcuts';
@@ -35,7 +34,6 @@ export interface LibraryHandlers {
   onEraseAll(): Promise<void>;
   onToggleAutoSave(hash: string, on: boolean): void;
   onRename(hash: string, title: string): void;
-  onForgetCoins(hash: string): void;
   onExport(hash: string): Promise<void>;
   onExportMany(): void;
   isSaving(): boolean;
@@ -307,18 +305,12 @@ function openSheet(
     : null;
   spareRow?.classList.add('inert');
 
-  const coinSummary = answersSummary(readCoinAnswers(g.coinAnswers));
-  const coinRow = coinSummary
-    ? sheetRow(str('library.coin_slots'), str('library.n_tap_to_choose_again', { 0: coinSummary }))
-    : null;
-  coinRow?.addEventListener('click', () => { closeSheet(); h.onForgetCoins(g.hash); });
-
   const delRow = sheetRow(str('library.remove_from_cache'), hasState ? str('library.discards_the_saved_state_too') : '');
   delRow.classList.add('destructive');
   delRow.addEventListener('click', () => { closeSheet(); deferDelete(g, h); });
 
   showSheet(displayTitle(g), [
-    renameRow, autoRow, ...(coinRow ? [coinRow] : []), freshRow, exportRow, ...(spareRow ? [spareRow] : []), delRow,
+    renameRow, autoRow, freshRow, exportRow, ...(spareRow ? [spareRow] : []), delRow,
   ], returnTo);
 }
 

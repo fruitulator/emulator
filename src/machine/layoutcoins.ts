@@ -1,7 +1,7 @@
 import { decryptFml, isEncryptedFml } from '../layout/fml';
 import { parseLayout, type ParsedComponent } from '../layout/fmlparse';
 import { COIN_RAW } from './coinraw';
-import { acceptorIds } from './coinid';
+import { acceptorIds, isAcceptor } from './coinid';
 
 export interface CoinNote {
   readonly name: string;
@@ -140,8 +140,10 @@ export function declaredCoins(layout: Uint8Array | undefined): DeclaredCoin[] {
     return [];
   }
   const out: DeclaredCoin[] = [];
+  const drawn = onPicture(comps);
   for (const c of comps) {
-    if (!c.values.get('CoinSelected')) continue;
+    if (!drawn(c)) continue;
+    if (!isAcceptor(c.values)) continue;
     const ids = acceptorIds(c.values);
     const note = ids.note ?? null;
     const named = note === null ? null : COIN_NOTES.get(note) ?? null;
@@ -160,6 +162,33 @@ export function declaredCoins(layout: Uint8Array | undefined): DeclaredCoin[] {
         ? { left: c.x, top: c.y, width: c.width, height: c.height }
         : null,
     });
+  }
+  return out;
+}
+
+function onPicture(comps: readonly ParsedComponent[]): (c: ParsedComponent) => boolean {
+  const bg = comps.find((c) => c.type === 0x01 && c.width > 0 && c.height > 0);
+  return (c) => !bg
+    || (c.x < bg.x + bg.width && c.x + Math.max(c.width, 1) > bg.x && c.y < bg.y + bg.height && c.y + Math.max(c.height, 1) > bg.y);
+}
+
+export function layoutInputButtons(layout: Uint8Array | undefined): number[] | null {
+  const payload = fmlPayload(layout);
+  if (!payload) return null;
+  let comps: ParsedComponent[];
+  try {
+    comps = parseLayout(payload);
+  } catch {
+    return null;
+  }
+  if (!comps.length) return null;
+  const drawn = onPicture(comps);
+  const out: number[] = [];
+  for (const c of comps) {
+    if (isAcceptor(c.values)) continue;
+    if (!drawn(c)) continue;
+    const b = c.values.get('ButtonNumber');
+    if (b !== undefined) out.push(b);
   }
   return out;
 }

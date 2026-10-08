@@ -395,3 +395,30 @@
   opacity: 0.45;
   cursor: default;
 }
+
+.pack-progress-line {
+  margin: 6px 0 10px;
+  font-size: 14px;
+  min-height: 1.4em;
+}
+.pack-progress {
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: var(--r-ctl);
+  overflow: hidden;
+}
+.pack-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.25s linear;
+}
+.pack-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.ui-dialog.pack-progress-dialog .about-bar,
+.ui-dialog.pack-progress-dialog .ui-dialog-scroll {
+  width: min(440px, 100%);
+}

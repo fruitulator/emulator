@@ -12,7 +12,7 @@ import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
 import { drawnAngle } from '../src/layout/compangle';
 import { bandArtCells } from '../src/layout/bandcells';
-import { acceptorIds } from '../src/machine/coinid';
+import { acceptorIds, isAcceptor } from '../src/machine/coinid';
 import { shortcutKnown } from './shortcuts';
 import { BFM_ALPHA_DEFAULT_COLUMNS, BFM_ALPHA_DEFAULT_INK, BFM_ALPHA_DEFAULT_OFF_LEVEL } from './bfmalpha';
 
@@ -988,7 +988,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   reels.sort((a, b) => a.left - b.left);
 
   const lamps: CabLamp<ImageData>[] = [];
-  const coinLamps = comps.filter((c) => c.type === Type.Lamp && c.values.get('CoinSelected'));
+  const coinLamps = comps.filter((c) => c.type === Type.Lamp && isAcceptor(c.values));
   coinLamps.sort((a, b) => (b.values.get('CoinId') ?? 0) - (a.values.get('CoinId') ?? 0));
   const picturedOwners = new Map<number, ParsedComponent[]>();
   const backdropShapeSet = new Set(backdropShapes(comps));
@@ -1017,7 +1017,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   };
   for (const c of comps) {
     if (c.type !== Type.Lamp) continue;
-    if (!sublampSlots(c).length && !c.values.get('CoinSelected') && !isUnwiredBox(c)) continue;
+    if (!sublampSlots(c).length && !isAcceptor(c.values) && !isUnwiredBox(c)) continue;
     const keyed: LampKey = c.values.get('Transparent') ? 'alpha'
       : c.values.get('Graphic') ? 'alphaonly' : false;
     const offRaw = image(c, 'OffImage', keyed);
@@ -1034,7 +1034,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         ?? (off || maskOnly || isShapeLamp(c) ? null : firstImage(c, keyed));
     const on = pool ?? fitToRect(onRaw, c.width, c.height);
     const btn = inputId(c);
-    const acceptor = c.values.get('CoinSelected')
+    const acceptor = isAcceptor(c.values)
       ? {
         ...(coinLine(c) !== undefined ? { line: coinLine(c) } : {}),
         ...(coinNote(c) !== undefined ? { note: coinNote(c) } : {}),
@@ -1235,8 +1235,8 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   for (const c of comps) {
     if (c.type !== Type.Button) continue;
     const btn = inputId(c) ?? (c.number > 0 ? c.number : undefined);
-    const coin = c.values.get('CoinNoteId');
-    if (btn === undefined && coin === undefined) continue;
+    const coin = isAcceptor(c.values);
+    if (btn === undefined && !coin) continue;
     let on = fitToRect(
       image(c, 'Lamp1', true) ?? (hasPicture(c) ? firstImage(c, true) : null),
       c.width, c.height,
@@ -1267,7 +1267,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       ...inputGates(c, (c.subs ?? []).filter((n) => n >= 0)),
       cap: true,
       ...capName(c),
-      ...(coin !== undefined && coin >= 0
+      ...(coin
         ? {
           acceptor: {
             ...(coinLine(c) !== undefined ? { line: coinLine(c) } : {}),

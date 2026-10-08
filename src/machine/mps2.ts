@@ -18,7 +18,9 @@ import type { BoardPart } from './parts';
 import { fitReelBank, type ReelFit } from './reelfit';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
-import type { DigitKind } from './machine';
+import type { DigitKind, CoinWiringStatus } from './machine';
+import { calibratorState, changeOf, linesOf, MeterStepCalibrator, wiringKey, wiringStateFor, type CalibratorState, type CoinLineTable, type CoinWiring, type SlotCoin, type WatchedCoin } from './coinwiring';
+import { readMps2CoinTable } from './mps2coins';
 
 const RAM_LO = 0xe800;
 const RAM_HI = 0xf0fc;
@@ -50,7 +52,7 @@ const REEL_STAND_IN_HALF_STEPS = 96;
 const REEL_STAND_IN_STOPS = 12;
 
 export class Mps2 implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['fitted'];
+  static readonly snapshotConfig: readonly string[] = ['fitted', 'wiring', 'coinSlots'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -88,17 +90,146 @@ export class Mps2 implements Machine {
   }
 
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
-    this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
-    this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
+    this.meterInMult = [...inMult];
+    this.meterOutMultRaw = [...outMult];
+    this.meterOutMult = [...ledgerOutMults({ in: inMult, out: outMult })[0]];
+    this.meterInPence = this.meterInMult.map((x) => x * METER_UNIT_PENCE);
+    this.meterOutPence = this.meterOutMult.map((x) => x * METER_UNIT_PENCE);
   }
+  private meterInMult: number[] = [];
+  private meterOutMult: number[] = [];
+  private meterOutMultRaw: number[] = [];
+  readonly meterTotals = { in: 0, out: 0 };
 
   private bookMeterLine(line: number): void {
+    if (this.wiring) { this.bookWiredLine(line); return; }
     const inP = this.meterInPence[line] ?? 0;
     const outP = this.meterOutPence[line] ?? 0;
     if (line === TOKEN_IN_LINE) this.ledger.tokenInPence += inP;
     else this.ledger.inPence += inP;
     if (line === TOKEN_OUT_LINE) this.ledger.tokenOutPence += outP;
     else this.ledger.outPence += outP;
+  }
+
+  private wiring: {
+    coins: Map<number, SlotCoin>;
+    conflicts: number[];
+    cal: MeterStepCalibrator;
+    unpricedTokens: boolean;
+    change: Map<number, number>;
+  } | null = null;
+
+  private wiringState: { key: string; cal: CalibratorState; held: { inC: Float64Array; outC: Float64Array }; windowLines: number[] } = Mps2.freshWiringState('');
+
+  private static freshWiringState(key: string): { key: string; cal: CalibratorState; held: { inC: Float64Array; outC: Float64Array }; windowLines: number[] } {
+    return { key, cal: calibratorState(), held: { inC: new Float64Array(9), outC: new Float64Array(9) }, windowLines: [] };
+  }
+
+  private static readonly WIRING_QUIET = Math.round(1.5 * CLOCK);
+  private static readonly WIRING_FIRST_WAIT = Math.round(3 * CLOCK);
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    const pence = new Map<number, number>();
+    for (const [line, c] of coins) { const v = typeof c === 'number' ? c : c.token; if (v !== null) pence.set(line, v); }
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), Mps2.freshWiringState);
+    this.wiring = {
+      coins,
+      conflicts,
+      cal: new MeterStepCalibrator(Mps2.WIRING_QUIET, Mps2.WIRING_FIRST_WAIT, this.wiringState.cal),
+      unpricedTokens: [...coins.values()].some((c) => typeof c === 'object' && c.token === null),
+      change: changeOf(this.coinLineTable, pence),
+    };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    return { state: w.cal.state, step: w.cal.step, conflicts: [...w.conflicts] };
+  }
+
+  private wiredValue(line: number): WatchedCoin {
+    const c = this.wiring?.coins.get(line);
+    if (c === undefined) return undefined;
+    const v = typeof c === 'number' ? c : c.token;
+    return v === null ? null : v - (this.wiring!.change.get(line) ?? 0);
+  }
+
+  private bookWiredLine(line: number): void {
+    const w = this.wiring!;
+    let inC = this.meterInMult[line] ?? 0;
+    const outC = this.meterOutMult[line] ?? 0;
+    if (line === TOKEN_IN_LINE && w.unpricedTokens) inC = 0;
+    if (inC > 0) w.cal.count(inC, this.now);
+    this.wiringState.held.inC[line] += inC;
+    this.wiringState.held.outC[line] += outC;
+    this.flushWired();
+  }
+
+  private flushWired(): void {
+    const w = this.wiring!;
+    if (w.cal.state !== 'calibrated' || w.cal.step === null) return;
+    const step = w.cal.step;
+    for (let line = 0; line < 9; line++) {
+      const inP = this.wiringState.held.inC[line]! * step;
+      const outP = this.wiringState.held.outC[line]! * step;
+      this.wiringState.held.inC[line] = 0;
+      this.wiringState.held.outC[line] = 0;
+      if (line === TOKEN_IN_LINE) this.ledger.tokenInPence += inP;
+      else this.ledger.inPence += inP;
+      if (line === TOKEN_OUT_LINE) this.ledger.tokenOutPence += outP;
+      else this.ledger.outPence += outP;
+    }
+  }
+
+  private tickWiring(): void {
+    const w = this.wiring!;
+    const closed = w.cal.tick(this.now);
+    if (!closed) return;
+    const lines = this.wiringState.windowLines;
+    this.wiringState.windowLines = [];
+    if (closed.counts > 0) {
+      this.ledger.unpricedTokenIn += closed.coins.filter((c) => c === null).length;
+      for (const l of lines) {
+        const c = w.change.get(l);
+        if (c) { this.ledger.inPence += c; this.ledger.outPence += c; }
+      }
+    }
+    this.flushWired();
+  }
+
+  private coinSlots: { line: number; token: boolean }[] = [];
+
+  setLayoutCoins(list: readonly { button: number | null; pence: number | null; token: boolean }[]): void {
+    const out = new Map<number, boolean>();
+    for (const c of list) {
+      if (c.button === null || c.button < 19 || c.button > 23 || c.pence !== null) continue;
+      out.set(c.button, (out.get(c.button) ?? false) || c.token);
+    }
+    this.coinSlots = [...out].sort((a, b) => a[0] - b[0]).map(([line, token]) => ({ line, token }));
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots.map((s) => s.line);
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    if (!('lines' in t)) return null;
+    const tokens = new Set(this.coinSlots.filter((s) => s.token).map((s) => s.line));
+    return { ...t, lines: t.lines.map((l) => (tokens.has(l.line) ? { ...l, token: true } : l)) };
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
+  }
+
+  private readCoinTable(): ReturnType<typeof readMps2CoinTable> {
+    return readMps2CoinTable(this.rom, {
+      rotaryByte: ((this.rotary << 4) ^ 0xf0) & 0xff,
+      dil: (select) => ((select & 2) === 0 ? ~this.dip1 & 0xff : (select & 1) === 0 ? ~this.dip2 & 0xff : 0xff),
+    });
   }
 
   private ppi26a = 0; private ppi26b = 0;
@@ -138,10 +269,13 @@ export class Mps2 implements Machine {
   private tickMeters(cycles: number): void {
     const confirmed = this.meterBank.advance(cycles, METER_TICK_CYCLES);
     if (confirmed) for (let l = 0; l < 9; l++) if (confirmed & (1 << l)) this.meterConfirmed(l);
+    if (this.wiring) this.tickWiring();
   }
 
   private meterConfirmed(line: number): void {
     if (line >= 1) this.meterCounts[line - 1]++;
+    this.meterTotals.in += this.meterInMult[line] ?? 0;
+    this.meterTotals.out += this.meterOutMultRaw[line] ?? 0;
     this.bookMeterLine(line);
   }
 
@@ -197,7 +331,7 @@ export class Mps2 implements Machine {
   readonly alarm = new OneBitSpeaker(CLOCK, 48_000, {
     bassFreq: BASE_BOARD_BASS_FREQ, steps: [0x3fff, 0], fullScale: 1 / (4 * 0xfff),
   });
-  private rotary = 7;
+  private rotary = 0;
   private hoppersFlag = 0x50;
 
   private powerFail = 1;
@@ -303,6 +437,8 @@ export class Mps2 implements Machine {
   private static readonly TEST_SWITCH_ROW = 7;
   setHoppers(v: number): void { this.hoppersFlag = v & 0xff; }
   setProtocol(p: number): void { this.protocol = p; }
+  setRotary(n: number): void { this.rotary = n & 0xf; }
+  get rotarySwitch(): number { return this.rotary; }
 
   setReelPosition(i: number, pos: number): void {
     this.jpmReels.setPosition(i, pos);
@@ -612,6 +748,10 @@ export class Mps2 implements Machine {
 
   insertCoin(bit: number): void {
     if (this.coinTimer > 0 || bit < 0 || bit > 31) return;
+    if (this.wiring) {
+      this.wiring.cal.coin(this.wiredValue(bit), this.now);
+      this.wiringState.windowLines.push(bit);
+    }
     this.coinInput = bit;
     this.layoutInput(bit, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;

@@ -1,5 +1,5 @@
 import type { Bus } from '../cpu/bus';
-import type { Machine, DigitKind, CabinetSwitch, CoinPortLines } from './machine';
+import type { Machine, DigitKind, CabinetSwitch, CoinPortLines, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import type { SlideEffect, SwitchControl } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
@@ -26,6 +26,10 @@ import { Hopper, v20Waveform } from '../hw/hopper';
 import { MuxLamps } from '../hw/muxlamps';
 import { StrayCounter } from './strayaccess';
 import { noteRomCut } from './boarddefaults';
+import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
+import { readMpu4CoinTable, readMpu4CoinTakes } from './mpu4coins';
+import { readMpu4VideoCoinTable, readMpu4VideoCoinTakes } from './mpu4vidcoins';
+import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import type { Mpu4VideoCard } from './mpu4video';
 
 export const MASTER_CLOCK = 6_880_000;
@@ -237,7 +241,7 @@ export class SegColumnBank {
 }
 
 export class Mpu4 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache'];
   readonly digitKind: DigitKind = 'mpu4led';
   readonly cpu: M6809;
   readonly ram = new Uint8Array(0x0800);
@@ -986,12 +990,19 @@ export class Mpu4 implements Bus, Machine {
 
   private coinLockStated = false;
 
+  private coinLockAllOrNothing = false;
+
+  private allCoinLocksHeld(): boolean {
+    const d = this.ic5.ddrB() & 0x0f;
+    return d !== 0 && (this.ic5.outB() & d) === d;
+  }
+
   get coinLockHarnessRead(): boolean {
     return this.coinLockStated;
   }
 
   coinsRefused = 0;
-  coinRefusedReason: 'locked' | 'no-line' | 'still-passing' | null = null;
+  coinRefusedReason: 'locked' | 'no-line' | 'still-passing' | 'not-taken' | null = null;
 
   private static readonly COIN_PENCE = [10, 20, 50, 100, 20, 5];
 
@@ -1013,14 +1024,232 @@ export class Mpu4 implements Bus, Machine {
     if (this.coinLockStated) {
       if (lock === null) { this.coinsRefused++; this.coinRefusedReason = 'no-line'; return; }
       if (this.coinLockouts & lock) { this.coinsRefused++; this.coinRefusedReason = 'locked'; return; }
+    } else if (this.coinLockAllOrNothing && this.allCoinLocksHeld()) {
+      this.coinsRefused++; this.coinRefusedReason = 'locked'; return;
     }
     this.coinMask = this.coinLinePattern[line];
     this.coinCycles = Mpu4.COIN_DWELL;
+    this.coinLine = line;
     this.inputs.aux2 |= this.coinMask;
+    this.pendCoin(line);
+  }
+
+  private bookTaken(line: number): void {
+    if (this.wiring) { this.bookWiredCoin(line); return; }
     const pence = this.coinLinePence[line];
     if (pence === null || pence === undefined) return;
     if (line === 4) this.cashLedger.tokenInPence += pence;
     else this.cashLedger.inPence += pence;
+  }
+
+  private coinLine = -1;
+  private readonly pendLine = new Array<number>(8).fill(-1);
+  private readonly pendWait = new Array<number>(8).fill(0);
+  private readonly pendByHandler = new Array<number>(8).fill(0);
+  private pendCount = 0;
+  private static readonly TAKE_WAIT = Math.round(1.5 * E_CLOCK);
+
+  private takeCache: { rom: Uint8Array; t: Map<number, number[]> } | null = null;
+  private coinTakes(): Map<number, number[]> {
+    const rom = this.video ? this.video.rom : this.rom;
+    if (this.takeCache?.rom !== rom) {
+      const bitLine = (mask: number): number | null => {
+        const i = Mpu4.COIN_LINE_BIT.indexOf(31 - Math.clz32(mask));
+        return i < 0 ? null : i;
+      };
+      this.takeCache = { rom, t: this.video ? readMpu4VideoCoinTakes(rom, bitLine) : readMpu4CoinTakes(rom, bitLine) };
+    }
+    return this.takeCache.t;
+  }
+
+  private takenByHandler(line: number): boolean {
+    if (this.coinLinePattern[line] !== 1 << Mpu4.COIN_LINE_BIT[line]!) return false;
+    return (this.coinTakes().get(line)?.length ?? 0) > 0;
+  }
+
+  private pendCoin(line: number): void {
+    const k = this.pendLine.indexOf(-1);
+    if (k < 0) { this.coinsRefused++; this.coinRefusedReason = 'not-taken'; return; }
+    this.pendLine[k] = line;
+    this.pendWait[k] = Mpu4.TAKE_WAIT;
+    this.pendByHandler[k] = this.takenByHandler(line) ? 1 : 0;
+    this.pendCount++;
+  }
+
+  private oldestPending(line: number, byHandler: number): number {
+    let k = -1;
+    for (let i = 0; i < this.pendLine.length; i++) {
+      if (this.pendLine[i] !== line || this.pendByHandler[i] !== byHandler) continue;
+      if (k < 0 || this.pendWait[i]! < this.pendWait[k]!) k = i;
+    }
+    return k;
+  }
+
+  private settle(k: number, taken: boolean): void {
+    const line = this.pendLine[k]!;
+    this.pendLine[k] = -1;
+    this.pendWait[k] = 0;
+    this.pendCount--;
+    if (taken) this.bookTaken(line);
+    else { this.coinsRefused++; this.coinRefusedReason = 'not-taken'; }
+  }
+
+  private coinSampled(): void {
+    if (this.coinCycles <= 0 || this.coinLine < 0) return;
+    const k = this.oldestPending(this.coinLine, 0);
+    if (k >= 0) this.settle(k, true);
+  }
+
+  private takeStep(cycles: number): void {
+    let at = -1;
+    for (let k = 0; k < this.pendLine.length; k++) {
+      const line = this.pendLine[k]!;
+      if (line < 0) continue;
+      if (this.pendByHandler[k]) {
+        if (at < 0) {
+          const pc = this.cpu.pc & 0xffff;
+          at = this.video
+            ? (pc >= 0x4000 && pc < 0xc000 ? pc - 0x4000 : -2)
+            : (this.bank * PAGE_SIZE + pc) & this.romMask;
+        }
+        if (this.coinTakes().get(line)!.includes(at)) { this.settle(k, true); continue; }
+        this.pendWait[k] = this.pendWait[k]! - cycles;
+        if (this.pendWait[k]! <= 0) this.settle(k, false);
+      } else if (!(this.coinCycles > 0 && this.coinLine === line && this.oldestPending(line, 0) === k)) {
+        this.settle(k, false);
+      }
+    }
+  }
+
+  private wiring: {
+    coins: Map<number, SlotCoin>;
+    conflicts: number[];
+    check: MeterUnitCheck;
+    unpricedTokens: boolean;
+  } | null = null;
+
+  private wiringState: { key: string; now: number; check: MeterCheckState } = Mpu4.freshWiringState('');
+
+  private static freshWiringState(key: string): { key: string; now: number; check: MeterCheckState } {
+    return { key, now: 0, check: meterCheckState() };
+  }
+
+  private static readonly WIRING_QUIET = Math.round(1.5 * E_CLOCK);
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    const pulse = Math.max(1, ...(this.meterMapFitted ? this.meterInMult : [1]));
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), Mpu4.freshWiringState);
+    this.wiring = {
+      coins,
+      conflicts,
+      check: new MeterUnitCheck(Mpu4.METER_UNIT_PENCE, pulse * Mpu4.METER_UNIT_PENCE, Mpu4.WIRING_QUIET, this.wiringState.check),
+      unpricedTokens: [...coins.values()].some((c) => typeof c === 'object' && c.token === null),
+    };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return this.wiring?.check.state !== 'disagrees';
+  }
+
+  private bookWiredCoin(line: number): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(line)) { w.check.coin(undefined, this.wiringState.now); return; }
+    const c = w.coins.get(line);
+    if (c === undefined) {
+      const pence = this.coinLinePence[line];
+      w.check.coin(pence ?? undefined, this.wiringState.now);
+      if (pence === null || pence === undefined) return;
+      if (line === Mpu4.TOKEN_COIN_LINE) this.cashLedger.tokenInPence += pence;
+      else this.cashLedger.inPence += pence;
+      return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; w.check.coin(c, this.wiringState.now); return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; w.check.coin(null, this.wiringState.now); return; }
+    this.cashLedger.tokenInPence += c.token;
+    w.check.coin(c.token, this.wiringState.now);
+  }
+
+  private checkMeterIn(i: number): void {
+    const w = this.wiring!;
+    const n = this.meterMapFitted ? this.meterInMult[i]! : i === 0 || i === 2 ? 1 : 0;
+    if (i === 2 && w.unpricedTokens) return;
+    w.check.count(n, this.wiringState.now);
+  }
+
+  private tickWiring(cycles: number): void {
+    const s = this.wiringState;
+    s.now += cycles;
+    this.wiring!.check.tick(s.now);
+  }
+
+  private coinSlots: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const out = new Set<number>();
+    for (const c of list) {
+      if (c.pence !== null) continue;
+      if (c.named?.name.startsWith('ccTalk')) continue;
+      let line = -1;
+      if (c.line !== null && c.note === null) line = c.line;
+      else if (c.note === Mpu4.TOK_MPU4_NOTE) line = Mpu4.TOKEN_COIN_LINE;
+      else {
+        const mask = coinRowPattern(c, Mpu4.AUX2_COIN_ROW);
+        if (mask !== undefined && mask !== 0 && (mask & (mask - 1)) === 0) line = Mpu4.COIN_LINE_BIT.indexOf(31 - Math.clz32(mask));
+        else if (mask !== undefined) line = this.coinLinePattern.indexOf(mask);
+      }
+      if (line >= 0) out.add(line);
+    }
+    this.coinSlots = [...out].sort((a, b) => a - b);
+  }
+
+  private static readonly TOK_MPU4_NOTE = 0x39;
+  private static readonly AUX2_COIN_ROW = 5;
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private coinTableCache: { rom: Uint8Array; t: CoinLineTable | { refused: string } } | null = null;
+  private readCoinTable(): CoinLineTable | { refused: string } {
+    const rom = this.video ? this.video.rom : this.rom;
+    if (this.coinTableCache?.rom !== rom) {
+      const bitLine = (mask: number): number | null => {
+        const i = Mpu4.COIN_LINE_BIT.indexOf(31 - Math.clz32(mask));
+        return i < 0 ? null : i;
+      };
+      this.coinTableCache = { rom, t: this.video ? readMpu4VideoCoinTable(rom, bitLine) : readMpu4CoinTable(rom, bitLine) };
+    }
+    return this.coinTableCache.t;
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    return 'lines' in t ? t : null;
+  }
+
+  get coinLinesShut(): number {
+    if (!this.coinLockStated) {
+      return this.coinLockAllOrNothing && this.allCoinLocksHeld() ? (1 << Mpu4.COIN_LINE_BIT.length) - 1 : 0;
+    }
+    const ddr = this.ic5.ddrB();
+    let out = 0;
+    for (let line = 0; line < Mpu4.COIN_LINE_BIT.length; line++) {
+      const lock = Mpu4.lockoutFor(line, ddr);
+      if (lock === null || (this.coinLockouts & lock)) out |= 1 << line;
+    }
+    return out;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
   }
 
   get coinChutes(): readonly { label: string; bit: number }[] {
@@ -1084,9 +1313,11 @@ export class Mpu4 implements Bus, Machine {
       if (!(rising & 1)) continue;
       this.triacPulses[i]++;
       const slide = this.outMetered ? null : this.triacSlides[i];
-      if (slide === 'token') this.cashLedger.unpricedTokenOut++;
+      if (!this.booksMoney) {  }
+      else if (slide === 'token') this.cashLedger.unpricedTokenOut++;
       else if (slide === 'unpriced') this.cashLedger.unpricedOut++;
       else if (slide !== null) this.cashLedger.outPence += slide;
+      if (this.wiring && this.triacInMult[i]) this.wiring.check.count(this.triacInMult[i]!, this.wiringState.now);
       if (this.triacInMult[i] || this.triacOutMult[i]) {
         this.meterTotals.in += this.triacInMult[i];
         this.meterTotals.out += this.triacOutMult[i];
@@ -1160,6 +1391,10 @@ export class Mpu4 implements Bus, Machine {
     this.meterCounts[i]++;
     this.meterTotals.in += this.meterInMult[i];
     this.meterTotals.out += this.meterOutMult[i];
+    if (this.wiring) {
+      this.checkMeterIn(i);
+      if (!this.booksMoney) return;
+    }
     if (!this.meterMapFitted) {
       if (i === 1) this.cashLedger.outPence += Mpu4.METER_UNIT_PENCE;
       else if (i === 3) this.cashLedger.tokenOutPence += Mpu4.METER_UNIT_PENCE;
@@ -1531,7 +1766,7 @@ export class Mpu4 implements Bus, Machine {
     if (!this.hopper1) return;
     const count = !this.outMetered;
     const book = (fresh: number, pence: number | null): void => {
-      if (!count) return;
+      if (!count || !this.booksMoney) return;
       if (pence === null) this.cashLedger.unpricedOut += fresh;
       else this.cashLedger.outPence += fresh * pence;
     };
@@ -1560,7 +1795,10 @@ export class Mpu4 implements Bus, Machine {
     }
     this.romMask = this.rom.length <= PAGE_SIZE ? PAGE_SIZE - 1 : this.rom.length - 1;
     this.bank = this.resetPage();
-    this.coinLockStated = Mpu4.coinLockTableIn(this.rom) !== null;
+    this.coinLockStated = this.video
+      ? 'lines' in this.readCoinTable()
+      : Mpu4.coinLockTableIn(this.rom) !== null;
+    this.coinLockAllOrNothing = !!this.video && !this.coinLockStated;
     this.hopperCoinPence = Mpu4.hopperCoinRecordsIn(this.rom);
   }
 
@@ -1639,6 +1877,7 @@ export class Mpu4 implements Bus, Machine {
     this.meterTickCycles = 0;
     this.reelSelect = 0;
     this.coinLockouts = 0;
+    for (let k = 0; k < this.pendLine.length; k++) if (this.pendLine[k]! >= 0) this.settle(k, false);
     this.mainsCycles = 0;
     this.mainsState = false;
     this.hopper1?.reset();
@@ -1700,6 +1939,11 @@ export class Mpu4 implements Bus, Machine {
         && (this.ic5.peek(1) & 4)) {
       const v = pia.read(0);
       return this.lampExtSense && this.lampEnable ? v | 0x40 : v & 0xbf;
+    }
+    if (pia === this.ic5 && (addr & 3) === 2 && this.pendCount > 0 && (this.ic5.peek(3) & 4)) {
+      const v = pia.read(2);
+      this.coinSampled();
+      return v;
     }
     if (pia) return pia.read(addr & 3);
     this.strays.hit(addr);
@@ -1960,7 +2204,9 @@ export class Mpu4 implements Bus, Machine {
     this.tickMeterPulses(cycles);
     this.tickMains(cycles);
     if (this.lampEnableCount > 0) this.tickLampEnable(cycles);
+    if (this.pendCount > 0) this.takeStep(cycles);
     this.tickCoin(cycles);
+    if (this.wiring) this.tickWiring(cycles);
     this.tickHoppers(cycles);
     if (this.dataPakType && (this.dataport.active || this.dataPakOut.length)) this.tickDataport(cycles);
     this.ptmSound.tick(cycles);

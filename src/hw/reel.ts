@@ -129,6 +129,7 @@ export class Reel {
 
   private readonly mame: boolean;
   private readonly mamePhase: (pattern: number, oldPhase: number) => number;
+  private readonly mameOpposite: number;
   private indexStart: number;
   private indexEnd: number;
   private readonly indexPattern: number;
@@ -150,6 +151,9 @@ export class Reel {
     this.mame = cfg.mame ?? false;
     this.mfmeJpm = cfg.mfmeJpm ?? false;
     this.mamePhase = cfg.mameDrive === 'barcrest' ? barcrestPhase : starpointPhase;
+    this.mameOpposite = cfg.mameDrive === 'barcrest'
+      ? (1 << 0x05) | (1 << 0x0a)
+      : (1 << 0x03) | (1 << 0x0c);
     this.indexStart = cfg.indexStart ?? 1;
     this.indexEnd = cfg.indexEnd ?? 3;
     this.indexPattern = cfg.indexPattern ?? 0;
@@ -245,7 +249,9 @@ export class Reel {
   }
 
   private updateMame(pattern: number): number {
-    this.mPhase = this.mamePhase(pattern, this.mOldPhase);
+    this.mPhase = (this.mameOpposite >> pattern) & 1
+      ? this.mOldPhase
+      : this.mamePhase(pattern, this.mOldPhase);
     let steps = this.mOldPhase - this.mPhase;
     if (steps < -4) steps += 8;
     if (steps > 4) steps -= 8;

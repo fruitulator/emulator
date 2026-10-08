@@ -1,5 +1,8 @@
-import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, DigitKind } from './machine';
+import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
+import type { DeclaredCoin } from './layoutcoins';
+import { locateSys80Coins, sys80CoinTable, sys80ProgramCoins, sys80PlayMeterPrice, type Sys80CoinCode } from './sys80coins';
 import { Reel } from '../hw/reel';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { Tms9995, type Tms9995Bus } from '../cpu/tms9995';
@@ -80,7 +83,10 @@ interface Sys80Reel {
 }
 
 export class Sys80 implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches'];
+  static readonly snapshotConfig: readonly string[] = [
+    'switches',
+    'coinCodeCache', 'coinPriceCache', 'pricedByPlays', 'coinSlots', 'wiring', 'meterInRaw', 'meterOutRaw',
+  ];
 
   readonly digitKind: DigitKind = 'words';
   readonly clockHz: number = CLOCK;
@@ -100,6 +106,7 @@ export class Sys80 implements Machine {
     if (!map || map.length !== 512) return;
     this.portMap = map;
     this.portMapFromLayout = true;
+    this.coinPriceCache = null;
   }
 
   readonly lamps = new Uint8Array(LAMP_COUNT);
@@ -124,6 +131,9 @@ export class Sys80 implements Machine {
   static readonly METER_UNIT_PENCE = 10;
 
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+    this.meterInRaw = [...inMult];
+    this.meterOutRaw = [...outMult];
+    this.coinPriceCache = null;
     this.meterInPence = inMult.map((x) => x * Sys80.METER_UNIT_PENCE);
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * Sys80.METER_UNIT_PENCE);
     const second = (mult: readonly number[]): number => mult.flatMap((x, i) => (x ? [i] : []))[1] ?? -1;
@@ -132,7 +142,10 @@ export class Sys80 implements Machine {
   }
 
   private bookMeter(i: number): void {
-    const inP = this.meterInPence[i] ?? 0;
+    this.gridTotals.in += this.meterInRaw[i] ?? 0;
+    this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+    if (!this.booksMoney) return;
+    const inP = this.coinsFromProgram() ? 0 : this.meterInPence[i] ?? 0;
     const outP = this.meterOutPence[i] ?? 0;
     if (inP) {
       if (i === this.tokenInMeter) this.ledger.tokenInPence += inP;
@@ -390,6 +403,10 @@ export class Sys80 implements Machine {
 
   protected writeMapped(port: number, value: number): void {
     this.portWrites[port]++;
+    if (value !== this.portLevel[port]) {
+      this.portLevel[port] = value;
+      if (value && this.owedPorts.length) this.payOwed(port);
+    }
     const e = this.portMap[port];
     switch (e.type) {
       case PortType.Lamp:
@@ -493,6 +510,7 @@ export class Sys80 implements Machine {
 
   step(): number {
     const c = this.cpu.step();
+    if (this.judging || this.owedWait > 0) this.judgeCoinStep(c);
     this.tickMeters(c);
     if (++this.refresh >= 100000) this.refresh = 0;
     if (this.refresh % REFRESH_TICK === 0) this.ageSeg();
@@ -552,7 +570,7 @@ export class Sys80 implements Machine {
       { id: 'switches', label: 'SWITCH MATRIX', part: '4 rows x 8 + DIP 1/3', device: this.matrix },
       { id: 'sevenseg', label: '7-SEG', part: '2 BCD + 16 segment digits', device: this.digits },
       { id: 'meters', label: 'METERS', part: 'pulse counts', device: this.meters },
-      { id: 'coins', label: 'COIN INPUTS', part: '10p 20p 20p 50p - lines 19-22', modelled: true,
+      { id: 'coins', label: 'COIN INPUTS', part: 'matrix lines - read by the program', modelled: true,
         note: 'Modelled as timed matrix pulses (insertCoin), not as a mech.' },
       { id: 'ports', label: 'CRU OUTPUT PORTS', part: '512 lines - meaning per set (layout tag $9C)', device: this.portWrites },
       { id: 'iocard', label: 'I/O CARD', part: 'CRU $00-$1F - matrix + reel optos', device: this.matrix },
@@ -596,13 +614,309 @@ export class Sys80 implements Machine {
 
   insertCoin(bit: number): void {
     if (this.coinTimer > 0 || bit < 0 || bit > 31) return;
+    const code = this.coinCode();
+    if (code && !code.lines.some((l) => l.line === bit)) { this.coinsRefused++; return; }
     this.coinInput = bit;
     this.layoutInput(bit, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;
+    if (!this.coinsFromProgram()) return;
+    this.judgeCount[bit] = this.judgeCount[bit]! + 1;
+    this.judgeWait[bit] = Sys80.JUDGE_WAIT;
+    this.judging = true;
   }
   protected coinTimer = 0;
   protected coinInput = -1;
   get coinBusy(): boolean { return this.coinTimer > 0; }
+
+  protected readsProgramCoins = true;
+
+  private coinCodeCache: { c: Sys80CoinCode | Refusal } | null = null;
+  private coinCodeFound(): Sys80CoinCode | Refusal {
+    if (!this.readsProgramCoins) return { refused: 'not read on this board' };
+    if (!this.coinCodeCache) this.coinCodeCache = { c: locateSys80Coins(this.memory.subarray(0, RAM_LO)) };
+    return this.coinCodeCache.c;
+  }
+  private coinCode(): Sys80CoinCode | null {
+    const c = this.coinCodeFound();
+    return 'refused' in c ? null : c;
+  }
+
+  private tokenPorts(): number[] {
+    if (this.tokenInMeter < 0) return [];
+    const v = this.tokenInMeter + 1;
+    const out: number[] = [];
+    this.portMap.forEach((e, p) => { if (e.type === PortType.Meter && e.value === v) out.push(p); });
+    return out;
+  }
+
+  private coinPriceCache: { table: CoinLineTable; coins: Map<number, { coin: SlotCoin; change: number }> | null } | null = null;
+  private priced(): { table: CoinLineTable; coins: Map<number, { coin: SlotCoin; change: number }> | null } | null {
+    const code = this.coinCode();
+    if (!code) return null;
+    if (!this.coinPriceCache) {
+      let table = sys80CoinTable(code, this.tokenPorts());
+      let coins = sys80ProgramCoins(table);
+      this.pricedByPlays = false;
+      if (!coins) {
+        const p = sys80PlayMeterPrice(this.memory.subarray(0, RAM_LO), code, this.gridInMeters());
+        const at = p === null ? null : { ...table, pricePerCredit: p, source: `${table.source}, priced at the layout's plays meter` };
+        const atCoins = at ? sys80ProgramCoins(at) : null;
+        if (at && atCoins) { table = at; coins = atCoins; this.pricedByPlays = true; }
+      }
+      this.coinPriceCache = { table, coins };
+    }
+    return this.coinPriceCache;
+  }
+
+  private pricedByPlays = false;
+  get coinsPricedByPlays(): boolean {
+    this.priced();
+    return this.pricedByPlays;
+  }
+
+  private gridInMeters(): { ports: number[]; pence: number }[] {
+    const out: { ports: number[]; pence: number }[] = [];
+    this.meterInPence.forEach((pence, i) => {
+      if (pence <= 0) return;
+      const ports: number[] = [];
+      this.portMap.forEach((e, p) => { if (e.type === PortType.Meter && e.value === i + 1) ports.push(p); });
+      out.push({ ports, pence });
+    });
+    return out;
+  }
+
+  private programCoin(line: number): { coin: SlotCoin; change: number } | null {
+    return this.priced()?.coins?.get(line) ?? null;
+  }
+
+  private coinsFromProgram(): boolean {
+    const p = this.priced();
+    return !!p && (!!p.coins || this.wiring !== null);
+  }
+
+  get programReadsCoins(): boolean {
+    return !!this.priced()?.coins;
+  }
+
+  get coinLineTable(): CoinLineTable | null | undefined {
+    if (!this.readsProgramCoins) return undefined;
+    return this.priced()?.table ?? null;
+  }
+
+  get coinLineTableRefusal(): string | null | undefined {
+    if (!this.readsProgramCoins) return undefined;
+    const c = this.coinCodeFound();
+    return 'refused' in c ? c.refused : null;
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    const coins = this.readsProgramCoins ? this.priced()?.coins : null;
+    if (!coins) return undefined;
+    const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
+    return [...coins].flatMap(([bit, { coin }]): CoinChute[] => {
+      if (typeof coin === 'number') return [{ label: label(coin), bit, pence: coin }];
+      return [{ label: coin.token === null ? 'Token' : `${label(coin.token)} token`, bit, pence: coin.token, token: true }];
+    }).sort((a, b) => (b.pence ?? -1) - (a.pence ?? -1) || a.bit - b.bit);
+  }
+
+  coinsRefused = 0;
+
+  get coinRefusing(): number {
+    const code = this.coinCode();
+    if (!code) return 0;
+    const ram = (a: number): number => (a >= RAM_LO && a + 1 < RAM_HI ? (this.memory[a]! << 8) | this.memory[a + 1]! : 0);
+    const made = (n: number | null): boolean => n !== null && ((this.matrix[(n >> 3) & 3]! >> (n & 7)) & 1) === 1;
+    let m = 0;
+    const gated = !!code.gate && (ram(code.gate.flags) & code.gate.mask) === code.gate.mask;
+    const refill = made(code.refillInput);
+    const ignored = code.shared ? ram(code.shared.ignore) : 0;
+    code.lines.forEach((l, k) => {
+      const tube = refill && (code.shape === 'script' || l.refill !== null);
+      if (gated || tube || (ignored >> k) & 1) m |= 1 << l.line;
+    });
+    return m;
+  }
+
+  private static readonly JUDGE_WAIT = Math.floor(CLOCK * 1.0);
+  protected judging = false;
+  private readonly judgeCount = new Array(32).fill(0);
+  private readonly judgeWait = new Array(32).fill(0);
+
+  private takenAlt = 0;
+
+  protected judgeCoinStep(cycles: number): void {
+    if (this.owedWait > 0) {
+      this.owedWait -= cycles;
+      if (this.owedWait <= 0) this.clearOwed();
+    }
+    if (!this.judging) return;
+    const code = this.coinCode();
+    if (!code) { this.judgeCount.fill(0); this.judgeWait.fill(0); this.judging = false; return; }
+    const pc = this.cpu.pc;
+    let line = -1; let taken = false;
+    this.takenAlt = 0;
+    if (code.shared) {
+      if (pc === code.shared.accept || pc === code.shared.refill) {
+        const reg = (n: number): number => (this.memory[(this.cpu.wp + 2 * n) & 0xffff]! << 8) | this.memory[(this.cpu.wp + 2 * n + 1) & 0xffff]!;
+        const k = (reg(3) - code.shared.first) / 4;
+        line = Number.isInteger(k) ? code.lines[k]?.line ?? -1 : -1;
+        taken = pc === code.shared.accept;
+        const alt = reg(5);
+        this.takenAlt = alt === 1 ? 1 : 0;
+      }
+    } else {
+      for (const l of code.lines) {
+        if (pc === l.accept) { line = l.line; taken = true; break; }
+        if (pc === l.refill) { line = l.line; break; }
+      }
+    }
+    if (line >= 0 && this.judgeCount[line]! > 0) {
+      this.judgeCount[line] = this.judgeCount[line]! - 1;
+      if (taken) this.bookTaken(line);
+    }
+    let any = false;
+    for (let b = 0; b < 32; b++) {
+      if (this.judgeCount[b]! <= 0) continue;
+      this.judgeWait[b] = this.judgeWait[b]! - cycles;
+      if (this.judgeWait[b]! <= 0) {
+        this.coinsRefused += this.judgeCount[b]!;
+        this.judgeCount[b] = 0;
+        this.judgeWait[b] = 0;
+        continue;
+      }
+      any = true;
+    }
+    this.judging = any;
+  }
+
+  private bookTaken(line: number): void {
+    const taken = this.programCoin(line);
+    if (this.wiring) { this.bookWiredCoin(line, taken); return; }
+    if (!taken) return;
+    this.bookCoin(taken.coin);
+    this.bookChange(line, taken.change);
+  }
+
+  private bookCoin(c: SlotCoin): void {
+    if (typeof c === 'number') this.ledger.inPence += c;
+    else if (c.token === null) this.ledger.unpricedTokenIn++;
+    else this.ledger.tokenInPence += c.token;
+  }
+
+  private bookChange(line: number, pence: number): void {
+    if (!pence) return;
+    const l = this.coinCode()?.lines.find((x) => x.line === line);
+    const c = l?.change[this.takenAlt] ?? l?.change[0];
+    const n = c ? c.ports.reduce((s, p) => s + p.count, 0) : 0;
+    if (!c || !n) return;
+    const metered = c.ports.some((p) => {
+      const e = this.portMap[p.port];
+      return e?.type === PortType.Meter && (this.meterOutPence[e.value - 1] ?? 0) !== 0;
+    });
+    if (metered) return;
+    for (const p of c.ports) {
+      this.owedPorts.push(p.port);
+      this.owedCounts.push(p.count);
+      this.owedPence.push(pence / n);
+    }
+    this.owedWait = Sys80.OWED_WAIT;
+  }
+
+  private static readonly OWED_WAIT = CLOCK * 3;
+  private owedPorts: number[] = [];
+  private owedCounts: number[] = [];
+  private owedPence: number[] = [];
+  private owedWait = 0;
+  private readonly portLevel = new Uint8Array(512);
+
+  private clearOwed(): void {
+    this.owedPorts = [];
+    this.owedCounts = [];
+    this.owedPence = [];
+    this.owedWait = 0;
+  }
+
+  private payOwed(port: number): void {
+    const i = this.owedPorts.findIndex((p, k) => p === port && this.owedCounts[k]! > 0);
+    if (i < 0) return;
+    this.owedCounts[i] = this.owedCounts[i]! - 1;
+    if (this.booksMoney) this.ledger.outPence += Math.round(this.owedPence[i]!);
+    if (this.owedCounts.every((x) => x <= 0)) this.clearOwed();
+    else this.owedWait = Sys80.OWED_WAIT;
+  }
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    if (!this.readsProgramCoins) return;
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private bookWiredCoin(line: number, taken: { coin: SlotCoin; change: number } | null): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(line)) return;
+    const c = w.coins.get(line);
+    if (c === undefined) {
+      if (taken) { this.bookCoin(taken.coin); this.bookChange(line, taken.change); }
+      return;
+    }
+    if (taken) {
+      const t = taken.coin;
+      const agrees = typeof c === 'number'
+        ? typeof t === 'number' && t === c
+        : typeof t === 'object' && (c.token === null || c.token === t.token);
+      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    this.bookCoin(c);
+    if (taken) this.bookChange(line, taken.change);
+  }
+
+  private coinSlots: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const slots = new Set<number>();
+    for (const c of list) {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      if (c.pence !== null) continue;
+      const line = sys80SlotLine(c);
+      if (line >= 0 && line <= 31) slots.add(line);
+    }
+    this.coinSlots = [...slots].sort((a, b) => a - b);
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.readsProgramCoins ? this.coinSlots : [];
+  }
+
+  private meterInRaw: number[] = [];
+  private meterOutRaw: number[] = [];
+  private readonly gridTotals = { in: 0, out: 0 };
+
+  get meterTotals(): { in: number; out: number } | undefined {
+    return this.readsProgramCoins ? { in: this.gridTotals.in, out: this.gridTotals.out } : undefined;
+  }
+}
+
+export function sys80SlotLine(c: Pick<DeclaredCoin, 'line' | 'button' | 'token'> & { note?: number | null }): number {
+  if (c.line !== null) return c.line;
+  if (c.button !== null && c.button >= 0) return c.button;
+  if (c.note != null && c.note >= 0x0f && c.note <= 0x16) return 16 + (c.note - 0x0f);
+  return c.token ? -1 : 22;
 }
 
 const COIN_HOLD = Math.round(0.15 * CLOCK);

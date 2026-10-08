@@ -1,5 +1,6 @@
 import { machineFor, type Game } from '../src/machine/registry';
-import type { CoinChute, Machine, NamedCoin } from '../src/machine/machine';
+import type { CoinChute, CoinWiringStatus, Machine, NamedCoin } from '../src/machine/machine';
+import type { CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
 import type { Recorder, Recording } from '../src/machine/replay';
 import { recordInto } from '../src/machine/replay';
 import {
@@ -7,8 +8,8 @@ import {
 } from '../src/machine/framestate';
 import { applyState, captureState, captureStateRaw } from './snapshot';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, buildMachineInfo, powerCycleOrThrow,
-  rebuildWithBlankMemory, sameFrameLayout,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
 } from './emu-core';
@@ -23,7 +24,7 @@ import type { Snapshot } from './snapshot';
 
 export class InlineEmu implements Emu {
   private machine: Machine | null = null;
-  private loadedFrom: { game: Game; wasm?: boolean; noRegions?: boolean } | null = null;
+  private loadedFrom: ({ game: Game } & MeasureSettings) | null = null;
   private settingNotes: string[] = [];
   private layout: FrameLayout | null = null;
   private infoValue: MachineInfo | null = null;
@@ -41,6 +42,7 @@ export class InlineEmu implements Emu {
   private seq = 0;
   private epoch = 0;
   private droppedMsTotal = 0;
+  private machineSTotal = 0;
   private buf: ArrayBuffer | null = null;
   private view: FrameView | null = null;
   private audioPort: MessagePort | null = null;
@@ -74,6 +76,7 @@ export class InlineEmu implements Emu {
     this.lastTickAt = 0;
     this.seq = 0;
     this.droppedMsTotal = 0;
+    this.machineSTotal = 0;
     this.view = null;
     this.bench = null;
     this.benchStepMs = [];
@@ -90,6 +93,7 @@ export class InlineEmu implements Emu {
       if (opts.snapshot) applyState(m, opts.snapshot);
       applyPanelSwitchState(m, opts.panelSwitches);
       applyNamedCoins(m, opts.namedCoins);
+      applyCoinWiring(m, opts.coinWiring);
       if (opts.powerCycle) powerCycleOrThrow(m);
       this.layout = frameLayoutFor(opts.game.system, m, opts.game.layout);
       this.buf = new ArrayBuffer(this.layout.byteLength);
@@ -106,7 +110,10 @@ export class InlineEmu implements Emu {
       this.coins.clear();
       if (this.recorder) { this.recorder.detach(); this.recorder = null; }
       this.machine = m;
-      this.loadedFrom = { game: opts.game, wasm: opts.wasm, noRegions: opts.noRegions };
+      this.loadedFrom = {
+        game: opts.game, wasm: opts.wasm, noRegions: opts.noRegions,
+        optionKeys: opts.optionKeys, panelSwitches: opts.panelSwitches, namedCoins: opts.namedCoins,
+      };
       this.infoValue = buildMachineInfo(opts.game, m, this.layout);
       this.settingNotes = reads.finish().map(unreadSettingLine);
       this.systemName = this.infoValue.system;
@@ -138,6 +145,7 @@ export class InlineEmu implements Emu {
     const t0 = performance.now();
     let steps = 0;
     const budget = Math.floor(elapsed * m.clockHz);
+    this.machineSTotal += budget / m.clockHz;
     try {
       steps = runBudget(m, budget, this.benchStep);
     } catch (e) {
@@ -205,6 +213,16 @@ export class InlineEmu implements Emu {
     const m = this.machine;
     if (!m) return;
     this.coins.offer(m, bit);
+  }
+
+  setCoinWiring(wiring: CoinWiring): void {
+    const m = this.machine;
+    if (m) applyCoinWiring(m, wiring);
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | null {
+    const w = this.machine?.coinWiringStatus;
+    return w ? { ...w, conflicts: [...w.conflicts] } : null;
   }
 
   nameCoin(line: number, coin: NamedCoin): void {
@@ -343,6 +361,24 @@ export class InlineEmu implements Emu {
     return Promise.resolve(l ? { ...l } : null);
   }
 
+  measureCoins(lines: readonly number[]): Promise<{ result: CoinMeasurement; wallMs: number } | null> {
+    const m = this.machine;
+    const from = this.loadedFrom;
+    if (!m || !from) return Promise.resolve(null);
+    const t0 = performance.now();
+    let result: CoinMeasurement;
+    try {
+      result = measureRunningCoins(machineFor, from.game, m, this.gameName, from, lines, new Date());
+    } catch (e) {
+      console.warn('[emu] coin measuring failed', e);
+      result = { refused: (e as Error).message || 'the machine could not be copied' };
+    }
+    const wallMs = performance.now() - t0;
+    this.lastTickAt = 0;
+    this.log.add('coin', measureLogLine(result, wallMs));
+    return Promise.resolve({ result, wallMs });
+  }
+
   clearRam(settings: ClearRamSettings): Promise<string | null> {
     const old = this.machine;
     const from = this.loadedFrom;
@@ -399,6 +435,10 @@ export class InlineEmu implements Emu {
       if (text) { this.log.add('audio', text); console.log('[audio]', text); }
     };
   }
+
+  droppedMs(): number { return this.droppedMsTotal; }
+  machineS(): number { return this.machineSTotal; }
+  framesReceived(): number { return this.seq; }
 
   benchStats(): EmuBenchStats | null {
     return this.bench;

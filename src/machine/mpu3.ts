@@ -13,8 +13,11 @@ import { placeRomFlat } from './pairplacer';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, Machine, DigitKind, CashLedger } from './machine';
+import type { AudioSource, CabinetSwitch, CoinChute, CoinWiringStatus, Machine, DigitKind, CashLedger } from './machine';
 import { newCashLedger, dilSwitchLabel, ledgerOutMults } from './machine';
+import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
+import { locateMpu3Coins, mpu3CoinTable, mpu3Coins, mpu3Payouts, type Mpu3Coin, type Mpu3CoinCode } from './mpu3coins';
+import type { DeclaredCoin } from './layoutcoins';
 import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
@@ -75,7 +78,7 @@ interface PiaWrite {
 }
 
 export class Mpu3 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'plainInputs', 'wiring', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'tokenOutCache'];
 
   readonly digitKind: DigitKind = 'byte16';
   readonly clockHz = MPU3_CLOCK;
@@ -259,6 +262,10 @@ export class Mpu3 implements Bus, Machine {
       { in: [...map.meterIn], out: [...map.meterOut] },
       { in: [...map.triacIn], out: [...map.triacOut] },
     );
+    this.meterInRaw = [...map.meterIn];
+    this.meterOutRaw = [...map.meterOut];
+    this.triacInRaw = [...map.triacIn];
+    this.triacOutRaw = [...map.triacOut];
     this.meterInPence = unit(map.meterIn);
     this.triacInPence = unit(map.triacIn);
     this.meterOutPence = mOut.map((x) => x * MPU3_METER_UNIT_PENCE);
@@ -273,6 +280,20 @@ export class Mpu3 implements Bus, Machine {
 
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
+    this.tokenOutCache = null;
+  }
+
+  private tokenOutCache: number | null = null;
+  private tokenOutBits(): number {
+    if (this.tokenOutCache !== null) return this.tokenOutCache;
+    let bits = 0;
+    for (const p of mpu3Payouts(this.rom) ?? []) {
+      if (!p.triacs || !p.meterBits) continue;
+      let token = true;
+      for (let i = 0; i < 8; i++) if (p.triacs & (1 << i) && this.slidePence[i] !== 'token') token = false;
+      if (token) bits |= p.meterBits;
+    }
+    return (this.tokenOutCache = bits);
   }
 
   powerCycle(): void {
@@ -312,7 +333,9 @@ export class Mpu3 implements Bus, Machine {
   }
 
   step(): number {
+    if (this.wiring) this.takeStep();
     const c = this.cpu.step();
+    if (this.judging) this.judgeStep(c);
     if (++this.slices % METER_TICK_SLICES === 0) this.tickMeters();
     this.speaker.tick(c);
     this.ptm.tick(c);
@@ -488,15 +511,17 @@ export class Mpu3 implements Bus, Machine {
   }
 
   private ic3PortA(): number {
-    let v: number;
-    switch (this.strobe) {
-      case 0: case 1: case 2: case 3: v = (this.matrix[this.strobe] << 2) & 0xff; break;
-      case 4: v = DIP_LOW(this.dip1); break;
-      case 5: v = DIP_HIGH(this.dip1); break;
-      case 6: v = DIP_LOW(this.dip2); break;
-      default: v = DIP_HIGH(this.dip2); break;
-    }
+    const v = this.strobe < 4 ? (this.matrix[this.strobe] << 2) & 0xff : this.dilRow(this.strobe);
     return v | (this.zeroLevel ? 2 : 0);
+  }
+
+  private dilRow(strobe: number): number {
+    switch (strobe) {
+      case 4: return DIP_LOW(this.dip1);
+      case 5: return DIP_HIGH(this.dip1);
+      case 6: return DIP_LOW(this.dip2);
+      default: return DIP_HIGH(this.dip2);
+    }
   }
 
   private setLampBits(base: number, word: number, n: number): void {
@@ -512,12 +537,14 @@ export class Mpu3 implements Bus, Machine {
     for (let i = 0; i < 10; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;
-      this.cashLedger.inPence += this.triacInPence[i] ?? 0;
-      this.cashLedger.outPence += this.triacOutPence[i] ?? 0;
+      this.gridTotals.in += this.triacInRaw[i] ?? 0;
+      this.gridTotals.out += this.triacOutRaw[i] ?? 0;
+      if (this.booksMoney && !this.wiredIn) this.cashLedger.inPence += this.triacInPence[i] ?? 0;
+      if (this.booksMoney) this.cashLedger.outPence += this.triacOutPence[i] ?? 0;
       const p = this.slidePence[i];
       if (p === null) continue;
       if (typeof p === 'number') this.slideOutPence += p;
-      if (this.outPriced) continue;
+      if (this.outPriced || !this.booksMoney) continue;
       if (p === 'token') this.cashLedger.unpricedTokenOut++;
       else if (p === 'unpriced') this.cashLedger.unpricedOut++;
       else this.cashLedger.outPence += p;
@@ -547,8 +574,12 @@ export class Mpu3 implements Bus, Machine {
       if (!(this.meterWord & (1 << b)) || this.meterHold[b] === 0) continue;
       if (--this.meterHold[b] !== 0) continue;
       this.meterCounts[b]++;
-      this.cashLedger.inPence += this.meterInPence[b] ?? 0;
-      this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
+      this.gridTotals.in += this.meterInRaw[b] ?? 0;
+      this.gridTotals.out += this.meterOutRaw[b] ?? 0;
+      if (this.booksMoney && !this.wiredIn) this.cashLedger.inPence += this.meterInPence[b] ?? 0;
+      if (!this.booksMoney) continue;
+      if (this.tokenOutBits() & (1 << b)) this.cashLedger.tokenOutPence += this.meterOutPence[b] ?? 0;
+      else this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
     }
   }
 
@@ -567,6 +598,10 @@ export class Mpu3 implements Bus, Machine {
     if (raw === undefined || !(raw & 0x100)) return;
     const row = (raw & 0x78) >> 3;
     if (row >= this.matrix.length) return;
+    const line = 0x100 | (raw & 0x7f);
+    const coins = this.programCoins();
+    if (coins && !coins.some((c) => c.id === line)) { this.coinsRefused++; return; }
+    if (this.wiring && coins) this.pend(this.keyOf(line));
     this.coinRow = row;
     this.coinMask = 1 << (raw & 7);
     this.coinTimer = COIN_PRESS + COIN_GAP;
@@ -574,6 +609,240 @@ export class Mpu3 implements Bus, Machine {
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }
+
+  private coinCodeCache: Mpu3CoinCode | Refusal | null = null;
+  private coinCodeFound(): Mpu3CoinCode | Refusal {
+    return (this.coinCodeCache ??= locateMpu3Coins(this.rom));
+  }
+  private coinCode(): Mpu3CoinCode | null {
+    const c = this.coinCodeFound();
+    return 'refused' in c ? null : c;
+  }
+
+  private coinsCache: { dips: number; coins: Mpu3Coin[] | null } | null = null;
+  private programCoins(): Mpu3Coin[] | null {
+    const code = this.coinCode();
+    if (!code) return null;
+    const dips = (this.dip1 << 8) | this.dip2;
+    if (this.coinsCache?.dips !== dips) this.coinsCache = { dips, coins: mpu3Coins(code, this.rom, (s) => this.dilRow(s)) };
+    return this.coinsCache.coins;
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const code = this.coinCode();
+    const coins = this.programCoins();
+    if (!code || !coins) return null;
+    const t = mpu3CoinTable(code, coins);
+    return { ...t, lines: t.lines.map((l) => ({ ...l, line: this.keyOf(l.line) })) };
+  }
+
+  private static lineOf(id: number): number | null {
+    const raw = id >= 0x100 && id < 0x180 ? id : COIN_RAW[id];
+    if (raw === undefined || !(raw & 0x100) || ((raw & 0x78) >> 3) >= 6) return null;
+    return 0x100 | (raw & 0x7f);
+  }
+
+  private keyOf(line: number): number {
+    return this.drawnCoins.find((d) => d !== line && Mpu3.lineOf(d) === line) ?? line;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const c = this.coinCodeFound();
+    if ('refused' in c) return c.refused;
+    return this.programCoins() ? null : 'the program\'s change for a coin does not balance at these DIL settings';
+  }
+
+  private priced(): Map<number, SlotCoin> | null {
+    const t = this.coinLineTable;
+    if (!t) return null;
+    const c = detectCoins(t);
+    return c instanceof Map ? c : null;
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    const coins = this.priced();
+    if (!coins) return undefined;
+    const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
+    return [...coins].map(([bit, coin]): CoinChute => (typeof coin === 'number'
+      ? { label: label(coin), bit, pence: coin }
+      : { label: coin.token === null ? 'Token' : `${label(coin.token)} token`, bit, pence: coin.token, token: true }))
+      .sort((a, b) => (b.pence ?? -1) - (a.pence ?? -1) || a.bit - b.bit);
+  }
+
+  coinsRefused = 0;
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private get wiredIn(): boolean {
+    return !!this.wiring && this.programCoins() !== null;
+  }
+
+  private takeId = -1;
+  private takeEnd = -1;
+  private takeLeft = 0;
+  private static readonly TAKE_WINDOW = 400;
+
+  private takeStep(): void {
+    const code = this.coinCode();
+    if (!code) return;
+    const pc = this.cpu.pc & 0x7fff;
+    if (this.takeId >= 0) {
+      if (pc === code.credit && (code.creditX === undefined || this.cpu.x === code.creditX)) {
+        const id = this.takeId;
+        this.takeId = -1;
+        this.unpend(id);
+        this.bookTaken(id);
+        return;
+      }
+      const ended = code.shape === 'strobed' ? pc === this.takeEnd : this.recordPtr(code) !== this.takeEnd;
+      if (ended || --this.takeLeft <= 0) { this.unpend(this.takeId); this.takeId = -1; }
+    }
+    if (pc !== code.take) return;
+    let line: number | null = null;
+    if (code.shape === 'strobed') {
+      const st = this.ram[code.strobeVar!]!;
+      if (st < 4) line = st * 8 + 5;
+      const sp = this.cpu.s;
+      this.takeEnd = ((this.read8((sp + 1) & 0xffff) << 8) | this.read8((sp + 2) & 0xffff)) & 0x7fff;
+    } else {
+      this.takeEnd = this.recordPtr(code);
+      line = code.lineOfIndex![this.takeEnd - code.table!] ?? null;
+    }
+    if (line === null) return;
+    this.takeId = this.keyOf(0x100 | line);
+    this.takeLeft = Mpu3.TAKE_WINDOW;
+  }
+
+  private recordPtr(code: Mpu3CoinCode): number {
+    return (this.ram[code.ptrVar!]! << 8) | this.ram[code.ptrVar! + 1]!;
+  }
+
+  private static readonly JUDGE_WAIT = Math.round(1.5 * MPU3_CLOCK);
+  private readonly judgeId = new Array<number>(4).fill(-1);
+  private readonly judgeWait = new Array<number>(4).fill(0);
+  private judging = false;
+
+  private pend(id: number): void {
+    const k = this.judgeId.indexOf(-1);
+    if (k < 0) { this.coinsRefused++; return; }
+    this.judgeId[k] = id;
+    this.judgeWait[k] = Mpu3.JUDGE_WAIT;
+    this.judging = true;
+  }
+
+  private unpend(id: number): void {
+    let k = -1;
+    for (let i = 0; i < this.judgeId.length; i++) {
+      if (this.judgeId[i] !== id) continue;
+      if (k < 0 || this.judgeWait[i]! < this.judgeWait[k]!) k = i;
+    }
+    if (k < 0) return;
+    this.judgeId[k] = -1;
+    this.judgeWait[k] = 0;
+  }
+
+  private judgeStep(cycles: number): void {
+    let any = false;
+    for (let k = 0; k < this.judgeId.length; k++) {
+      if (this.judgeId[k]! < 0) continue;
+      this.judgeWait[k] = this.judgeWait[k]! - cycles;
+      if (this.judgeWait[k]! <= 0) {
+        this.coinsRefused++;
+        this.judgeId[k] = -1;
+        this.judgeWait[k] = 0;
+        continue;
+      }
+      any = true;
+    }
+    this.judging = any;
+  }
+
+  private bookTaken(id: number): void {
+    const w = this.wiring;
+    if (!w || !this.booksMoney || w.conflicts.includes(id)) return;
+    const taken = this.priced()?.get(id) ?? null;
+    const c = w.coins.get(id);
+    if (c === undefined) {
+      if (taken !== null) this.bookCoin(id, taken);
+      return;
+    }
+    if (taken !== null) {
+      const agrees = typeof c === 'number'
+        ? typeof taken === 'number' && taken === c
+        : typeof taken === 'object' && (c.token === null || taken.token === null || c.token === taken.token);
+      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    this.bookCoin(id, c);
+  }
+
+  private bookCoin(id: number, c: SlotCoin): void {
+    if (typeof c === 'number') this.cashLedger.inPence += c;
+    else if (c.token === null) this.cashLedger.unpricedTokenIn++;
+    else this.cashLedger.tokenInPence += c.token;
+    this.cashLedger.outPence += this.changeFor(id);
+  }
+
+  private changeFor(id: number): number {
+    const t = this.coinLineTable;
+    const l = t?.lines.find((x) => x.line === id);
+    if (!t || !l || !l.change.length) return 0;
+    const alt = l.change[0]!;
+    return alt.reduce((s, x) => s + x.count * (x.pence ?? 0), 0);
+  }
+
+  private coinSlots: number[] = [];
+  private drawnCoins: number[] = [];
+  private plainInputs: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[], plain: readonly number[] = []): void {
+    const slots = new Set<number>();
+    const drawn = new Set<number>();
+    for (const c of list) {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      const id = mpu3SlotId(c);
+      if (id === null) continue;
+      drawn.add(id);
+      if (c.pence === null) slots.add(id);
+    }
+    this.coinSlots = [...slots].sort((a, b) => a - b);
+    this.drawnCoins = [...drawn].sort((a, b) => a - b);
+    this.plainInputs = [...new Set(plain.filter((b) => Number.isInteger(b) && b >= 0 && b < 0x80))].sort((a, b) => a - b);
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    const coins = this.programCoins() ?? [];
+    const plain = this.plainInputs.map((b) => 0x100 | b).filter((id) => coins.some((c) => c.id === id)).map((id) => this.keyOf(id));
+    return [...new Set([...this.coinSlots, ...plain])].sort((a, b) => a - b);
+  }
+
+  private meterInRaw: number[] = [];
+  private meterOutRaw: number[] = [];
+  private triacInRaw: number[] = [];
+  private triacOutRaw: number[] = [];
+  private readonly gridTotals = { in: 0, out: 0 };
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in, out: this.gridTotals.out };
+  }
 
   get parts(): BoardPart[] {
     return [
@@ -597,4 +866,11 @@ export class Mpu3 implements Bus, Machine {
       { id: 'sound', label: 'SOUND', part: 'IC3 CB2 and the PTM', device: this.speaker },
     ];
   }
+}
+
+export function mpu3SlotId(c: Pick<DeclaredCoin, 'line' | 'button' | 'note'>): number | null {
+  if (c.line !== null) return c.line;
+  if (c.note !== null && c.note !== 0x47) return c.note;
+  if (c.note === 0x47 && c.button !== null && c.button >= 0) return 0x100 | (c.button & 0x7f);
+  return null;
 }

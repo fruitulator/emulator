@@ -30,3 +30,9 @@ export function acceptorIds(values: ReadonlyMap<string, number>): { note?: numbe
 export function isLineWindow(coinId: number): boolean {
   return coinId >= 0x0f && coinId <= 0x16;
 }
+
+export function isAcceptor(values: ReadonlyMap<string, number>): boolean {
+  if (values.get('CoinSelected')) return true;
+  const old = values.get('CoinId');
+  return old === 0x43 || old === 0x44 || old === 0x45 || old === 0x49 || old === 0x4a;
+}

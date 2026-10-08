@@ -50,11 +50,12 @@ export function landedFlaws(meta: GameMeta): string[] {
 
 export async function listArchives(
   sets: FolderSet[],
-  o: { onEach?(i: number, n: number, set: FolderSet): void; trace?(line: string): void } = {},
+  o: { onEach?(i: number, n: number, set: FolderSet): void; stop?(): boolean; trace?(line: string): void } = {},
 ): Promise<FolderSet[]> {
   for (const s of sets) if (s.punnet) await sniffPunnetSet(s);
   const archives = sets.filter((s) => s.zip);
   for (let i = 0; i < archives.length; i++) {
+    if (o.stop?.()) return [];
     o.onEach?.(i, archives.length, archives[i]);
     const t0 = Date.now();
     try {

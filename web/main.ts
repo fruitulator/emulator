@@ -31,7 +31,7 @@ import {
   onLibraryWrite, openPak, type ImportError, type UploadSource,
 } from './importer';
 import { exportPunnet, punnetFileName } from './portable';
-import { openExportPicker, openPackTarget, packGames } from './punnetexport';
+import { openExportPicker, openPackTarget, packGames, packReport } from './punnetexport';
 import { openAlert } from './ui/dialog';
 import { pillButton } from './ui/list';
 import { rowIcon } from './ui/icons';
@@ -70,10 +70,7 @@ import {
 import { deflateSync, strToU8 } from 'fflate';
 import { parseTitle } from './title';
 import { layoutPoint, pickControl } from './cabhit';
-import { viewFor, acceptorResolve, coinInputLine, type PlatformView } from './platform';
-import { mustAsk, readCoinAnswers, withAnswer, type CoinAnswers } from './coinask';
-import { askCoin } from './coinaskui';
-import type { NamedCoin } from '../src/machine/machine';
+import { viewFor, acceptorResolve, stampCoinInputs, type PlatformView } from './platform';
 import { virtualDisplayReversed } from '../src/machine/layoutdisplay';
 import {
   reelEffectivePosition,
@@ -82,7 +79,6 @@ import {
   type CabLamp,
   type Cabinet,
 } from './dat';
-import { hasInput } from './dat';
 import { StoreConfirm, reelDriftFault } from './reeldrift';
 import { createCabinetPainter, DOT_OFF, DOT_ON } from './cabdraw';
 import { chordCaps, primaryModifier } from './shortcuts';
@@ -230,12 +226,6 @@ function traceReset(): void {
   traceStart = 0;
   try { localStorage.removeItem(TRACE_KEY); } catch {  }
 }
-function traceTail(n = 10): string {
-  try {
-    const lines = JSON.parse(localStorage.getItem(TRACE_KEY) ?? '[]') as string[];
-    return lines.length ? str('main.what_the_page_got_through', { 0: lines.slice(-n).join('\n') }) : '';
-  } catch { return ''; }
-}
 function markImporting(name: string): void {
   try { sessionStorage.setItem(IMPORTING_KEY, name); } catch {  }
 }
@@ -247,14 +237,14 @@ window.addEventListener('unhandledrejection', (ev) => {
   trace(`unhandled rejection: ${why}`);
   if (importing()) {
     clearImporting();
-    showError(str('main.the_import_stopped_on_an', { 0: why, 1: traceTail() }));
+    showError(str('main.the_import_stopped_on_an', { 0: why }));
   }
 });
 window.addEventListener('error', (ev) => {
   trace(`error: ${ev.message}`);
   if (importing()) {
     clearImporting();
-    showError(str('main.the_import_stopped_on_an', { 0: ev.message, 1: traceTail() }));
+    showError(str('main.the_import_stopped_on_an', { 0: ev.message }));
   }
 });
 function clearImporting(): void {
@@ -277,7 +267,7 @@ function reportInterruptedImport(): void {
     sessionStorage.removeItem(PICKER_KEY);
   } catch { return; }
   if (!name && pickerOpen) {
-    showError(str('main.the_page_reloaded_while_the', { 0: traceTail() }));
+    showError(str('main.the_page_reloaded_while_the'));
     return;
   }
   if (!name) return;
@@ -286,7 +276,7 @@ function reportInterruptedImport(): void {
     const e = JSON.parse(localStorage.getItem(LAST_ERROR_KEY) ?? 'null') as { msg: string; at: string } | null;
     if (e) last = str('main.the_last_error_recorded_was', { 0: e.msg, 1: e.at });
   } catch {  }
-  showError(str('main.the_page_reloaded_while_n', { 0: name, 1: last, 2: traceTail() }));
+  showError(str('main.the_page_reloaded_while_n', { 0: name, 1: last }));
 }
 
 errorDismiss.addEventListener('click', () => {
@@ -318,13 +308,11 @@ class Session {
   game: Game | null = null;
   hash: string | null = null;
   autoSave = true;
-  coinAnswers: CoinAnswers = {};
   meta: GameMeta | null = null;
 }
 const session = new Session();
 const stateStore: StateStore = localStateStore;
 let libraryReturns = 0;
-let coinAsking = false;
 let libraryErased = false;
 
 let cabinet: Cabinet | null = null;
@@ -385,13 +373,11 @@ function startGame(
     machineUp = true;
     settle();
   };
-  session.coinAnswers = readCoinAnswers(session.meta?.coinAnswers);
   void emu.load({
     game,
     snapshot,
     optionKeys: readSavedOptionKeys(game),
     panelSwitches: readSavedPanelSwitches(game),
-    namedCoins: session.coinAnswers,
     benchStep: BENCH_STEP,
     noAudio: NO_AUDIO,
     bench: BENCH,
@@ -473,16 +459,7 @@ function startGame(
       const cabView = viewFor(game.system);
       capsAreSwitches(cab.lamps, cabView.nonSwitchInputs);
       cabinet = cab;
-      let coinControls = 0;
-      const cabChutes = emu.info?.coins ?? cabView.coins;
-      for (const lp of cab.lamps) {
-        if (lp.acceptor) { coinControls++; continue; }
-        if (!hasInput(lp)) continue;
-        const line = coinInputLine(cabView, lp.button ?? -1, cabChutes);
-        if (line < 0) continue;
-        lp.coinInput = line;
-        coinControls++;
-      }
+      const coinControls = stampCoinInputs(cab.lamps, cabView, emu.info?.coins ?? cabView.coins);
       if (!coinControls) {
         showNotice(machineCoins(emu.info, cabView).length
           ? str('main.this_cabinet_s_layout_draws')
@@ -582,7 +559,6 @@ function handleUpload(src: UploadSource, fallbackName?: string): void {
           session.hash = meta.hash;
           session.meta = meta;
           session.autoSave = meta.autoSave;
-          adoptCoinAnswers(meta);
         } else {
           hideBusy();
           status.textContent = str('main.n_added_tap_its_card', { 0: meta.name });
@@ -689,11 +665,28 @@ function importPunnetFile(bytes: Uint8Array, name: string): void {
 let stopBatch = false;
 let batchRunning = false;
 
+let pickGen = 0;
+
 busyStop.addEventListener('click', () => {
+  if (!batchRunning) {
+    pickGen++;
+    disarmPickerWait();
+    clearImporting();
+    busyStop.hidden = true;
+    hideBusy();
+    trace('pick stopped before import');
+    status.textContent = str('main.stopped_nothing_was_added');
+    return;
+  }
   stopBatch = true;
   busyStop.disabled = true;
   setBusyMsg(str('main.finishing_the_sets_in_progress'));
 });
+
+function offerPickStop(): void {
+  busyStop.hidden = false;
+  busyStop.disabled = false;
+}
 
 async function importFolderSets(sets: FolderSet[]): Promise<void> {
   stopBatch = false;
@@ -867,6 +860,8 @@ importReportRemove.addEventListener('click', async () => {
 
 async function importPicked(files: File[]): Promise<void> {
   if (files.length === 0) return;
+  const gen = pickGen;
+  const stopped = (): boolean => gen !== pickGen;
   if (files.length === 1 && /\.punnet$/i.test(files[0].name)) {
     const probe: FolderSet = { dir: files[0].name, name: archiveStem(files[0].name), entries: [files[0]], punnet: true };
     await sniffPunnetSet(probe);
@@ -879,21 +874,26 @@ async function importPicked(files: File[]): Promise<void> {
   status.textContent = str('main.loading');
   showBusy(files.length === 1 ? str('main.reading_n', { 0: files[0].name }) : str('main.reading_n_files', { 0: files.length }));
   markImporting(files.length === 1 ? files[0].name : 'a game folder');
+  offerPickStop();
   const picked = setsFromFolderInput(files);
   trace(`split into ${picked.length} set(s), ${picked.filter((s) => s.zip).length} archive(s)`);
 
   if (picked.length === 0) {
     clearImporting();
+    busyStop.hidden = true;
     hideBusy();
     status.textContent = str('main.no_game_files_in_that');
     return;
   }
 
   const sets = await listArchives(picked, {
-    onEach: (i, n, set) => showBusy(n > 1
-      ? str('main.looking_inside_n_n_of', { 0: set.name, 1: i + 1, 2: n }) : str('main.looking_inside_n', { 0: set.name })),
+    onEach: (i, n, set) => { if (!stopped()) showBusy(n > 1
+      ? str('main.looking_inside_n_n_of', { 0: set.name, 1: i + 1, 2: n }) : str('main.looking_inside_n', { 0: set.name })); },
+    stop: stopped,
     trace,
   });
+  if (stopped()) return;
+  busyStop.hidden = true;
 
   if (sets.length === 1) {
     const set = sets[0];
@@ -935,6 +935,7 @@ for (const input of [picker, zipPicker]) {
     if (files.length === 0) disarmPickerWait();
     else if (pickerWait) { if (pickerWait.timer > 0) clearTimeout(pickerWait.timer); pickerWait = null; }
     trace(`picker answered: ${files.length} file(s), ${files.reduce((n, f) => n + f.size, 0)} bytes`);
+    if (pickerGen !== pickGen) { trace('pick was stopped: dropped'); return; }
     status.textContent = files.length === 1 ? str('main.1_file_picked') : str('main.n_files_picked', { 0: files.length });
     void importPicked(files);
   });
@@ -1116,7 +1117,6 @@ async function openFromLibrary(hash: string, resume: boolean, variant?: string):
         if (session.hash === hash) {
           session.meta = meta;
           session.autoSave = meta.autoSave;
-          adoptCoinAnswers(meta);
           if (!onFirstFrameDrawn) hideBusy();
         }
         requestStoragePersist();
@@ -1179,23 +1179,6 @@ const libraryHandlers: LibraryHandlers = {
       .then((m) => (m ? putMeta({ ...m, title: title || undefined }) : undefined))
       .then(() => renderLibrary(libraryHandlers))
       .catch((e) => console.warn('[library] rename failed', e));
-  },
-  onForgetCoins: (hash) => {
-    if (hash === session.hash) {
-      session.coinAnswers = {};
-      if (session.meta) session.meta = { ...session.meta, coinAnswers: undefined };
-    }
-    void getMeta(hash)
-      .then((m) => {
-        if (!m) return undefined;
-        const { coinAnswers: _gone, ...rest } = m;
-        return putMeta(rest);
-      })
-      .then(() => {
-        status.textContent = str('main.coin_slots_will_be_asked');
-        return renderLibrary(libraryHandlers);
-      })
-      .catch((e) => console.warn('[library] coin answers not cleared', e));
   },
   onExport: async (hash) => {
     if (libraryWriteInFlight()) {
@@ -1281,21 +1264,13 @@ async function exportMany(
   }
   trace(`exported ${result.written.length} games (${result.bytes} bytes, ${target.streamed ? 'streamed' : 'blob'}), ${result.failed.length} failed${result.stopped ? ', stopped' : ''}`);
   const n = result.written.length;
-  const message = result.stopped ? str('main.export_stopped_no_file_was')
-    : n === 0 ? str('main.nothing_was_exported')
-    : str('main.n_games_saved_in_one', { n, size: fmtMB(result.bytes) });
-  const lines = result.failed.map((f) => `${f.title} - ${f.reason}`);
-  if (lines.length) lines.unshift(str('main.n_could_not_be_packed', { 0: lines.length }));
+  const { message, lines, clean } = packReport(result);
   if (n && !result.stopped) status.textContent = str('main.n_games_exported', { 0: n });
-  if (!lines.length && n && !result.stopped) {
+  if (clean) {
     showNotice(message);
     return;
   }
   openAlert({ message, lines, buttons: [{ button: pillButton(str('main.ok'), () => undefined), run: () => undefined }] });
-}
-
-function fmtMB(n: number): string {
-  return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1024 ** 2))} MB`;
 }
 
 onLibraryWrite(() => {
@@ -1625,7 +1600,6 @@ async function clearRamNow(): Promise<string | null> {
   const why = await emu.clearRam({
     optionKeys: readSavedOptionKeys(game),
     panelSwitches: readSavedPanelSwitches(game),
-    namedCoins: session.coinAnswers,
   });
   if (why) return str('main.not_cleared_n', { 0: why });
   if (session.hash && !session.autoSave) {
@@ -1804,12 +1778,9 @@ const appActions: ActionSurface = {
   running: () => running,
   closeMenu,
   coin: (c) => {
-    void coinNamed(c.bit).then((ok) => {
-      if (!ok) return;
-      emu.coin(c.bit);
-      effects.coin(undefined);
-      stopWatch.engage();
-    });
+    emu.coin(c.bit);
+    effects.coin(undefined);
+    stopWatch.engage();
   },
   throwSwitch: (sw, checked) => {
     const said = throwPanelSwitch(sw, checked);
@@ -2240,7 +2211,43 @@ function frame(now: number): void {
   if (BENCH) benchSample(t0);
   screenStalls.charge('drawing the machine', tDraw);
   screenStalls.charge('the rest of the frame', performance.now() - tFrame - tDraw);
+  if (import.meta.env.DEV) frameScriptTotal += performance.now() - tFrame;
   requestAnimationFrame(frame);
+}
+
+let frameScriptTotal = 0;
+
+if (import.meta.env.DEV) {
+  void import('./trace').then(({ PLAIN_PAGE_NOTE, Recorder, TRACE_KEY }) => {
+    const totals = { n: 0, patches: 0, wholes: 0, layoutMs: 0, copyMs: 0, patchPx: 0, bitmapMs: 0, parts: 0 };
+    let seenT = 0;
+    const recorder = new Recorder({
+      emu,
+      running: () => running,
+      gpuMs: () => null,
+      glass: () => {
+        for (const d of painter.drawLog) {
+          if (d.t <= seenT) continue;
+          totals.n++;
+          if (d.rects === 'full') { totals.wholes++; totals.patchPx += canvas.width * canvas.height; }
+          else { totals.patches++; for (const r of d.rects) totals.patchPx += (r.right - r.left) * (r.bottom - r.top); }
+        }
+        const last = painter.drawLog[painter.drawLog.length - 1];
+        if (last) seenT = last.t;
+        return totals;
+      },
+      scriptMs: () => frameScriptTotal,
+      describe: () => `${canvas.width}x${canvas.height}@${+devicePixelRatio.toFixed(2)}, ${PLAIN_PAGE_NOTE}`,
+    }, 'app-trace');
+    recorder.start();
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key !== TRACE_KEY) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      const name = recorder.dump((t) => console.log(t));
+      if (name) status.textContent = str('main.trace_saved_n', { 0: name });
+    }, true);
+  });
 }
 
 if (import.meta.env.DEV && 'serviceWorker' in navigator) {
@@ -2847,7 +2854,7 @@ function loadSnapshotFile(file: File): void {
         return;
       }
       const booted = ++session.boot;
-      void emu.load({ game, snapshot: snap, optionKeys: readSavedOptionKeys(game), panelSwitches: readSavedPanelSwitches(game), namedCoins: session.coinAnswers, bench: BENCH, noRegions: NO_REGIONS, wasm: USE_WASM })
+      void emu.load({ game, snapshot: snap, optionKeys: readSavedOptionKeys(game), panelSwitches: readSavedPanelSwitches(game), bench: BENCH, noRegions: NO_REGIONS, wasm: USE_WASM })
         .then((info) => {
           if (booted !== session.boot) return;
           audio.attach(info.audioRate);
@@ -2877,42 +2884,6 @@ function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor']): void {
   }
 }
 
-async function coinNamed(line: number): Promise<boolean> {
-  if (!mustAsk(line, emu.info?.unnamedCoins, session.coinAnswers)) return true;
-  if (coinAsking) return false;
-  coinAsking = true;
-  const booted = session.boot;
-  let coin: NamedCoin | null;
-  try {
-    coin = await askCoin();
-  } finally {
-    coinAsking = false;
-  }
-  if (coin === null || booted !== session.boot || !running) return false;
-  session.coinAnswers = withAnswer(session.coinAnswers, line, coin);
-  emu.nameCoin(line, coin);
-  if (session.hash) saveCoinAnswers(session.hash);
-  return true;
-}
-
-function saveCoinAnswers(hash: string): void {
-  const answers = session.coinAnswers;
-  if (session.meta?.hash === hash) session.meta = { ...session.meta, coinAnswers: answers };
-  void getMeta(hash)
-    .then((m) => (m ? putMeta({ ...m, coinAnswers: answers }) : undefined))
-    .catch((e) => console.warn('[library] coin answer not saved', e));
-}
-
-function adoptCoinAnswers(meta: GameMeta): void {
-  const stored = readCoinAnswers(meta.coinAnswers);
-  for (const [line, coin] of Object.entries(stored)) {
-    if (!(line in session.coinAnswers)) emu.nameCoin(Number(line), coin);
-  }
-  const unsaved = Object.keys(session.coinAnswers).some((k) => stored[k] !== session.coinAnswers[k]);
-  session.coinAnswers = { ...stored, ...session.coinAnswers };
-  if (unsaved) saveCoinAnswers(meta.hash);
-}
-
 function coinsMenuHint(view: PlatformView): string {
   return machineCoins(emu.info, view).length ? str('main.menu_coins_puts_money_in') : '';
 }
@@ -2940,16 +2911,11 @@ function activate(lp: CabLamp, pointerId: number): void {
       showNotice(str('main.this_slot_is_drawn_on', { 0: coinsMenuHint(view) }));
       return;
     }
-    if (mustAsk(bit, emu.info?.unnamedCoins, session.coinAnswers)) {
-      void coinNamed(bit).then((ok) => { if (ok) dropCoinAt(bit, lp.acceptor); });
-      return;
-    }
     dropCoinAt(bit, lp.acceptor);
     return;
   }
-  if (lp.coinInput !== undefined && lp.coinInput >= 0 && emu.info?.unnamedCoins?.includes(lp.coinInput)) {
-    const line = lp.coinInput;
-    void coinNamed(line).then((ok) => { if (ok) dropCoinAt(line); });
+  if (lp.coinInput !== undefined && lp.coinInput >= 0 && emu.info?.namesCoins && emu.info.unnamedCoins?.includes(lp.coinInput)) {
+    dropCoinAt(lp.coinInput);
     return;
   }
   if (lp.button !== undefined) pressInput(pointerId, lp.button);
@@ -3422,10 +3388,12 @@ function openPicker(which: 'folder' | 'files'): void {
   traceReset();
   trace(`picker opened: ${which}`);
   markPickerOpen(true);
+  pickerGen = pickGen;
   armPickerWait(which);
   (which === 'folder' ? picker : zipPicker).click();
 }
 
+let pickerGen = 0;
 let pickerWait: { which: 'folder' | 'files'; left: boolean; timer: number } | null = null;
 function armPickerWait(which: 'folder' | 'files'): void {
   disarmPickerWait();
@@ -3436,7 +3404,7 @@ function disarmPickerWait(): void {
   const shown = pickerWait.timer === -1;
   if (pickerWait.timer > 0) clearTimeout(pickerWait.timer);
   pickerWait = null;
-  if (shown) hideBusy();
+  if (shown) { busyStop.hidden = true; hideBusy(); }
 }
 function pickerLeft(): void {
   if (pickerWait) pickerWait.left = true;
@@ -3450,6 +3418,7 @@ function pickerBack(): void {
     showBusy(w.which === 'folder'
       ? str('main.reading_the_folder')
       : str('main.opening_the_files'));
+    offerPickStop();
   }, 250);
 }
 window.addEventListener('blur', pickerLeft);

@@ -1,6 +1,7 @@
 import { unbuiltParts } from '../src/machine/boarddefaults';
 import type { UnbuiltPart } from '../src/machine/boarddefaults';
 import { str } from './i18n';
+import { rowIcon } from './ui/icons';
 
 export interface StopSample {
   lampsRaw: Uint8Array;
@@ -146,6 +147,7 @@ export class StopNote {
   private closeRun: (() => void) | null = null;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private closeBtn: HTMLButtonElement | null = null;
+  private iconEl: HTMLElement | null = null;
 
   constructor(
     root: Document | HTMLElement = document,
@@ -158,6 +160,7 @@ export class StopNote {
         : (root as HTMLElement).querySelector(`#${id}`);
     this.el = q('stopnote');
     this.msg = q('stopnote-msg');
+    this.iconEl = q('stopnote-icon');
     const more = q('stopnote-more') as HTMLButtonElement | null;
     const close = q('stopnote-close') as HTMLButtonElement | null;
     this.closeBtn = close;
@@ -175,9 +178,10 @@ export class StopNote {
   }
 
   update(reason: NoteReason | null, text: string, offerState = false): string | null {
+    if (reason !== null) this.setIcon(null);
     if (reason !== 'stopped') this.dismissed.delete('stopped');
     if (!reason || this.dismissed.has(reason)) {
-      if (this.shown) this.hide();
+      if (this.shown && !this.passing) this.hide();
       this.reason = null;
       return null;
     }
@@ -191,8 +195,15 @@ export class StopNote {
     return text;
   }
 
-  notice(text: string, action?: { label: string; run: () => void }, onClose?: () => void, hideAfterMs?: number): void {
+  notice(
+    text: string,
+    action?: { label: string; run: () => void },
+    onClose?: () => void,
+    hideAfterMs?: number,
+    icon?: { paths: string; label: string },
+  ): void {
     this.reason = null;
+    this.setIcon(icon ?? null);
     this.closeRun = onClose ?? null;
     if (this.hideTimer !== null) { clearTimeout(this.hideTimer); this.hideTimer = null; }
     if (this.closeBtn) this.closeBtn.hidden = hideAfterMs !== undefined;
@@ -213,7 +224,7 @@ export class StopNote {
     if (this.moreBtn) this.moreBtn.hidden = true;
     if (this.stateBtn) this.stateBtn.hidden = true;
     this.offering = false;
-    this.show(text);
+    this.show(text, hideAfterMs !== undefined);
   }
 
   dismiss(): void {
@@ -225,28 +236,52 @@ export class StopNote {
   clear(): void {
     this.dismissed.clear();
     this.reason = null;
-    this.hide();
+    if (!this.passing) this.hide();
   }
 
   get visible(): boolean { return this.shown; }
+  get passing(): boolean { return this.shown && this.hideTimer !== null; }
   get text(): string { return this.lastText; }
   get saying(): NoteReason | null { return this.shown ? this.reason : null; }
   get offeringState(): boolean { return this.shown && this.offering; }
 
-  private show(text: string): void {
+  private setIcon(icon: { paths: string; label: string } | null): void {
+    const el = this.iconEl;
+    if (!el) return;
+    el.hidden = !icon;
+    if (!icon) { el.replaceChildren(); el.removeAttribute('aria-label'); return; }
+    el.setAttribute('aria-label', icon.label);
+    el.replaceChildren(rowIcon(icon.paths, 'stopnote-icon-svg', 22));
+  }
+
+  private show(text: string, passing = false): void {
     this.lastText = text;
+    const wasUp = this.shown;
     this.shown = true;
     if (this.msg) this.msg.textContent = text;
     if (!this.el) return;
     const el = this.el;
+    if (wasUp && el.classList.contains('open')) {
+      document.documentElement.style.setProperty('--toast-h', `${el.offsetHeight}px`);
+      return;
+    }
     el.hidden = false;
-    el.classList.remove('leaving');
+    el.classList.remove('leaving', 'settled');
+    if (passing) el.classList.add('passing'); else el.classList.remove('passing');
     requestAnimationFrame(() => {
       if (!this.shown) return;
       el.classList.add('open');
       document.documentElement.style.setProperty('--toast-h', `${el.offsetHeight}px`);
     });
+    el.addEventListener?.('animationend', this.onAnnounceEnd);
   }
+
+  private readonly onAnnounceEnd = (e: AnimationEvent): void => {
+    const el = this.el;
+    if (!el || e.target !== el || !e.animationName.startsWith('toast-')) return;
+    el.removeEventListener?.('animationend', this.onAnnounceEnd);
+    if (this.shown && el.classList.contains('open')) el.classList.add('settled');
+  };
 
   private restoreButtons(): void {
     this.actRun = null;
@@ -269,8 +304,10 @@ export class StopNote {
     el.classList.remove('open');
     window.setTimeout(() => {
       if (this.shown || el.classList.contains('open')) return;
-      el.classList.remove('leaving');
+      el.classList.remove('leaving', 'settled');
+      el.classList.remove('passing');
       el.hidden = true;
+      this.setIcon(null);
       this.restoreButtons();
     }, HIDE_MS);
   }

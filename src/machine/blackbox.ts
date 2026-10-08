@@ -3,13 +3,15 @@ import { HD6303Y } from '../cpu/m6303';
 import type { Bus } from '../cpu/bus';
 import { Pia6821 } from '../hw/pia6821';
 import { Reel } from '../hw/reel';
-import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind } from './machine';
+import type { AudioSource, CabinetSwitch, CoinChute, CoinWiringStatus, Machine, MachineDisplay, DigitKind } from './machine';
 import { newCashLedger, ledgerOutMults } from './machine';
+import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
+import type { DeclaredCoin } from './layoutcoins';
+import { bbCoinBits, bbCoinParts, bbCoinTable, bbRecordOf, creditsOf, locateBlackBoxCoins, type BbCoinCode } from './bbcoins';
 import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { ReelGeometry } from './layoutreels';
-import { COIN_RAW } from './coinraw';
 import { noteRomCut } from './boarddefaults';
 import { BbTone, bbTonePeriod, type BbSoundType } from '../hw/bbtone';
 import { resetReelsInPlace } from './v20optic';
@@ -40,9 +42,10 @@ const OPTIC_TABLE = (() => {
 
 const COIN_HOLD = Math.floor(BLACKBOX_CLOCK * 0.1);
 const COIN_TAIL = Math.floor(BLACKBOX_CLOCK * 0.005);
+const COIN_HOLD_LINE = Math.floor(BLACKBOX_CLOCK * 0.07);
 
 export class BlackBox implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
 
   readonly digitKind: DigitKind = 'byte16';
   readonly clockHz = BLACKBOX_CLOCK;
@@ -72,7 +75,10 @@ export class BlackBox implements Bus, Machine {
   private meterOutPence: number[] = [];
 
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
-    this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
+    this.meterInRaw = [...inMult];
+    this.meterOutRaw = [...outMult];
+    const counts = this.coinCode()?.countMeters ?? [];
+    this.meterInPence = inMult.map((x, b) => (counts.includes(b) ? 0 : x * METER_UNIT_PENCE));
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
   }
 
@@ -201,6 +207,7 @@ export class BlackBox implements Bus, Machine {
     this.meterWord = 0;
     this.coinMask = 0;
     this.coinTimer = 0;
+    this.coinParts = [];
     resetReelsInPlace(this.reelSet);
     this.tone.reset();
     this.recomputeOptics();
@@ -226,9 +233,14 @@ export class BlackBox implements Bus, Machine {
     }
     if (this.coinTimer > 0) {
       this.coinTimer -= c;
-      if (this.coinTimer <= COIN_TAIL) this.matrix[0] &= ~this.coinMask;
-      if (this.coinTimer < 0) this.coinTimer = 0;
+      if (this.coinTimer <= COIN_TAIL) this.matrix[this.coinRow] &= ~this.coinMask;
+      if (this.coinTimer <= 0) {
+        this.coinTimer = 0;
+        const next = this.coinParts.shift();
+        if (next) this.pressCoinPart(next);
+      }
     }
+    if (this.judging) this.judgeCoinStep(c);
     return c;
   }
 
@@ -384,7 +396,7 @@ export class BlackBox implements Bus, Machine {
       if (p === null) continue;
       this.slideEjects[i]++;
       if (typeof p === 'number') this.slideOutPence += p;
-      if (metered) continue;
+      if (metered || !this.booksMoney) continue;
       if (p === 'token') this.cashLedger.unpricedTokenOut++;
       else if (p === 'unpriced') this.cashLedger.unpricedOut++;
       else this.cashLedger.outPence += p;
@@ -406,22 +418,216 @@ export class BlackBox implements Bus, Machine {
       if (!(this.meterWord & (1 << b)) || this.meterHold[b] === 0) continue;
       if (--this.meterHold[b] !== 0) continue;
       this.meterCounts[b]++;
-      this.cashLedger.inPence += this.meterInPence[b] ?? 0;
+      this.gridTotals.in += this.meterInRaw[b] ?? 0;
+      this.gridTotals.out += this.meterOutRaw[b] ?? 0;
+      if (!this.booksMoney) continue;
+      if (!this.wiredIn) this.cashLedger.inPence += this.meterInPence[b] ?? 0;
       this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
     }
   }
 
   insertCoin(id: number): void {
-    if (this.coinTimer > 0 || id < 0 || id >= COIN_RAW.length) return;
-    const raw = COIN_RAW[id];
-    if (raw & 0x100) return;
-    this.coinMask = raw & 0xff;
-    this.matrix[0] |= this.coinMask;
-    this.coinTimer = COIN_HOLD + COIN_TAIL;
+    if (this.coinTimer > 0) return;
+    const parts = bbCoinParts(id);
+    if (!parts.length) return;
+    const code = this.coinCode();
+    if (code) {
+      const bits = bbCoinBits(code);
+      if (!parts.some((p) => p.row === 0 && (p.mask & bits))) { this.coinsRefused++; return; }
+    }
+    if (parts.some((p) => p.row >= this.matrix.length)) return;
+    this.coinParts = parts.slice(1);
+    this.pressCoinPart(parts[0]!);
+    if (this.wiring && code) this.pend(id);
   }
+
+  private pressCoinPart(p: { row: number; mask: number; direct: boolean }): void {
+    this.coinRow = p.row;
+    this.coinMask = p.mask;
+    this.matrix[p.row] |= p.mask;
+    this.coinTimer = (p.direct ? COIN_HOLD_LINE : COIN_HOLD) + COIN_TAIL;
+  }
+
+  private coinParts: { row: number; mask: number; direct: boolean }[] = [];
+  private coinRow = 0;
 
   get coinBusy(): boolean {
     return this.coinTimer > 0;
+  }
+
+  private coinCodeCache: BbCoinCode | Refusal | null = null;
+  private coinCodeFound(): BbCoinCode | Refusal {
+    return (this.coinCodeCache ??= locateBlackBoxCoins(this.rom));
+  }
+  private coinCode(): BbCoinCode | null {
+    const c = this.coinCodeFound();
+    return 'refused' in c ? null : c;
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const code = this.coinCode();
+    return code ? bbCoinTable(code, this.drawnCoins) : null;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const c = this.coinCodeFound();
+    return 'refused' in c ? c.refused : null;
+  }
+
+  private priced(): Map<number, SlotCoin> | null {
+    const t = this.coinLineTable;
+    if (!t) return null;
+    const c = detectCoins(t);
+    return c instanceof Map ? c : null;
+  }
+
+  private programLine(id: number): number | null {
+    const code = this.coinCode();
+    const t = this.coinLineTable;
+    if (!code || !t) return null;
+    const r = bbRecordOf(code, id);
+    if (!r) return null;
+    return t.lines.find((l) => bbRecordOf(code, l.line) === r)?.line ?? null;
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    const coins = this.priced();
+    if (!coins) return undefined;
+    const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
+    return [...coins].map(([bit, coin]): CoinChute => (typeof coin === 'number'
+      ? { label: label(coin), bit, pence: coin }
+      : { label: coin.token === null ? 'Token' : `${label(coin.token)} token`, bit, pence: coin.token, token: true }))
+      .sort((a, b) => (b.pence ?? -1) - (a.pence ?? -1) || a.bit - b.bit);
+  }
+
+  coinsRefused = 0;
+
+  private static readonly JUDGE_WAIT = Math.round(1.5 * BLACKBOX_CLOCK);
+  private readonly judgeId = new Array<number>(4).fill(-1);
+  private readonly judgeWait = new Array<number>(4).fill(0);
+  private judging = false;
+
+  private pend(id: number): void {
+    const k = this.judgeId.indexOf(-1);
+    if (k < 0) { this.coinsRefused++; return; }
+    this.judgeId[k] = id;
+    this.judgeWait[k] = BlackBox.JUDGE_WAIT;
+    this.judging = true;
+  }
+
+  private judgeCoinStep(cycles: number): void {
+    const code = this.coinCode();
+    if (!code || !this.wiring) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; return; }
+    if (this.cpu.pc === code.take) {
+      const at = (this.ram[code.ptr & 0x7f]! << 8) | this.ram[(code.ptr + 1) & 0x7f]!;
+      const rec = code.records.find((r) => r.at === at || r.alts.some((a) => a.at === at));
+      if (rec) {
+        const taken = rec.at === at ? rec : rec.alts.find((a) => a.at === at)!;
+        let k = -1;
+        for (let i = 0; i < this.judgeId.length; i++) {
+          const id = this.judgeId[i]!;
+          if (id < 0 || bbRecordOf(code, id) !== rec) continue;
+          if (k < 0 || this.judgeWait[i]! > this.judgeWait[k]!) k = i;
+        }
+        if (k >= 0) {
+          if (creditsOf(taken) > 0) this.bookTaken(this.judgeId[k]!);
+          this.judgeId[k] = -1;
+          this.judgeWait[k] = 0;
+        }
+      }
+    }
+    let any = false;
+    for (let k = 0; k < this.judgeId.length; k++) {
+      if (this.judgeId[k]! < 0) continue;
+      this.judgeWait[k] = this.judgeWait[k]! - cycles;
+      if (this.judgeWait[k]! <= 0) {
+        this.coinsRefused++;
+        this.judgeId[k] = -1;
+        this.judgeWait[k] = 0;
+        continue;
+      }
+      any = true;
+    }
+    this.judging = any;
+  }
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private get wiredIn(): boolean {
+    return !!this.wiring && this.coinCode() !== null;
+  }
+
+  private bookTaken(id: number): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(id)) return;
+    const line = this.programLine(id);
+    const taken = line === null ? null : this.priced()?.get(line) ?? null;
+    const c = w.coins.get(id) ?? (line === null ? undefined : w.coins.get(line));
+    if (c === undefined) {
+      if (taken) this.bookCoin(taken);
+      return;
+    }
+    if (taken) {
+      const agrees = typeof c === 'number'
+        ? typeof taken === 'number' && taken === c
+        : typeof taken === 'object' && (c.token === null || taken.token === null || c.token === taken.token);
+      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    this.bookCoin(c);
+  }
+
+  private bookCoin(c: SlotCoin): void {
+    if (typeof c === 'number') this.cashLedger.inPence += c;
+    else if (c.token === null) this.cashLedger.unpricedTokenIn++;
+    else this.cashLedger.tokenInPence += c.token;
+  }
+
+  private coinSlots: number[] = [];
+  private drawnCoins: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const slots = new Set<number>();
+    const drawn = new Set<number>();
+    for (const c of list) {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      const id = bbSlotId(c);
+      if (id === null) continue;
+      drawn.add(id);
+      if (c.pence === null) slots.add(id);
+    }
+    this.coinSlots = [...slots].sort((a, b) => a - b);
+    this.drawnCoins = [...drawn].sort((a, b) => a - b);
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private meterInRaw: number[] = [];
+  private meterOutRaw: number[] = [];
+  private readonly gridTotals = { in: 0, out: 0 };
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in, out: this.gridTotals.out };
   }
 
   get parts(): BoardPart[] {
@@ -449,4 +655,11 @@ export class BlackBox implements Bus, Machine {
   layoutDigit(n: number): number {
     return n >= 0 && n < this.digits.length ? this.digits[n] : 0;
   }
+}
+
+export function bbSlotId(c: Pick<DeclaredCoin, 'line' | 'button' | 'note' | 'token'>): number | null {
+  if (c.line !== null) return c.line;
+  if (c.note !== null && c.note !== 0x47) return c.note;
+  if (c.note === 0x47 && c.button !== null && c.button >= 0) return 0x100 | (c.button & 0x7f);
+  return c.token ? null : 53;
 }

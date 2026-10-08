@@ -7,6 +7,7 @@ export interface PanelDownload {
 
 const SVG = 'http://www.w3.org/2000/svg';
 const DOWNLOAD = 'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14';
+const UPLOAD = 'M12 15V4M7.5 8.5 12 4l4.5 4.5M5 19h14';
 
 function icon(d: string, cls: string, size: number): SVGSVGElement {
   const svg = document.createElementNS(SVG, 'svg');
@@ -84,6 +85,31 @@ export class DownloadMenu {
   private row(d: PanelDownload, i: number): HTMLButtonElement {
     return downloadRow(d, i);
   }
+}
+
+export interface PanelUpload {
+  label: string;
+  accept: string;
+  pick(file: File): void;
+}
+
+export function uploadRow(u: PanelUpload, i: number): HTMLButtonElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'menu-row';
+  row.style.setProperty('--d', `${i * 28}ms`);
+  row.append(icon(UPLOAD, 'row-icon', 17), span('row-label', u.label));
+  row.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = u.accept;
+    input.addEventListener('change', () => {
+      const f = input.files?.[0];
+      if (f) u.pick(f);
+    });
+    input.click();
+  });
+  return row;
 }
 
 export function downloadRow(d: PanelDownload, i: number): HTMLButtonElement {

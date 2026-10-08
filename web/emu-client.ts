@@ -1,5 +1,6 @@
 import type { Game } from '../src/machine/registry';
-import type { CoinChute, NamedCoin } from '../src/machine/machine';
+import type { CoinChute, CoinWiringStatus, NamedCoin } from '../src/machine/machine';
+import type { CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
 import { FrameView } from '../src/machine/framestate';
 import type { AutosaveTrigger, CashLedger, DiagEntry, EmuRequest, EmuResponse, MachineInfo } from './emu-protocol';
 import type { Snapshot } from './snapshot';
@@ -10,6 +11,7 @@ export interface ClearRamSettings {
   optionKeys?: Record<string, number>;
   panelSwitches?: Record<string, boolean>;
   namedCoins?: Record<string, NamedCoin>;
+  coinWiring?: CoinWiring;
 }
 
 export interface EmuLoadOptions {
@@ -18,6 +20,7 @@ export interface EmuLoadOptions {
   optionKeys?: Record<string, number>;
   panelSwitches?: Record<string, boolean>;
   namedCoins?: Record<string, NamedCoin>;
+  coinWiring?: CoinWiring;
   powerCycle?: boolean;
   benchStep?: boolean;
   noAudio?: boolean;
@@ -54,6 +57,8 @@ export interface Emu {
   input(id: number, on: boolean): void;
   coin(bit: number): void;
   nameCoin(line: number, coin: NamedCoin): void;
+  setCoinWiring(wiring: CoinWiring): void;
+  readonly coinWiringStatus: CoinWiringStatus | null;
   note(billType: number, parallel?: boolean): void;
   reset(): void;
   powerCycle(): void;
@@ -64,6 +69,7 @@ export interface Emu {
   diagRam(addrs: number[]): Promise<number[]>;
   ledger(): Promise<CashLedger | null>;
   clearRam(settings: ClearRamSettings): Promise<string | null>;
+  measureCoins(lines: readonly number[]): Promise<{ result: CoinMeasurement; wallMs: number } | null>;
   ioActivity(): Promise<Record<string, number> | null>;
   startRecording(opts: { cold: boolean; setHash?: string; at?: number }): void;
   stopRecording(): Promise<Recording | null>;
@@ -78,6 +84,9 @@ export interface Emu {
   cachedAutosave(): AutosaveBlob | null;
   attachAudioPort(port: MessagePort): void;
   benchStats(): EmuBenchStats | null;
+  droppedMs(): number;
+  machineS(): number;
+  framesReceived(): number;
   onHalted?: (message: string) => void;
   onAutosave?: (blob: AutosaveBlob, trigger: AutosaveTrigger) => void;
   onSerial?: (events: { ch: number; bytes: number[] }[]) => void;
@@ -101,6 +110,7 @@ export class WorkerEmu implements Emu {
   private pendingDiags = new Map<number, (values: number[]) => void>();
   private pendingLedgers = new Map<number, (l: CashLedger | null) => void>();
   private pendingClears = new Map<number, (error: string | null) => void>();
+  private pendingMeasures = new Map<number, (r: { result: CoinMeasurement; wallMs: number } | null) => void>();
   private pendingActivity = new Map<number, (c: Record<string, number> | null) => void>();
   private pendingDiagLogs = new Map<number, (e: DiagEntry[]) => void>();
   private pendingRecordings = new Map<number, (r: Recording | null) => void>();
@@ -111,6 +121,8 @@ export class WorkerEmu implements Emu {
   private current: FrameView | null = null;
   private previous: FrameView | null = null;
   private infoValue: MachineInfo | null = null;
+  private wiringStatus: CoinWiringStatus | null = null;
+  get coinWiringStatus(): CoinWiringStatus | null { return this.wiringStatus; }
   private autosave: AutosaveBlob | null = null;
   private bench: EmuBenchStats | null = null;
   private audioPort: MessagePort | null = null;
@@ -170,6 +182,9 @@ export class WorkerEmu implements Emu {
         }
         this.previous = this.current;
         this.current = view;
+        this.dropped = view.droppedMs;
+        if (msg.machineS !== undefined) this.machineSeconds = msg.machineS;
+        this.received++;
         break;
       }
       case 'halted':
@@ -227,6 +242,7 @@ export class WorkerEmu implements Emu {
       case 'ledger-result': {
         const resolve = this.pendingLedgers.get(msg.id);
         this.pendingLedgers.delete(msg.id);
+        this.wiringStatus = msg.wiring ?? null;
         resolve?.(msg.ledger);
         break;
       }
@@ -234,6 +250,12 @@ export class WorkerEmu implements Emu {
         const resolve = this.pendingClears.get(msg.id);
         this.pendingClears.delete(msg.id);
         resolve?.(msg.error ?? null);
+        break;
+      }
+      case 'measure-coins-result': {
+        const resolve = this.pendingMeasures.get(msg.id);
+        this.pendingMeasures.delete(msg.id);
+        resolve?.(msg.result ? { result: msg.result, wallMs: msg.wallMs } : null);
         break;
       }
       case 'io-activity-result': {
@@ -274,6 +296,7 @@ export class WorkerEmu implements Emu {
 
   load(opts: EmuLoadOptions): Promise<MachineInfo> {
     this.epoch++;
+    this.wiringStatus = null;
     this.current = null;
     this.previous = null;
     this.autosave = null;
@@ -290,6 +313,7 @@ export class WorkerEmu implements Emu {
         optionKeys: opts.optionKeys,
         panelSwitches: opts.panelSwitches,
         namedCoins: opts.namedCoins,
+        coinWiring: opts.coinWiring,
         powerCycle: opts.powerCycle,
         benchStep: opts.benchStep,
         noAudio: opts.noAudio,
@@ -314,6 +338,10 @@ export class WorkerEmu implements Emu {
 
   nameCoin(line: number, coin: NamedCoin): void {
     this.post({ type: 'name-coin', epoch: this.epoch, line, coin });
+  }
+
+  setCoinWiring(wiring: CoinWiring): void {
+    this.post({ type: 'coin-wiring', epoch: this.epoch, wiring });
   }
 
   note(billType: number, parallel = false): void {
@@ -373,6 +401,15 @@ export class WorkerEmu implements Emu {
       const id = this.nextId++;
       this.pendingClears.set(id, resolve);
       this.post({ type: 'clear-ram', epoch: this.epoch, id, ...settings });
+    });
+  }
+
+  measureCoins(lines: readonly number[]): Promise<{ result: CoinMeasurement; wallMs: number } | null> {
+    if (!this.infoValue) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const id = this.nextId++;
+      this.pendingMeasures.set(id, resolve);
+      this.post({ type: 'measure-coins', epoch: this.epoch, id, lines: [...lines] });
     });
   }
 
@@ -452,6 +489,13 @@ export class WorkerEmu implements Emu {
     if (this.worker) this.post({ type: 'audio-port', port }, [port]);
     else this.audioPort = port;
   }
+
+  droppedMs(): number { return this.dropped; }
+  private dropped = 0;
+  machineS(): number { return this.machineSeconds; }
+  private machineSeconds = 0;
+  framesReceived(): number { return this.received; }
+  private received = 0;
 
   benchStats(): EmuBenchStats | null {
     return this.bench;

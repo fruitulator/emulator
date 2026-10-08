@@ -1,5 +1,5 @@
 import type { Bus16 } from '../cpu/bus68k';
-import type { Machine, OptionKey, DigitKind, NoteResult, CoinPortLines } from './machine';
+import type { Machine, OptionKey, DigitKind, NoteResult, CoinPortLines, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel, type CabinetSwitch } from './machine';
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
@@ -25,10 +25,14 @@ import { Reel } from '../hw/reel';
 import { percentageCode, prizeCode, sc4StakeBits } from '../hw/bfmkeys';
 import type { LayoutSwitch } from './layoutswitches';
 import { fitReelBank, type ReelFit } from './reelfit';
-import { noteRomCut } from './boarddefaults';
+import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { ROM_UNPLACED } from './pairplacer';
 import { resetReelsInPlace } from './v20optic';
 import { lockoutRefuses, lockoutRefusing, type CoinLockoutWiring } from '../hw/coinlockout';
+import { COIN_RAW } from './coinraw';
+import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState, wiringKey, wiringStateFor } from './coinwiring';
+import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
+import { locateSc4CoinTables, sc4CoinTable, sc4ProgramCoin, sc4TokenLine, SC4_COIN_LINES, type Sc4CoinTables, type Sc4Mem, type Sc4ProgramCoin } from './sc4coins';
 
 export const MASTER_CLOCK = 16_000_000;
 
@@ -77,7 +81,7 @@ export interface IoAccess {
 }
 
 export class Sc4 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'coinLinePattern', 'tokenLine', 'programMem'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: M68307Sim;
@@ -166,7 +170,7 @@ export class Sc4 implements Bus16, Machine {
     v.address = 0x28;
     v.desFitted = desFitted;
     if (bnvKey) v.setStoredKey(bnvKey);
-    v.onStacked = (billType) => { this.cashLedger.inPence += JcmEba.billPence(billType) ?? 0; };
+    v.onStacked = (billType) => { if (this.booksMoney) this.cashLedger.inPence += JcmEba.billPence(billType) ?? 0; };
     v.onLampWord = (word) => { this.noteLamps.write(word); this.packNoteLamps(); };
     this.ccNote = v;
     this.resetNoteLamps();
@@ -260,7 +264,7 @@ export class Sc4 implements Bus16, Machine {
     if (inMult) this.meterTotals.in += inMult;
     if (outMult) {
       this.meterTotals.out += outMult;
-      this.cashLedger.outPence += (this.meterLedgerMult[n] ?? 0) * Sc4.SEC_UNIT_PENCE;
+      if (this.booksMoney) this.cashLedger.outPence += (this.meterLedgerMult[n] ?? 0) * Sc4.SEC_UNIT_PENCE;
     }
   }
 
@@ -285,7 +289,7 @@ export class Sc4 implements Bus16, Machine {
     if (inMult) this.meterTotals.in += inMult * delta;
     if (outMult) {
       this.meterTotals.out += outMult * delta;
-      this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Sc4.SEC_UNIT_PENCE;
+      if (this.booksMoney) this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Sc4.SEC_UNIT_PENCE;
     }
   }
   readonly parHopper = new Sc4HopperPair(MASTER_CLOCK);
@@ -301,6 +305,7 @@ export class Sc4 implements Bus16, Machine {
   }
 
   private bookHopperCoin(coin: Sc4Coin | null): void {
+    if (!this.booksMoney) return;
     if (coin === null) this.cashLedger.unpricedOut++;
     else if (coin.token) this.cashLedger.tokenOutPence += coin.pence;
     else this.cashLedger.outPence += coin.pence;
@@ -723,23 +728,66 @@ export class Sc4 implements Bus16, Machine {
 
   insertCoin(bit: number): void {
     if (this.coinBit >= 0) return;
-    if (lockoutRefuses(Sc4.LOCKOUT, this.io[Sc4.LOCKOUT_OFF], this.coinPattern(bit) & 0x3f)) {
+    if (lockoutRefuses(Sc4.LOCKOUT, this.io[Sc4.LOCKOUT_OFF], this.lockoutPattern(bit))) {
       this.coinsRefused++;
       return;
     }
+    const taken = this.programCoinOn(bit);
     this.coinBit = bit;
     this.coinInstructions = 0;
     this.coins &= ~this.coinPattern(bit) & 0x3f;
-    this.cashLedger.inPence += Sc4.COIN_PENCE[bit & 7] ?? 0;
+    if (taken === 'refused') { this.coinsRefused++; return; }
+    if (this.wiring) { this.bookWiredCoin(bit, taken); return; }
+    this.bookProgramCoin(bit, taken);
   }
+
+  private bookProgramCoin(line: number, taken: Sc4ProgramCoin): void {
+    if (taken === 'refused') return;
+    if (taken === null) {
+      noteBoardDefault(this, {
+        axis: 'coin',
+        text: 'the program\'s coin table was not read - a coin books the board\'s price for its line',
+        ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
+      });
+      this.cashLedger.inPence += Sc4.COIN_PENCE[line & 7] ?? 0;
+      return;
+    }
+    if (taken.token) this.cashLedger.tokenInPence += taken.pence;
+    else this.cashLedger.inPence += taken.pence;
+  }
+
+  private programCoinOn(line: number): Sc4ProgramCoin {
+    const t = this.coinTables();
+    if ('refused' in t) return null;
+    return sc4ProgramCoin(t, this.programMem, this.coinPattern(line) & 0x3f);
+  }
+
+  private coinTablesCache: { rom: Uint8Array; t: Sc4CoinTables | { refused: string } } | null = null;
+  private coinTables(): Sc4CoinTables | { refused: string } {
+    if (this.coinTablesCache?.rom !== this.rom) this.coinTablesCache = { rom: this.rom, t: locateSc4CoinTables(this.rom) };
+    return this.coinTablesCache.t;
+  }
+
+  private readonly programMem: Sc4Mem = {
+    w: (a) => (a >= RAM_BASE
+      ? (a + 1 < RAM_BASE + RAM_SIZE ? (this.ram[a - RAM_BASE]! << 8) | this.ram[a - RAM_BASE + 1]! : 0)
+      : a + 1 < ROM_SIZE ? (this.rom[a]! << 8) | this.rom[a + 1]! : 0),
+    l: (a) => ((this.programMem.w(a) << 16) | this.programMem.w(a + 2)) >>> 0,
+  };
 
   static readonly LOCKOUT: CoinLockoutWiring = { openSense: 1, mask: 0x3f, bits: [0, 1, 2, 3, 4, 5] };
   static readonly LOCKOUT_OFF = 0x02f1;
 
+  private lockoutPattern(line: number): number {
+    return this.binaryMech ? 0x3f : this.coinPattern(line) & 0x3f;
+  }
+
   coinsRefused = 0;
 
   get coinRefusing(): number {
-    return lockoutRefusing(Sc4.LOCKOUT, this.io[Sc4.LOCKOUT_OFF], 6, (n) => this.coinPattern(n) & 0x3f);
+    let m = lockoutRefusing(Sc4.LOCKOUT, this.io[Sc4.LOCKOUT_OFF], 6, (n) => this.lockoutPattern(n));
+    for (let n = 0; n < SC4_COIN_LINES; n++) if (this.programCoinOn(n) === 'refused') m |= 1 << n;
+    return m >>> 0;
   }
 
   private tickCoin(): void {
@@ -757,7 +805,17 @@ export class Sc4 implements Bus16, Machine {
 
   setCoinMech(mech: string | null): void {
     this.binaryMech = mech === 'Binary';
+    this.coinLinePattern = Sc4.COIN_PENCE.map((p, b) => {
+      if (!this.binaryMech || p <= 0) return 1 << b;
+      const id = Sc4.BINARY_NOTE_BY_PENCE.get(p);
+      return id === undefined ? 1 << b : COIN_RAW[id]! & 0x3f;
+    });
+    this.tokenLine = null;
   }
+
+  private static readonly BINARY_NOTE_BY_PENCE = new Map([[5, 0], [10, 1], [20, 2], [50, 4], [100, 5], [200, 6]]);
+
+  private tokenLine: number | null = null;
 
   private coinLinePattern: number[] = Sc4.COIN_PENCE.map((_, b) => 1 << b);
 
@@ -767,7 +825,15 @@ export class Sc4 implements Bus16, Machine {
 
   setCabinetCoinSlots(slots: readonly { pence: number | null; token: boolean; mask: number }[]): void {
     for (const s of slots) {
-      if (s.token || s.pence === null || s.pence <= 0) continue;
+      if (s.token) {
+        const t = this.coinTables();
+        const line = 'refused' in t ? null : sc4TokenLine(t, this.programMem);
+        if (line === null) continue;
+        this.coinLinePattern[line] = s.mask & 0x3f;
+        this.tokenLine = line;
+        continue;
+      }
+      if (s.pence === null || s.pence <= 0) continue;
       const line = Sc4.COIN_PENCE.indexOf(s.pence);
       if (line < 0) continue;
       this.coinLinePattern[line] = s.mask & 0x3f;
@@ -779,8 +845,96 @@ export class Sc4 implements Bus16, Machine {
       compare: 0x3f,
       lines: this.coinLinePattern
         .map((mask, bit) => ({ bit, mask }))
-        .filter((l) => Sc4.COIN_PENCE[l.bit] > 0),
+        .filter((l) => Sc4.COIN_PENCE[l.bit] > 0 || l.bit === this.tokenLine),
     };
+  }
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return !this.wiring || this.wiringState.state !== 'disagrees';
+  }
+
+  private bookWiredCoin(line: number, taken: Sc4ProgramCoin): void {
+    const w = this.wiring!;
+    if (!this.booksMoney || w.conflicts.includes(line)) return;
+    const c = w.coins.get(line);
+    if (c === undefined) {
+      this.bookProgramCoin(line, taken);
+      return;
+    }
+    if (taken !== null && taken !== 'refused') {
+      const agrees = typeof c === 'number'
+        ? !taken.token && taken.pence === c
+        : taken.token && (c.token === null || c.token === taken.pence);
+      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
+      if (!agrees) return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
+    this.cashLedger.tokenInPence += c.token;
+  }
+
+  private coinSlots: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const out = new Set<number>();
+    const bit = (b: number): number | null => (b >= 0 && b < SC4_COIN_LINES && Sc4.COIN_PENCE[b]! > 0 ? b : null);
+    for (const c of list) {
+      if (c.pence !== null) continue;
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      let line: number | null;
+      if (c.line !== null && c.note === null) {
+        if (c.line < 0 || c.line >= SC4_COIN_LINES) continue;
+        line = c.line;
+      } else if (c.note !== null && c.note >= 0x0f && c.note <= 0x16) {
+        if ((line = bit(c.note - 0x0f)) === null) continue;
+      } else if (c.note === COIN_NOTE_BLANK && c.button !== null && c.button >= 0 && c.button < 128 && (c.button >> 3) === Sc4.COIN_ROW) {
+        if ((line = bit(c.button & 7)) === null) continue;
+      } else if (c.token || (c.note !== null && COIN_NOTES.get(c.note)?.token)) {
+        if (this.tokenLine === null) continue;
+        line = this.tokenLine;
+      } else line = 0;
+      out.add(line);
+    }
+    this.coinSlots = [...out].sort((a, b) => a - b);
+  }
+
+  private static readonly COIN_ROW = 12;
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private readCoinTable(): CoinLineTable | { refused: string } {
+    const t = this.coinTables();
+    if ('refused' in t) return t;
+    return sc4CoinTable(t, this.programMem, this.coinLinePattern.map((p) => p & 0x3f));
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? null : t;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
   }
 
   private static readonly NOTE_PORT_OFF = 0x8000;
@@ -822,7 +976,7 @@ export class Sc4 implements Bus16, Machine {
       this.noteHoldLeft = Sc4.NOTE_ESCROW_CYCLES;
       return 'escrow';
     }
-    this.cashLedger.inPence += pence;
+    if (this.booksMoney) this.cashLedger.inPence += pence;
     return 'stacked';
   }
 
@@ -860,7 +1014,7 @@ export class Sc4 implements Bus16, Machine {
       this.noteHeld = 0;
       this.noteVendLeft = Sc4.NOTE_VEND_CYCLES;
       this.noteVendCode = 1 << channel;
-      this.cashLedger.inPence += this.notePence.get(channel) ?? 0;
+      if (this.booksMoney) this.cashLedger.inPence += this.notePence.get(channel) ?? 0;
       return;
     }
     if (this.noteHoldLeft > 0 && (this.noteHoldLeft -= cycles) <= 0) {

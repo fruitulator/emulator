@@ -1,0 +1,150 @@
+.coin-ticks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+.coin-tick {
+  min-width: 52px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-ctl);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  color: var(--muted);
+  font-family: var(--ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease, box-shadow 200ms ease;
+}
+.coin-tick:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  color: var(--text);
+}
+.coin-tick[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(225, 29, 42, 0.32), rgba(225, 29, 42, 0.14));
+  box-shadow: 0 0 0 1px rgba(225, 29, 42, 0.35), 0 0 14px rgba(225, 29, 42, 0.22);
+}
+.coin-tick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.coin-token {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.coin-token .dd[hidden] {
+  display: none;
+}
+.coin-token .dd-btn {
+  height: 34px;
+  font-family: var(--ui);
+  font-size: 13.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.dd-list.coin-menu {
+  min-width: 120px;
+  max-width: calc(100vw - 16px);
+  z-index: 60;
+  transition: none;
+}
+.coin-menu .dd-opt {
+  animation: none !important;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.coin-menu .dd-opt.active {
+  transform: none;
+  background: rgba(225, 29, 42, 0.28);
+}
+.coin-menu-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.coin-menu:focus-visible {
+  outline: none;
+}
+.coin-slot + .coin-slot {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.coin-slot-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 0;
+}
+.coin-slot-head .row-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.coin-slot-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 12px;
+}
+.coin-slot-notes:empty {
+  display: none;
+}
+.coin-slot-note {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.coin-slot-note.warn {
+  color: var(--warn);
+}
+.coin-slot-lead {
+  margin: 0;
+  padding: 10px 12px 2px;
+}
+.wz-slot-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.wz-slot-mark {
+  position: absolute;
+  box-sizing: border-box;
+  min-width: 14px;
+  min-height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.wz-slot-mark::before {
+  content: attr(data-n);
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #fff;
+  color: #000;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.wz-slot-mark.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 14px rgba(225, 29, 42, 0.7);
+}
+.wz-slot-mark.on::before {
+  background: var(--accent);
+  color: #fff;
+}

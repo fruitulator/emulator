@@ -1,4 +1,5 @@
 export interface Dropdown {
+  root: HTMLElement;
   refresh(): void;
   close(): void;
 }
@@ -196,5 +197,5 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
   select.hidden = true;
   select.tabIndex = -1;
   refresh();
-  return { refresh, close: () => hide(false) };
+  return { root, refresh, close: () => hide(false) };
 }

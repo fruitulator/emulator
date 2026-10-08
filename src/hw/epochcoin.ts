@@ -95,6 +95,7 @@ const MEI_BCO: ReadonlyMap<number, { pence: number; name: string; token?: true }
   [0x08, { pence: 5, name: '5p' }],
   [0x1c, { pence: 10, name: '10p' }],
   [0x0b, { pence: 20, name: '20p' }],
+  [0x19, { pence: 50, name: '50p (old)' }],
   [0x0d, { pence: 50, name: '50p' }],
   [0x1a, { pence: 100, name: '£1' }],
   [0x1f, { pence: 200, name: '£2' }],
@@ -151,7 +152,7 @@ export function findEpochCoinTables(rom: Uint8Array): EpochCoinTables | null {
   }
   if (sw < 0 || sw + 12 > rom.length) return null;
   const selectorSwitch = be16(rom, sw);
-  const codeSwitches = [0, 1, 2, 3, 4].map((i) => be16(rom, sw + 2 + 2 * i));
+  const codeSwitches = findEpochCodeLines(rom) ?? [0, 1, 2, 3, 4].map((i) => be16(rom, sw + 2 + 2 * i));
 
   const rec = findPattern(rom, [
     0x7a, 0x01, 0x00, 0x00, 0x00, 0x0e, 0x0f, 0xa0, 0x5e, null, null, null,
@@ -199,6 +200,33 @@ export function findEpochCoinTables(rom: Uint8Array): EpochCoinTables | null {
   }
   if (!records.length) return null;
   return { modeWord, selectorSwitch, codeSwitches, recordsAt, records, valuesAt };
+}
+
+export function findEpochCodeLines(rom: Uint8Array): number[] | null {
+  const bit3 = [
+    0x6b, 0x22, 0x00, null, null, null, 0x0d, 0x20, 0x5e, null, null, null,
+    0x0d, 0x03, 0x0d, 0x32, 0x10, 0x92, 0x10, 0x92, 0x10, 0x92, 0x6f, 0xe2, 0xff, 0xfe,
+  ];
+  for (let at = findPattern(rom, bit3); at >= 0; at = findPattern(rom, bit3, at + 2)) {
+    const jsr = rom.subarray(at + 9, at + 12);
+    const cmp = findPattern(rom.subarray(at + 26, at + 48), [0x79, 0x03, 0x00, 0x04, 0x1d, 0x32, 0x58, 0x60]);
+    if (cmp < 0) continue;
+    const reads: number[] = [];
+    let a = at + 26 + cmp + 10;
+    while (reads.length < 4 && a < at + 26 + cmp + 200 && a + 12 <= rom.length) {
+      if (rom[a] === 0x6b && rom[a + 1] === 0x22 && rom[a + 2] === 0x00 && rom[a + 6] === 0x0d && rom[a + 7] === 0x20
+        && rom[a + 8] === 0x5e && rom[a + 9] === jsr[0] && rom[a + 10] === jsr[1] && rom[a + 11] === jsr[2]) {
+        reads.push(((rom[a + 3] << 16) | (rom[a + 4] << 8) | rom[a + 5]) >>> 0);
+        a += 12;
+      } else a += 2;
+    }
+    if (reads.length < 4) continue;
+    const words = [reads[0], reads[1], reads[2], ((rom[at + 3] << 16) | (rom[at + 4] << 8) | rom[at + 5]) >>> 0, reads[3]];
+    if (words.some((w) => w + 2 > rom.length)) continue;
+    const lines = words.map((w) => be16(rom, w));
+    if (lines.every((n) => n >= 1 && n <= 64) && new Set(lines).size === 5) return lines;
+  }
+  return null;
 }
 
 export interface EpochHopperCoin {

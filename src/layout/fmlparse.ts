@@ -204,8 +204,9 @@ const BUTTON = m({
   0x27: ['font', 'Font'], 0x1c: ['u32', 'NonNullSublampCount'],
   0x38: ['subcount', 'SublampCount'],
   0x39: ['subtable', 'SublampTable'], 0x3b: ['u32', ''], 0x3f: ['text', 'Label'],
-  0x30: ['bool', ''], 0x19: ['bool', ''], 0x0d: ['i32', 'XOffset'], 0x0e: ['i32', 'YOffset'],
-  0x28: ['text', 'Label'], 0x1a: ['u32', ''],
+  0x30: ['bool', ''], 0x0d: ['i32', 'XOffset'], 0x0e: ['i32', 'YOffset'],
+  0x19: ['bool', 'CoinSelected'],
+  0x28: ['text', 'Label'], 0x1a: ['u32', 'CoinId'],
   0x4c: ['byte', ''],
 });
 

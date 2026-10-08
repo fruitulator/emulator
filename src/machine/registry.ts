@@ -69,7 +69,7 @@ import {
 } from '../layout/fmlconfig';
 import { parseLayout } from '../layout/fmlparse';
 import { datReelChannels, datReelWiring } from '../layout/datreels';
-import { cabinetCoinPence, cabinetCoinSlots, declaredCoins, parallelNoteChannels } from './layoutcoins';
+import { cabinetCoinPence, cabinetCoinSlots, declaredCoins, layoutInputButtons, parallelNoteChannels } from './layoutcoins';
 import { placeRomPairs } from './pairplacer';
 
 const MPU4_COIN_ROW = 5;
@@ -274,6 +274,7 @@ const BOARD_TOKEN_LINE = new Set(['SCORPION1', 'SCORPION2', 'SYS5', 'SYS85', 'IM
 
 function noteBoardTokenLine(m: object, game: Game): void {
   if (!BOARD_TOKEN_LINE.has(game.system.toUpperCase())) return;
+  if ((m as { programReadsCoins?: boolean }).programReadsCoins === true) return;
   noteBoardDefault(m, {
     axis: 'token',
     text: 'which line counts TOKENS, and what one is worth, are the board\'s defaults',
@@ -548,6 +549,7 @@ const scorpion4: Platform = {
 
     if (sc4Layout) m.setCoinMech(readSetting(sc4Layout, 'SCORPION4', 'Coin Mech'));
     m.setCabinetCoinSlots(cabinetCoinSlots(game.layout, SC4_COIN_ROW));
+    m.setLayoutCoins(declaredCoins(game.layout));
 
     const nv4Fitted = sc4Layout ? readSetting(sc4Layout, 'SCORPION4', 'NV4 Note') === 'Yes' : false;
     m.fitNoteReader(nv4Fitted, parallelNoteChannels(game.layout));
@@ -665,6 +667,8 @@ const scorpion2: Platform = {
       if (dmBusy !== null) m.setDmBusySwitch(dmBusy);
     }
 
+    m.setLayoutCoins(declaredCoins(game.layout));
+
     const sc2Protocol = Number(game.gam?.settings.get('Protocol') ?? 0);
     if (sc2Protocol) m.fitDataport(sc2Protocol);
 
@@ -732,7 +736,10 @@ const scorpion1: Platform = {
     if (sc1Layout) {
       const slides = triacSlidePence(sc1Layout, 'SCORPION1');
       if (slides) m.setSlidePence(slides);
+      const meters = meterMoneyMap(sc1Layout, 'SCORPION1');
+      if (meters) m.setMeterMoneyMap(meters);
     }
+    m.setLayoutCoins(declaredCoins(game.layout));
     applyOperatorPresets(m, game, {
       service: { fallback: null, made: true },
       cash: { fallback: null, made: true },
@@ -777,7 +784,10 @@ const sys85: Platform = {
     if (sys85Layout) {
       const slides = triacSlidePence(sys85Layout, 'SYS85');
       if (slides) m.setSlidePence(slides);
+      const meters = meterMoneyMap(sys85Layout, 'SYS85');
+      if (meters) m.setMeterMoneyMap(meters);
     }
+    m.setLayoutCoins(declaredCoins(game.layout));
 
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
@@ -833,6 +843,7 @@ const sys5: Platform = {
     }
     const sys5Meters = sys5Layout ? meterMoneyMap(sys5Layout, 'SYS5') : null;
     if (sys5Meters) m.setMeterMoney(sys5Meters.meterOut, sys5Meters.meterIn);
+    m.setLayoutCoins(declaredCoins(game.layout));
     if (game.gam?.reels.length) m.numReels = game.gam.reels.length;
 
     if (game.nvram) m.loadNvram(game.nvram);
@@ -1172,6 +1183,7 @@ function buildMpu4Board(game: Game, sys: 'MPU4' | 'MPU4VIDEO'): Mpu4 {
 
   applyCabinetCoinPence(m, game.layout);
   m.setCabinetCoinSlots(cabinetCoinSlots(game.layout, MPU4_COIN_ROW));
+  m.setLayoutCoins(declaredCoins(game.layout));
   if (mpu4SharedCoinConnector && !m.coinLineRead) {
     noteBoardDefault(m, {
       axis: 'hopper',
@@ -1359,6 +1371,7 @@ const impact: Platform = {
       if (hoppers !== null) m.setHoppers(hoppers);
       const mech = readSetting(layout, 'IMPACT', 'Coin Mech');
       if (mech !== null) m.setMechType(mech === 'Binary' ? 1 : 0);
+      m.setLayoutCoins(declaredCoins(game.layout));
       const meters = meterMoneyMap(layout, 'IMPACT');
       if (meters) {
         m.setMeterMap(meters.meterIn, meters.meterOut);
@@ -1491,6 +1504,7 @@ const acesp: Platform = {
       if (meters) {
         m.setMeterOutPence(ledgerOutMults({ in: meters.meterIn, out: meters.meterOut })[0].map((mult) => mult * 10));
         m.setMeterInPence(meters.meterIn.map((mult) => mult * 10));
+        m.setMeterMoneyMap(meters);
       }
       if (meters) {
         console.log(`[acesp] layout money wiring: out mult [${
@@ -1514,6 +1528,7 @@ const acesp: Platform = {
     }
 
     applyCabinetCoinPence(m, game.layout);
+    m.setLayoutCoins(declaredCoins(game.layout));
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
     fitReels(m, game);
@@ -1640,6 +1655,7 @@ const m1ab: Platform = {
         m.setCabinetCoinNotes(declaredCoins(game.layout).flatMap((c) => (c.note === null ? [] : [{
           note: c.note, label: c.named?.name ?? 'Coin', pence: c.pence, token: c.token,
         }])));
+        m.setLayoutCoins(declaredCoins(game.layout));
         if (coinMech === null && m.hasTransformedCoinSlot) {
           noteBoardDefault(m, {
             axis: 'coin',
@@ -1749,6 +1765,12 @@ const mpu5: Platform = {
       });
     }
     m.setCoinMech(peripherals.coinMech);
+    m.setLayoutCoins(declaredCoins(game.layout));
+    {
+      const gridLayout = decodedLayout(game.layout);
+      const grid = gridLayout ? meterMoneyMap(gridLayout, 'MPU5') : null;
+      if (grid) m.setMeterMoney(grid);
+    }
     m.barbus.reelJumpers = peripherals.reelJumpers !== undefined
       ? peripherals.reelJumpers
       : mpu5ReelJumpersFrom(game.layout);
@@ -1937,6 +1959,17 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
       hopper1: desBox('Hopper 1 DES'), hopper2: desBox('Hopper 2 DES'),
     };
     m.setDesFitted(sc5Des);
+    const sc5Currency = sc5Leds ? readSetting(sc5Leds, 'SCORPION5', 'Coin Mech Currency') : null;
+    const sc5CurrencyIndex = sc5Currency === 'GB 1' ? 0 : sc5Currency === 'GB 2' ? 1 : sc5Currency === 'EU' ? 2 : null;
+    m.setCoinMechCurrency(sc5CurrencyIndex);
+    if (sc5CurrencyIndex === 2) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'this cabinet\'s coin mech takes euro coins - they are not booked as money',
+        ifWrong: 'Coins put into this machine are missing from the bookkeeping.',
+        node: TAILORED_IDS.coinMech,
+      });
+    }
     if (sc5Leds && sc5Fitted.coinMech !== null && sc5Des.mech === null) {
       noteBoardDefault(m, {
         axis: 'peripheral',
@@ -2159,6 +2192,7 @@ const epoch: Platform = {
       refill: { fallback: 37, made: false },
     });
 
+    m.setLayoutCoins(declaredCoins(game.layout));
     const epochMeters = epochPayload ? meterMoneyMap(epochPayload, 'EPOCH') : null;
     if (epochMeters) {
       m.setMeterMoney(epochMeters.meterOut, epochMeters.meterIn);
@@ -2229,8 +2263,22 @@ const mps2: Platform = {
     }
     m.setProtocol(Number(game.gam?.settings.get('Protocol') ?? 0) || 0);
 
+    {
+      const rotary = layout ? readNumber(layout, 'MPS2', 'Rotary Switch') : null;
+      if (rotary !== null) {
+        m.setRotary(rotary);
+      } else {
+        noteBoardDefault(m, {
+          axis: 'key',
+          text: 'rotary switch: the layout states no position - 0 assumed',
+          ifWrong: 'A game that reads the switch (some price a coin by it) runs on the wrong option.',
+        });
+      }
+    }
+
     const meters = layout ? meterMoneyMap(layout, 'MPS2') : null;
     if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
+    m.setLayoutCoins(declaredCoins(game.layout));
 
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
@@ -2264,6 +2312,30 @@ const sys80: Platform = {
       node: TAILORED_IDS.meters,
     });
     if (s80Meters) m.setMeterMoney(s80Meters.meterIn, s80Meters.meterOut);
+    m.setLayoutCoins(declaredCoins(game.layout));
+    const s80Why = 'A grid that prices a meter the program does not pulse for coins books the wrong money in.';
+    if (m.coinsPricedByPlays) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'coins priced at the layout\'s plays meter - one credit a play assumed',
+        ifWrong: 'A cabinet charging more than one credit a play books its coins at the wrong value.',
+        node: TAILORED_IDS.coinMech,
+      });
+    } else if (!m.programReadsCoins && m.coinLineTable) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'the program\'s coin credits fit more than one price - coins in book at the layout\'s meter grid',
+        ifWrong: s80Why,
+        node: TAILORED_IDS.coinMech,
+      });
+    } else if (!m.programReadsCoins) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'the program\'s coin code was not read - coins in book at the layout\'s meter grid',
+        ifWrong: s80Why,
+        node: TAILORED_IDS.coinMech,
+      });
+    }
 
     m.reset();
     game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
@@ -2291,11 +2363,41 @@ const sys1: Platform = {
     m.setStepMode((payload && readNumber(payload, 'SYS1', 'Step Mode')) ?? 0);
     const sys1Slides = payload && triacSlidePence(payload, 'SYS1');
     if (sys1Slides) m.setSlidePence(sys1Slides);
-    if (!sys1Slides?.some((x) => x !== null)) {
+    const sys1Meters = payload ? meterMoneyMap(payload, 'SYS1') : null;
+    if (sys1Meters) m.setMeterMoneyMap(sys1Meters);
+    m.setLayoutCoins(declaredCoins(game.layout));
+    if (m.payoutLinesRefusal) {
       noteBoardDefault(m, {
         axis: 'meter',
-        text: 'payout slides not named by the layout - money out not booked',
+        text: 'payout lines not found in the program - money out not booked',
         ifWrong: 'Bookkeeping shows no money out for this machine; play is not affected.',
+      });
+    } else if (m.payoutCoinsRefusal) {
+      if (!sys1Slides?.some((x) => x !== null)) {
+        noteBoardDefault(m, {
+          axis: 'meter',
+          text: 'payout coin values not found in the program, and the layout names no payout slides - money out not booked',
+          ifWrong: 'Bookkeeping shows no money out for this machine; play is not affected.',
+        });
+      } else {
+        noteBoardDefault(m, {
+          axis: 'meter',
+          text: 'payout coin values not found in the program - money out is priced by the layout\'s payout slides',
+          ifWrong: 'Bookkeeping books a wrong value for any coin the layout prices differently from the machine.',
+        });
+      }
+    } else if (m.payoutLinesUnpriced().length) {
+      noteBoardDefault(m, {
+        axis: 'meter',
+        text: `payout on Triac ${m.payoutLinesUnpriced().map((i) => i + 1).join(', ')}: no coin value found in the program - counted, not priced`,
+        ifWrong: 'Bookkeeping counts any coin paid on that line without its value; play is not affected.',
+      });
+    }
+    if (!m.payoutLinesRefusal && m.slideLinesUnpaid().length) {
+      noteBoardDefault(m, {
+        axis: 'meter',
+        text: `payout slide on Triac ${m.slideLinesUnpaid().map((i) => i + 1).join(', ')} is not a payout line - not booked`,
+        ifWrong: 'Bookkeeping leaves out any coin paid on that line; play is not affected.',
       });
     }
     m.reset();
@@ -2352,6 +2454,7 @@ const proconn: Platform = {
       const meters = meterMoneyMap(payload, 'PROCONN');
       if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
     }
+    m.setLayoutCoins(declaredCoins(game.layout));
     m.reset();
     game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
     return m;
@@ -2408,6 +2511,7 @@ const electrocoin: Platform = {
       const slides = triacSlidePence(payload, 'ELECTROCOIN');
       if (slides) m.setSlidePence(slides);
     }
+    m.setLayoutCoins(declaredCoins(game.layout));
     m.reset();
     game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
     return m;
@@ -2432,6 +2536,7 @@ function phoenixPlatform(system: 'PHOENIX' | 'PHOENIX2'): Platform {
       const pct = Number(game.gam?.settings.get('Percentage'));
       m.setPercentage(Number.isInteger(pct) && pct >= 0 && pct < 15 ? pct + 1 : 0);
       m.setSwitches(layoutSwitches(game.layout));
+      m.setLayoutCoins(declaredCoins(game.layout));
       applyOperatorPresets(m, game, DEFAULT_PRESETS);
       const payload = decodedLayout(game.layout);
       if (payload) {
@@ -2504,6 +2609,7 @@ const blackbox: Platform = {
     const m = new BlackBox(progFiles.map((f) => f.bytes), game.nvram);
     m.setReelGeometry(reelGeometry(game.layout));
     m.setSwitches(layoutSwitches(game.layout));
+    m.setLayoutCoins(declaredCoins(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const bbLayout = decodedLayout(game.layout);
     if (bbLayout) {
@@ -2574,6 +2680,7 @@ const mpu3: Platform = {
       const meters = meterMoneyMap(payload, 'MPU3');
       if (meters) m.setMeterMoneyMap(meters);
     }
+    m.setLayoutCoins(declaredCoins(game.layout), layoutInputButtons(game.layout) ?? []);
     if (!m.moneyPriced) {
       noteBoardDefault(m, {
         axis: 'meter',
@@ -2654,6 +2761,7 @@ const astra: Platform = {
         }
       }
     }
+    m.setLayoutCoins(declaredCoins(game.layout));
     const geometry = reelGeometry(game.layout);
     if (geometry.length) m.setReelGeometry(geometry);
 
@@ -3082,8 +3190,9 @@ export function machineFor(game: Game): Machine {
       node: TAILORED_IDS.hopper,
     });
   }
-  const SET_PRICED = new Set(['EPOCH', 'MPU5', 'ASTRASYSA1', 'PROCONN', 'BLACKBOX', 'PHOENIX', 'PHOENIX2', 'SRU']);
-  if (!SET_PRICED.has(game.system.toUpperCase()) && !cabinetCoinPence(game.layout)) {
+  const SET_PRICED = new Set(['EPOCH', 'MPU5', 'ASTRASYSA1', 'PROCONN', 'BLACKBOX', 'PHOENIX', 'PHOENIX2', 'SRU', 'SYSTEM80']);
+  const readsCoins = (m as { programReadsCoins?: boolean }).programReadsCoins === true;
+  if (!SET_PRICED.has(game.system.toUpperCase()) && !cabinetCoinPence(game.layout) && !readsCoins) {
     noteBoardDefault(m, {
       axis: 'coin',
       text: `coin and token values: the ${game.system} board's default table - the layout prices no coin line`,

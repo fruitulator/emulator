@@ -1,5 +1,7 @@
 import { backRow, choreograph, menuRow } from './rows';
 
+export const PANEL_SHOW = 'menu-panel-show';
+
 export interface DrawerElements {
   menu: HTMLElement;
   backdrop: HTMLElement;
@@ -57,6 +59,7 @@ export class MenuDrawer {
   openSubmenu(title: string, panel: HTMLElement): void {
     const back = backRow(title, () => this.closeSubmenu());
     const { menu, content, sub } = this.el;
+    panel.dispatchEvent(new Event(PANEL_SHOW));
     sub.replaceChildren(back, panel);
     choreograph(sub);
     sub.scrollTop = 0;
@@ -83,6 +86,7 @@ export class MenuDrawer {
     const h = document.createElement('div');
     h.className = 'menu-fly-title';
     h.textContent = title;
+    panel.dispatchEvent(new Event(PANEL_SHOW));
     fly.replaceChildren(h, panel);
     choreograph(fly);
     fly.scrollTop = 0;

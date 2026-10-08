@@ -1,5 +1,5 @@
 import type { Bus16 } from '../cpu/bus68k';
-import type { CabinetSwitch, Machine, DigitKind, NoteResult } from './machine';
+import type { CabinetSwitch, CoinWiringStatus, Machine, DigitKind, NoteResult } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
@@ -16,10 +16,13 @@ import { MeterConfirm } from '../hw/meterconfirm';
 import { DataPak } from '../hw/datapak';
 import { SspValidator, SSP_CHANNEL_PENCE } from '../hw/ssp';
 import { fitReelBank, type ReelFit } from './reelfit';
-import { noteRomCut } from './boarddefaults';
+import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { ROM_UNPLACED } from './pairplacer';
 import { COIN_RAW } from './coinraw';
+import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
+import { impactCoinTable, listInForce, programCoin, readImpactAllCoinLists, readImpactCoinLists, type ImpactAllLists, type ImpactCoinRead, type ProgramCoin } from './impactcoins';
+import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
 import type { LayoutSwitch } from './layoutswitches';
 import { StatedLines } from './statedlines';
 import { CurveMux } from '../hw/curvemux';
@@ -68,7 +71,7 @@ export interface IoAccess {
 }
 
 export class Impact implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache'];
   readonly digitKind: DigitKind = 'impact';
   readonly cpu: M68000;
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -364,7 +367,14 @@ export class Impact implements Bus16, Machine {
     this.sec.fitV20();
     this.lamps.fill(0xff, 256);
     this.ssp.onReply = (bytes) => this.sspReply(bytes);
-    this.ssp.onCredit = (channel) => { this.cashLedger.inPence += SSP_CHANNEL_PENCE[channel - 1] ?? 0; };
+    this.ssp.onCredit = (channel) => {
+      const pence = SSP_CHANNEL_PENCE[channel - 1] ?? 0;
+      if (this.wiring) {
+        this.wiring.check.coin(this.booksMoney ? pence : undefined, this.wiringState.now);
+        if (!this.booksMoney) return;
+      }
+      this.cashLedger.inPence += pence;
+    };
     this.sspLamps();
   }
 
@@ -507,11 +517,46 @@ export class Impact implements Bus16, Machine {
     this.coinstate &= ~mask & 0xffff;
     this.coinMasks[b] = mask;
     this.coinCycles[b] = COIN_DWELL;
-    if (b === Impact.TOKEN_LINE) {
-      this.cashLedger.tokenInPence += Impact.COIN_PENCE[b] ?? 0;
-    } else {
-      this.cashLedger.inPence += Impact.COIN_PENCE[b] ?? 0;
+    const taken = this.programCoinOn(b);
+    if (taken === 'refused') { this.coinsRefused++; return; }
+    if (this.wiring) { this.bookWiredCoin(b, taken); return; }
+    this.bookProgramCoin(b, taken);
+  }
+
+  coinsRefused = 0;
+
+  private bookProgramCoin(b: number, taken: ProgramCoin): void {
+    if (taken === null) {
+      noteBoardDefault(this, {
+        axis: 'coin',
+        text: 'the program\'s coin list was not read - a coin books the board\'s price for its line',
+        ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
+      });
+      if (b === Impact.TOKEN_LINE) this.cashLedger.tokenInPence += Impact.COIN_PENCE[b] ?? 0;
+      else this.cashLedger.inPence += Impact.COIN_PENCE[b] ?? 0;
+      return;
     }
+    if (taken === 'refused') return;
+    if ('unvalued' in taken) { this.cashLedger.unpricedTokenIn++; return; }
+    if (taken.token) this.cashLedger.tokenInPence += taken.pence;
+    else this.cashLedger.inPence += taken.pence;
+  }
+
+  private programCoinOn(b: number): ProgramCoin {
+    const all = this.allCoinLists();
+    const code = this.mechType ? (Impact.BINARY_CODE[b]! & 0x1f) | 0x20 : 1 << b;
+    return programCoin(this.rom, all, this.ram, this.mechType === 1, code);
+  }
+
+  get programReadsCoins(): boolean {
+    const all = this.allCoinLists();
+    return (this.mechType ? all.binary : all.parallel).length > 0;
+  }
+
+  private allListsCache: { rom: Uint8Array; all: ImpactAllLists } | null = null;
+  private allCoinLists(): ImpactAllLists {
+    if (this.allListsCache?.rom !== this.rom) this.allListsCache = { rom: this.rom, all: readImpactAllCoinLists(this.rom) };
+    return this.allListsCache.all;
   }
 
   get coinBusy(): boolean {
@@ -530,6 +575,125 @@ export class Impact implements Bus16, Machine {
     { label: '20p token', bit: 4, pence: null, token: true },
     { label: '5p', bit: 5, pence: 5 },
   ];
+
+  private wiring: {
+    coins: Map<number, SlotCoin>;
+    conflicts: number[];
+    check: MeterUnitCheck;
+    checked: Set<number> | null;
+    cashIn: Set<number>;
+  } | null = null;
+
+  private wiringState: { key: string; now: number; check: MeterCheckState } = Impact.freshWiringState('');
+
+  private static freshWiringState(key: string): { key: string; now: number; check: MeterCheckState } {
+    return { key, now: 0, check: meterCheckState() };
+  }
+
+  private static readonly WIRING_SLACK = 5;
+  private static readonly WIRING_QUIET = 2 * CPU_CLOCK;
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    const t = this.readCoinTable();
+    const cashIn = new Set<number>();
+    this.meterInMult.forEach((x, i) => { if (x > 0) cashIn.add(i); });
+    if (!cashIn.size) cashIn.add(Impact.METER_CASH_IN);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), Impact.freshWiringState);
+    this.wiring = {
+      coins,
+      conflicts,
+      check: new MeterUnitCheck(Impact.METER_UNIT_PENCE, Impact.WIRING_SLACK, Impact.WIRING_QUIET, this.wiringState.check),
+      checked: 'refused' in t ? null : new Set(t.cash),
+      cashIn,
+    };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return this.wiring?.check.state !== 'disagrees';
+  }
+
+  private checks(line: number, pence: number | null): boolean {
+    const set = this.wiring!.checked;
+    if (set) return set.has(line);
+    return line !== Impact.TOKEN_LINE && pence !== 0;
+  }
+
+  private bookWiredCoin(line: number, taken: ProgramCoin): void {
+    const w = this.wiring!;
+    const tell = (pence: number | null): void => {
+      if (this.checks(line, pence)) w.check.coin(pence, this.wiringState.now);
+    };
+    if (!this.booksMoney || w.conflicts.includes(line)) { tell(null); return; }
+    const c = w.coins.get(line);
+    if (c === undefined) {
+      this.bookProgramCoin(line, taken);
+      tell(taken === null ? Impact.COIN_PENCE[line] ?? 0 : taken !== 'refused' && 'pence' in taken ? taken.pence : null);
+      return;
+    }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; tell(c); return; }
+    if (c.token === null) { this.cashLedger.unpricedTokenIn++; tell(null); return; }
+    this.cashLedger.tokenInPence += c.token;
+    tell(c.token);
+  }
+
+  private tickWiring(cycles: number): void {
+    const s = this.wiringState;
+    s.now += cycles;
+    this.wiring!.check.tick(s.now);
+  }
+
+  private coinSlots: number[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    const out = new Set<number>();
+    const bit = (b: number): number | null => (b >= 0 && b < 6 ? b : null);
+    for (const c of list) {
+      if (c.pence !== null) continue;
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
+      let line: number | null;
+      if (c.line !== null && c.note === null) {
+        if ((line = bit(c.line)) === null) continue;
+      } else if (c.note !== null && c.note >= 0x0f && c.note <= 0x16) line = bit(c.note - 0x0f);
+      else if (c.note === COIN_NOTE_BLANK && c.button !== null && c.button >= 0 && c.button < 128 && (c.button >> 3) === Impact.COIN_ROW) line = bit(c.button & 7);
+      else if (c.note !== null && COIN_NOTES.get(c.note)?.token) line = Impact.TOKEN_LINE;
+      else line = null;
+      out.add(line ?? (c.token ? Impact.TOKEN_LINE : 0));
+    }
+    this.coinSlots = [...out].sort((a, b) => a - b);
+  }
+
+  private static readonly COIN_ROW = 9;
+  private static readonly METER_CASH_IN = 0;
+
+  get unnamedCoinLines(): readonly number[] {
+    return this.coinSlots;
+  }
+
+  private coinTableCache: { rom: Uint8Array; t: ReturnType<typeof readImpactCoinLists> } | null = null;
+  private readCoinTable(): ImpactCoinRead | { refused: string } {
+    if (this.mechType) return { refused: 'a Binary coin mech: the program\'s coin code list is not read' };
+    if (this.coinTableCache?.rom !== this.rom) this.coinTableCache = { rom: this.rom, t: readImpactCoinLists(this.rom) };
+    const lists = this.coinTableCache.t;
+    if (!Array.isArray(lists)) return lists;
+    return impactCoinTable(lists, listInForce(this.rom, lists, this.ram));
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? null : t.table;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    const t = this.readCoinTable();
+    return 'refused' in t ? t.refused : null;
+  }
 
   setDsw(v: number): void {
     this.idle[PORT_DSW] = v & 0xff;
@@ -630,7 +794,11 @@ export class Impact implements Bus16, Machine {
   private secCount(meter: number, delta: number): void {
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
-    if (inMult) this.secTotals.in += inMult * delta;
+    if (inMult) {
+      this.secTotals.in += inMult * delta;
+      if (this.wiring && delta > 0) this.wiring.check.count(delta, this.wiringState.now);
+    }
+    if (outMult && !this.booksMoney) { this.secTotals.out += outMult * delta; return; }
     if (outMult) {
       this.secTotals.out += outMult * delta;
       if (!this.coinHasLeft()) { if (this.secLedgerMult[meter]) this.heldOutPulses += delta; return; }
@@ -642,6 +810,7 @@ export class Impact implements Bus16, Machine {
 
   loadRomPair(even: Uint8Array, odd: Uint8Array): void {
     this.rom.fill(ROM_UNPLACED);
+    this.coinTableCache = null;
     noteRomCut(this, Math.max(even.length, odd.length) * 2, ROM_SIZE);
     const n = Math.min(even.length, odd.length, ROM_SIZE >> 1);
     for (let i = 0; i < n; i++) {
@@ -653,6 +822,7 @@ export class Impact implements Bus16, Machine {
 
   loadRom(image: Uint8Array): void {
     this.rom.fill(ROM_UNPLACED);
+    this.coinTableCache = null;
     noteRomCut(this, image.length, ROM_SIZE);
     this.rom.set(image.subarray(0, ROM_SIZE));
     this.cpu.setCodeRegion(0, this.rom);
@@ -816,6 +986,10 @@ export class Impact implements Bus16, Machine {
     this.meterCount[id]++;
     this.meterTotals.in += this.meterInMult[id];
     this.meterTotals.out += this.meterOutMult[id];
+    if (this.wiring) {
+      if (this.wiring.cashIn.has(id)) this.wiring.check.count(1, this.wiringState.now);
+      if (!this.booksMoney) return;
+    }
     const outMeter = this.meterMapStated
       ? (this.meterLedgerMult[id] ?? 0) > 0 || (id === Impact.METER_TOKEN_OUT
         && this.meterOutMult[Impact.METER_CASH_OUT] > 0 && !this.meterOutMult[id] && !this.meterInMult[id])
@@ -1049,6 +1223,8 @@ export class Impact implements Bus16, Machine {
 
     this.hopper1.tick(cycles);
     this.hopper2.tick(cycles);
+
+    if (this.wiring) this.tickWiring(cycles);
 
     for (let i = 0; i < 6; i++) {
       if (this.coinCycles[i] > 0) {

@@ -6,6 +6,7 @@ dist/
 test/vectors
 
 bin
+bin-pending
 
 public/DefaultSounds
 

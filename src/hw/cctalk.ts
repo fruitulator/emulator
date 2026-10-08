@@ -117,7 +117,7 @@ export function inhibitLampWord(enabled: boolean, mask: number): number {
 }
 
 export class Sr5iMech implements CcTalkDevice {
-  static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'bnvKey'];
+  static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'bnvKey', 'currency'];
 
   bnvKey: BnvKey = [...JcmEba.DEFAULT_KEY];
 
@@ -191,10 +191,21 @@ export class Sr5iMech implements CcTalkDevice {
     }
   }
 
-  static channelPence(channel: number): number | null {
-    const m = /^GB(\d{3})/.exec(Sr5iMech.COIN_IDS[channel - 1] ?? '');
+  static channelPence(channel: number, currency = 0): number | null {
+    const m = /^GB(\d{3})/.exec(Sr5iMech.coinIdOf(currency, channel));
     return m ? Number(m[1]) : null;
   }
+
+  pence(channel: number): number | null {
+    return Sr5iMech.channelPence(channel, this.currency);
+  }
+
+  static coinIdOf(currency: number, channel: number): string {
+    const set = Sr5iMech.COIN_TABLES[currency] ?? Sr5iMech.COIN_TABLES[0]!;
+    return set[channel - 1] ?? '......';
+  }
+
+  currency = 0;
 
   random: () => number = () => {
     this.seed = (Math.imul(this.seed, 1103515245) + 12345) >>> 0;
@@ -249,6 +260,12 @@ export class Sr5iMech implements CcTalkDevice {
   static readonly COIN_IDS: readonly string[] =
     ['GB100B', 'GB050B', 'GB020A', 'GB010B', 'TK477A', 'GB200A', 'GB005A'];
 
+  static readonly COIN_TABLES: readonly (readonly string[])[] = [
+    Sr5iMech.COIN_IDS,
+    ['GB100A', 'GB050B', 'GB020A', 'GB010B', '......', 'GB200A', 'GB005A', '......', 'TK477A', 'TK558A', 'TK724A'],
+    ['EU005A', 'EU010A', 'EU020A', 'EU050A'],
+  ];
+
   reply(header: number, data: readonly number[] = []): number[] | null {
     switch (header) {
       case CC.REQUEST_MANUFACTURER:
@@ -261,7 +278,7 @@ export class Sr5iMech implements CcTalkDevice {
         return [2, 20];
       case CC.REQUEST_COIN_ID: {
         const ch = data[0] ?? 0;
-        return ascii(Sr5iMech.COIN_IDS[ch - 1] ?? '......');
+        return ascii(Sr5iMech.coinIdOf(this.currency, ch));
       }
       case CC.READ_BUFFERED_CREDIT: {
         const events: number[] = [];
@@ -816,7 +833,7 @@ export class JcmEba implements CcTalkDevice {
     const id = ascii(GB_BILLS[position] ?? '');
     const body = id.length
       ? [position, 0x23, id[0], id[1], 2, 0, challenge, this.random() & 0xff, ...id.slice(2), 0x31]
-      : [position, 0x2e, 0x2e, 0x2e, 0, 0, challenge, this.random() & 0xff, 0, 0, 0, 0, 0, 0];
+      : [position, 0x2e, 0x2e, 0x2e, 0, 0, challenge, this.random() & 0xff, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e];
     const crc = crc16(body.map((b) => b & 0xff));
     return desEcb(this.des.key, [crc & 0xff, ...body, (crc >> 8) & 0xff], false);
   }
@@ -951,7 +968,7 @@ const GB_BILLS: Record<number, string> = {
   3: 'GB0020A',
 };
 
-const EMPTY_BILL = '       ';
+const EMPTY_BILL = '.......';
 
 const MODELS: Record<string, () => CcTalkDevice> = {
   SR5I: () => new Sr5iMech(),

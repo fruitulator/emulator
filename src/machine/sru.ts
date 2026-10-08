@@ -72,6 +72,7 @@ export class Sru extends Sys80 {
   ];
 
   override readonly clockHz = SRU_CLOCK;
+  protected override readsProgramCoins = false;
 
   private row4 = 0;
   private int1En = 0;
@@ -260,7 +261,7 @@ export class Sru extends Sys80 {
     this.chuteCache = null;
   }
 
-  get unnamedCoinLines(): readonly number[] {
+  override get unnamedCoinLines(): readonly number[] {
     const out: number[] = [];
     for (let i = 0; i < 4; i++) if (this.layoutCoinPence[i] === null) out.push(20 + i);
     return out;
@@ -276,7 +277,7 @@ export class Sru extends Sys80 {
   }
 
   private chuteCache: CoinChute[] | null = null;
-  get coinChutes(): readonly CoinChute[] | undefined {
+  override get coinChutes(): readonly CoinChute[] | undefined {
     if (this.coinPence.every((p) => p === null)) return undefined;
     this.chuteCache ??= this.coinPence.map((p, i): CoinChute => {
       const bit = 20 + i;

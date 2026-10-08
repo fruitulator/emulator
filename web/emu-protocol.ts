@@ -3,7 +3,8 @@ import type { Check, CheckResult, RelayInput } from './relay';
 import type { FrameLayout } from '../src/machine/framestate';
 import type { Schematic } from '../src/machine/schematic';
 import type { Snapshot } from './snapshot';
-import type { CashLedger, CoinChute, NamedCoin } from '../src/machine/machine';
+import type { CashLedger, CoinChute, CoinWiringStatus, NamedCoin } from '../src/machine/machine';
+import type { CoinLineTable, CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
 import type { DiagEntry } from './diaglog';
 import type { Recording } from '../src/machine/replay';
 import type { SwitchControl } from '../src/layout/fmlconfig';
@@ -36,6 +37,11 @@ export interface MachineInfo {
   coins?: CoinChute[];
   coinPort?: { compare: number; lines: { bit: number; mask: number }[] };
   unnamedCoins?: number[];
+  namesCoins?: boolean;
+  coinTable?: CoinLineTable;
+  coinTableRefusal?: string;
+  slotlessCoins: number[];
+  drawnCoins?: number[];
   layout: FrameLayout;
   schematic: Schematic | null;
   boardDefaults?: { axis: string; text: string; ifWrong: string; node?: string; unbuilt?: string }[];
@@ -51,6 +57,7 @@ export type EmuRequest =
       optionKeys?: Record<string, number>;
       panelSwitches?: Record<string, boolean>;
       namedCoins?: Record<string, NamedCoin>;
+      coinWiring?: CoinWiring;
       powerCycle?: boolean;
       benchStep?: boolean;
       noAudio?: boolean;
@@ -63,6 +70,7 @@ export type EmuRequest =
   | { type: 'input'; epoch: number; id: number; on: boolean }
   | { type: 'coin'; epoch: number; bit: number }
   | { type: 'name-coin'; epoch: number; line: number; coin: NamedCoin }
+  | { type: 'coin-wiring'; epoch: number; wiring: CoinWiring }
   | { type: 'note'; epoch: number; billType: number; parallel?: boolean }
   | { type: 'reset'; epoch: number }
   | { type: 'power-cycle'; epoch: number }
@@ -71,7 +79,9 @@ export type EmuRequest =
       optionKeys?: Record<string, number>;
       panelSwitches?: Record<string, boolean>;
       namedCoins?: Record<string, NamedCoin>;
+      coinWiring?: CoinWiring;
     }
+  | { type: 'measure-coins'; epoch: number; id: number; lines: number[] }
   | {
       type: 'record-start';
       epoch: number;
@@ -110,7 +120,7 @@ export type EmuResponse =
   | { type: 'serial'; epoch: number; events: { ch: number; bytes: number[] }[] }
   | { type: 'coins'; epoch: number; coins: CoinChute[] }
   | { type: 'coin-rejected'; epoch: number; bit: number }
-  | { type: 'frame'; buf: ArrayBuffer }
+  | { type: 'frame'; buf: ArrayBuffer; machineS?: number }
   | { type: 'halted'; epoch: number; message: string }
   | { type: 'key-fitted'; epoch: number; positions: number[] }
   | {
@@ -142,8 +152,12 @@ export type EmuResponse =
       regionsRefused?: number;
     }
   | { type: 'diag-result'; id: number; values: number[] }
-  | { type: 'ledger-result'; id: number; ledger: CashLedger | null }
+  | {
+      type: 'ledger-result'; id: number; ledger: CashLedger | null;
+      wiring?: CoinWiringStatus;
+    }
   | { type: 'clear-ram-result'; id: number; error?: string }
+  | { type: 'measure-coins-result'; id: number; result: CoinMeasurement | null; wallMs: number }
   | { type: 'io-activity-result'; id: number; counts: Record<string, number> | null }
   | { type: 'diag-log-result'; id: number; entries: DiagEntry[] }
   | { type: 'recording-result'; id: number; recording: Recording | null }

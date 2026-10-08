@@ -18,6 +18,7 @@ export const DENY = new Set([
   'boardDefaults', 'boardDefaultsStated',
   'cfCycles', 'c32Cycles', 'c32Tails', 'c32Heads',
   'predecode', 'regions',
+  'allListsCache', 'coinTableCache',
   'wasm', 'wasmMode', 'wasmBytesOverride',
   'rxQueue',
   'opticStart', 'opticWidth',

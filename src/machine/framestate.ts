@@ -57,6 +57,7 @@ const OFF_REEL_COUNT = 21;
 const OFF_LAMP_PHASE = 22;
 const OFF_LAMP_DIM = 23;
 const OFF_COIN_REFUSING = 24;
+const OFF_COIN_SHUT = 26;
 
 export const LAMP_FULL = 255;
 export const LAMP_HALF = 128;
@@ -359,6 +360,7 @@ export function captureFrame(
     | (meta.paused ? FLAG_PAUSED : 0));
   dv.setUint8(OFF_REEL_COUNT, layout.reelCount);
   dv.setUint16(OFF_COIN_REFUSING, (m.coinRefusing ?? 0) & 0xffff, true);
+  dv.setUint16(OFF_COIN_SHUT, (m.coinLinesShut ?? 0) & 0xffff, true);
   dv.setUint8(OFF_LAMP_PHASE,
     (m as unknown as { lampPhase?(): number }).lampPhase?.() ?? 0);
   dv.setUint8(OFF_LAMP_DIM,
@@ -581,6 +583,7 @@ export class FrameView {
   readonly steps: number;
   readonly coinBusy: boolean;
   readonly coinRefusing: number;
+  readonly coinLinesShut: number;
   readonly halted: boolean;
   readonly paused: boolean;
   readonly reels: FrameReel[];
@@ -607,6 +610,7 @@ export class FrameView {
     const flags = dv.getUint8(OFF_FLAGS);
     this.coinBusy = (flags & FLAG_COIN_BUSY) !== 0;
     this.coinRefusing = dv.getUint16(OFF_COIN_REFUSING, true);
+    this.coinLinesShut = dv.getUint16(OFF_COIN_SHUT, true);
     this.halted = (flags & FLAG_HALTED) !== 0;
     this.paused = (flags & FLAG_PAUSED) !== 0;
 

@@ -3,6 +3,7 @@ import { openDialog } from './ui/dialog';
 import { actionButton, pillButton } from './ui/list';
 import { exportPunnet, punnetFileName } from './portable';
 import { PunnetPackWriter, COLLECTION_VERSION, type PackSink } from './punnetpack';
+import { saveBlob } from './downloads';
 import type { GameMeta } from './store';
 import { str } from './i18n';
 
@@ -16,8 +17,12 @@ export function openExportPicker(o: {
   saved: ReadonlySet<string>;
   unplayable: Unplayable;
   onSave(chosen: GameMeta[]): void;
+  preselected?: boolean;
+  flat?: boolean;
+  title?: string;
+  intro?: string;
 }): void {
-  const chosen = new Set<string>();
+  const chosen = new Set<string>(o.preselected ? o.games.map((g) => g.hash) : []);
   const grid = document.createElement('div');
   grid.className = 'ui-list export-pick-grid';
   const count = document.createElement('span');
@@ -42,6 +47,7 @@ export function openExportPicker(o: {
     mode: 'pick',
     unplayable: o.unplayable,
     thumbSize: 'small',
+    flat: o.flat,
     chosen: (g) => chosen.has(g.hash),
     onPick: (g) => {
       if (chosen.has(g.hash)) chosen.delete(g.hash); else chosen.add(g.hash);
@@ -61,7 +67,7 @@ export function openExportPicker(o: {
 
   const intro = document.createElement('p');
   intro.className = 'export-pick-intro';
-  intro.textContent = str('punnetexport.save_your_games_including_artwork');
+  intro.textContent = o.intro ?? str('punnetexport.save_your_games_including_artwork');
   const bar = document.createElement('div');
   bar.className = 'export-pick-bar';
   const picks = document.createElement('div');
@@ -73,7 +79,7 @@ export function openExportPicker(o: {
   bar.append(picks, ends);
 
   const dialog = openDialog({
-    title: str('punnetexport.export_games'),
+    title: o.title ?? str('punnetexport.export_games'),
     body: [intro, bar, grid],
     actions: list.searchButton ? [list.searchButton] : [],
   });
@@ -171,4 +177,83 @@ export async function packGames(
   });
   out.bytes = writer.size;
   return out;
+}
+
+export interface PackProgress {
+  say(msg: string): void;
+  fill(share: number): void;
+  readonly stopped: boolean;
+  close(): void;
+}
+
+export function openPackProgress(title: string): PackProgress {
+  const line = document.createElement('p');
+  line.className = 'pack-progress-line';
+  line.setAttribute('aria-live', 'polite');
+  const track = document.createElement('div');
+  track.className = 'pack-progress';
+  track.setAttribute('role', 'progressbar');
+  track.setAttribute('aria-valuemin', '0');
+  track.setAttribute('aria-valuemax', '100');
+  track.setAttribute('aria-valuenow', '0');
+  const fill = document.createElement('div');
+  fill.className = 'pack-progress-fill';
+  track.append(fill);
+  let stopped = false;
+  const stop = pillButton(str('punnetexport.stop'), () => { stopped = true; stop.disabled = true; });
+  const acts = document.createElement('div');
+  acts.className = 'pack-progress-actions';
+  acts.append(stop);
+  let closing = false;
+  const dialog = openDialog({ title, body: [line, track, acts], onClose: () => { if (!closing) stopped = true; } });
+  dialog.panel.classList.add('pack-progress-dialog');
+  return {
+    say: (msg) => { line.textContent = msg; },
+    fill: (share) => {
+      const pc = Math.round(Math.max(0, Math.min(1, share)) * 100);
+      fill.style.width = `${pc}%`;
+      track.setAttribute('aria-valuenow', String(pc));
+    },
+    get stopped() { return stopped; },
+    close: () => { if (closing) return; closing = true; dialog.close(); },
+  };
+}
+
+export async function packWithProgress(
+  chosen: GameMeta[], pending: Promise<PackTarget | null>, name: string,
+): Promise<PackResult | null> {
+  const target = await pending;
+  if (!target) return null;
+  const progress = openPackProgress(str('main.packing_n_games', { 0: chosen.length }));
+  try {
+    const result = await packGames(chosen, target, {
+      stop: () => progress.stopped,
+      onGame: (i, n, title) => {
+        progress.say(str('main.packing_n_n_of_n', { 0: title, 1: i + 1, 2: n }));
+        progress.fill(i / n);
+      },
+    });
+    if (!result.stopped && result.written.length) {
+      progress.fill(1);
+      progress.say(str('main.saving_the_file'));
+      const blob = await target.close();
+      if (blob) saveBlob(blob, name);
+    }
+    return result;
+  } catch (e) {
+    await target.abort().catch(() => undefined);
+    throw e;
+  } finally {
+    progress.close();
+  }
+}
+
+export function packReport(result: PackResult): { message: string; lines: string[]; clean: boolean } {
+  const n = result.written.length;
+  const message = result.stopped ? str('main.export_stopped_no_file_was')
+    : n === 0 ? str('main.nothing_was_exported')
+    : str('main.n_games_saved_in_one', { n, size: fmtSize(result.bytes) });
+  const lines = result.failed.map((f) => `${f.title} - ${f.reason}`);
+  if (lines.length) lines.unshift(str('main.n_could_not_be_packed', { 0: lines.length }));
+  return { message, lines, clean: !lines.length && n > 0 && !result.stopped };
 }

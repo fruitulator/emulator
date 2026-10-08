@@ -10,8 +10,8 @@ import { applyState, captureState, captureStateRaw } from './snapshot';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { Follower, diffPaths, followBudget, settleSound, signalsOf, snapshotHash, type Check, type RelayInput } from './relay';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, buildMachineInfo, powerCycleOrThrow,
-  rebuildWithBlankMemory, sameFrameLayout,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
 } from './emu-core';
@@ -30,7 +30,7 @@ const post = (msg: EmuResponse, transfer: Transferable[] = []): void => {
 
 const TICK_MS = 1000 / 60;
 const BENCH_REPORT_MS = 1000;
-const FRAME_POOL = 3;
+const FRAME_POOL = 6;
 
 let machine: Machine | null = null;
 let epoch = -1;
@@ -45,6 +45,7 @@ let tickTarget = 0;
 let scheduled = false;
 let seq = 0;
 let droppedMsTotal = 0;
+let machineSTotal = 0;
 let pool: ArrayBuffer[] = [];
 
 let audioPort: MessagePort | null = null;
@@ -82,7 +83,7 @@ function postFrame(m: Machine, stepMs: number, steps: number): void {
   captureFrame(m, layout, buf, {
     epoch, seq: seq++, stepMs, droppedMs: droppedMsTotal, steps, halted, paused,
   });
-  post({ type: 'frame', buf }, [buf]);
+  post({ type: 'frame', buf, machineS: machineSTotal }, [buf]);
 }
 
 function pushAutosave(now: number, trigger: AutosaveTrigger): void {
@@ -228,6 +229,7 @@ function tick(): void {
     post({ type: 'halted', epoch, message: (e as Error).message || str('emu.worker.machine_halted') });
     return;
   }
+  machineSTotal += budget / m.clockHz;
   dwell.ran(m, budget);
   coins.ran(m, budget);
   sendRelay(now, false);
@@ -250,7 +252,7 @@ function tick(): void {
 
 let sentCoins = '';
 
-let loadedFrom: { game: Game; wasm?: boolean; noRegions?: boolean } | null = null;
+let loadedFrom: ({ game: Game } & MeasureSettings) | null = null;
 let settingNotes: string[] = [];
 
 function coinsKey(m: Machine): string {
@@ -281,6 +283,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
   paused = false;
   seq = 0;
   droppedMsTotal = 0;
+  machineSTotal = 0;
   lastTickAt = 0;
   tickTarget = 0;
   stalls.forget();
@@ -298,6 +301,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
     if (req.snapshot) applyState(m, req.snapshot);
     applyPanelSwitchState(m, req.panelSwitches);
     applyNamedCoins(m, req.namedCoins);
+    applyCoinWiring(m, req.coinWiring);
     if (req.powerCycle) powerCycleOrThrow(m);
     layout = frameLayoutFor(req.game.system, m, req.game.layout);
     pool = Array.from({ length: FRAME_POOL }, () => new ArrayBuffer(layout!.byteLength));
@@ -313,7 +317,10 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
       if (wm.usingWasm) console.log('[emu] CPU: WebAssembly core (?wasm=0 opts out)');
     }
     machine = m;
-    loadedFrom = { game: req.game, wasm: req.wasm, noRegions: req.noRegions };
+    loadedFrom = {
+      game: req.game, wasm: req.wasm, noRegions: req.noRegions,
+      optionKeys: req.optionKeys, panelSwitches: req.panelSwitches, namedCoins: req.namedCoins,
+    };
     if (req.relay) {
       relayRec = recordInto(m, {
         set: gameName, cold: false, clock: { mode: 'pinned', at: req.relay.at }, maxEvents: 0,
@@ -354,6 +361,25 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
   }
 }
 
+function measureCoins(req: Extract<EmuRequest, { type: 'measure-coins' }>): EmuResponse {
+  const m = machine;
+  if (req.epoch !== epoch || !m || !loadedFrom) return { type: 'measure-coins-result', id: req.id, result: null, wallMs: 0 };
+  const t0 = performance.now();
+  let result;
+  try {
+    result = measureRunningCoins(machineFor, loadedFrom.game, m, gameName, loadedFrom, req.lines, new Date());
+  } catch (e) {
+    console.warn('[emu] coin measuring failed', e);
+    result = { refused: (e as Error).message || 'the machine could not be copied' };
+  }
+  const wallMs = performance.now() - t0;
+  lastTickAt = 0;
+  tickTarget = 0;
+  stalls.forget();
+  diagLog.add('coin', measureLogLine(result, wallMs));
+  return { type: 'measure-coins-result', id: req.id, result, wallMs };
+}
+
 function clearRam(req: Extract<EmuRequest, { type: 'clear-ram' }>): string | null {
   const old = machine;
   if (!old || !loadedFrom) return 'no machine is running';
@@ -362,7 +388,7 @@ function clearRam(req: Extract<EmuRequest, { type: 'clear-ram' }>): string | nul
   let fresh: FrameLayout;
   try {
     m = rebuildWithBlankMemory(machineFor, loadedFrom.game, old, {
-      optionKeys: req.optionKeys, panelSwitches: req.panelSwitches, namedCoins: req.namedCoins,
+      optionKeys: req.optionKeys, panelSwitches: req.panelSwitches, namedCoins: req.namedCoins, coinWiring: req.coinWiring,
       wasm: loadedFrom.wasm, noRegions: loadedFrom.noRegions,
     });
     fresh = frameLayoutFor(loadedFrom.game.system, m, loadedFrom.game.layout);
@@ -408,6 +434,9 @@ function handle(req: EmuRequest): void {
         pool.push(req.buf);
       }
       return;
+    case 'measure-coins':
+      post(measureCoins(req));
+      return;
     default:
       break;
   }
@@ -427,6 +456,9 @@ function handle(req: EmuRequest): void {
       break;
     case 'name-coin':
       m.nameCoin?.(req.line, req.coin);
+      break;
+    case 'coin-wiring':
+      applyCoinWiring(m, req.wiring);
       break;
     case 'note':
       diagLog.add('coin', offerNote(m, req.billType, req.parallel === true));
@@ -547,7 +579,8 @@ function handle(req: EmuRequest): void {
     }
     case 'ledger': {
       const l = m.cashLedger;
-      post({ type: 'ledger-result', id: req.id, ledger: l ? { ...l } : null });
+      const w = m.coinWiringStatus;
+      post({ type: 'ledger-result', id: req.id, ledger: l ? { ...l } : null, ...(w ? { wiring: { ...w, conflicts: [...w.conflicts] } } : {}) });
       break;
     }
     case 'io-activity':

@@ -325,6 +325,7 @@ export interface PickOptions extends CommonOptions {
   fresh?: ReadonlySet<string>;
   onDrawn?(shown: number): void;
   chosen?(g: GameMeta): boolean;
+  flat?: boolean;
 }
 
 export type GameListOptions = BrowseOptions | PickOptions;
@@ -358,10 +359,11 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
   };
   root.classList.toggle('tiles-small', o.thumbSize === 'small');
 
-  const visible = (games: GameMeta[]): GameMeta[] => sortGames(
-    games.filter((g) => matches(g, search) && !(o.mode === 'pick' && o.exclude?.(g))),
-    sort,
-  );
+  const flat = o.mode === 'pick' && !!o.flat;
+  const visible = (games: GameMeta[]): GameMeta[] => {
+    const kept = games.filter((g) => matches(g, search) && !(o.mode === 'pick' && o.exclude?.(g)));
+    return flat ? kept : sortGames(kept, sort);
+  };
 
   const cardFor = (g: GameMeta): HTMLElement => {
     const hasState = saved.has(g.hash);
@@ -396,8 +398,8 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
 
   const draw = (games: GameMeta[], s: ReadonlySet<string> = saved): void => {
     saved = s;
-    let sections = groupGames(games, sort);
-    if (o.mode === 'pick') {
+    let sections = flat ? [{ label: '', games }] : groupGames(games, sort);
+    if (o.mode === 'pick' && !flat) {
       for (const f of root.querySelectorAll<HTMLElement>('.art')) releaseArtwork(f);
       const fresh = o.fresh;
       if (fresh?.size) {
@@ -414,6 +416,7 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     for (const c of [...root.children]) if (c !== bar?.wrap) c.remove();
     if (bar && bar.wrap.parentNode !== root) root.prepend(bar.wrap);
     root.append(...sections.flatMap(({ label, games: gs }) => {
+      if (flat) return [tileGrid(gs.map(cardFor))];
       let head: HTMLElement;
       if (o.mode === 'pick' && o.chosen) {
         const chosen = o.chosen;
@@ -457,6 +460,9 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     });
     searchButton = find;
     root.prepend(sb.wrap);
+    root.addEventListener('keydown', gridArrowNav);
+  }
+  if (o.mode === 'pick' && !flat) {
     const wrap = document.createElement('div');
     wrap.className = 'ui-sort-wrap';
     const lab = document.createElement('span');
@@ -478,7 +484,6 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     sel.addEventListener('change', () => { sort = sel.value as SortKey; storeSort(sort); redraw(); });
     controls = wrap;
     enhanceSelect(sel);
-    root.addEventListener('keydown', gridArrowNav);
   }
 
   const api: GameList = {

@@ -23,6 +23,10 @@ import type { LayoutSwitch } from './layoutswitches';
 import type { CabinetSwitch, CoinPortLines, Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult } from './machine';
 import { dilSwitchLabel } from './machine';
 import { newCashLedger } from './machine';
+import { fittedMech, mpu5CoinTable, readMpu5Mechs, type Mpu5Channel, type Mpu5Mechs } from './mpu5coins';
+import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
+import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
+import type { CoinWiringStatus } from './machine';
 import type { BoardPart } from './parts';
 import { noteRomCut } from './boarddefaults';
 import { ROM_UNPLACED } from './pairplacer';
@@ -67,7 +71,7 @@ export interface IoEvent {
 const TRACE_CAP = 8192;
 
 export class Mpu5 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['banks', 'nvram'];
+  static readonly snapshotConfig: readonly string[] = ['banks', 'nvram', 'mechs', 'coinSlots', 'wiring', 'gridMeterIn', 'gridMeterOut', 'gridSecIn', 'gridSecOut'];
 
   readonly digitKind: DigitKind = 'mpu5';
   readonly cpu: M68000;
@@ -169,10 +173,9 @@ export class Mpu5 implements Bus16, Machine {
       if (c.label) this.sec.counterText[i] = c.label;
     });
     this.sec.onCount = (meter, delta) => {
+      this.gridCount(this.gridSecIn[meter], this.gridSecOut[meter], delta);
       if (this.vendCoinsIn()) return;
-      if ((this.sec.counterText[meter] ?? '').trim() === 'CASH IN') {
-        this.cashLedger.inPence += delta * this.meterPencePerPulse;
-      }
+      if ((this.sec.counterText[meter] ?? '').trim() === 'CASH IN') this.cashInCounted(delta);
     };
   }
 
@@ -187,6 +190,7 @@ export class Mpu5 implements Bus16, Machine {
     if (v23 >= 0xffff0000) this.asic.commandAddr = v23;
     this.banks = mpu5LampBanks(this.rom);
     this.#named = mpu5MatrixSwitches(this.rom.subarray(0, this.romTop)) ?? [];
+    this.mechs = readMpu5Mechs(this.rom.subarray(0, this.romTop));
   }
 
   private banks: Mpu5LampBanks | null = null;
@@ -448,7 +452,7 @@ export class Mpu5 implements Bus16, Machine {
     const rising = v & ~this.meterPort;
     const falling = this.meterPort & ~v;
     this.meterPort = v;
-    if (rising & 0x01) this.cashLedger.inPence += this.meterPencePerPulse;
+    if (rising & 0x01) this.cashInCounted(1);
     for (let i = 0, bit = 1; i < 8; i++, bit <<= 1) {
       if (rising & bit) { this.meterHold[i] = Mpu5.METER_HOLD_TICKS; this.meterHoldMask |= bit; }
       else if (falling & bit) { this.meterHold[i] = 0; this.meterHoldMask &= ~bit; }
@@ -473,6 +477,7 @@ export class Mpu5 implements Bus16, Machine {
         if (--this.meterHold[i] !== 0) continue;
         this.meterHoldMask &= ~bit;
         this.meterCounts[i]++;
+        this.gridCount(this.gridMeterIn[i], this.gridMeterOut[i], 1);
       }
     }
   }
@@ -505,7 +510,7 @@ export class Mpu5 implements Bus16, Machine {
     const u16 = (i: number) => (program[i] << 8) | program[i + 1];
     const u32 = (i: number) => ((program[i] << 24) | (program[i + 1] << 16) | (program[i + 2] << 8) | program[i + 3]) >>> 0;
     for (let i = 0; i + 0x70 < program.length; i += 2) {
-      if (u32(i) !== 0x444d4f44 || u16(i + 4) !== 1 || u32(i + 6) !== 0x5041594f) continue;
+      if (u32(i) !== 0x444d4f44 || u16(i + 4) !== 1 || ((u32(i + 6) & 0xdfdfdfdf) >>> 0) !== 0x5041594f) continue;
       if (u32(i + 10) !== 0x1883d040 || u16(i + 14) !== 0x54a0) continue;
       let first = -1;
       for (let j = i + 30; j < i + 0x70; j += 2) {
@@ -514,7 +519,7 @@ export class Mpu5 implements Bus16, Machine {
       }
       if (first !== key) continue;
       const coin = u32(i + 22);
-      if (coin + 10 > program.length || u32(coin) !== 0x434f494e) continue;
+      if (coin + 10 > program.length || ((u32(coin) & 0xdfdfdfdf) >>> 0) !== 0x434f494e) continue;
       const pence = u16(coin + 8);
       return pence <= 10_000 ? pence : null;
     }
@@ -523,6 +528,7 @@ export class Mpu5 implements Bus16, Machine {
 
   private bookHopperCoin(): void {
     this.payoutCoins++;
+    if (!this.booksMoney) return;
     const pence = this.hopperCoinPence[0];
     if (pence !== null) {
       if (pence > 0) this.cashLedger.outPence += pence;
@@ -1042,6 +1048,7 @@ export class Mpu5 implements Bus16, Machine {
     }
     if (this.dataPakOut.length || this.dataPakIn.length) this.tickDataPak(span);
     this.tickCoin(span);
+    if (this.wiring) this.tickWiring(span);
     this.tickPayout(span);
     this.tickMeters(span);
     this.tickBoardClocks(span, this.wasm === null ? span : this.pendingDac);
@@ -1874,7 +1881,8 @@ export class Mpu5 implements Bus16, Machine {
     if (s2.a && !this.hopper2Beam) {
       this.hopper2Coins++;
       const pence = this.hopperCoinPence[1];
-      if (pence === null) this.cashLedger.unpricedOut++;
+      if (!this.booksMoney) {  }
+      else if (pence === null) this.cashLedger.unpricedOut++;
       else if (pence > 0) this.cashLedger.outPence += pence;
       else this.cashLedger.unpricedTokenOut++;
     }
@@ -1954,22 +1962,163 @@ export class Mpu5 implements Bus16, Machine {
       return;
     }
     if (this.coinCycles > 0 || this.coinHold > 0) return;
-    if (this.asic.regs[7] === 0) {
+    const pattern = this.coinPattern(bit);
+    if (this.asic.regs[7] === 0 || pattern === 0) {
       if (this.binaryMech) this.coinHold = Mpu5.BCO_REJECT_HOLD;
+      this.coinsRefused++;
       return;
+    }
+    this.coinPort = 0xff ^ pattern;
+    if (this.binaryMech) {
+      this.coinCycles = Mpu5.BCO_DWELL;
+      this.coinHold = Mpu5.BCO_INTERVAL;
+    } else {
+      this.coinCycles = Mpu5.COIN_DWELL;
+    }
+    if (this.wiring) this.bookWiredCoin(bit);
+  }
+
+  private coinPattern(bit: number): number {
+    const ch = this.fittedChannels();
+    if (ch) {
+      const c = ch.find((x) => x.bit === bit);
+      if (!c) return 0;
+      return this.binaryMech ? c.pattern : c.pattern | ((Mpu5.COIN_LINES[bit] ?? 0) & ~Mpu5.PARALLEL_PORT_MASK);
     }
     if (this.binaryMech) {
       const coin = Mpu5.BCO_COINS[bit];
-      if (!coin) return;
-      this.coinPort = 0xff ^ (BCO_UK[coin] << Mpu5.BCO_SHIFT);
-      this.coinCycles = Mpu5.BCO_DWELL;
-      this.coinHold = Mpu5.BCO_INTERVAL;
+      return coin ? BCO_UK[coin] << Mpu5.BCO_SHIFT : 0;
+    }
+    return Mpu5.COIN_LINES[bit] ?? 0;
+  }
+
+  private mechs: Mpu5Mechs | null = null;
+
+  private fittedChannels(): Mpu5Channel[] | null {
+    if (!this.mechs) return null;
+    const ch = fittedMech(this.mechs, this.binaryMech);
+    return Array.isArray(ch) ? ch : null;
+  }
+
+  get coinLineTable(): CoinLineTable | null {
+    const ch = this.fittedChannels();
+    return ch ? mpu5CoinTable(ch, this.binaryMech ? 'binary' : 'parallel') : null;
+  }
+
+  get coinLineTableRefusal(): string | null {
+    if (!this.mechs) return 'no program loaded';
+    const ch = fittedMech(this.mechs, this.binaryMech);
+    return Array.isArray(ch) ? null : ch.refused;
+  }
+
+  coinsRefused = 0;
+
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[]; check: MeterUnitCheck } | null = null;
+
+  private wiringState: { key: string; now: number; check: MeterCheckState } = Mpu5.freshWiringState('');
+
+  private static freshWiringState(key: string): { key: string; now: number; check: MeterCheckState } {
+    return { key, now: 0, check: meterCheckState() };
+  }
+
+  private static readonly WIRING_QUIET = Math.round(3 * MASTER_CLOCK);
+
+  setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), Mpu5.freshWiringState);
+    const unit = this.meterPencePerPulse;
+    this.wiring = { coins, conflicts, check: new MeterUnitCheck(unit, unit - 1, Mpu5.WIRING_QUIET, this.wiringState.check) };
+  }
+
+  get coinWiringStatus(): CoinWiringStatus | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts] };
+  }
+
+  private get booksMoney(): boolean {
+    return this.wiring?.check.state !== 'disagrees';
+  }
+
+  private get wiredIn(): boolean {
+    return this.wiring !== null && this.fittedChannels() !== null;
+  }
+
+  private cashInCounted(n: number): void {
+    if (this.wiredIn) { if (this.booksMoney) this.wiring!.check.count(n, this.wiringState.now); return; }
+    if (this.booksMoney) this.cashLedger.inPence += n * this.meterPencePerPulse;
+  }
+
+  private bookWiredCoin(bit: number): void {
+    const w = this.wiring!;
+    const own = this.fittedChannels()?.find((c) => c.bit === bit);
+    if (!own) return;
+    const now = this.wiringState.now;
+    if (!this.booksMoney || w.conflicts.includes(bit)) { w.check.coin(undefined, now); return; }
+    const c = w.coins.get(bit);
+    if (c === undefined) {
+      if (own.pence > 0) { this.cashLedger.inPence += own.pence; w.check.coin(own.pence, now); }
+      else w.check.coin(null, now);
       return;
     }
-    const lines = Mpu5.COIN_LINES[bit] ?? 0;
-    if (!lines) return;
-    this.coinPort = 0xff ^ lines;
-    this.coinCycles = Mpu5.COIN_DWELL;
+    const agrees = typeof c === 'number' ? own.pence === c : own.pence === 0;
+    if (!agrees) { this.wiringState.check.state = 'disagrees'; return; }
+    if (typeof c === 'number') { this.cashLedger.inPence += c; w.check.coin(c, now); return; }
+    if (c.token === null) this.cashLedger.unpricedTokenIn++;
+    else this.cashLedger.tokenInPence += c.token;
+    w.check.coin(null, now);
+  }
+
+  private tickWiring(cycles: number): void {
+    const s = this.wiringState;
+    s.now += cycles;
+    this.wiring!.check.tick(s.now);
+  }
+
+  private coinSlots: { button: number | null; note: number | null; line: number | null; token: boolean }[] = [];
+
+  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    this.coinSlots = list
+      .filter((c) => c.pence === null && !c.named?.name.startsWith('ccTalk') && !c.named?.name.startsWith('NV'))
+      .map((c) => ({ button: c.button, note: c.note, line: c.line, token: c.token }));
+  }
+
+  get unnamedCoinLines(): readonly number[] {
+    const port = this.coinPortLines;
+    const out = new Set<number>();
+    for (const c of this.coinSlots) {
+      if (c.line !== null) { out.add(c.line); continue; }
+      const mask = coinRowPattern({ ...c, named: null, effect: null, pence: null, rect: null }, Mpu5.COIN_ROW);
+      if (mask === undefined) { out.add(Mpu5.DEFAULT_COIN_BIT); continue; }
+      const hit = port.lines.find((l) => (l.mask & port.compare) === (mask & port.compare));
+      if (hit) out.add(hit.bit);
+    }
+    return [...out].sort((a, b) => a - b);
+  }
+
+  private static readonly COIN_ROW = 10;
+  private static readonly DEFAULT_COIN_BIT = 4;
+
+  private gridMeterIn: number[] = [];
+  private gridMeterOut: number[] = [];
+  private gridSecIn: number[] = [];
+  private gridSecOut: number[] = [];
+  private readonly gridTotals = { in: 0, out: 0 };
+
+  setMeterMoney(m: { meterIn: number[]; meterOut: number[]; secIn: number[]; secOut: number[] }): void {
+    this.gridMeterIn = [...m.meterIn];
+    this.gridMeterOut = [...m.meterOut];
+    this.gridSecIn = [...m.secIn];
+    this.gridSecOut = [...m.secOut];
+  }
+
+  private gridCount(inMult: number | undefined, outMult: number | undefined, n: number): void {
+    if (inMult) this.gridTotals.in += inMult * n;
+    if (outMult) this.gridTotals.out += outMult * n;
+  }
+
+  get meterTotals(): { in: number; out: number } {
+    return { in: this.gridTotals.in, out: this.gridTotals.out };
   }
 
   private tickCoin(cycles: number): void {
@@ -2000,6 +2149,13 @@ export class Mpu5 implements Bus16, Machine {
   private static readonly PARALLEL_PORT_MASK = 0xfc;
 
   get coinPortLines(): CoinPortLines {
+    const ch = this.fittedChannels();
+    if (ch) {
+      return {
+        compare: this.binaryMech ? Mpu5.BINARY_PORT_MASK : Mpu5.PARALLEL_PORT_MASK,
+        lines: ch.map((c) => ({ bit: c.bit, mask: this.coinPattern(c.bit) })),
+      };
+    }
     return this.binaryMech ? Mpu5.BINARY_PORT : Mpu5.PARALLEL_PORT;
   }
 

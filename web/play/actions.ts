@@ -6,8 +6,8 @@ import type { DiagEntry } from '../diaglog';
 import type { Game } from '../../src/machine/registry';
 import { card, menuRow } from '../ui/rows';
 import { MENU_ICONS } from '../ui/icons';
-import { cabinetSoundsRow, coinsPanel, reelBounceRow, switchPanels } from '../menupanels';
-import { downloadRow, type PanelDownload } from '../panelmenu';
+import { cabinetSoundsRow, coinsPanel, reelBounceRow, switchPanels, type OwnCoins } from '../menupanels';
+import { downloadRow, uploadRow, type PanelDownload, type PanelUpload } from '../panelmenu';
 import { saveDiagLog, saveSnapshot } from '../downloads';
 import { UNBUILT_NOTE_TEXT, stopNoteParts } from '../stopnote';
 import { statusRow } from '../ui/status';
@@ -23,6 +23,7 @@ export interface ActionSurface {
   running(): boolean;
   closeMenu(): void;
   coin(c: CoinChoice): void;
+  coinList?(): OwnCoins | null;
   throwSwitch(sw: PanelSwitch, on: boolean): void;
   namedSwitch(id: number, level: boolean): void;
   readonly effects: CabinetEffects;
@@ -33,6 +34,7 @@ export interface ActionSurface {
   reboot(): void;
   leave(): void;
   stateSaved?(snap: Snapshot): void;
+  loadState?(file: File): void;
 }
 
 export type ActionId =
@@ -84,6 +86,10 @@ export function stateDownload(s: ActionSurface): PanelDownload {
   return { label: str('play.actions.machine_state'), run: () => saveState(s) };
 }
 
+export function stateUpload(s: ActionSurface): PanelUpload {
+  return { label: str('play.actions.load_state'), accept: '.json', pick: (f) => s.loadState?.(f) };
+}
+
 export function logDownload(s: ActionSurface): PanelDownload {
   return { label: str('play.actions.diagnostics_log'), run: () => saveLog(s).then(() => true) };
 }
@@ -102,7 +108,7 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
   for (const id of ids) {
     switch (id) {
       case 'coins':
-        nav('coins', coinsPanel(m.info, m.view, m.system, (c) => s.coin(c)));
+        nav('coins', coinsPanel(m.info, m.view, m.system, (c) => s.coin(c), s.coinList ? () => s.coinList!() : undefined));
         break;
       case 'switches':
         for (const p of switchPanels(m.info, m.view, (sw, on) => s.throwSwitch(sw, on),
@@ -129,6 +135,7 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
         const dl = card();
         dl.classList.add('pm-rows');
         dl.append(downloadRow(stateDownload(s), 0), downloadRow(logDownload(s), 1));
+        if (s.loadState) dl.append(uploadRow(stateUpload(s), 2));
         nav('download', dl);
         break;
       }

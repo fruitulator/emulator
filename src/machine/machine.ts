@@ -2,8 +2,15 @@ import type { Reel } from '../hw/reel';
 import type { NamedCap } from './buttonnames';
 import type { BoardPart } from './parts';
 import type { DisplayKind } from './layoutdisplay';
+import type { CoinLineTable, CoinWiring, StepState } from './coinwiring';
 
 export type { DisplayKind };
+
+export interface CoinWiringStatus {
+  state: StepState;
+  step: number | null;
+  conflicts: number[];
+}
 
 export type NamedCoin = number | 'token';
 
@@ -151,11 +158,16 @@ export interface Machine {
   insertCoin(bit: number): void;
   readonly coinBusy: boolean;
   readonly coinRefusing?: number;
+  readonly coinLinesShut?: number;
   readonly coinChutes?: readonly CoinChute[];
   readonly coinPortLines?: CoinPortLines;
   readonly coinLockHarnessRead?: boolean;
   readonly coinsRefused?: number;
   readonly unnamedCoinLines?: readonly number[];
+  readonly coinLineTable?: CoinLineTable | null;
+  readonly coinLineTableRefusal?: string | null;
+  setCoinWiring?(w: CoinWiring): void;
+  readonly coinWiringStatus?: CoinWiringStatus;
   nameCoin?(line: number, coin: NamedCoin): void;
   insertNote?(type: number): NoteResult;
   insertParallelNote?(channel: number): NoteResult;
@@ -163,6 +175,7 @@ export interface Machine {
   readonly noteReaderFitted?: boolean;
   readonly reelDriftBase?: number;
   readonly cashLedger?: CashLedger;
+  readonly meterTotals?: { readonly in: number; readonly out: number };
   drainSerial?(): { ch: number; bytes: number[] }[];
 
   restoredStateFault?(): string | null;

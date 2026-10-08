@@ -3,6 +3,13 @@ export interface CoinLockoutWiring {
   readonly openSense: 0 | 1;
   readonly mask: number;
   readonly bits: readonly (number | null)[];
+  readonly masks?: readonly (number | null)[];
+}
+
+function lineMask(w: CoinLockoutWiring, line: number): number | null {
+  if (w.masks) return w.masks[line] || null;
+  const bit = w.bits[line];
+  return bit === null || bit === undefined ? null : 1 << bit;
 }
 
 export function lockoutOpen(w: CoinLockoutWiring, driven: number): number {
@@ -14,9 +21,8 @@ export function lockoutRefuses(w: CoinLockoutWiring, driven: number | null, patt
   const open = lockoutOpen(w, driven);
   if (open === 0) return true;
   if (pattern === 0 || (pattern & (pattern - 1)) !== 0) return false;
-  const line = 31 - Math.clz32(pattern);
-  const bit = w.bits[line];
-  return bit !== null && bit !== undefined && (open & (1 << bit)) === 0;
+  const gate = lineMask(w, 31 - Math.clz32(pattern));
+  return gate !== null && (open & gate) === 0;
 }
 
 export function lockoutRefusing(
