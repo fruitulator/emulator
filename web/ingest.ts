@@ -1,6 +1,6 @@
 import { repairC1 } from './cp437';
 import type { GameFile } from '../src/machine/registry';
-import { STATE_ONLY, isSetFile } from '../src/machine/setfiles';
+import { OS_JUNK_FILE, isSetFile, isSpareStateDir } from '../src/machine/setfiles';
 import { isEffectSample } from '../src/machine/effects';
 
 function isImportFile(name: string): boolean {
@@ -77,9 +77,7 @@ function gamDirs(paths: string[]): { games: Set<string>; state: Set<string> } {
     const dir = dirOf(p);
     if (games.has(dir) || state.has(dir)) continue;
     const below = paths.filter((q) => under(dir, dirOf(q)));
-    const runnable = below.some((q) => !STATE_ONLY.test(q));
-    const battery = below.some((q) => /\.ram$/i.test(q));
-    (!runnable && battery ? state : games).add(dir);
+    (isSpareStateDir(below) ? state : games).add(dir);
   }
   return { games, state };
 }
@@ -87,12 +85,7 @@ function gamDirs(paths: string[]): { games: Set<string>; state: Set<string> } {
 function isJunk(path: string): boolean {
   const parts = path.split('/');
   const base = parts[parts.length - 1];
-  return (
-    parts.includes('__MACOSX') ||
-    base === '.DS_Store' ||
-    base === 'Thumbs.db' ||
-    base.startsWith('._')
-  );
+  return parts.includes('__MACOSX') || OS_JUNK_FILE.test(base);
 }
 
 export interface ZipGameSet {
@@ -276,7 +269,7 @@ export function setsFromFolderInput(list: Iterable<File>): FolderSet[] {
   const sparesOf = (owner: string | undefined, every: boolean): Pick<FolderSet, 'spares'> => {
     const mine = picked.filter((e) => {
       const s = stateDirOf(e.path);
-      return s !== undefined && !zipped.has(e.file)
+      return s !== undefined && !zipped.has(e.file) && isImportFile(e.path)
         && (every || nearest(dirs, dirOf(s)) === owner);
     });
     return mine.length

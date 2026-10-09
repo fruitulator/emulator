@@ -27,6 +27,7 @@ export const DOT_PANEL_COMPONENTS: ReadonlyMap<number, string> = new Map([
   [0x11, 'ProconnMatrix'],
   [0x22, 'EpochMatrix'],
   [0x2e, 'MaygayMatrix'],
+  [0x23, 'PlasmaDisplay'],
 ]);
 
 const DAT_ALPHA_CLASSES = /^(TAlpha|TDotAlpha)$/;

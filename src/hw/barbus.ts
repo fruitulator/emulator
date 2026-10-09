@@ -110,6 +110,7 @@ class MuxDuty {
 export class Barbus {
   framesSeen = 0;
   repliesSent = 0;
+  repeatsSeen = 0;
   onAlpha?: (cells: Uint8Array, punct: Uint8Array) => void;
   readonly reel5 = new Reel5();
   readonly reel5b = new Reel5();
@@ -117,6 +118,14 @@ export class Barbus {
   reelJumpers: { mode: number; units: number[][] } | null = null;
 
   mux5Extended = false;
+
+  muxUnitAbsent = 0;
+
+  private muxFitted(unit: number): boolean {
+    return this.muxUnitAbsent === 0 || unit !== this.muxUnitAbsent;
+  }
+
+  private readonly lastTaken = new Map<number, { toggle: number; reply: number[] | null }>();
 
   reel5At(addr: number): Reel5 | null {
     const unit = (addr >> 1) & 3;
@@ -187,6 +196,7 @@ export class Barbus {
     this.replyQueue.length = 0;
     this.framesSeen = 0;
     this.repliesSent = 0;
+    this.repeatsSeen = 0;
     this.log.length = 0;
     this.reelLog.length = 0;
     this.alphaCells.fill(0x20);
@@ -210,6 +220,7 @@ export class Barbus {
     this.reelSenseHold.fill(0);
     this.reel5.reset();
     this.reel5b.reset();
+    this.lastTaken.clear();
   }
 
   resyncLink(): void {
@@ -217,6 +228,7 @@ export class Barbus {
     this.pending7f = false;
     this.idleCycles = 0;
     this.replyQueue.length = 0;
+    this.lastTaken.clear();
   }
 
   feedTx(channel: 0 | 1, byte: number): void {
@@ -385,6 +397,22 @@ export class Barbus {
 
   private respond(addr: number, cmd: number, body: number[]): void {
     this.framesSeen++;
+    if ((addr & 0xf0) === 0x00 && !this.muxFitted((addr >> 1) & 7)) {
+      this.log.push({ addr, cmd, body: body.slice() });
+      if (this.log.length > LOG_FRAMES) this.log.shift();
+      return;
+    }
+    const slave = addr < 0xf0 && ((addr >> 4) === TYPE_MUX5 || (addr >> 4) === TYPE_REEL5) ? addr & 0xfe : -1;
+    if (slave >= 0) {
+      const last = this.lastTaken.get(slave);
+      if (last && last.toggle === (addr & 1)) {
+        this.repeatsSeen++;
+        this.log.push({ addr, cmd, body: body.slice() });
+        if (this.log.length > LOG_FRAMES) this.log.shift();
+        if (last.reply) this.queueReply(last.reply);
+        return;
+      }
+    }
     if (!this.lampsLive && (addr & 0xfe) === 0x00
       && ((cmd & 0xf0) === 0xb0 || (cmd & 0xf0) === 0x80 || cmd === 0xeb || cmd === 0xef)) {
       this.lampsLive = true;
@@ -436,7 +464,12 @@ export class Barbus {
       this.reelLog.push({ addr, cmd, body: body.slice(), ...(reply ? { reply: reply.slice() } : {}) });
       if (this.reelLog.length > REEL_LOG_FRAMES) this.reelLog.shift();
     }
+    if (slave >= 0) this.lastTaken.set(slave, { toggle: addr & 1, reply: reply ? reply.slice() : null });
     if (!reply) return;
+    this.queueReply(reply);
+  }
+
+  private queueReply(reply: readonly number[]): void {
     this.replyQueue.push(0x7f);
     for (const b of reply) {
       this.replyQueue.push(b);

@@ -44,12 +44,13 @@ export function pakMetaOf(
   game: Game,
   cab: { decode?: { clean: number; total: number } } | null,
   contentHash: string,
+  pending = false,
 ): PakMeta {
   return {
     name: game.name,
     system: game.system,
     created: Date.now(),
-    decodeStatus: decodeStatusOf(cab),
+    decodeStatus: pending && !cab ? 'pending' : decodeStatusOf(cab),
     ...(cab?.decode ? { decode: cab.decode } : {}),
     files: game.files.map((f) => ({ name: f.name, size: f.bytes.length })),
     variant: game.variant,
@@ -100,6 +101,7 @@ export async function persistGame(
   layoutProps?: LayoutProps,
   played = true,
   spares?: GameFile[],
+  pendingArtwork = false,
 ): Promise<GameMeta> {
   const enc = new TextEncoder();
   const prev = await getMeta(hash);
@@ -107,7 +109,7 @@ export async function persistGame(
     : prev?.batteries?.some(inSpareDir) ? await storedSpares(hash) : [];
   const contentHash = await contentHashOf(game.files);
   const chunks: PakChunkIn[] = [
-    { type: 'META', bytes: encodeMeta(pakMetaOf(game, cab, contentHash)), deflate: true },
+    { type: 'META', bytes: encodeMeta(pakMetaOf(game, cab, contentHash, pendingArtwork)), deflate: true },
     { type: 'SRCS', bytes: encodeSrcs(game.files) },
   ];
   if (spare.length) chunks.push({ type: 'SPAR', bytes: encodeSrcs(spare), deflate: true });
@@ -136,7 +138,7 @@ export async function persistGame(
     addedAt: prev?.addedAt ?? Date.now(),
     lastPlayedAt: Date.now(),
     decodeVersion: DECODE_VERSION,
-    decodeStatus: decodeStatusOf(cab),
+    decodeStatus: pendingArtwork && !cab ? 'pending' : decodeStatusOf(cab),
     ...(cab?.decode ? { decode: cab.decode } : {}),
     autoSave: prev?.autoSave ?? true,
     sizeBytes: pak.length,

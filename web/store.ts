@@ -20,7 +20,7 @@ export interface GameMeta {
   missingSound?: string[];
   linkedInstances?: string[];
   decodeVersion: number;
-  decodeStatus: 'ok' | 'partial' | 'fallback';
+  decodeStatus: 'ok' | 'partial' | 'fallback' | 'pending';
   decode?: { clean: number; total: number };
   autoSave: boolean;
   sizeBytes: number;

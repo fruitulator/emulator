@@ -17,6 +17,7 @@ import { Mixer } from '../hw/mixer';
 import { DataPak } from '../hw/datapak';
 import type { AudioSource } from './machine';
 import { noteBoardDefault, noteRomCut } from './boarddefaults';
+import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { fitReelBank, type ReelFit } from './reelfit';
 import { layoutPanelRows, type LayoutSwitch } from './layoutswitches';
@@ -738,6 +739,13 @@ export class AceSp implements Bus, Machine {
     noteRomCut(this, Math.max(low.length, high.length), 0x8000);
     this.rom.set(low.subarray(0, 0x8000), 0);
     this.rom.set(high.subarray(0, 0x8000), 0x8000);
+  }
+
+  loadRomList(files: readonly Uint8Array[]): void {
+    const { image, placed, total } = placeRomFlat(files, { fixed: 0x8000, max: 0x10000, reverse: true });
+    this.rom = new Uint8Array(0x10000);
+    this.rom.set(image);
+    noteRomCut(this, Math.max(total, placed), 0x10000);
   }
 
   batteryRam(): Uint8Array {

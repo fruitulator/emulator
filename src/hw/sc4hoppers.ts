@@ -94,6 +94,11 @@ export class Sc4HopperPair {
     }
     return (hop & 0xff) | (this.enable2 ? 0x40 : 0) | 0x20 | 0x04;
   }
+
+  readUnfitted(rio: boolean, strobe13 = 0): number {
+    return (this.enable2 ? 0x40 : 0) | 0x20 | (strobe13 & 0x9f) | (rio ? 0x04 : 0)
+      | ((this.p & 0x08) !== 0 ? 1 : 0) | 0x02;
+  }
 }
 
 export type Sc4PayoutUnits =

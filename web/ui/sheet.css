@@ -119,3 +119,28 @@
   letter-spacing: 0;
   text-transform: none;
 }
+
+.sheet-facing {
+  cursor: default;
+}
+.sheet-facing-label {
+  flex: 1;
+}
+.sheet-facing-btn {
+  width: 44px;
+  height: 44px;
+  font: inherit;
+  font-size: 20px;
+  color: inherit;
+  background: none;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.18));
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.sheet-facing-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.sheet-facing-btn[aria-pressed="true"] {
+  border-color: currentColor;
+  background: rgba(255, 255, 255, 0.1);
+}

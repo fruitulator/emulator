@@ -1,8 +1,15 @@
 
 import { makeLogo } from './ui/logo';
+import { BRAND_MARKS, UI_ICONS, brandMark, rowIcon } from './ui/icons';
+import { openDialog, type Dialog } from './ui/dialog';
+import { buildStamp } from './downloads';
 import { str } from './i18n';
 
 export const COMMUNITY_URL = 'https://desertislandfruits.com/';
+
+export const REPO_URL = 'https://github.com/fruitulator/emulator';
+
+export const ISSUES_URL = `${REPO_URL}/issues`;
 
 export const INTRO: readonly string[] = [
   str('about.fruitulator_lets_you_play_classic'),
@@ -20,7 +27,7 @@ export interface Credit {
 
 export const CREDITS: readonly Credit[] = [
   {
-    name: 'John Parker',
+    name: 'John Parker and Paul Maidment',
     work: 'Oasis',
     url: 'https://github.com/johnparker007/Oasis',
     thanks: [
@@ -53,6 +60,12 @@ export const CREDITS: readonly Credit[] = [
     ],
   },
   {
+    name: 'Robsonmeg46',
+    thanks: [
+      str('about.for_testing_fruitulator_on_far'),
+    ],
+  },
+  {
     name: str('about.the_layout_authors_rom_dumpers'),
     thanks: [
       str('about.every_cabinet_represents_somebody_s'),
@@ -62,6 +75,8 @@ export const CREDITS: readonly Credit[] = [
 
 export const ABOUT_LINKS: readonly string[] = [
   COMMUNITY_URL,
+  REPO_URL,
+  ISSUES_URL,
   ...CREDITS.flatMap((c) => (c.url ? [c.url] : [])),
 ];
 
@@ -106,6 +121,16 @@ export function renderAbout(build: string): HTMLElement {
   for (const p of INTRO) lead.append(rich(el('p'), p));
   root.append(lead);
 
+  const links = el('div', 'about-links');
+  const repo = link(REPO_URL, '');
+  repo.className = 'about-repo';
+  repo.append(brandMark(BRAND_MARKS.github), el('span', undefined, str('about.view_the_source_on_github')));
+  const issues = link(ISSUES_URL, '');
+  issues.className = 'about-repo';
+  issues.append(rowIcon(UI_ICONS.bug, 'about-repo-icon', 18), el('span', undefined, str('about.report_a_bug_or_suggest')));
+  links.append(repo, issues);
+  root.append(links);
+
   const thanks = el('section', 'about-sec');
   thanks.append(el('h3', undefined, str('about.thanks')));
   for (const c of CREDITS) {
@@ -121,4 +146,22 @@ export function renderAbout(build: string): HTMLElement {
 
   root.append(el('p', 'about-build', build));
   return root;
+}
+
+let open: Dialog | null = null;
+
+export function openAbout(o: { onClose?: () => void } = {}): Dialog {
+  if (open) return open;
+  const d = openDialog({
+    title: str('index.about'),
+    body: [renderAbout(buildStamp())],
+    onClose: () => { open = null; o.onClose?.(); },
+  });
+  d.panel.classList.add('about-dialog');
+  open = d;
+  return d;
+}
+
+export function aboutOpen(): Dialog | null {
+  return open;
 }

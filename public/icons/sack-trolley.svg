@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+<title>Sack trolley</title>
+<!-- A fruit machine on a sack trolley, side on, tilted back on its wheel, facing
+     right (mirrored).
+     Drawn upright and rotated about the wheel's axle; one colour
+     (currentColor) so it can sit on any background. -->
+<g fill="currentColor" transform="matrix(-1 0 0 1 128 0) translate(64 64) scale(0.9) translate(-76 -66) rotate(24 88 112)">
+  <!-- cabinet: no top box; reel glass raked back, the button deck jutting out,
+       the lower door, and the back flat against the frame -->
+  <path d="M74 106 V16 Q74 14 72 14 H51 Q49 14 49 16 L44 57 L33 61 V67 H42 V106 Z"/>
+  <!-- frame and handle -->
+  <path d="M78 112 V18 Q78 9 87 9 H91" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- toe plate -->
+  <rect x="38" y="108" width="42" height="5" rx="1"/>
+  <!-- axle bracket -->
+  <path d="M78 96 L84 103 L78 108 Z"/>
+  <!-- wheel, hub cut out -->
+  <path fill-rule="evenodd" d="M88 100 A12 12 0 0 1 88 124 A12 12 0 0 1 88 100 Z M88 108 A4 4 0 0 0 88 116 A4 4 0 0 0 88 108 Z"/>
+</g>
+</svg>

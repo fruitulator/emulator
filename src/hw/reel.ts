@@ -65,6 +65,7 @@ export interface ReelConfig {
   initPhase?: number;
   indexTrail?: number;
   mfmeJpm?: boolean;
+  flip?: boolean;
   mameDrive?: 'starpoint' | 'barcrest';
 }
 
@@ -120,6 +121,7 @@ export class Reel {
   onSnap?: (delta: number, steps: number) => void;
   private readonly phaseTable: Int8Array;
   private readonly mfmeJpm: boolean;
+  readonly flip: boolean;
   readonly traceNib = new Uint8Array(512);
   readonly tracePos = new Uint8Array(512);
   readonly traceGap = new Uint32Array(512);
@@ -150,6 +152,7 @@ export class Reel {
     this.phaseTable = PHASE_TABLES[cfg.drive ?? 'barcrest'];
     this.mame = cfg.mame ?? false;
     this.mfmeJpm = cfg.mfmeJpm ?? false;
+    this.flip = cfg.flip ?? false;
     this.mamePhase = cfg.mameDrive === 'barcrest' ? barcrestPhase : starpointPhase;
     this.mameOpposite = cfg.mameDrive === 'barcrest'
       ? (1 << 0x05) | (1 << 0x0a)
@@ -195,6 +198,7 @@ export class Reel {
   }
 
   update(nibble: number): number {
+    const prevNibble = this.lastNibble;
     if ((nibble & 0x0f) !== this.lastNibble) {
       this.tracePos[this.traceAt] = this.position & 0xff;
       this.traceNib[this.traceAt] = nibble & 0x0f;
@@ -203,6 +207,14 @@ export class Reel {
       this.traceAt = (this.traceAt + 1) & 511;
     }
     this.lastNibble = nibble & 0x0f;
+    if (this.flip) {
+      const p = nibble & 0x0f;
+      if (p === prevNibble || (p !== 6 && p !== 9) || ((p ^ this.position) & 1) === 0) return 0;
+      this.position = (this.position + 1) % this.stepsPerRevolution;
+      this.travel += 1;
+      this.lastDir = 1;
+      return 1;
+    }
     if (this.mfmeJpm) {
       const d = NEWJPM[this.position % 8][nibble & 0x0f];
       if (d !== 0) {
@@ -289,6 +301,7 @@ export class Reel {
   }
 
   optic(): boolean {
+    if (this.flip) return this.position === 0;
     if (this.mame) {
       if (this.mameIndex()) return true;
       return this.sinceIndex > 0 && this.sinceIndex <= this.indexTrail;

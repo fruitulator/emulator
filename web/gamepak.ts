@@ -3,7 +3,7 @@ import type { GameFile, LayoutProps } from '../src/machine/registry';
 
 export const CONTAINER_VERSION = 1;
 
-export const DECODE_VERSION = 158;
+export const DECODE_VERSION = 159;
 
 export type ChunkType = 'META' | 'SRCS' | 'CABJ' | 'IMGS' | 'THMB' | 'STAT' | 'SPAR';
 
@@ -232,7 +232,7 @@ export interface PakMeta {
   name: string;
   system: string;
   created: number;
-  decodeStatus: 'ok' | 'partial' | 'fallback';
+  decodeStatus: 'ok' | 'partial' | 'fallback' | 'pending';
   decode?: { clean: number; total: number };
   files: { name: string; size: number }[];
   variant?: string;

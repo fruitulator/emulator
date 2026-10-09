@@ -133,6 +133,14 @@
   font-size: 34px;
   user-select: none;
 }
+.art-placeholder::before {
+  content: '';
+  width: 2.8em;
+  height: 2.8em;
+  background: currentColor;
+  -webkit-mask: url(/icons/sack-trolley.svg) center / contain no-repeat;
+  mask: url(/icons/sack-trolley.svg) center / contain no-repeat;
+}
 .card-panel {
   position: relative;
   z-index: 3;

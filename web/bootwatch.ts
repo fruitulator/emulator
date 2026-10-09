@@ -45,6 +45,8 @@ const SAMPLE_HZ = 25;
 
 const FLASH_WINDOW_S = 4;
 
+const SCREEN_IS_GLASS = new Set(['ACEVIDEO']);
+
 export class BootWatch {
   private timer: ReturnType<typeof setInterval> | null = null;
   private last: FrameView | null = null;
@@ -59,6 +61,10 @@ export class BootWatch {
   private readonly bankText: string[] = [];
   private readonly readsBank: boolean;
   private lastReading: CoreReading | null = null;
+  private readonly screenIsGlass: boolean;
+  private screenSerial = -1;
+  private screenMoved = false;
+  private screenPics = new Set<number>();
 
   constructor(
     readonly door: BootDoor,
@@ -71,6 +77,7 @@ export class BootWatch {
   ) {
     const forms = boardAlarmForms(board) ?? [];
     this.readsBank = forms.includes(FLASH_FORM) || forms.includes(STRIM_FLASH_FORM);
+    this.screenIsGlass = SCREEN_IS_GLASS.has(board.toUpperCase());
   }
 
   get reading(): CoreReading | null { return this.lastReading; }
@@ -95,6 +102,14 @@ export class BootWatch {
       if (this.pose !== '' && pose !== this.pose) this.reels = true;
       this.pose = pose;
       this.flips.feed(v);
+      if (this.screenIsGlass && v.videoRaw.length && v.videoSerial !== this.screenSerial) {
+        if (this.screenSerial !== -1) this.screenMoved = true;
+        this.screenSerial = v.videoSerial;
+        let h = 2166136261;
+        const raw = v.videoRaw;
+        for (let i = 0; i < raw.length; i += 28) h = Math.imul(h ^ raw[i] ^ (raw[i + 1] << 8) ^ (raw[i + 2] << 16), 16777619);
+        this.screenPics.add(h >>> 0);
+      }
       if (this.readsBank && this.layout) {
         const g = readGlass(v, this.layout, this.surf);
         this.bankCells.push(g.cells ?? []);
@@ -123,12 +138,14 @@ export class BootWatch {
       const reading = g ? classifyGlassCore(this.board, g) : null;
       this.lastReading = reading;
       const line = reading?.glass ?? '';
-      const glass = line !== this.glassLine;
+      const glass = line !== this.glassLine || this.screenMoved;
       this.glassLine = line;
       const opened = this.door.second({
         t: 0, reels, ledger, glass, alarm: reading?.verdict === 'ALARM', line,
-        lamps: this.flips.take(), pics: this.flips.takePictures(),
+        lamps: this.flips.take(), pics: [...this.flips.takePictures(), ...this.screenPics],
       });
+      this.screenMoved = false;
+      this.screenPics = new Set();
       if (opened) { this.stop(); this.onOpen(); }
     } finally {
       this.busy = false;

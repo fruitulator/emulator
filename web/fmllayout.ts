@@ -6,7 +6,7 @@ import {
   type RgbLed,
   SEG_METRICS,
 } from './dat';
-import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, VideoScreen } from './dat';
+import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, VideoScreen } from './dat';
 import { applyOpaqueBand, reelLightFloor } from './reellight';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
@@ -166,11 +166,13 @@ const enum Type {
   ProconnMatrix = 0x11,
   EpochDotAlpha = 0x16,
   MaygayMatrix = 0x2e,
+  PlasmaDisplay = 0x23,
   EpochMatrix = 0x22,
   Disc = 0x06,
   RgbLed = 0x26,
   BFMVideo = 0x1f,
   BarcrestVideo = 0x0f,
+  AceVideo = 0x21,
 }
 
 const TypeBitmap = 0x0b;
@@ -1397,6 +1399,17 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       }
     : null;
 
+  const plx = comps.find((c) => c.type === Type.PlasmaDisplay && c.width > 0 && c.height > 0);
+  const plasmaPanel: PlasmaPanel | null = plx
+    ? {
+        left: plx.x, top: plx.y, width: plx.width, height: plx.height, ...turn(plx),
+        size: Math.max(2, val(plx, 'Size') ?? 5),
+        on: val(plx, 'OnColour') ?? 0xffff8d1c,
+        off: val(plx, 'OffColour') ?? 0xff000000,
+        bg: val(plx, 'BackgroundColour') ?? 0xff000000,
+      }
+    : null;
+
   const emx = comps.find((c) => c.type === Type.EpochMatrix && c.width > 0 && c.height > 0);
   const epochMatrix: EpochMatrixPanel | null = emx
     ? {
@@ -1411,7 +1424,8 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     : null;
 
   const bfmv = comps.find((c) => c.type === Type.BFMVideo && c.number === 0 && c.width > 0 && c.height > 0)
-    ?? comps.find((c) => c.type === Type.BarcrestVideo && c.width > 0 && c.height > 0);
+    ?? comps.find((c) => c.type === Type.BarcrestVideo && c.width > 0 && c.height > 0)
+    ?? comps.find((c) => c.type === Type.AceVideo && c.width > 0 && c.height > 0);
   const videoScreen: VideoScreen | null = bfmv
     ? { left: bfmv.x, top: bfmv.y, width: bfmv.width, height: bfmv.height, ...turn(bfmv), chip: 0 }
     : null;
@@ -1578,6 +1592,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...(epochDotAlpha ? [epochDotAlpha] : []),
     ...(maygayMatrix ? [maygayMatrix] : []),
     ...(epochMatrix ? [epochMatrix] : []),
+    ...(plasmaPanel ? [plasmaPanel] : []),
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
   ], background, backgroundOffset.x);
@@ -1595,6 +1610,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     epochDotAlpha,
     maygayMatrix,
     epochMatrix,
+    plasmaPanel,
     videoScreen,
     rgbLeds,
     prismLamps,

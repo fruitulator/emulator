@@ -116,7 +116,8 @@ export class Ymz280b {
   }
 
   private romByte(addr: number): number {
-    return this.rom[addr % (this.rom.length || 1)] ?? 0xff;
+    if (this.rom.length === 0) return 0;
+    return this.rom[addr % this.rom.length] ?? 0xff;
   }
 
   read(port: number): number {
@@ -276,6 +277,7 @@ export class Ymz280b {
       this.finishVoice(v, index);
       return null;
     }
+    if (this.rom.length === 0) return 0;
     return v.signal | 0;
   }
 

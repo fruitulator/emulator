@@ -18,15 +18,25 @@ export class SwitchedLamps {
   }
 
   write(bits: number): void {
-    for (let k = 0; k < this.count; k++) {
+    this.writeAt(0, this.count, bits);
+  }
+
+  writeAt(first: number, n: number, bits: number): boolean {
+    let switched = false;
+    for (let k = 0; k < n; k++) {
+      const i = first + k;
+      if (i >= this.count) break;
       const on = (bits >> k) & 1;
-      if (on && !this.state[k]) {
-        this.state[k] = 1;
-        this.shown[k] = 0xff;
-      } else if (!on && this.state[k]) {
-        this.state[k] = 0;
-        this.shown[k] = 0;
+      if (on && !this.state[i]) {
+        this.state[i] = 1;
+        this.shown[i] = 0xff;
+        switched = true;
+      } else if (!on && this.state[i]) {
+        this.state[i] = 0;
+        this.shown[i] = 0;
+        switched = true;
       }
     }
+    return switched;
   }
 }

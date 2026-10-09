@@ -14,6 +14,7 @@ export type ImportRequest =
       hash?: string;
       fallbackName?: string;
       background?: boolean;
+      deferArtwork?: boolean;
     }
   | {
       id: number;
@@ -25,6 +26,11 @@ export type ImportRequest =
   | {
       id: number;
       op: 'contentHash';
+      hash: string;
+    }
+  | {
+      id: number;
+      op: 'decodeArtwork';
       hash: string;
     }
   | {

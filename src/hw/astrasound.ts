@@ -72,6 +72,11 @@ export class AstraSound implements AudioSource {
     this.held = 0;
   }
 
+  restart(): void {
+    this.adpcm.acc = -2;
+    this.adpcm.step = 0;
+  }
+
   setVolumeTarget(v: number): void {
     this.target = Math.max(0, Math.min(255, v | 0));
   }

@@ -48,6 +48,7 @@ export interface CabGeometry {
   proconnMatrix?: Cabinet['proconnMatrix'];
   epochDotAlpha?: Cabinet['epochDotAlpha'];
   maygayMatrix?: Cabinet['maygayMatrix'];
+  plasmaPanel?: Cabinet['plasmaPanel'];
   epochMatrix?: Cabinet['epochMatrix'];
   videoScreen?: Cabinet['videoScreen'];
   rgbLeds?: Cabinet['rgbLeds'];
@@ -202,6 +203,7 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     proconnMatrix: cab.proconnMatrix ?? null,
     epochDotAlpha: cab.epochDotAlpha ?? null,
     maygayMatrix: cab.maygayMatrix ?? null,
+    plasmaPanel: cab.plasmaPanel ?? null,
     epochMatrix: cab.epochMatrix ?? null,
     videoScreen: cab.videoScreen ?? null,
     rgbLeds: cab.rgbLeds ?? [],
@@ -305,6 +307,7 @@ export function assembleCabinet<A>(
     proconnMatrix: geo.proconnMatrix ?? null,
     epochDotAlpha: geo.epochDotAlpha ?? null,
     maygayMatrix: geo.maygayMatrix ?? null,
+    plasmaPanel: geo.plasmaPanel ?? null,
     epochMatrix: geo.epochMatrix ?? null,
     videoScreen: geo.videoScreen ?? null,
     rgbLeds: geo.rgbLeds ?? [],
@@ -445,7 +448,7 @@ export function componentBounds(
     const d = cab.proconnMatrix;
     spanR(d);
   }
-  for (const d of [cab.epochDotAlpha, cab.maygayMatrix, cab.epochMatrix]) {
+  for (const d of [cab.epochDotAlpha, cab.maygayMatrix, cab.epochMatrix, cab.plasmaPanel]) {
     if (d) spanR(d);
   }
   if (cab.videoScreen) {
@@ -652,6 +655,7 @@ function stillDisplays(fx: Ctx, cab: Cabinet<ImageData> | Cabinet<ImageBitmap>):
   if (cab.proconnMatrix) face(cab.proconnMatrix, cab.proconnMatrix.bg);
   if (cab.epochDotAlpha) face(cab.epochDotAlpha, cab.epochDotAlpha.bg);
   if (cab.maygayMatrix) face(cab.maygayMatrix, cab.maygayMatrix.bg);
+  if (cab.plasmaPanel) face(cab.plasmaPanel, cab.plasmaPanel.bg);
   if (cab.epochMatrix) face(cab.epochMatrix, cab.epochMatrix.bg);
   if (cab.vfd) face(cab.vfd, cab.vfdColours?.bg, '#050505');
   if (cab.videoScreen) face(cab.videoScreen, null);

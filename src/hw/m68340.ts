@@ -71,6 +71,7 @@ export interface Sim40Hooks {
   dmaStart?(ch: number): void;
   dmaStop?(ch: number): void;
   serialTx?(channel: 0 | 1, v: number): void;
+  serialOutputPort?(opr: number, was: number): void;
   portAIn?(): number;
   portBIn?(): number;
   portWrite?(): void;
@@ -103,6 +104,7 @@ export class M68340Sim {
 
   readonly serial = new Mc68681({
     txByte: (channel, v) => this.hooks.serialTx?.(channel, v),
+    outputPort: (v, was) => this.hooks.serialOutputPort?.(v, was),
     txDreq: (_channel, requesting) => { this.dreqLevel = requesting; if (requesting) this.dreq(); },
     irqChanged: () => { this.irqDirty = true; },
   });
@@ -297,6 +299,11 @@ export class M68340Sim {
     };
   }
 
+  csBaseOf(i: number): number {
+    if (this.csDirty) this.compileCs();
+    return this.csBase[i] >>> 0;
+  }
+
   get cs0IsGlobal(): boolean { return this.cs0Global; }
 
   hasSourceAt(level: number): boolean {
@@ -312,7 +319,8 @@ export class M68340Sim {
       const ba = this.r32(CS_BASE + i * 8 + 4);
       this.csOn[i] = ba & 1;
       this.csWp[i] = (ba & 8) ? CS_WP : 0;
-      this.csMask[i] = ~((am & 0xffffff00) | 0xff);
+      const amBits = i === 2 ? (am & ~(ba & 0xffffff00)) : am;
+      this.csMask[i] = ~((amBits & 0xffffff00) | 0xff);
       this.csBase[i] = (ba & 0xffffff00) >>> 0;
       const clocks = (ba & 4) ? 2
         : (am & 3) === 3 ? 3

@@ -1,4 +1,4 @@
-import { ROM_UNPLACED } from './pairplacer';
+import { ROM_UNPLACED, placeRomFlat } from './pairplacer';
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, Machine, OptionKey, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
@@ -667,10 +667,16 @@ export class Sc2 implements Bus, Machine {
     return this.coinCycles > 0;
   }
 
-  loadRom(image: Uint8Array, decode = true): void {
+  loadRom(image: Uint8Array | readonly Uint8Array[], decode = true): void {
     const raw = new Uint8Array(ROM_SIZE).fill(ROM_UNPLACED);
-    noteRomCut(this, image.length, ROM_SIZE);
-    raw.set(image.subarray(0, ROM_SIZE), Math.max(0, ROM_SIZE - Math.min(image.length, ROM_SIZE)));
+    if (image instanceof Uint8Array) {
+      noteRomCut(this, image.length, ROM_SIZE);
+      raw.set(image.subarray(0, ROM_SIZE), Math.max(0, ROM_SIZE - Math.min(image.length, ROM_SIZE)));
+    } else {
+      const placed = placeRomFlat(image, { max: ROM_SIZE, reverse: true });
+      noteRomCut(this, placed.total, ROM_SIZE);
+      raw.set(placed.image);
+    }
     if (!decode) {
       this.rom.set(raw);
       this.wireOptionKeys();

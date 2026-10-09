@@ -851,13 +851,18 @@ export class Sc1 implements Bus, Machine {
       this.reels[5]?.update(v & 0x0f);
       return;
     }
-    if (a > 0x3800 && a < 0x3a00 && this.updFitted) {
+    if (a >= 0x3900 && a < 0x3a00) {
+      this.reels[4]?.update((v >> 4) & 0x0f);
+      this.reels[5]?.update(v & 0x0f);
+      return;
+    }
+    if (a > 0x3800 && a < 0x3900 && this.updFitted) {
       this.upd.portW(v & 0x3f);
       this.upd.setStartLine(false);
       this.upd.setStartLine(true);
       return;
     }
-    if (a >= 0x3800 && a < 0x3a00) return;
+    if (a >= 0x3800 && a < 0x3900) return;
     this.strays.hit(a);
   }
 

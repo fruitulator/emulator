@@ -4,7 +4,7 @@ import { newCashLedger, ledgerOutMults, dilSwitchLabel, type CabinetSwitch } fro
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
 import { M68000 } from '../cpu/m68000';
-import { M68307Sim, SIM_BASE, SIM_SIZE } from '../hw/m68307';
+import { M68307Sim, SIM_BASE } from '../hw/m68307';
 import { opticWindowForFlag } from '../layout/datreels';
 import { Eeprom24c } from '../hw/eeprom';
 import { findSecurityKey, Sc4Mbus } from '../hw/sc4mbus';
@@ -313,6 +313,11 @@ export class Sc4 implements Bus16, Machine {
   readonly seg7 = new BfmLed();
   private parHopperFitted = false;
 
+  private cabinetRio = false;
+  setCabinetStyle(style: string | null): void {
+    this.cabinetRio = style === 'Rio';
+  }
+
   setHoppers(hoppersWord = 0): void {
     const w = hoppersWord & 0xff;
     this.parHopperFitted = w !== 0x50;
@@ -355,11 +360,12 @@ export class Sc4 implements Bus16, Machine {
     return this.reelFit;
   }
 
-  setReelGeometry(geometry: readonly { number: number; stops: number; halfSteps: number }[]): void {
+  setReelGeometry(geometry: readonly { number: number; stops: number; halfSteps: number; flip?: boolean }[]): void {
     for (const g of geometry) {
       if (g.number < 0 || g.number >= this.reels.length) continue;
       this.reels[g.number] = new Reel({
         stepsPerRevolution: g.halfSteps, symbols: g.stops, mfmeJpm: true, opticStart: 7, opticWidth: 1,
+        flip: g.flip ?? false,
       });
       this.reelFromLayout[g.number] = true;
     }
@@ -606,7 +612,9 @@ export class Sc4 implements Bus16, Machine {
       if (bit < 5) return [strobe - 4, 1 << (bit + 2)];
       return null;
     }
-    return strobe === 16 ? [20, 1 << bit] : null;
+    if (strobe === 16) return [20, 1 << bit];
+    if (strobe === 12 || strobe === 13) return [strobe, 1 << bit];
+    return null;
   }
 
   readonly lamps = new Uint8Array(68);
@@ -1143,6 +1151,14 @@ export class Sc4 implements Bus16, Machine {
 
   batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
 
+  postRestore(): void {
+    if (!this.sim.mapped && this.totalCycles > 0) {
+      this.sim.mbar = 0xbfff;
+      this.sim.base = SIM_BASE;
+      this.sim.mapped = true;
+    }
+  }
+
   loadNvram(data: Uint8Array): void {
     this.nvram = data.slice(0, RAM_SIZE);
     this.ram.set(this.nvram);
@@ -1202,7 +1218,7 @@ export class Sc4 implements Bus16, Machine {
 
   read8(addr: number): number {
     const a = addr & 0xffffff;
-    if (a < RAM_BASE) return this.rom[a & ROM_MASK];
+    if (a < RAM_BASE) return (a & 0xfffff0) === 0xf0 ? 0 : this.rom[a & ROM_MASK];
     if (a >= RAM_BASE && a < RAM_BASE + RAM_SIZE) return this.ram[a - RAM_BASE];
     if (a >= IO_BASE && a < IO_BASE + IO_SIZE) {
       const off = a - IO_BASE;
@@ -1216,10 +1232,17 @@ export class Sc4 implements Bus16, Machine {
         return this.inputRegs[reg] | this.senseOr(reg);
       }
       if (off === 0x0240) {
+        const m12 = this.inputRegs[12];
         return ((this.secFitted && this.sec.data()) ? 0x40 : 0x00)
-          | (this.coins & ~this.coinModeHold & 0x3f);
+          | (m12 & 0xc0)
+          | (this.coins & ~this.coinModeHold & ~m12 & 0x3f);
       }
-      if (off === 0x0241) return this.parHopperFitted ? this.parHopper.readPay() : 0xff;
+      if (off === 0x0241) {
+        const m13 = this.inputRegs[13];
+        return this.parHopperFitted
+          ? this.parHopper.readPay() | (m13 & 0x9f)
+          : this.parHopper.readUnfitted(this.cabinetRio, m13);
+      }
       if (off === 0x02e0) return 0x00;
       if (off === 0x02e1) return 0x80;
       if (off === YMZ_OFF) return this.ymz.read(0);
@@ -1230,7 +1253,8 @@ export class Sc4 implements Bus16, Machine {
       this.noteIo(a, false);
       return this.duart.read((a - DUART_BASE) >> 1);
     }
-    if (a >= SIM_BASE && a < SIM_BASE + SIM_SIZE) return this.sim.read8(a - SIM_BASE);
+    const simOff = this.sim.offsetOf(a);
+    if (simOff >= 0) return this.sim.read8(simOff);
     if (this.noteFitted && a === this.notePortAddr()) {
       this.noteIo(a, false);
       return this.readNotePort();
@@ -1308,8 +1332,9 @@ export class Sc4 implements Bus16, Machine {
       this.duart.write((a - DUART_BASE) >> 1, v);
       return;
     }
-    if (a >= SIM_BASE && a < SIM_BASE + SIM_SIZE) {
-      this.sim.write8(a - SIM_BASE, v);
+    const simOff = this.sim.offsetOf(a);
+    if (simOff >= 0) {
+      this.sim.write8(simOff, v);
       return;
     }
     if (this.noteFitted && a === this.notePortAddr()) {
@@ -1321,6 +1346,7 @@ export class Sc4 implements Bus16, Machine {
 
   read16(addr: number): number {
     const a = addr & 0xffffff;
+    if ((a & 0xfffff0) === 0xf0) return this.sim.readControl16(a);
     if (a + 1 < RAM_BASE) {
       const r = a & ROM_MASK;
       if (r + 1 < ROM_SIZE) return (this.rom[r] << 8) | this.rom[r + 1];
@@ -1334,6 +1360,10 @@ export class Sc4 implements Bus16, Machine {
 
   write16(addr: number, val: number): void {
     const a = addr & 0xffffff;
+    if ((a & 0xfffff0) === 0xf0) {
+      this.sim.writeControl16(a, val);
+      return;
+    }
     if (a >= RAM_BASE && a + 1 < RAM_BASE + RAM_SIZE) {
       const i = a - RAM_BASE;
       this.ram[i] = (val >> 8) & 0xff;

@@ -86,7 +86,36 @@ export class M68307Sim {
   readonly txLog: number[] = [];
   private readonly rxQueue: number[] = [];
 
+  mbar = 0xbfff;
+  scr = 0x0007f010;
+  base = 0;
+  mapped = false;
+
   constructor(private readonly hooks: SimHooks = {}) {}
+
+  offsetOf(addr: number): number {
+    return this.mapped && ((addr & 0xfff000) >>> 0) === this.base ? addr & 0xfff : -1;
+  }
+
+  readControl16(addr: number): number {
+    if (addr === 0xf2) return this.mbar & 0xffff;
+    if (addr === 0xf4) return this.scr >>> 16;
+    if (addr === 0xf6) return this.scr & 0xffff;
+    return 0;
+  }
+
+  writeControl16(addr: number, v: number): void {
+    v &= 0xffff;
+    if (addr === 0xf2) {
+      this.mbar = v;
+      this.base = (v & 0xfff) << 12;
+      this.mapped = true;
+    } else if (addr === 0xf4) {
+      this.scr = ((v << 16) | (this.scr & 0xffff)) >>> 0;
+    } else if (addr === 0xf6) {
+      this.scr = ((this.scr & 0xffff0000) | v) >>> 0;
+    }
+  }
 
   chipSelect(n: number): { base: number; mask: number; enabled: boolean } {
     const br = this.r16(0x40 + n * 4);
@@ -105,6 +134,8 @@ export class M68307Sim {
   }
 
   reset(): void {
+    this.mbar = 0xbfff;
+    this.scr = 0x0007f010;
     this.regs.fill(0);
     this.reads.clear();
     this.writes.clear();

@@ -11,7 +11,7 @@ import { HwBridge } from './hwbridge';
 import type { MachineInfo } from './emu-protocol';
 import { ledgerPayoutPercent, type CashLedger } from './emu-protocol';
 import { buildStamp, logInputLabels, saveBlob, saveFile } from './downloads';
-import { renderAbout } from './about';
+import { aboutOpen, openAbout as openAboutDialog } from './about';
 import { DownloadMenu } from './panelmenu';
 import { bulbTab, logTab, matrixTab, optionsTab } from './paneltabs';
 import { bootValue, liveValue, setSwitch, urlValue, wasmOption } from './settings';
@@ -23,6 +23,8 @@ import { readZipDirectory } from './zipdir';
 import { collectionEntries } from './punnetpack';
 import { convertLegacyThumbs, refreshStaleThumbs } from './rethumb';
 import { backfillContentHashes } from './backfill';
+import { prepareArtwork } from './artpass';
+import { holdBusy } from './busy';
 import {
   CLOUD_HINT, importFolderSet, landedFlaws, listArchives, stageText, unplayableReason,
 } from './libimport';
@@ -136,10 +138,6 @@ const menuSub = document.getElementById('menuSub') as HTMLElement;
 const schemPanelEl = document.getElementById('schemPanel') as HTMLElement;
 const schemBackdrop = document.getElementById('schemBackdrop') as HTMLElement;
 const aboutBtn = document.getElementById('aboutBtn') as HTMLButtonElement;
-const aboutPanel = document.getElementById('aboutPanel') as HTMLElement;
-const aboutBackdrop = document.getElementById('aboutBackdrop') as HTMLElement;
-const aboutClose = document.getElementById('aboutClose') as HTMLButtonElement;
-const aboutScroll = document.getElementById('aboutScroll') as HTMLElement;
 const uploadLabels = [...document.querySelectorAll<HTMLElement>('.upload')];
 const busy = document.getElementById('busy') as HTMLElement;
 const busyMsg = document.getElementById('busyMsg') as HTMLElement;
@@ -700,6 +698,7 @@ function offerPickStop(): void {
 async function importFolderSets(sets: FolderSet[]): Promise<void> {
   stopBatch = false;
   batchRunning = true;
+  const unbusy = holdBusy();
   busyStop.hidden = false;
   busyStop.disabled = false;
   busyBar.hidden = false;
@@ -766,6 +765,7 @@ async function importFolderSets(sets: FolderSet[]): Promise<void> {
     trace(`batch done: ${added} added, ${known} known, ${failed.length} failed`);
     clearImporting();
     batchRunning = false;
+    unbusy();
     busyStop.hidden = true;
     busyBar.hidden = true;
     hideBusy();
@@ -773,6 +773,7 @@ async function importFolderSets(sets: FolderSet[]): Promise<void> {
       await renderLibrary(libraryHandlers)
         .catch((e) => console.warn('[library] refresh after batch failed', e));
     }
+    startArtworkPass();
   }
 
   showImportReport({
@@ -1537,33 +1538,19 @@ function toggleSchematic(): void {
   if (schemPanel.isOpen) schemPanel.close();
   else openSchematic();
 }
-let aboutBuilt = false;
-
 function openAbout(): void {
-  if (!aboutBuilt) {
-    aboutScroll.replaceChildren(renderAbout(buildStamp()));
-    aboutBuilt = true;
-  }
-  aboutPanel.hidden = false;
-  aboutBackdrop.hidden = false;
   aboutBtn.setAttribute('aria-expanded', 'true');
-  aboutScroll.scrollTop = 0;
-  aboutClose.focus();
+  openAboutDialog({ onClose: () => aboutBtn.setAttribute('aria-expanded', 'false') });
 }
 
 function closeAbout(): void {
-  if (aboutPanel.hidden) return;
-  aboutPanel.hidden = true;
-  aboutBackdrop.hidden = true;
-  aboutBtn.setAttribute('aria-expanded', 'false');
+  aboutOpen()?.close();
 }
 
 aboutBtn.addEventListener('click', () => {
-  if (aboutPanel.hidden) openAbout();
-  else closeAbout();
+  if (aboutOpen()) closeAbout();
+  else openAbout();
 });
-aboutClose.addEventListener('click', closeAbout);
-aboutBackdrop.addEventListener('click', closeAbout);
 
 function toggleMagnifier(): void {
   magnifier.setActive(!magnifier.active);
@@ -1703,18 +1690,17 @@ function buildMenu(info: MachineInfo): void {
     const tokInV = stat(str('main.tokens_in'));
     const tokInRowEl = tokInV.parentElement!;
     const pctV = stat(str('main.payout'));
-    const allInV = stat(str('main.money_in_since_added'));
-    const allInRowEl = allInV.parentElement!;
-    const allOutV = stat(str('main.money_out_since_added'));
-    const allOutRowEl = allOutV.parentElement!;
     const money = (p: number): string =>
       `${p < 0 ? '-' : ''}£${(Math.abs(p) / 100).toFixed(2)}`;
     refreshMenuLive = () => {
       void emu.ledger().then((l) => {
         if (!l) return;
         book.hidden = false;
-        inV.textContent = money(l.inPence);
-        outV.textContent = l.unpricedOut
+        const rec = moneyWatch.rec;
+        inV.textContent = money(rec ? rec.total.inPence : l.inPence);
+        outV.textContent = rec
+          ? money(rec.total.outPence)
+          : l.unpricedOut
           ? str('main.n_n_coins', { 0: money(l.outPence), 1: l.unpricedOut })
           : money(l.outPence);
         const tokParts: string[] = [];
@@ -1732,12 +1718,6 @@ function buildMenu(info: MachineInfo): void {
         tokInRowEl.hidden = tokInParts.length === 0;
         const pct = ledgerPayoutPercent(l);
         pctV.textContent = pct === null ? '-' : `${pct.toFixed(1)}%`;
-        const rec = moneyWatch.rec;
-        allInRowEl.hidden = allOutRowEl.hidden = !rec;
-        if (rec) {
-          allInV.textContent = money(rec.total.inPence);
-          allOutV.textContent = money(rec.total.outPence);
-        }
       });
     };
     refreshMenuLive();
@@ -2999,7 +2979,7 @@ const playKeys = new PlayKeys({
   lamps: () => cabinet?.lamps ?? null,
   running: () => running,
   onScreen: () => !stage.hidden,
-  hasKeyboard: () => !stage.hidden && aboutPanel.hidden && importReport.hidden && errorPopup.hidden,
+  hasKeyboard: () => !stage.hidden && !aboutOpen() && importReport.hidden && errorPopup.hidden,
   pressable: (lp) => clickable(lp),
   press: (lp, id) => activate(lp, id),
   release: (id) => releaseInput(id),
@@ -3023,7 +3003,7 @@ playKeys.watchWindow();
 
 window.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') {
-    if (!aboutPanel.hidden) {
+    if (aboutOpen()) {
       closeAbout();
       return;
     }
@@ -3415,6 +3395,31 @@ refreshStaleThumbs((hash) => {
   if (librarySection.hidden || batchRunning) return;
   refreshArtwork(hash);
 });
+function startArtworkPass(): void {
+  prepareArtwork({
+    onTile: (hash) => {
+      if (batchRunning) return;
+      refreshArtwork(hash);
+    },
+    onProgress: (left, total) => {
+      if (batchRunning) return;
+      if (left > 0) {
+        status.textContent = str('main.preparing_artwork_n_of_n', { 0: total - left + 1, 1: total });
+        artworkShown = true;
+      } else if (artworkShown) {
+        artworkShown = false;
+        status.textContent = '';
+      }
+    },
+    visible: () => new Set(
+      [...document.querySelectorAll<HTMLElement>('#tiles .art[data-hash]')]
+        .filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; })
+        .map((el) => el.dataset.hash!),
+    ),
+  });
+}
+let artworkShown = false;
+startArtworkPass();
 backfillContentHashes(() => {
   if (librarySection.hidden || batchRunning) return;
   void renderLibrary(libraryHandlers)

@@ -127,8 +127,9 @@ function fillSlot(slot: HTMLElement, g: GameMeta): void {
   } else {
     const ph = document.createElement('div');
     ph.className = 'art-placeholder';
-    ph.textContent = '\u{1F3B0}';
     frame.append(ph);
+    frame.dataset.hash = g.hash;
+    frame.dataset.alt = d.displayTitle(g);
   }
   slot.append(frame);
 

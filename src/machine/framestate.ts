@@ -208,6 +208,7 @@ export function frameLayoutFor(
       break;
     case 'MPU4':
     case 'MPU4VIDEO':
+    case 'MPU4PLASMA':
       lampKind = 'mfmelevel';
       break;
     case 'SPACE':
@@ -251,6 +252,21 @@ export function frameLayoutFor(
     case 'MPU3':
       lampKind = 'mfmelevel';
       break;
+    case 'MMM':
+      lampKind = 'mfmelevel';
+      break;
+    case 'SYS83':
+      lampKind = 'mfmelevel';
+      break;
+    case 'PLUTO5':
+      lampKind = 'mfmelevel';
+      break;
+    case 'ACEVIDEO':
+      lampKind = 'mfmelevel';
+      break;
+    case 'MPU2':
+      lampKind = 'mfmelevel';
+      break;
     case 'BLACKBOX':
       lampKind = 'byte256';
       break;
@@ -276,7 +292,7 @@ export function frameLayoutFor(
     ? { base: 0, bytes: 0 }
     : { base: driftBase, bytes: DIAG_RAM_BYTES[system] ?? 0 };
   const diagBytes = diag.bytes;
-  const dotBytes = system === 'SPACE' || system === 'SCORPION2'
+  const dotBytes = system === 'SPACE' || system === 'SCORPION2' || system === 'MPU4PLASMA'
     ? rawDots(m)?.length ?? 0 : 0;
   const lcdBytes = system === 'PROCONN' ? 80
     : system === 'EPOCH' ? 32 + 0x400

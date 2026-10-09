@@ -1,15 +1,18 @@
 import { getThumb } from '../store';
 import { imageMime } from '../cabjson';
 
-export function artwork(hash: string | null, alt: string, onTap: () => void): HTMLElement {
+export function artwork(
+  hash: string | null, alt: string, onTap: () => void,
+  awaiting?: string,
+): HTMLElement {
   const frame = document.createElement('div');
   frame.className = 'art';
   frame.addEventListener('click', onTap);
   if (!hash) {
     const ph = document.createElement('div');
     ph.className = 'art-placeholder';
-    ph.textContent = '\u{1F3B0}';
     frame.append(ph);
+    if (awaiting) { frame.dataset.hash = awaiting; frame.dataset.alt = alt; }
     return frame;
   }
   frame.dataset.hash = hash;
@@ -51,6 +54,13 @@ async function fillArtworkNow(frame: HTMLElement): Promise<void> {
   await img.decode().catch(() => undefined);
   back.classList.add('in');
   img.classList.add('in');
+}
+
+export function showTile(frame: HTMLElement): Promise<void> {
+  frame.querySelector('.art-placeholder')?.remove();
+  clearArtwork(frame);
+  artObserver?.observe(frame);
+  return fillArtwork(frame);
 }
 
 export function clearArtwork(frame: HTMLElement): void {

@@ -347,8 +347,8 @@ export function buildRenderIndex(
     });
   }
 
-  if (cab.dotMatrix) {
-    const d = cab.dotMatrix;
+  for (const d of [cab.dotMatrix, cab.plasmaPanel]) {
+    if (!d) continue;
     els.push({
       extent: turned(rect(d.left, d.top, d.width, d.height), d),
       key: (m) => {

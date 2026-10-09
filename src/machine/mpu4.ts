@@ -9,6 +9,7 @@ import { Pia6821 } from '../hw/pia6821';
 import { V20SoftSerial } from '../hw/v20softserial';
 import { DataPak } from '../hw/datapak';
 import { Ptm6840 } from '../hw/ptm6840';
+import { Mc68681 } from '../hw/mc68681';
 import { Reel } from '../hw/reel';
 import { v20IndexWindow, V20_ARM_MPU4, MODEL_RELATIONS, oursFromMfme, V20_REEL_POWER_UP_POS, resetReelsInPlace } from './v20optic';
 import { Characteriser, type CharacteriserTable } from '../hw/characteriser';
@@ -31,6 +32,7 @@ import { readMpu4CoinTable, readMpu4CoinTakes } from './mpu4coins';
 import { readMpu4VideoCoinTable, readMpu4VideoCoinTakes } from './mpu4vidcoins';
 import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import type { Mpu4VideoCard } from './mpu4video';
+import type { Mpu4PlasmaCard } from './mpu4plasma';
 
 export const MASTER_CLOCK = 6_880_000;
 export const E_CLOCK = MASTER_CLOCK / 4;
@@ -249,6 +251,8 @@ export class Mpu4 implements Bus, Machine {
   video: Mpu4VideoCard | null = null;
   private videoRam: Uint8Array | null = null;
 
+  plasma: Mpu4PlasmaCard | null = null;
+
   readonly ptm: Ptm6840;
   readonly ic3: Pia6821;
   readonly ic4: Pia6821;
@@ -303,6 +307,9 @@ export class Mpu4 implements Bus, Machine {
   readonly ptmSound: Ptm6840;
   readonly characteriser = new Characteriser();
   bwbCharacteriser: BwbCharacteriser | null = null;
+  fixedCharacteriser: number | null = null;
+  coinworldCharacter: Uint8Array | null = null;
+  private coinworldChrIndex = 0;
 
   private readonly reelUnits: Reel[] = [0, 1, 2, 3].map(barcrestReel);
   private reelMux: Mpu4ReelMux = 'standard';
@@ -371,11 +378,12 @@ export class Mpu4 implements Bus, Machine {
     this.segBank0 = new SegColumnBank(this.outputs.leds, this.outputs.ledLevels, 0);
     this.segBank1 = new SegColumnBank(this.outputs.leds, this.outputs.ledLevels, 1);
 
-    this.characteriser.setCheat(() => {
-      const x = this.cpu.x & 0xffff;
-      if (x >= 0x0800 && x <= 0x0fff) return 0;
-      return this.read8(x);
-    });
+    const pointedAt = (r: number): number => {
+      const a = r & 0xffff;
+      if (a >= 0x0800 && a <= 0x0fff) return 0;
+      return this.read8(a);
+    };
+    this.characteriser.setCheat(() => pointedAt(this.cpu.x), () => pointedAt(this.cpu.u));
 
     const irqChanged = () => this.updateIrq();
 
@@ -393,8 +401,12 @@ export class Mpu4 implements Bus, Machine {
       irqChanged,
       writeA: (v) => this.latchLamps('a', v),
       writeB: (v) => this.latchLamps('b', v),
-      writeCA2: (v) => this.vfd.data(v),
-      writeCB2: (v) => (this.alphaCableSwapped ? this.vfd.sclk(!v) : this.vfd.por(v)),
+      writeCA2: (v) => { if (!this.plasma) this.vfd.data(v); },
+      writeCB2: (v) => {
+        if (this.plasma) return;
+        if (this.alphaCableSwapped) this.vfd.sclk(!v);
+        else this.vfd.por(v);
+      },
     });
 
     this.ic4 = new Pia6821({
@@ -483,7 +495,9 @@ export class Mpu4 implements Bus, Machine {
       },
       writeB: (v) => this.okiPortB(v),
       writeCA2: (level) => this.okiResetLine(level),
-      readB: () => (this.oki.nar ? 0x80 : 0) | (this.oki.busy ? 0 : 0x40),
+      readB: () => (this.packSamples.length > 1
+        ? (this.packNar ? 0x80 : 0) | (this.packIdle ? 0x40 : 0)
+        : (this.oki.nar ? 0x80 : 0) | (this.oki.busy ? 0 : 0x40)),
     });
     this.ptmSound = new Ptm6840({ irqChanged });
 
@@ -528,7 +542,15 @@ export class Mpu4 implements Bus, Machine {
       },
       writeB: (v) => this.latchTriacs(v),
       writeCA2: (v) => this.setStrobeBit(2, v),
-      writeCB2: (v) => (this.alphaCableSwapped ? this.vfd.por(v) : this.vfd.sclk(!v)),
+      writeCB2: (v) => {
+        if (this.plasma) {
+          const bit = this.plasma.linkClock(v, this.ic3.ca2());
+          if (bit !== null) this.ic3.setCB2(bit);
+          return;
+        }
+        if (this.alphaCableSwapped) this.vfd.por(v);
+        else this.vfd.sclk(!v);
+      },
     });
   }
 
@@ -585,6 +607,7 @@ export class Mpu4 implements Bus, Machine {
   private powerOnSampleRate = MSM6376_RATE;
 
   get parts(): BoardPart[] {
+    if (this.plasma) return this.plasmaParts(this.plasma);
     return this.video ? this.videoParts(this.video) : this.boardParts();
   }
 
@@ -652,6 +675,17 @@ export class Mpu4 implements Bus, Machine {
     ];
   }
 
+  private plasmaParts(p: Mpu4PlasmaCard): BoardPart[] {
+    return [
+      ...this.boardParts().filter((b) => b.id !== 'alpha'),
+      { id: 'scc', label: 'LINK SCC', part: 'Z8530 - from MPU4 and to display', device: p.scc },
+      { id: 'pcpu', label: 'PLASMA CPU', part: 'MC68000 - 9.83 MHz', device: p.cpu, cpu: true },
+      { id: 'prom', label: 'PLASMA ROM', part: 'program', device: p.rom },
+      { id: 'pram', label: 'PLASMA RAM', part: '1M', device: p.ram },
+      { id: 'plasma', label: 'PLASMA DISPLAY', part: '128 x 32 dots', device: p.frame },
+    ];
+  }
+
   private okiData = 0;
   private okiLines = 0x03;
   private okiVolClock = false;
@@ -660,6 +694,14 @@ export class Mpu4 implements Bus, Machine {
   private okiCh2Phrase = -1;
   private okiCh2Rises = 0;
   private okiCh2Atten = 0;
+
+  private packNar = true;
+  private packIdle = true;
+  private packNarTimer = 0;
+  private readonly packActive = [false, false];
+  private readonly packStaged = [-1, -1];
+  private packStagedAtten = 0;
+  private packPoll = 0;
 
   okiVolumeManual = false;
   volumeApplies = true;
@@ -683,6 +725,10 @@ export class Mpu4 implements Bus, Machine {
     const ch2 = (lines & 2) !== 0;
     const stChanged = (changed & 1) !== 0;
     const ch2Changed = (changed & 2) !== 0;
+    if (this.packSamples.length > 1) {
+      this.packCardStrobe(st, ch2, stChanged, ch2Changed);
+      return;
+    }
 
     if (ch2 && !ch2Changed && stChanged && !st) {
       if (this.okiData === 0) this.oki.stop();
@@ -724,8 +770,104 @@ export class Mpu4 implements Bus, Machine {
       this.okiCh2Rises = 0;
       this.okiCh2Atten = 0;
       this.okiLines = 0x03;
+      this.packNar = true;
+      this.packIdle = true;
+      this.packNarTimer = 0;
+      this.packActive[0] = this.packActive[1] = false;
+      this.packStaged[0] = this.packStaged[1] = -1;
     }
     this.okiInReset = !level;
+  }
+
+  private packCardStrobe(st: boolean, ch2: boolean, stChanged: boolean, ch2Changed: boolean): void {
+    if (ch2 && !ch2Changed && stChanged && !st && (this.packNar || this.okiData === 0)) {
+      const id = this.okiData;
+      if (this.packSamples[id]) {
+        this.packNar = false;
+        if (!this.packActive[0]) {
+          this.packStaged[0] = -1;
+          this.packNarTimer = 500;
+          this.packCardStart(id, 0, 1);
+        } else {
+          this.packStaged[0] = id;
+          this.packNarTimer = 0;
+        }
+      }
+    }
+    if (!ch2 && ch2Changed) this.okiCh2Rises = 0;
+    if (!ch2 && stChanged) {
+      if (!st) {
+        if (this.okiCh2Rises === 0) this.okiCh2Phrase = this.okiData;
+      } else {
+        this.okiCh2Rises++;
+        this.okiCh2Atten = this.okiCh2Rises === 1 ? 0 : this.okiCh2Atten + 1;
+      }
+    }
+    if (ch2 && ch2Changed && this.okiCh2Phrase >= 0) {
+      const id = this.okiCh2Phrase;
+      if (this.packSamples[id]) {
+        if (!this.packActive[1]) {
+          this.okiCh2Phrase = -1;
+          this.packCardStart(id, 1, Mpu4.packAttenGain(this.okiCh2Atten));
+        } else {
+          this.packStaged[1] = id;
+          this.packStagedAtten = this.okiCh2Atten;
+        }
+      }
+    }
+  }
+
+  private static packAttenGain(a: number): number {
+    const att = a === 1 ? 0x32 : a === 2 ? 100 : a;
+    return (0xff - att) / 0xff;
+  }
+
+  private packCardStart(id: number, ch: 0 | 1, gain: number): void {
+    this.packIdle = false;
+    this.packActive[ch] = true;
+    this.samplePlayer.start(this.packSamples[id], ch, gain);
+  }
+
+  private packCardTick(cycles: number): void {
+    if (this.packNarTimer > 0) {
+      this.packNarTimer -= cycles;
+      if (this.packNarTimer <= 0) {
+        this.packNarTimer = 0;
+        this.packNar = true;
+        if ((this.okiLines & 1) === 0) {
+          this.packStaged[0] = this.okiData;
+          this.packNar = false;
+        }
+      }
+    }
+    this.packPoll -= cycles;
+    if (this.packPoll > 0) return;
+    this.packPoll += 0xfa;
+    if (!this.packActive[0] && !this.packActive[1]) { this.packIdle = true; return; }
+    const ended = [false, false];
+    for (let ch = 0; ch < 2; ch++) {
+      if (this.packActive[ch] && !this.samplePlayer.voicePlaying(ch)) {
+        this.packActive[ch] = false;
+        ended[ch] = true;
+      }
+    }
+    if (!this.packActive[0] && !this.packActive[1]) this.packIdle = true;
+    if (ended[0]) {
+      const id = this.packStaged[0];
+      if (id > 0 && this.packSamples[id]) {
+        if (this.okiLines & 1) this.packStaged[0] = -1;
+        this.packNarTimer = 500;
+        this.packCardStart(id, 0, 1);
+      } else {
+        this.packNar = true;
+        this.packNarTimer = 0;
+      }
+    }
+    if (ended[1] && this.packStaged[1] > 0 && this.packSamples[this.packStaged[1]]) {
+      const id = this.packStaged[1];
+      this.packStaged[1] = -1;
+      this.packCardStart(id, 1, Mpu4.packAttenGain(this.packStagedAtten));
+    }
   }
 
   get audioSource(): Mixer {
@@ -745,7 +887,10 @@ export class Mpu4 implements Bus, Machine {
     if (this.packSamples.length > 1) return this.samplePlayer;
     const base = this.oki.phraseCount > 0 ? this.oki : this.ay;
     if (this.video) {
-      if (this.videoMix?.base !== base) this.videoMix = { base, mixer: new Mixer([base, this.video.saa]) };
+      this.video.saa.setRate(base.rate);
+      if (this.videoMix?.base !== base || this.videoMix.mixer.rate !== base.rate) {
+        this.videoMix = { base, mixer: new Mixer([base, this.video.saa]) };
+      }
       return this.videoMix.mixer;
     }
     return base;
@@ -1428,6 +1573,11 @@ export class Mpu4 implements Bus, Machine {
   static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x96, start: 0x96, settle: 1 });
   private hopper1Opto = false;
   private duartOp = 0;
+  readonly duart = ((): Mc68681 => {
+    const d = new Mc68681({ irqChanged: () => this.updateIrq() });
+    d.inputPort = 0x20;
+    return d;
+  })();
   private hopper2Opto = false;
   private hopper1Booked = 0;
   private hopper2Booked = 0;
@@ -1835,6 +1985,7 @@ export class Mpu4 implements Bus, Machine {
     this.opll?.reset();
     for (const pia of this.pias()) pia.reset();
     this.characteriser.reset();
+    this.coinworldChrIndex = 0;
     this.okiVolume = 0;
     this.okiInReset = true;
     this.okiResetLine(true);
@@ -1888,12 +2039,20 @@ export class Mpu4 implements Bus, Machine {
     this.hopper2Booked = 0;
     this.hopper1Opto = false;
     this.duartOp = 0;
+    this.duart.reset();
+    this.duart.inputPort = 0x20;
     this.hopper2Opto = false;
     if (this.video) {
       this.videoRam?.fill(0);
       this.video.reset();
     }
+    this.plasma?.powerOn();
     this.cpu.reset();
+  }
+
+  private get duartHopperPage(): boolean {
+    return this.hopperType === 1 || this.hopperType === 3 || this.hopperType === 5
+      || this.payoutType === 6 || this.payoutType === 10;
   }
 
   private pias(): Pia6821[] {
@@ -1926,6 +2085,10 @@ export class Mpu4 implements Bus, Machine {
   private readIo(addr: number): number {
     if (this.video && addr < 0x0810) return this.video.mpu4Acia.read(addr - 0x0800 === 0 ? 0 : 1);
     if (addr < 0x0840 && this.bwbCharacteriser) return this.bwbCharacteriser.read();
+    if (addr < 0x0840 && this.fixedCharacteriser !== null) return this.fixedCharacteriser;
+    if (addr < 0x0840 && this.coinworldCharacter) {
+      return addr < 0x0810 ? this.coinworldCharacter[this.coinworldChrIndex] ?? 0 : 0;
+    }
     if (addr < 0x0820) return this.characteriser.read(addr - 0x0800);
     if (addr >= 0x0850 && addr < 0x0860) return this.pageLatch;
     if (addr >= 0x0900 && addr < 0x0a00) return this.ptm.read(addr & 7);
@@ -1934,6 +2097,7 @@ export class Mpu4 implements Bus, Machine {
           || this.payoutType === 6 || this.payoutType === 10)) {
       return this.readDuart(addr & 15);
     }
+    if (addr >= 0x08e0 && addr < 0x08f0) return this.duart.read(addr & 15);
     if (addr >= 0x08c0 && addr < 0x0900) return this.ptmSound.read(addr & 7);
     if (addr >= 0x0880 && addr < 0x0890 && this.crystalSoundPage) return this.crystalSoundRead();
     const pia = this.piaAt(addr);
@@ -1961,6 +2125,16 @@ export class Mpu4 implements Bus, Machine {
     }
     if (addr < 0x0840 && this.bwbCharacteriser) {
       this.bwbCharacteriser.write(val);
+      return;
+    }
+    if (addr < 0x0840 && this.fixedCharacteriser !== null) return;
+    if (addr < 0x0840 && this.coinworldCharacter) {
+      if (addr < 0x0810) {
+        const k = (val - 0x28) & 0xff;
+        this.coinworldChrIndex = k < 8 ? k : 8;
+      } else if (addr < 0x0820 && (addr & 3) === 2 && (val & 0xff) === 0) {
+        this.coinworldChrIndex = 0;
+      }
       return;
     }
     if (addr < 0x0820) {
@@ -1992,6 +2166,11 @@ export class Mpu4 implements Bus, Machine {
       }
       return;
     }
+    if (addr >= 0x08e0 && addr < 0x08f0) {
+      this.duart.write(addr & 15, val);
+      this.updateIrq();
+      return;
+    }
     if (addr >= 0x08c0 && addr < 0x0900) {
       this.ptmSound.write(addr & 7, val);
       if ((addr & 3) === 3) this.clockOkiFromPtm();
@@ -2010,6 +2189,7 @@ export class Mpu4 implements Bus, Machine {
     const pia = this.piaAt(addr);
     if (pia) pia.write(addr & 3, val);
     else this.strays.hit(addr);
+    if (this.plasma && pia === this.ic3) this.plasma.ic3Control(this.ic3.peek(1));
     if (addr === 0x0883 && this.romPaging === 1 && (val & 0x30) === 0x30) {
       this.bank = (val >> 3) & 1;
     }
@@ -2027,7 +2207,7 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private updateIrq(): void {
-    let irq = this.ptm.irq();
+    let irq = this.ptm.irq() || (!this.duartHopperPage && this.duart.irq());
     if (!irq) {
       for (const pia of this.pias()) {
         if (pia.irqA() || pia.irqB()) {
@@ -2041,6 +2221,11 @@ export class Mpu4 implements Bus, Machine {
       return;
     }
     this.cpu.setIRQ(irq);
+  }
+
+  attachPlasma(card: Mpu4PlasmaCard): void {
+    this.plasma = card;
+    (this.outputs as { dots?: Uint8Array }).dots = card.frame;
   }
 
   attachVideo(card: Mpu4VideoCard): void {
@@ -2164,6 +2349,8 @@ export class Mpu4 implements Bus, Machine {
       v |= 0x08;
     }
     if (this.mainsState) v |= 0x04;
+    if (this.dataPakType === 2) v |= this.ic5.ca2() ? 0x80 : 0;
+    else if (this.dataPakType === 1) v |= this.dataport.out ? 0x80 : 0;
     return v | this.lampSense();
   }
 
@@ -2202,6 +2389,7 @@ export class Mpu4 implements Bus, Machine {
   step(): number {
     const cycles = this.cpu.step();
     this.ptm.tick(cycles);
+    if (!this.duart.idle()) this.duart.tick(cycles * 4);
     this.tickMeterSettle(cycles);
     this.tickMeterPulses(cycles);
     this.tickMains(cycles);
@@ -2215,12 +2403,14 @@ export class Mpu4 implements Bus, Machine {
     this.ay.tick(cycles, E_CLOCK);
     this.oki.tick(cycles, E_CLOCK);
     this.samplePlayer.tick(cycles, E_CLOCK);
+    if (this.packSamples.length > 1) this.packCardTick(cycles);
     this.opll?.tick(cycles, E_CLOCK);
     this.alarm.tick(cycles);
     if (this.video) {
       this.video.advance(cycles, E_CLOCK);
       this.cpu.setIRQ(this.video.mpu4AciaIrq());
     }
+    this.plasma?.advance(cycles, E_CLOCK);
     return cycles;
   }
 

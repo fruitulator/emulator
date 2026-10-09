@@ -16,6 +16,11 @@ import ASTRASYSA1 from './gameconfig/ASTRASYSA1.json';
 import SYS1 from './gameconfig/SYS1.json';
 import BLACKBOX from './gameconfig/BLACKBOX.json';
 import MPU3 from './gameconfig/MPU3.json';
+import MMM from './gameconfig/MMM.json';
+import MPU2 from './gameconfig/MPU2.json';
+import SYS83 from './gameconfig/SYS83.json';
+import ACEVIDEO from './gameconfig/ACEVIDEO.json';
+import PLUTO5 from './gameconfig/PLUTO5.json';
 import MPU4VIDEO from './gameconfig/MPU4VIDEO.json';
 import PROCONN from './gameconfig/PROCONN.json';
 import ELECTROCOIN from './gameconfig/ELECTROCOIN.json';
@@ -190,7 +195,13 @@ const MAPS: Record<string, SystemMap> = {
   SYS85: SYS85 as SystemMap,
   BLACKBOX: BLACKBOX as SystemMap,
   MPU3: MPU3 as unknown as SystemMap,
+  MMM: MMM as unknown as SystemMap,
+  MPU2: MPU2 as unknown as SystemMap,
+  SYS83: SYS83 as unknown as SystemMap,
+  ACEVIDEO: ACEVIDEO as unknown as SystemMap,
+  PLUTO5: PLUTO5 as unknown as SystemMap,
   MPU4VIDEO: MPU4VIDEO as unknown as SystemMap,
+  MPU4PLASMA: MPU4 as SystemMap,
 };
 
 export function gameConfigControls(system: string): Readonly<Record<string, Readonly<Control>>> | null {
@@ -301,7 +312,7 @@ export function readNumber(
 export const SWITCH_CONTROLS = ['Cash', 'Refill', 'Service', 'Test', 'Test 2', 'Top Up'] as const;
 export type SwitchControl = (typeof SWITCH_CONTROLS)[number];
 
-const SWITCH_ID_SYSTEMS = new Set(['SCORPION2', 'SCORPION4', 'MPU4', 'IMPACT', 'M1AB', 'SPACE', 'EPOCH', 'SYSTEM80', 'ELECTROCOIN', 'PHOENIX', 'PHOENIX2', 'SYS5', 'SYS85', 'PROCONN', 'ASTRASYSA1']);
+const SWITCH_ID_SYSTEMS = new Set(['SCORPION2', 'SCORPION4', 'MPU4', 'MPU4PLASMA', 'IMPACT', 'M1AB', 'SPACE', 'EPOCH', 'SYSTEM80', 'ELECTROCOIN', 'PHOENIX', 'PHOENIX2', 'SYS5', 'SYS85', 'PROCONN', 'ASTRASYSA1']);
 
 export function layoutSwitchIds(
   payload: Uint8Array,

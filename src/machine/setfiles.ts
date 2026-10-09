@@ -24,6 +24,15 @@ export function setFiles<T extends { name: string }>(files: T[]): T[] {
   return files.filter((f) => isSetFile(f.name));
 }
 
+export const OS_JUNK_FILE = /^(\.ds_store|thumbs\.db|desktop\.ini|\._.*)$/i;
+
+const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
+
+export function isSpareStateDir(below: readonly string[]): boolean {
+  const kept = below.filter((p) => !OS_JUNK_FILE.test(baseName(p)) && isSetFile(p));
+  return kept.some((p) => /\.ram$/i.test(p)) && kept.every((p) => STATE_ONLY.test(p));
+}
+
 export const LAYOUT_FILE = /\.(fml|dat)$/i;
 
 export function hasGameFile(files: readonly { name: string }[]): boolean {

@@ -51,7 +51,7 @@ const newChannel = (): Channel => ({
 const chFreq = (c: Channel): number => (511 - c.frequency) << (8 - c.octave);
 
 export class Saa1099 implements AudioSource {
-  readonly rate: number;
+  rate: number;
   readonly nativeRate: number;
   gain = 1;
 
@@ -77,6 +77,18 @@ export class Saa1099 implements AudioSource {
     this.rate = outRate;
     const frames = 2 ** Math.ceil(Math.log2(Math.max(1 << 14, outRate * 0.25)));
     this.ring = new Float32Array(frames * 2);
+  }
+
+  setRate(rate: number): void {
+    if (!Number.isFinite(rate) || rate <= 0 || rate === this.rate) return;
+    this.flush();
+    this.rate = rate;
+    this.cycleRemainder = 0;
+    const frames = 2 ** Math.ceil(Math.log2(Math.max(1 << 14, rate * 0.25)));
+    if (frames * 2 > this.ring.length) {
+      this.ring = new Float32Array(frames * 2);
+      this.ringRead = this.ringWrite = 0;
+    }
   }
 
   reset(): void {
@@ -226,7 +238,7 @@ export class Saa1099 implements AudioSource {
     out[1] = outR;
   }
 
-  private readonly ring: Float32Array;
+  private ring: Float32Array;
   private ringWrite = 0;
   private ringRead = 0;
   private cycleRemainder = 0;

@@ -333,6 +333,7 @@ export interface Cabinet<A = ImageBitmap> {
   epochDotAlpha?: EpochDotAlphaPanel | null;
   maygayMatrix?: MaygayMatrixPanel | null;
   epochMatrix?: EpochMatrixPanel | null;
+  plasmaPanel?: PlasmaPanel | null;
   videoScreen?: VideoScreen | null;
   rgbLeds?: RgbLed[];
   prismLamps?: PrismLamp<A>[];
@@ -451,6 +452,13 @@ export interface EpochDotAlphaPanel extends Rect {
 }
 
 export interface MaygayMatrixPanel extends Rect {
+  size: number;
+  on: number;
+  off: number;
+  bg: number;
+}
+
+export interface PlasmaPanel extends Rect {
   size: number;
   on: number;
   off: number;
@@ -660,6 +668,33 @@ export function mfmeBandIndex(
       MPU3_ADJUST * scale - position, reversed, bandOffset * scale,
     );
   }
+  if (system === 'MPU2') {
+    const MPU2_ADJUST = 7;
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(
+      MPU2_ADJUST * scale - position, reversed, bandOffset * scale,
+    );
+  }
+  if (system === 'SYS83') {
+    const SYS83_ADJUST = 7;
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(
+      SYS83_ADJUST * scale - position, reversed, bandOffset * scale,
+    );
+  }
+  if (system === 'MMM') {
+    const MMM_ADJUST = 8;
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(
+      MMM_ADJUST * scale - position, reversed, bandOffset * scale,
+    );
+  }
   if (system === 'PROCONN') {
     const PROCONN_ADJUST = 1;
     void stops;
@@ -669,8 +704,8 @@ export function mfmeBandIndex(
       PROCONN_ADJUST * scale - position, reversed, bandOffset * scale,
     );
   }
-  if (system === 'MPU4') {
-    const MPU4_ADJUST = -1;
+  if (system === 'MPU4' || system === 'MPU4PLASMA') {
+    const MPU4_ADJUST = system === 'MPU4PLASMA' ? 0 : -1;
     const MPU4_MODEL_HOME = 3;
     void stops;
     const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;

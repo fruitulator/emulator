@@ -158,10 +158,11 @@ export type UploadSource =
 export function importUpload(
   src: UploadSource, fallbackName: string | undefined, events: ImportEvents,
   background = false,
+  deferArtwork = false,
 ): Promise<GameMeta> {
   const id = nextId++;
   const transfer = new Set<ArrayBuffer>();
-  const req: ImportRequest = { id, op: 'importUpload', fallbackName, background };
+  const req: ImportRequest = { id, op: 'importUpload', fallbackName, background, ...(deferArtwork ? { deferArtwork } : {}) };
   if ('zip' in src) {
     req.zip = src.zip;
     if (src.zip.buffer instanceof ArrayBuffer) transfer.add(src.zip.buffer);
@@ -195,4 +196,8 @@ export function backfillContentHash(hash: string): Promise<GameMeta> {
 
 export function refreshThumb(hash: string): Promise<GameMeta> {
   return request({ id: nextId++, op: 'refreshThumb', hash }, {}, [], true);
+}
+
+export function decodeArtwork(hash: string): Promise<GameMeta> {
+  return request({ id: nextId++, op: 'decodeArtwork', hash }, {}, [], true);
 }

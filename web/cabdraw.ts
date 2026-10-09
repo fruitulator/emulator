@@ -493,6 +493,8 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     if (eda) withAngle(ctx, eda, eda.angle, () => drawEpochDotAlpha(m, eda));
     if (mm) withAngle(ctx, mm, mm.angle, () => drawMaygayMatrix(m, mm));
     if (em) withAngle(ctx, em, em.angle, () => drawEpochMatrix(m, em));
+    const pp = cab.plasmaPanel;
+    if (pp) withAngle(ctx, pp, pp.angle, () => drawPlasmaPanel(m, pp));
     if (vs) withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs));
     drawBitmaps(m, cab, 'top');
     drawUnserved(m);
@@ -635,6 +637,31 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   }
 
   const MAYGAY_MATRIX_BANDS = [175, 210, 0, 35, 70, 105, 140];
+
+  function drawPlasmaPanel(m: FrameView, p: NonNullable<Cabinet['plasmaPanel']>): void {
+    const s = p.size;
+    const g = s < 5 ? 1 : 2;
+    const kx = p.width / (128 * s + g);
+    const ky = p.height / (32 * s + g);
+    ctx.fillStyle = argbToCss(p.bg);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
+    const dots = m.dotsRaw;
+    const w = (s - g) * kx;
+    const h = (s - g) * ky;
+    for (const want of [0, 1]) {
+      ctx.beginPath();
+      for (let y = 0; y < 32; y++) {
+        const top = p.top + (g + y * s) * ky;
+        for (let x = 0; x < 128; x++) {
+          const i = y * 16 + (x >> 3);
+          const on = i < dots.length ? (dots[i] >> (7 - (x & 7))) & 1 : 0;
+          if (on === want) ctx.rect(p.left + (g + x * s) * kx, top, w, h);
+        }
+      }
+      ctx.fillStyle = argbToCss(want ? p.on : p.off);
+      ctx.fill();
+    }
+  }
 
   function drawMaygayMatrix(m: FrameView, p: NonNullable<Cabinet['maygayMatrix']>): void {
     const s = p.size;

@@ -21,7 +21,13 @@ import { ELECTROCOIN_SCHEMATIC } from './electrocoin';
 import { PHOENIX_SCHEMATIC } from './phoenix';
 import { BLACKBOX_SCHEMATIC } from './blackbox';
 import { MPU3_SCHEMATIC } from './mpu3';
+import { MMM_SCHEMATIC } from './mmm';
+import { MPU2_SCHEMATIC } from './mpu2';
+import { SYS83_SCHEMATIC } from './sys83';
+import { ACEVIDEO_SCHEMATIC } from './acevideo';
+import { PLUTO5_SCHEMATIC } from './pluto5';
 import { MPU4VIDEO_SCHEMATIC } from './mpu4video';
+import { MPU4PLASMA_SCHEMATIC } from './mpu4plasma';
 
 const BY_SYSTEM: Record<string, Schematic> = {
   MPU5: MPU5_SCHEMATIC,
@@ -48,7 +54,13 @@ const BY_SYSTEM: Record<string, Schematic> = {
   PHOENIX2: PHOENIX_SCHEMATIC,
   BLACKBOX: BLACKBOX_SCHEMATIC,
   MPU3: MPU3_SCHEMATIC,
+  MMM: MMM_SCHEMATIC,
+  MPU2: MPU2_SCHEMATIC,
+  SYS83: SYS83_SCHEMATIC,
+  ACEVIDEO: ACEVIDEO_SCHEMATIC,
+  PLUTO5: PLUTO5_SCHEMATIC,
   MPU4VIDEO: MPU4VIDEO_SCHEMATIC,
+  MPU4PLASMA: MPU4PLASMA_SCHEMATIC,
 };
 
 export function schematicFor(system: string): Schematic | null {

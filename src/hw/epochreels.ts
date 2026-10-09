@@ -30,6 +30,7 @@ export class EpochReels {
 
   private readonly opticInverted: boolean;
   private readonly windows: { start: number; width: number }[];
+  private readonly reelInverted: boolean[];
 
   readonly reelBoard: 3 | 6;
   private latch6 = 0;
@@ -49,8 +50,10 @@ export class EpochReels {
       stepsPerRevolution: g.halfSteps,
       symbols: g.stops,
       opticStart: g.optoTab,
+      flip: g.flip ?? false,
     }));
     this.windows = geo.map((g) => opticWindowForFlag(g.optoTab));
+    this.reelInverted = geo.map((g) => !g.flip && !!g.invertedOpto);
     this.last = new Int8Array(this.reels.length);
   }
 
@@ -115,6 +118,7 @@ export class EpochReels {
   private step(index: number, nibble: number): void {
     const reel = this.reels[index];
     if (!reel) return;
+    if (reel.flip) { reel.update(nibble & 0x0f); return; }
     const phase = SWAP[nibble & 0xf];
     if (phase === 0) return;
     if ((((this.last[index] ^ phase) + 1) & 0xf) <= 1) return;
@@ -132,8 +136,8 @@ export class EpochReels {
     this.reels.forEach((r, i) => {
       const p = r.position;
       const w = this.windows[i];
-      const inWindow = p >= w.start && p < w.start + w.width;
-      if (inWindow === this.opticInverted) return;
+      const inWindow = r.flip ? p === 0 : p >= w.start && p < w.start + w.width;
+      if (inWindow === (this.opticInverted !== this.reelInverted[i])) return;
       bits |= 1 << i;
     });
     return bits;

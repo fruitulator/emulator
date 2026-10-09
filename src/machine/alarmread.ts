@@ -19,6 +19,7 @@ export const ALARM_FORM_CORE: readonly AlarmFormCore[] = [
   { id: 'mars-strim-code', re: /(?:^|\s)(\d\.[0-9A-F])(?=\s+[A-Z£#])/, reads: 'alpha' },
   { id: 'mpu5-alarm-header', re: /\bALARM\b\s*\d+\s*[-‐-―]\s*[0-9A-F]+\b/, reads: 'alpha' },
   { id: 'bfm-system-status', re: /\bSYSTEM STATUS\b/, reads: 'alpha' },
+  { id: 'jpm-error-equals', re: /\bERROR = (\d\.\d)(?![\d.])/, reads: 'alpha' },
   { id: 'mpu4-no-dataport', re: /\bNO DATAPORT COMM\b/, reads: 'alpha' },
   { id: 'bfm-not-paired', re: /\b(?:[A-Z]+ )?[A-Z]+\s+NP\s+A\d\b/, reads: 'alpha' },
   { id: FLASH_FORM, re: /[A-Za-z]/, reads: 'digits' },
@@ -43,7 +44,7 @@ export const BOARD_ALARM_FORMS: Readonly<Record<string, readonly string[]>> = {
   MPU5: ['mpu5-alarm-header', 'bacta-type-token', 'mars-strim-code'],
   EPOCH: ['mars-strim-code', 'bacta-type-token'],
   M1AB: ['mars-strim-code', 'bacta-type-token'],
-  IMPACT: ['mars-strim-code', 'bacta-type-token'],
+  IMPACT: ['mars-strim-code', 'jpm-error-equals', 'bacta-type-token'],
   MPS2: [],
   SRU: [],
   SYSTEM80: [],
@@ -55,6 +56,16 @@ export const BOARD_ALARM_FORMS: Readonly<Record<string, readonly string[]>> = {
   PHOENIX: [],
   PHOENIX2: [],
   PROCONN: ['mars-strim-code', 'bacta-type-token', FLASH_FORM],
+  MMM: [],
+  MPU2: [],
+  SYS83: [],
+  ACEVIDEO: [],
+  PLUTO5: [],
+  MPU4PLASMA: [],
+};
+
+export const FLASH_CODE_LEADS: Readonly<Record<string, RegExp>> = {
+  PROCONN: /^[Ed]/,
 };
 
 export function boardAlarmForms(system: string): readonly string[] | undefined {
@@ -67,6 +78,18 @@ const NO_FORMS_WHY: Readonly<Record<string, string>> = {
   SYSTEM80: 'this board has no fault display; it signals a fault with its alarm tone and by'
     + ' shutting its coin slots, and neither is read here',
   SRU: 'this board has no fault display and shows no fault codes',
+  MMM: 'no documentation of how this board shows a fault has been found, so a fault cannot be'
+    + ' told apart from attract',
+  MPU2: 'this board has no display; no documentation of how it shows a fault has been found, so a'
+    + ' fault cannot be told apart from attract',
+  SYS83: 'this board flashes a fault as a number on its credit digits at the start of its test'
+    + ' sequence, which cannot be told apart from a credit count',
+  ACEVIDEO: 'this board shows its messages as a picture on its video screen, which is not read'
+    + ' as text here',
+  PLUTO5: 'this board shows a fault as plain text alternating with a number, in words each game'
+    + ' chooses, so a fault cannot be told apart from attract text',
+  MPU4PLASMA: 'this board shows its messages as a picture on its dot display, which is not read'
+    + ' as text here',
 };
 
 export function unreadWhy(system: string, reason: UnreadReason): string {
@@ -93,7 +116,10 @@ export interface Glass {
   cells?: string[];
   hasDigits?: boolean;
   hasDisplayDevice?: boolean;
-  flashedCode?: { cells: number[]; code: string; normal: string };
+  flashedCode?: {
+    cells: number[]; code: string; normal: string;
+    shown?: string;
+  };
   flashedStrim?: { code: string; at: number };
   lit?: boolean;
   everLettered?: boolean;
@@ -123,6 +149,20 @@ export interface GlassSource {
   deviceText?(): string;
 }
 
+function withPoints(text: string, words: Uint32Array | undefined): string {
+  if (!words || text.length !== words.length) return text;
+  let s = '';
+  for (let i = 0; i < text.length; i++) {
+    s += text[i];
+    const w = words[i];
+    if (w & 0x10000) continue;
+    const p = (w >> 8) & 0xff;
+    if (p === 0x2e) s += '.';
+    else if (p === 0x2c) s += ',';
+  }
+  return s;
+}
+
 export function readGlass(
   m: GlassSource, layout: Uint8Array | undefined, surfaces?: CabinetSurfaces,
 ): Glass {
@@ -130,8 +170,10 @@ export function readGlass(
   const reversed = surf.reversed;
   let alpha = '';
   try {
-    const raw = m.deviceText?.() ?? (m.display as { text?: () => string } | undefined)?.text?.() ?? '';
-    alpha = glassText(raw, reversed).trimEnd();
+    const disp = m.display as { text?: () => string; cellWords?: Uint32Array } | undefined;
+    const own = disp?.text?.();
+    const raw = m.deviceText?.() ?? own ?? '';
+    alpha = glassText(raw === own ? withPoints(raw, disp?.cellWords) : raw, reversed).trimEnd();
   } catch {  }
   let digits = '';
   const cells: string[] = [];
@@ -193,7 +235,17 @@ Glass['flashedCode'] | undefined {
     normal.push(lastOther === '' ? ' ' : lastOther);
   }
   if (!hit.length) return undefined;
-  return { cells: hit, code: code.join(''), normal: normal.join('') };
+  const on = samples.filter((s) => (s[hit[0]] ?? '') === code[0]);
+  let shown = '';
+  for (let i = 0; i < width; i++) {
+    const n = new Map<string, number>();
+    for (const s of on) { const c = s[i] ?? ''; if (c !== '' && c !== ' ') n.set(c, (n.get(c) ?? 0) + 1); }
+    let best = ' ';
+    for (const [c, k] of n) if (k >= MIN_PHASES && k > (n.get(best) ?? 0)) best = c;
+    shown += best;
+  }
+  shown = shown.trimEnd();
+  return { cells: hit, code: code.join(''), normal: normal.join(''), ...(shown ? { shown } : {}) };
 }
 
 export function flashedStrim(samples: readonly string[]): Glass['flashedStrim'] | undefined {
@@ -253,13 +305,15 @@ export function classifyGlassCore(system: string, g: Glass): CoreReading {
     .map((f) => ({ f, m: f.re.exec(text) })).filter((h) => h.m);
   const best = hits.find((h) => own.has(h.f.id)) ?? hits[0];
   if (best) return { verdict: 'ALARM', form: best.f.id, matched: best.m![0].trim(), glass };
-  if (g.flashedCode && own.has(FLASH_FORM)) {
+  const leads = FLASH_CODE_LEADS[system.toUpperCase()];
+  if (g.flashedCode && own.has(FLASH_FORM) && (!leads || leads.test(g.flashedCode.code))) {
     return {
       verdict: 'ALARM',
       form: FLASH_FORM,
       matched: g.flashedCode.code,
       glass: `${glass} - cells ${g.flashedCode.cells.join(',')} flashed`
-        + ` "${g.flashedCode.code}" against "${g.flashedCode.normal}"`,
+        + ` "${g.flashedCode.code}" against "${g.flashedCode.normal}"`
+        + (g.flashedCode.shown ? ` (the bank read "${g.flashedCode.shown}")` : ''),
     };
   }
   if (g.flashedStrim && own.has(STRIM_FLASH_FORM)) {

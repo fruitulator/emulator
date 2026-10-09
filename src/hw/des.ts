@@ -135,6 +135,8 @@ export function desEcb(key: readonly number[], data: readonly number[], decrypt:
   return out;
 }
 
+export const V20_DEFAULT_DES_KEY: readonly number[] = [0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe];
+
 export function parseDesKey(hex: string): number[] | null {
   const t = hex.trim();
   if (!/^[0-9a-fA-F]{16}$/.test(t)) return null;

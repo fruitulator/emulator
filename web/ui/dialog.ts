@@ -42,7 +42,7 @@ export function openDialog(o: {
   body.append(...o.body);
   scroll.append(body);
   panel.append(bar, scroll);
-  const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') close(); };
+  const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } };
   const close = (): void => {
     backdrop.remove();
     panel.remove();

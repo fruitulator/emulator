@@ -59,6 +59,10 @@ class CtcChannel {
     if (this.mode & CONSTANT) {
       this.tconst = data || 0x100;
       this.mode &= ~CONSTANT;
+      if (!(this.mode & RESET) && !(this.mode & WAITING_FOR_TRIG) && this.timerLeft !== null) {
+        if ((this.mode & MODE) !== MODE_COUNTER) this.timerPeriod = this.period();
+        return;
+      }
       this.mode &= ~RESET;
       if ((this.mode & MODE) === MODE_COUNTER || (this.mode & TRIGGER) === TRIGGER_AUTO) {
         const p = this.period();

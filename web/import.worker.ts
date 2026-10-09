@@ -95,6 +95,16 @@ async function importUpload(
   post({ id, kind: 'progress', stage: 'hashing' });
   const hash = (req.files && req.hash) || await hashGameFiles(files);
 
+  if (req.deferArtwork) {
+    setPhase('caching');
+    const meta = await persistGame(hash, game, null, (stage) => {
+      setPhase(stage);
+      post({ id, kind: 'progress', stage });
+    }, req.fallbackName, undefined, !req.background, spares, true);
+    post({ id, kind: 'cached', hash, meta });
+    return;
+  }
+
   setPhase('decoding');
   if (game.layout) post({ id, kind: 'progress', stage: 'decoding' });
   const { cab, props } = await decodeLayout(game);
@@ -220,6 +230,25 @@ async function openPak(
   console.log(`[library] refreshed ${game.name} to decode v${DECODE_VERSION}`);
 }
 
+async function decodeArtwork(hash: string): Promise<GameMeta | null> {
+  const meta = await getMeta(hash);
+  if (!meta || meta.decodeStatus !== 'pending') return meta;
+  const bytes = await getPak(hash);
+  if (!bytes) return meta;
+  const pak = decodePak(bytes);
+  const files = decodeSrcs(pak.chunk('SRCS'));
+  let spares: GameFile[] = [];
+  try {
+    if (pak.has('SPAR')) spares = decodeSrcs(pak.chunk('SPAR'));
+  } catch (e) {
+    console.warn('[library] spare state unreadable', e);
+  }
+  const hasGam = files.some((f) => CONFIG_FILE.test(f.name));
+  const game = classifyGame(files, hasGam ? undefined : meta.name, meta.variant);
+  const { cab, props } = await decodeLayout(game);
+  return persistGame(hash, game, cab, undefined, undefined, props, false, spares);
+}
+
 async function refreshThumb(hash: string): Promise<GameMeta | null> {
   const meta = await getMeta(hash);
   if (!meta || meta.thumbRule === THUMB_RULE) return meta;
@@ -284,6 +313,11 @@ async function handle(req: ImportRequest): Promise<void> {
     } else if (req.op === 'contentHash') {
       setPhase('stamp');
       const meta = await backfillContentHash(req.hash);
+      if (!meta) throw new CodedError('game missing from library', 'missing-pak');
+      post({ id: req.id, kind: 'stamped', meta });
+    } else if (req.op === 'decodeArtwork') {
+      setPhase('decoding');
+      const meta = await decodeArtwork(req.hash);
       if (!meta) throw new CodedError('game missing from library', 'missing-pak');
       post({ id: req.id, kind: 'stamped', meta });
     } else if (req.op === 'refreshThumb') {

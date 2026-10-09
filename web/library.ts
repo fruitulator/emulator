@@ -6,7 +6,7 @@ import {
 import { localStateStore } from './statestore';
 import { parseTitle } from './title';
 import { enhanceSelect } from './ui/dropdown';
-import { clearArtwork, fillArtwork, hasArtwork, releaseArtwork } from './ui/art';
+import { clearArtwork, fillArtwork, hasArtwork, releaseArtwork, showTile } from './ui/art';
 import { chip } from './ui/list';
 import {
   activity, displayTitle, gridArrowNav, mountGameList, systemLabel,
@@ -262,6 +262,7 @@ export function refreshArtwork(hash: string): void {
     `#tiles .art[data-hash="${hash}"], #orbit-wrap .art[data-hash="${hash}"]`,
   );
   for (const frame of frames) {
+    if (frame.querySelector('.art-placeholder')) { void showTile(frame); continue; }
     if (!hasArtwork(frame)) continue;
     clearArtwork(frame);
     void fillArtwork(frame);

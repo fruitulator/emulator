@@ -13,12 +13,14 @@ export interface CharacteriserTable {
   challenges?: Uint8Array;
   responses?: Uint8Array;
   lamps?: Uint8Array;
+  recorded?: Uint8Array;
 }
 
 export class Characteriser {
   private col = 0;
   private lampCol = 0;
   private cheat: (() => number) | null = null;
+  private cheatU: (() => number) | null = null;
 
   constructor(private table: CharacteriserTable | null = null) {}
 
@@ -27,8 +29,9 @@ export class Characteriser {
     this.reset();
   }
 
-  setCheat(cheat: (() => number) | null): void {
+  setCheat(cheat: (() => number) | null, cheatU: (() => number) | null = null): void {
     this.cheat = cheat;
+    this.cheatU = cheatU;
   }
 
   get fitted(): boolean {
@@ -41,29 +44,57 @@ export class Characteriser {
   }
 
   read(offset: number): number {
-    switch (offset & 0x1f) {
-      case 0x00:
-        if (this.table?.responses) return this.table.responses[this.col] ?? 0;
-        if (this.cheat) return this.cheat();
-        return 0xff;
-      case 0x03:
+    offset &= 0x1f;
+    if (offset < 0x10) {
+      switch (offset & 3) {
+        case 0:
+          return this.response();
+        case 1:
+          return this.cheatU ? this.cheatU() : 0;
+        case 3:
+          return (this.table?.lamps?.[this.lampCol] ?? 0) & 0xfc;
+        default:
+          return 0;
+      }
+    }
+    switch (offset & 7) {
+      case 3:
         return this.table?.lamps?.[this.lampCol] ?? 0;
+      case 4: {
+        const v = this.response();
+        this.col = (this.col + 1) & 0x3f;
+        return v;
+      }
       default:
         return 0;
     }
   }
 
+  private response(): number {
+    if (this.table?.recorded) return this.table.recorded[this.col] ?? 0;
+    if (this.table?.responses) return this.table.responses[this.col] ?? 0;
+    if (this.cheat) return this.cheat();
+    return 0xff;
+  }
+
   write(offset: number, val: number): void {
     val &= 0xff;
-    switch (offset & 0x1f) {
-      case 0x00:
+    offset &= 0x1f;
+    if (offset >= 0x10) {
+      if ((offset & 3) === 2 && val === 0) this.col = 0;
+      return;
+    }
+    switch (offset & 7) {
+      case 0:
         if (val === 0) {
           this.col = 0;
+        } else if (this.table?.recorded) {
+          this.col = (this.col + 1) & 0x3f;
         } else {
           this.seek(val);
         }
         break;
-      case 0x02:
+      case 2:
         this.selectLampColumn(val);
         break;
     }

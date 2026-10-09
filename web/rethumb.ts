@@ -58,7 +58,7 @@ export function refreshStaleThumbs(onTile?: (hash: string) => void): void {
   refreshing = true;
   void (async () => {
     const games = await listGames();
-    const stale = games.filter((g) => g.thumbRule !== THUMB_RULE);
+    const stale = games.filter((g) => g.decodeStatus !== 'pending' && g.thumbRule !== THUMB_RULE);
     const played = (g: GameMeta): number => lastPlayed(g) ?? 0;
     const queue = stale
       .map((g, i) => ({ hash: g.hash, played: played(g), i }))

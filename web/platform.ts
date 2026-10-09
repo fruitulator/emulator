@@ -613,6 +613,63 @@ const mpu3: PlatformView = {
 
 const mpu4video: PlatformView = { ...mpu4, playButtons: [] };
 
+const mpu4plasma: PlatformView = mpu4;
+
+const mmm: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 8, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: -1, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const mpu2: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 4, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: 2, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const sys83: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 5, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: 3, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const acevideo: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 3, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: -1, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const pluto5: PlatformView = {
+  coins: [{ label: '£1 Pluto5', bit: 52 }],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 9, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: 3, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
 const VIEWS: Record<string, PlatformView> = {
   ELECTROCOIN: electrocoin,
   PHOENIX: phoenix,
@@ -638,7 +695,13 @@ const VIEWS: Record<string, PlatformView> = {
   ADDER5: scorpion5,
   EPOCH: epoch,
   MPU3: mpu3,
+  MMM: mmm,
+  MPU2: mpu2,
+  SYS83: sys83,
+  ACEVIDEO: acevideo,
+  PLUTO5: pluto5,
   MPU4VIDEO: mpu4video,
+  MPU4PLASMA: mpu4plasma,
 };
 
 const unreadBoard: PlatformView = {

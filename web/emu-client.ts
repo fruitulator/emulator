@@ -1,3 +1,4 @@
+import { holdBusy } from './busy';
 import type { Game } from '../src/machine/registry';
 import type { CoinChute, CoinWiringStatus, NamedCoin } from '../src/machine/machine';
 import type { CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
@@ -102,6 +103,11 @@ interface PendingLoad {
 }
 
 export class WorkerEmu implements Emu {
+  private unbusy: (() => void) | null = null;
+  private busy(on: boolean): void {
+    if (on) this.unbusy ??= holdBusy();
+    else { this.unbusy?.(); this.unbusy = null; }
+  }
   private worker: Worker | null = null;
   private epoch = 0;
   private nextId = 1;
@@ -147,6 +153,7 @@ export class WorkerEmu implements Emu {
         this.pendingLoad = null;
         this.worker?.terminate();
         this.worker = null;
+        this.busy(false);
         this.onHalted?.(msg);
       };
     }
@@ -189,7 +196,7 @@ export class WorkerEmu implements Emu {
         break;
       }
       case 'halted':
-        if (msg.epoch === this.epoch) this.onHalted?.(msg.message);
+        if (msg.epoch === this.epoch) { this.busy(false); this.onHalted?.(msg.message); }
         break;
       case 'serial':
         if (msg.epoch === this.epoch) this.onSerial?.(msg.events);
@@ -297,6 +304,7 @@ export class WorkerEmu implements Emu {
 
   load(opts: EmuLoadOptions): Promise<MachineInfo> {
     this.epoch++;
+    this.busy(true);
     this.wiringStatus = null;
     this.current = null;
     this.previous = null;
@@ -365,10 +373,12 @@ export class WorkerEmu implements Emu {
   }
 
   pause(): void {
+    this.busy(false);
     this.post({ type: 'pause', epoch: this.epoch });
   }
 
   resume(): void {
+    this.busy(true);
     this.post({ type: 'resume', epoch: this.epoch });
   }
 

@@ -14,6 +14,7 @@ const SYSTEM_LABELS: Record<string, string> = {
   SCORPION2: 'SC2',
   MPU4: 'MPU4',
   MPU4VIDEO: 'MPU4 Video',
+  MPU4PLASMA: 'MPU4 Plasma',
   IMPACT: 'IMPACT',
   SPACE: 'sp.ACE',
   M1AB: 'M1A/B',
@@ -188,7 +189,8 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
 
   const blocked = o.unplayable(g);
   const open = () => o.activate(blocked);
-  const art = artwork(g.hasThumb ? g.hash : null, parsed.title, open);
+  const art = artwork(g.hasThumb ? g.hash : null, parsed.title, open,
+    g.hasThumb ? undefined : g.hash);
 
   let flag: HTMLElement | null = null;
   if (blocked) {
@@ -323,6 +325,7 @@ export interface PickOptions extends CommonOptions {
   onPick(g: GameMeta): void;
   exclude?(g: GameMeta): boolean;
   fresh?: ReadonlySet<string>;
+  chips?(g: GameMeta): HTMLElement[];
   onDrawn?(shown: number): void;
   chosen?(g: GameMeta): boolean;
   flat?: boolean;
@@ -382,7 +385,7 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
         if (o.chosen) markChosen(card, o.chosen(g));
         markHeadings();
       },
-      lead: fresh ? [chip(str('gamelist.new'))] : [],
+      lead: [...(fresh ? [chip(str('gamelist.new'))] : []), ...(o.chips?.(g) ?? [])],
     });
     if (o.chosen) {
       const tick = document.createElement('span');

@@ -67,7 +67,7 @@ const TRIAC_LAMPS = 0x40;
 const METER_LAMPS = 0x50;
 const AUX2_LAMPS = 0x58;
 
-interface PiaWrite {
+export interface PiaWrite {
   changedA: number;
   changedB: number;
   wroteA: boolean;
@@ -75,6 +75,26 @@ interface PiaWrite {
   ca2: boolean;
   cb2: boolean;
   crbManual: boolean;
+}
+
+export function v20PiaWrite(p: Pia6821, reg: number, v: number): PiaWrite {
+  const cra = p.read(1), crb = p.read(3);
+  const outA = p.outA(), outB = p.outB(), ddrA = p.ddrA(), ddrB = p.ddrB();
+  const ca2 = p.ca2(), cb2 = p.cb2();
+  p.write(reg, v);
+  const r: PiaWrite = { changedA: 0, changedB: 0, wroteA: false, wroteB: false, ca2: false, cb2: false, crbManual: false };
+  if (reg === 0) {
+    if (cra & 4) { r.changedA = (outA ^ v) & ddrA; r.wroteA = true; }
+    else { r.changedA = ((~ddrA & v & ~outA) | (~outA & ddrA & ~v)) & 0xff; r.wroteA = r.changedA !== 0; }
+  } else if (reg === 2) {
+    if (crb & 4) { r.changedB = (outB ^ v) & ddrB; r.wroteB = true; }
+    else { r.changedB = ((~ddrB & v & ~outB) | (~outB & ddrB & ~v)) & 0xff; r.wroteB = r.changedB !== 0; }
+  } else if (reg === 3) {
+    r.crbManual = (v & 0x30) === 0x30;
+  }
+  r.ca2 = p.ca2() !== ca2;
+  r.cb2 = p.cb2() !== cb2;
+  return r;
 }
 
 export class Mpu3 implements Bus, Machine {
@@ -421,23 +441,7 @@ export class Mpu3 implements Bus, Machine {
   }
 
   private piaWrite(p: Pia6821, reg: number, v: number): PiaWrite {
-    const cra = p.read(1), crb = p.read(3);
-    const outA = p.outA(), outB = p.outB(), ddrA = p.ddrA(), ddrB = p.ddrB();
-    const ca2 = p.ca2(), cb2 = p.cb2();
-    p.write(reg, v);
-    const r: PiaWrite = { changedA: 0, changedB: 0, wroteA: false, wroteB: false, ca2: false, cb2: false, crbManual: false };
-    if (reg === 0) {
-      if (cra & 4) { r.changedA = (outA ^ v) & ddrA; r.wroteA = true; }
-      else { r.changedA = ((~ddrA & v & ~outA) | (~outA & ddrA & ~v)) & 0xff; r.wroteA = r.changedA !== 0; }
-    } else if (reg === 2) {
-      if (crb & 4) { r.changedB = (outB ^ v) & ddrB; r.wroteB = true; }
-      else { r.changedB = ((~ddrB & v & ~outB) | (~outB & ddrB & ~v)) & 0xff; r.wroteB = r.changedB !== 0; }
-    } else if (reg === 3) {
-      r.crbManual = (v & 0x30) === 0x30;
-    }
-    r.ca2 = p.ca2() !== ca2;
-    r.cb2 = p.cb2() !== cb2;
-    return r;
+    return v20PiaWrite(p, reg, v);
   }
 
   private writeIc3(reg: number, v: number): void {

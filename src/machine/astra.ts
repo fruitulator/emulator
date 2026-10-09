@@ -23,6 +23,7 @@ import { Sec } from '../hw/sec';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { ROM_UNPLACED } from './pairplacer';
+import { placeV20RomList } from './v20romlist';
 import { findAstraTokenPayout, astraTokenPence, type AstraTokenPayout } from '../hw/astratoken';
 import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState, wiringKey, wiringStateFor } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
@@ -138,6 +139,7 @@ export class Astra implements Bus16, Machine {
   readonly hoppers = [new Hopper(ASTRA_CLOCK, Astra.HOPPER_WAVEFORM), new Hopper(ASTRA_CLOCK, Astra.HOPPER_WAVEFORM)];
 
   hopperOpto = 0;
+  reel56Optos = 0;
   secFitted = false;
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
@@ -234,15 +236,8 @@ export class Astra implements Bus16, Machine {
       this.tokenPayout = findAstraTokenPayout(this.rom, Math.min(ROM_SIZE, parts[0]?.length ?? 0));
       return;
     }
-    const half = parts[0].length;
-    parts.forEach((p, i) => {
-      const lane = i & 1;
-      for (let k = 0; k + 1 < p.length; k += 2) {
-        if (lane + k < ROM_SIZE) this.rom[lane + k] = p[k];
-        if (half + lane + k < ROM_SIZE) this.rom[half + lane + k] = p[k + 1];
-      }
-    });
-    this.tokenPayout = findAstraTokenPayout(this.rom, Math.min(ROM_SIZE, 2 * half));
+    const spans = placeV20RomList(this.rom, parts);
+    this.tokenPayout = findAstraTokenPayout(this.rom, Math.min(ROM_SIZE, spans));
   }
 
   batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
@@ -925,6 +920,11 @@ export class Astra implements Bus16, Machine {
         let v = m[7];
         if (col >= 0) {
           v |= col === 4 ? m[8] : m[3 + col];
+          if (this.reelDrive.reels.length > 4) {
+            const notOptos = ~this.reelDrive.optics();
+            if (this.reel56Optos === 0) v |= (notOptos >> 2) & 0x0c;
+            else if (this.reel56Optos === 1) v |= (notOptos >> 3) & 0x06;
+          }
           if (col === 0) v |= (this.percentCode() & 0x0f) << 4;
           else if (col === 1) v |= REV4[this.prizeCode() & 0x0f] << 4;
           else if (col === 2) v |= ((this.stakeCode() & 3) << 6) | ((this.stakeCode() & 4) << 2);

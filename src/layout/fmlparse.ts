@@ -423,6 +423,12 @@ const MAYGAYMATRIX = m({
   0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''],
 });
 
+const PLASMADISPLAY_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'Size'],
+  0x02: ['color', 'OnColour'], 0x03: ['color', 'OffColour'], 0x04: ['color', 'BackgroundColour'],
+};
+const PLASMADISPLAY = m({ ...BASE_TAGS }, m(PLASMADISPLAY_TAGS), m(PLASMADISPLAY_TAGS));
+
 const BFMVIDEO = m({
   0x01: ['u32', 'VideoMode'], 0x36: ['bitmap', 'Overlay'],
   0x33: ['bool', ''], 0x3b: ['u32', ''],
@@ -513,6 +519,9 @@ const BARCRESTVIDEO_TAGS: Record<number, [Role, string]> = {
 };
 const BARCRESTVIDEO = m({ ...BASE_TAGS }, m(BARCRESTVIDEO_TAGS), m(BARCRESTVIDEO_TAGS));
 
+const ACEVIDEO_TAGS: Record<number, [Role, string]> = { 0x01: ['byte', 'Size'] };
+const ACEVIDEO = m({ ...BASE_TAGS }, m(ACEVIDEO_TAGS), m(ACEVIDEO_TAGS));
+
 const DEFAULTS: Record<number, Record<string, number>> = {
   0x01: { Colour: 0xfff0f0f0, BorderColour: 0xff000000 },
   0x04: { Sublamp1Colour: 0xffffff00, Sublamp2Colour: 0xffffff00, Sublamp3Colour: 0xffffff00, Sublamp4Colour: 0xffffff00, Sublamp5Colour: 0xffffff00, Sublamp6Colour: 0xffffff00, Sublamp7Colour: 0xffffff00, Sublamp8Colour: 0xffffff00, Sublamp9Colour: 0xffffff00, Sublamp10Colour: 0xffffff00, Sublamp11Colour: 0xffffff00, Sublamp12Colour: 0xffffff00, OffImageColour: 0xfff0f0f0, PieSize: 120, CoinNoteId: -1 },
@@ -530,6 +539,7 @@ const DEFAULTS: Record<number, Record<string, number>> = {
   0x0d: { Size: 7, OnColour: 0xffff0000, OffColour: 0xff000000, BackgroundColour: 0xff000000 },
   0x13: { XSize: 2, YSize: 2, DotSpacing: 1, DigitSpacing: 2,
     OnColour: 0xff00ffff, OffColour: 0xff002c2c, BackgroundColour: 0x00000000 },
+  0x23: { Size: 5, OnColour: 0xffff8d1c, OffColour: 0xff000000, BackgroundColour: 0xff000000 },
   0x26: { SelectedStyle: 0, MaxLED: 1, NoOutline: 0, NoShadow: 0,
     AdjustedOff: 0xff7f0000, AdjustedRed: 0xff000000, AdjustedGreen: 0xff000000,
     AdjustedRedGreen: 0xff000000, AdjustedBlue: 0xff000000, AdjustedRedBlue: 0xff000000,
@@ -544,7 +554,8 @@ const MAPS: Record<number, TagMap> = {
   0x10: ACEMATRIX, 0x11: PROCONNMATRIX, 0x1b: BORDER, 0x1c: SEVENSEGBLOCK,
   0x0c: BFMALPHA, 0x0d: DOTMATRIX, 0x13: DOTALPHA, 0x26: RGBLED,
   0x16: EPOCHDOTALPHA, 0x22: EPOCHMATRIX, 0x29: PRISMLAMP, 0x2e: MAYGAYMATRIX,
-  0x1f: BFMVIDEO, 0x2d: FLIPREEL, 0x0f: BARCRESTVIDEO,
+  0x1f: BFMVIDEO, 0x2d: FLIPREEL, 0x0f: BARCRESTVIDEO, 0x23: PLASMADISPLAY,
+  0x21: ACEVIDEO,
 };
 
 export function hasTagMap(type: number): boolean {
@@ -784,7 +795,9 @@ export function parseLayout(p: Uint8Array): ParsedComponent[] {
           || type === 0x16 || type === 0x1c || type === 0x22 || type === 0x29 || type === 0x2e
           || type === 0x0d
           || type === 0x2d
-          || type === 0x0f;
+          || type === 0x0f
+          || type === 0x23
+          || type === 0x21;
         const end = walkTags(value, ext, map, c, separated);
         if (end >= 0 && end !== value.length && !c.stop) c.stop = { off: end, tag: -1 };
         c.clean = end === value.length;

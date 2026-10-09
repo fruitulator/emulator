@@ -60,10 +60,10 @@ function hasNineBitRotate(rom: Uint8Array, from: number, to: number): boolean {
 
 function keyFromTable(rom: Uint8Array, call: number): SecurityKey | null {
   for (let t = Math.max(0, call - 0x30); t < call; t += 2) {
-    if (rom[t] !== 0x24 || rom[t + 1] !== 0x7c) continue;
+    if ((rom[t] & 0xf1) !== 0x20 || rom[t + 1] !== 0x7c) continue;
     const table = be32(rom, t + 2);
     for (let c = call; c < Math.min(rom.length - 6, call + 0x60); c += 2) {
-      if (rom[c] !== 0xb4 || rom[c + 1] !== 0x79) continue;
+      if ((rom[c] & 0xf1) !== 0xb0 || rom[c + 1] !== 0x79) continue;
       const countAt = be32(rom, c + 2);
       const count = countAt + 2 <= rom.length ? (rom[countAt] << 8) | rom[countAt + 1] : 0;
       if (count >= 1 && table + 16 <= rom.length && countAt === table + 16 * count) {
@@ -178,10 +178,18 @@ export class Sc4Mbus {
   private device = 0;
   private address = 0;
 
+  readonly store = new Uint8Array(0x2000);
+  private storePtr = 0;
+
   constructor(private readonly eeprom: Eeprom24c) {}
 
+  loadStore(image: Uint8Array): void {
+    this.store.fill(0);
+    this.store.set(image.subarray(0, this.store.length));
+  }
+
   private ours(): boolean {
-    return this.device === 0x12 || this.device === 0xa2;
+    return this.device === 0x12 || this.device === 0xa2 || this.device === 0xa8;
   }
 
   start(): void {
@@ -204,15 +212,28 @@ export class Sc4Mbus {
     }
     if (this.device === 0x12) this.security.write(this.address, v);
     else if (this.device === 0xa2) this.rtc.write(this.address, v);
+    else if (this.device === 0xa8) this.storeWrite(this.address, v);
     else this.eeprom.write(v);
     this.address = (this.address + 1) & 0xffff;
+  }
+
+  private storeWrite(address: number, v: number): void {
+    if (address === 0xa8) this.storePtr = (v & 0xff) << 8;
+    else if (address === 0xa9) this.storePtr = (this.storePtr & 0x1f00) | (v & 0xff);
+    else {
+      this.store[this.storePtr & 0x1fff] = v & 0xff;
+      this.storePtr = (this.storePtr & 0x1fe0) | ((this.storePtr + 1) & 0x1f);
+    }
   }
 
   read(): number {
     let v: number;
     if (this.device === 0x12) v = this.security.read(this.address);
     else if (this.device === 0xa2) v = this.rtc.read();
-    else v = this.eeprom.read();
+    else if (this.device === 0xa8) {
+      v = this.store[this.storePtr & 0x1fff];
+      this.storePtr = (this.storePtr + 1) & 0x1fff;
+    } else v = this.eeprom.read();
     this.address = (this.address + 1) & 0xffff;
     return v;
   }

@@ -2,7 +2,7 @@ import type { Machine } from './machine';
 import { bfmAlphaRoute, v20AlphaServe } from './layoutdisplay';
 import { ledgerOutMults } from './machine';
 import { gamFromJson, gamToJson, parseGam, type Gam, type GamJson } from './gam';
-import { parseDesKey } from '../hw/des';
+import { parseDesKey, V20_DEFAULT_DES_KEY } from '../hw/des';
 import {
   ReelBounce, bounceProfileFor, kindCanBounce, type BounceWiring,
 } from '../hw/reelbounce';
@@ -44,7 +44,13 @@ import { Sys80 } from './sys80';
 import { Sru, SRU_TONE_POT_DEFAULT, SRU_COIN_ROW, sruCoinsFromCabinet } from './sru';
 import { BlackBox } from './blackbox';
 import { Mpu3, Mpu3DisplayPort } from './mpu3';
+import { Mmm } from './mmm';
+import { Mpu2, Mpu2ReelType } from './mpu2';
+import { Sys83 } from './sys83';
+import { AceVideo } from './acevideo';
+import { Pluto5 } from './pluto5';
 import { Mpu4VideoCard } from './mpu4video';
+import { Mpu4PlasmaCard } from './mpu4plasma';
 import { Sys1 } from './sys1';
 import { Proconn, ProconnType } from './proconn';
 import { Electrocoin, STANDARD_METER_GRID } from './electrocoin';
@@ -325,7 +331,7 @@ function file(game: Game, name: string): GameFile | undefined {
 }
 
 function noRoms(game: Game, fallback: string): Error {
-  const wanted = game.gam?.roms.length ? game.gam.roms.join(', ') : '';
+  const wanted = (game.gam?.roms ?? []).filter((n) => !file(game, n)).join(', ');
   return new Error(wanted ? `missing ROM file(s): ${wanted}` : fallback);
 }
 
@@ -540,6 +546,7 @@ const scorpion4: Platform = {
     if (sc4Layout) {
       const hoppers = readCheckboxByte(sc4Layout, 'SCORPION4', 'Hopper 1');
       if (hoppers !== null) m.setHoppers(hoppers);
+      m.setCabinetStyle(readSetting(sc4Layout, 'SCORPION4', 'Cabinet Style'));
       const meters = meterMoneyMap(sc4Layout, 'SCORPION4');
       if (meters) {
         m.setSecMoneyMap(meters.secIn, meters.secOut);
@@ -606,6 +613,12 @@ const scorpion4: Platform = {
       }
     });
 
+    const sc4Eeps = byExt(game, /\.eep$/i);
+    const sc4Manifests = [game.variant, ...game.files.filter((f) => CONFIG_FILE.test(f.name)).map((f) => f.name)]
+      .map((n) => stem(n).toLowerCase());
+    const sc4Eep = sc4Manifests.map((s) => sc4Eeps.find((f) => stem(f.name).toLowerCase() === s)).find(Boolean) ?? sc4Eeps[0];
+    if (sc4Eep) m.mbus.loadStore(sc4Eep.bytes);
+
     if (game.nvram) m.loadNvram(game.nvram);
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
@@ -625,7 +638,7 @@ const scorpion2: Platform = {
     m.volumeApplies = !isClassicLayout(game.layoutName);
     m.vfd.drawsHidden = bfmAlphaRoute(game.layout)?.drawsHidden ?? true;
     const props = storedLayoutProps(game);
-    m.loadRom(progFiles[0].bytes);
+    m.loadRom(progFiles.map((f) => f.bytes));
     fitReels(m, game);
 
     const dotFile = game.gam?.slaveRoms
@@ -708,7 +721,11 @@ const scorpion1: Platform = {
 
     const m = new Sc1();
     m.vfd.drawsHidden = bfmAlphaRoute(game.layout)?.drawsHidden ?? true;
-    m.loadRom(progFiles.map((f) => f.bytes));
+    const sc1Enc = (() => {
+      const p = decodedLayout(game.layout);
+      return p ? readLayoutWord(p, 0x53) : null;
+    })();
+    m.loadRom(progFiles.map((f) => f.bytes), (sc1Enc ?? 0) === 0);
     const props = storedLayoutProps(game);
     fitReels(m, game);
 
@@ -873,7 +890,8 @@ export function crc32(bytes: Uint8Array): number {
   return ~c >>> 0;
 }
 
-function buildMpu4Board(game: Game, sys: 'MPU4' | 'MPU4VIDEO'): Mpu4 {
+function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'): Mpu4 {
+  const sys = board === 'MPU4PLASMA' ? 'MPU4' : board;
   const progFiles = game.gam
     ? manifestRoms(game)
     : byExt(game, /\.(bin|p1|p2|p3|p4)$/);
@@ -881,13 +899,15 @@ function buildMpu4Board(game: Game, sys: 'MPU4' | 'MPU4VIDEO'): Mpu4 {
 
   const m = new Mpu4();
   if (sys === 'MPU4VIDEO') m.attachVideo(buildMpu4VideoCard(m, game));
+  if (board === 'MPU4PLASMA') m.attachPlasma(buildMpu4PlasmaCard(game));
   m.volumeApplies = !isClassicLayout(game.layoutName);
   let sampleCardFitted = false;
   m.fitDataPak(Number(game.gam?.settings.get('Protocol') ?? 0));
   const romLayout = decodedLayout(game.layout);
   const encryption = romLayout ? readSetting(romLayout, sys, 'Encryption') : null;
   const romImage = mpu4RomImage(progFiles.map((f) => f.bytes));
-  if (encryption !== null && !(encryption in MPU4_ENCRYPTION)) {
+  if (board === 'MPU4PLASMA') {
+  } else if (encryption !== null && !(encryption in MPU4_ENCRYPTION)) {
     noteBoardDefault(m, {
       axis: 'peripheral',
       text: 'this cabinet declares a program-ROM encoding this build does not decode - the bytes are used as they are',
@@ -926,7 +946,7 @@ function buildMpu4Board(game: Game, sys: 'MPU4' | 'MPU4VIDEO'): Mpu4 {
         unbuilt: 'security chip',
       });
     }
-    if (chr.modelled && chr.source === 'none') {
+    if (chr.type === 'Barcrest' && chr.source === 'none') {
       noteBoardDefault(m, {
         axis: 'peripheral',
         text: 'the security chip\'s lamp row is not known for this cabinet - lamps it drives read as unlit',
@@ -935,6 +955,28 @@ function buildMpu4Board(game: Game, sys: 'MPU4' | 'MPU4VIDEO'): Mpu4 {
       });
     }
     m.setCharacteriser(chr.table);
+    if (chr.type === 'BWB Early') {
+      m.fixedCharacteriser = chrDeclared?.character?.[0] ?? 0;
+      if (chr.source === 'none') {
+        noteBoardDefault(m, {
+          axis: 'peripheral',
+          text: 'the security chip\'s answer is not stated by this cabinet',
+          ifWrong: 'The cabinet may raise a characteriser alarm and refuse to start.',
+          node: 'chr',
+        });
+      }
+    }
+    if (chr.type === 'Coinworld') {
+      m.coinworldCharacter = chrDeclared?.character?.slice() ?? new Uint8Array(72);
+      if (chr.source === 'none') {
+        noteBoardDefault(m, {
+          axis: 'peripheral',
+          text: 'the security chip\'s answer is not stated by this cabinet',
+          ifWrong: 'The cabinet may raise a characteriser alarm and refuse to start.',
+          node: 'chr',
+        });
+      }
+    }
     if (chr.type === 'BWB') {
       const bwb = bwbCharacterFor(chrDeclared?.character ?? null, romImage);
       m.bwbCharacteriser = new BwbCharacteriser(bwb.character);
@@ -1249,6 +1291,24 @@ function buildMpu4VideoCard(m: Mpu4, game: Game): Mpu4VideoCard {
   return card;
 }
 
+function buildMpu4PlasmaCard(game: Game): Mpu4PlasmaCard {
+  const card = new Mpu4PlasmaCard();
+  const files = (game.gam?.slaveRoms ?? [])
+    .map((n) => file(game, n))
+    .filter((f): f is GameFile => !!f);
+  if (!files.length) throw noRoms(game, 'no MPU4 plasma ROM');
+  card.loadRoms(files.map((f) => f.bytes));
+  card.powerOn();
+  return card;
+}
+
+const mpu4plasma: Platform = {
+  system: 'MPU4PLASMA',
+  build(game) {
+    return buildMpu4Board(game, 'MPU4PLASMA');
+  },
+};
+
 const mpu4video: Platform = {
   system: 'MPU4VIDEO',
   build(game) {
@@ -1437,24 +1497,24 @@ const PCP_REEL_MCU_CRC = 0x1c8019bf;
 const acesp: Platform = {
   system: 'SPACE',
   build(game) {
-    const progFiles = game.gam
-      ? manifestRoms(game)
-      : byExt(game, /\.bin$/);
-    if (progFiles.length < 2) throw noRoms(game, 'no sp.ACE program ROM pair');
-
-    const looksHigh = (f: GameFile): boolean => {
-      const b = f.bytes;
-      if (b.length < 0x8000) return false;
-      const reset = (b[0x7ffe] << 8) | b[0x7fff];
-      return reset >= 0x2000 && reset !== 0xffff;
-    };
-    const lines = (game.gam?.roms ?? []).map((n) => file(game, n));
-    const byLine = game.gam && lines[0] && lines[1] ? { high: lines[0], low: lines[1] } : null;
-    const high = byLine?.high ?? progFiles.find(looksHigh) ?? progFiles[0];
-    const low = byLine?.low ?? progFiles.find((f) => f !== high) ?? progFiles[1];
-
     const m = new AceSp();
-    m.loadRomPair(low.bytes, high.bytes);
+    if (game.gam) {
+      const listed = manifestRoms(game);
+      if (!listed.length) throw noRoms(game, 'no sp.ACE program ROM');
+      m.loadRomList(game.gam.roms.map((n) => file(game, n)?.bytes ?? new Uint8Array(0)));
+    } else {
+      const progFiles = byExt(game, /\.bin$/);
+      if (progFiles.length < 2) throw noRoms(game, 'no sp.ACE program ROM pair');
+      const looksHigh = (f: GameFile): boolean => {
+        const b = f.bytes;
+        if (b.length < 0x8000) return false;
+        const reset = (b[0x7ffe] << 8) | b[0x7fff];
+        return reset >= 0x2000 && reset !== 0xffff;
+      };
+      const high = progFiles.find(looksHigh) ?? progFiles[0];
+      const low = progFiles.find((f) => f !== high) ?? progFiles[1];
+      m.loadRomPair(low.bytes, high.bytes);
+    }
     m.alphaDrawn = v20AlphaServe(game.layout, { m10937: [0] })?.decoder === '10937';
 
     const mcu = game.files.find((f) => f.bytes.length === 0x800
@@ -1775,6 +1835,10 @@ const mpu5: Platform = {
       ? peripherals.reelJumpers
       : mpu5ReelJumpersFrom(game.layout);
     m.barbus.mux5Extended = mpu5Mux5ExtendedFrom(game.layout);
+    {
+      const muxLayout = decodedLayout(game.layout);
+      m.barbus.muxUnitAbsent = muxLayout && readSetting(muxLayout, 'MPU5', 'Showtime/Mux2') === 'Disabled' ? 1 : 0;
+    }
     m.optionSwitches1 = dipByte(game.gam?.dips.get(1));
     m.setDilLabels(dipSwitchLabelsFrom(game.layout));
     if (game.gam?.dips.get(1) === undefined && game.gam?.dips.get(2) === undefined) {
@@ -2002,7 +2066,10 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
       });
     }
 
-    const desKey = (name: string) => parseDesKey(game.gam?.settings.get(name) ?? '');
+    const desKey = (name: string) => {
+      const line = game.gam?.settings.get(name);
+      return line === undefined ? [...V20_DEFAULT_DES_KEY] : parseDesKey(line);
+    };
     m.setDesKeys({
       mech: desKey('MechDeskey'), hopper: desKey('Hop1Deskey'), hopper2: desKey('Hop2Deskey'), note: desKey('BNVDeskey'),
     });
@@ -2695,6 +2762,121 @@ const mpu3: Platform = {
   },
 };
 
+const mmm: Platform = {
+  system: 'MMM',
+  build(game) {
+    const progFiles = game.gam
+      ? manifestRoms(game)
+      : byExt(game, /\.bin$/i).slice().sort((a, b) => a.name.localeCompare(b.name));
+    if (!progFiles.length) throw noRoms(game, 'no MMM program ROM');
+    const m = new Mmm(progFiles.map((f) => f.bytes), game.nvram);
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    const payload = decodedLayout(game.layout);
+    const slides = payload ? triacSlidePence(payload, 'MMM') : null;
+    if (slides) m.setSlidePence(slides);
+    const money = payload ? meterMoneyMap(payload, 'MMM') : null;
+    if (money) m.setTriacMoney(money.triacIn, money.triacOut);
+    noteBoardDefault(m, {
+      axis: 'meter',
+      text: 'money in not priced for this board - coins in are not booked',
+      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      node: 'triacs',
+    });
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
+const mpu2: Platform = {
+  system: 'MPU2',
+  build(game) {
+    const progFiles = game.gam
+      ? manifestRoms(game)
+      : byExt(game, /\.(p\d+|bin)$/i).slice().sort((a, b) => a.name.localeCompare(b.name));
+    if (!progFiles.length) throw noRoms(game, 'no MPU2 program ROM');
+    if (!Mpu2.ROM_COUNTS.includes(progFiles.length)) {
+      throw new Error(`MPU2 loads two or three program ROMs; this set lists ${progFiles.length}`);
+    }
+    const m = new Mpu2(progFiles.map((f) => f.bytes));
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    const payload = decodedLayout(game.layout);
+    const reelType = payload ? readLayoutWord(payload, 0x65) : null;
+    const relay = payload ? readLayoutWord(payload, 0x59) : null;
+    if (relay !== null) m.relayTriac = relay;
+    if (reelType === Mpu2ReelType.Stepper) m.reelType = Mpu2ReelType.Stepper;
+    else {
+      m.reelType = Mpu2ReelType.Solenoid;
+      if (reelType === null) {
+        noteBoardDefault(m, {
+          axis: 'peripheral',
+          text: 'reel type not stated by the layout - electromechanical reels are not emulated',
+          ifWrong: 'The reels do not turn, and the machine may stop with a reel fault.',
+          node: 'reels',
+        });
+      } else {
+        noteBoardDefault(m, {
+          axis: 'peripheral',
+          text: 'electromechanical reels are not emulated on this board yet',
+          ifWrong: 'The reels do not turn, and the machine may stop with a reel fault.',
+          node: 'reels',
+        });
+      }
+    }
+    const slides = payload ? triacSlidePence(payload, 'MPU2') : null;
+    if (slides) m.setSlidePence(slides);
+    const money = payload ? meterMoneyMap(payload, 'MPU2') : null;
+    if (money) m.setTriacMoney(money.triacIn, money.triacOut);
+    noteBoardDefault(m, {
+      axis: 'meter',
+      text: 'money in not priced for this board - coins in are not booked',
+      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      node: 'triacs',
+    });
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
+const sys83: Platform = {
+  system: 'SYS83',
+  build(game) {
+    const progFiles = game.gam
+      ? manifestRoms(game)
+      : byExt(game, /\.(p\d+|bin)$/i).slice().sort((a, b) => a.name.localeCompare(b.name));
+    if (!progFiles.length) throw noRoms(game, 'no System 83 program ROM');
+    const m = new Sys83(progFiles.map((f) => f.bytes));
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    m.setDips(gamDipByteLsb(game.gam?.dips.get(1)), gamDipByteLsb(game.gam?.dips.get(2)));
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, {
+      service: { fallback: 13, made: true },
+      cash: { fallback: null, made: false },
+      refill: { fallback: 31, made: false },
+    });
+    const payload = decodedLayout(game.layout);
+    const slides = payload ? triacSlidePence(payload, 'SYS83') : null;
+    if (slides) m.setSlidePence(slides);
+    const money = payload ? meterMoneyMap(payload, 'SYS83') : null;
+    if (money) m.setMeterMoney(money);
+    noteBoardDefault(m, {
+      axis: 'meter',
+      text: 'money in not priced for this board - coins in are not booked',
+      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      node: 'meters',
+    });
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
 const adder5: Platform = {
   system: 'ADDER5',
   build: (game) => scorpion5.build(game),
@@ -2732,6 +2914,7 @@ const astra: Platform = {
       const opto = ['Normal', 'Inverted', 'Reversed', 'Rev Inv'].indexOf(
         readSetting(payload, 'ASTRASYSA1', 'Hopper Opto') ?? 'Normal');
       m.hopperOpto = opto < 0 ? 0 : opto;
+      m.reel56Optos = readSetting(payload, 'ASTRASYSA1', 'Reel 56 Optos') === 'Type 2' ? 1 : 0;
       const astraSec = layoutSecFitted(game, 'ASTRASYSA1');
       m.secFitted = astraSec ?? !!game.gam?.sec.length;
       if (astraSec === null) noteSecInferred(m, m.secFitted ? 'fitted' : 'none');
@@ -2805,8 +2988,83 @@ const astra: Platform = {
   },
 };
 
+const acevideo: Platform = {
+  system: 'ACEVIDEO',
+  build(game) {
+    if (!game.gam) throw noRoms(game, 'no ACEVIDEO .gam to name the program and graphics ROMs');
+    const progFiles = manifestRoms(game);
+    if (!progFiles.length) throw noRoms(game, 'no ACEVIDEO program ROM');
+    const gfxFiles = game.gam.vidRoms
+      .map((n) => file(game, n))
+      .filter((f): f is GameFile => !!f);
+    if (!gfxFiles.length) throw noRoms(game, 'no ACEVIDEO graphics ROM');
+    const m = new AceVideo(progFiles.map((f) => f.bytes), gfxFiles.map((f) => f.bytes));
+    m.setDips(gamDipByteLsb(game.gam.dips.get(1)), gamDipByteLsb(game.gam.dips.get(2)));
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    const payload = decodedLayout(game.layout);
+    const slides = payload ? triacSlidePence(payload, 'ACEVIDEO') : null;
+    if (slides) m.setSlidePence(slides);
+    const money = payload ? meterMoneyMap(payload, 'ACEVIDEO') : null;
+    if (money) m.setMeterMoney(money);
+    noteBoardDefault(m, {
+      axis: 'meter',
+      text: 'money in not priced for this board - coins in are not booked',
+      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      node: 'meters',
+    });
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    return m;
+  },
+};
+
+const pluto5: Platform = {
+  system: 'PLUTO5',
+  build(game) {
+    const prog = manifestRoms(game);
+    if (!prog.length) throw noRoms(game, 'no Pluto 5 program ROM');
+    const m = new Pluto5();
+    m.loadRom(prog.map((f) => f.bytes));
+    const payload = decodedLayout(game.layout);
+    if (payload) m.dotFitted = parseLayout(payload).some((c) => c.type === 0x1a);
+    (game.gam?.sec ?? []).forEach((c, i) => {
+      m.sec.counters[i] = c.value;
+      if (c.label) m.sec.counterText[i] = c.label;
+    });
+    const money = payload ? meterMoneyMap(payload, 'PLUTO5') : null;
+    if (money) m.setSecMoneyMap(money.secIn, money.secOut);
+    noteBoardDefault(m, {
+      axis: 'meter',
+      text: 'SEC counter priced at 10p a unit - assumed for this board',
+      ifWrong: 'A cabinet counting its SEC in another unit shows wrong bookkeeping totals.',
+      node: 'sec',
+    });
+    const geometry = reelGeometry(game.layout);
+    if (geometry.length) m.setReelGeometry(geometry);
+    m.dip1 = gamDipByteLsb(game.gam?.dips.get(1));
+    m.dip2 = gamDipByteLsb(game.gam?.dips.get(2));
+    m.setDilLabels(dipSwitchLabelsFrom(game.layout));
+    if (game.gam?.dips.get(1) === undefined && game.gam?.dips.get(2) === undefined) {
+      noteBoardDefault(m, {
+        axis: 'manifest',
+        text: 'no option-switch banks stated - all sixteen read as off',
+        ifWrong: 'The firmware takes its site options from those switches, so it may run at the wrong stake or percentage.',
+      });
+    }
+    const protocol = Number.parseInt(game.gam?.settings.get('Protocol') ?? '', 10);
+    m.fitDataPak(Number.isFinite(protocol) ? protocol : 0);
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
 const PLATFORMS = new Map<string, Platform>(
-  [scorpion4, scorpion2, scorpion1, sys85, sys5, mpu4, mpu4video, impact, acesp, m1ab, mpu5, scorpion5, epoch, mps2, sys80, astra, sru, blackbox, adder5, sys1, proconn, electrocoin, phoenix, phoenix2, mpu3]
+  [scorpion4, scorpion2, scorpion1, sys85, sys5, mpu4, mpu4video, impact, acesp, m1ab, mpu5, scorpion5, epoch, mps2, sys80, astra, sru, blackbox, adder5, sys1, proconn, electrocoin, phoenix, phoenix2, mpu3, mmm, mpu4plasma, mpu2, sys83, acevideo, pluto5]
     .map((p) => [p.system, p]),
 );
 
@@ -2830,12 +3088,6 @@ export const UNSUPPORTED_SYSTEMS = new Map<string, KnownPlatform>([
     sets: 0,
     missing: 'a relay/cam/reel-mech circuit simulator; these cabinets have no '
       + 'CPU or ROM, so no core can be reused and MAME has no driver to port',
-  }],
-  ['MMM', {
-    label: 'Maygay MMM',
-    sets: 1,
-    missing: 'a Z80 core and Z80 CTC, for a one-game library; '
-      + 'its AY-3-8910 is already built',
   }],
 ]);
 
@@ -2942,7 +3194,7 @@ function trimLabel(s: string): string {
 
 function alternativeRoms(files: GameFile[], gam: Gam): RomSwap[] {
   const referenced = new Set(
-    [...gam.roms, ...gam.sound, gam.layout ?? ''].map((n) => n.toLowerCase()),
+    [...gam.roms, ...gam.sound, ...gam.vidRoms, gam.layout ?? ''].map((n) => n.toLowerCase()),
   );
   const slots = gam.roms
     .map((n, slot) => ({ slot, file: files.find((f) => f.name.toLowerCase() === n.toLowerCase()) }))
@@ -3190,7 +3442,7 @@ export function machineFor(game: Game): Machine {
       node: TAILORED_IDS.hopper,
     });
   }
-  const SET_PRICED = new Set(['EPOCH', 'MPU5', 'ASTRASYSA1', 'PROCONN', 'BLACKBOX', 'PHOENIX', 'PHOENIX2', 'SRU', 'SYSTEM80']);
+  const SET_PRICED = new Set(['EPOCH', 'MPU5', 'ASTRASYSA1', 'PROCONN', 'BLACKBOX', 'PHOENIX', 'PHOENIX2', 'SRU', 'SYSTEM80', 'MPU2', 'SYS83']);
   const readsCoins = (m as { programReadsCoins?: boolean }).programReadsCoins === true;
   if (!SET_PRICED.has(game.system.toUpperCase()) && !cabinetCoinPence(game.layout) && !readsCoins) {
     noteBoardDefault(m, {

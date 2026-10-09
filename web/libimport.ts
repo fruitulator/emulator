@@ -128,7 +128,7 @@ export async function importFolderSet(set: FolderSet, ctx: SetImportContext): Pr
     const job = importUpload(src, unit.name, {
       ...events,
       onCabinet: (cab) => { if (cab) closeCabinet(cab); },
-    }, true);
+    }, true, true);
     ctx.inFlight.set(hash, job);
     let meta: GameMeta;
     try {

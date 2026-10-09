@@ -125,32 +125,43 @@ export class MfmeSamplePlayer implements AudioSource {
     this.gain = g;
   }
 
-  private cur: MfmeSample | null = null;
-  private pos = 0;
-  private stepPerFrame = 1;
+  private readonly voices = [0, 1].map(() => ({
+    cur: null as MfmeSample | null, pos: 0, stepPerFrame: 1, gain: 1,
+  }));
 
   constructor(rate: number) { this.rate = rate; }
 
-  get playing(): boolean { return this.cur !== null; }
+  get playing(): boolean { return this.voicePlaying(0); }
+
+  voicePlaying(ch: number): boolean {
+    this.flush();
+    return this.voices[ch & 1].cur !== null;
+  }
+
+  get busy(): boolean { return this.voicePlaying(0) || this.voicePlaying(1); }
 
   loaded = false;
 
-  start(s: MfmeSample): void {
+  start(s: MfmeSample, ch = 0, gain = 1): void {
     this.flush();
-    this.cur = s;
-    this.pos = 0;
-    this.stepPerFrame = s.rate / this.rate;
+    const v = this.voices[ch & 1];
+    v.cur = s;
+    v.pos = 0;
+    v.stepPerFrame = s.rate / this.rate;
+    v.gain = gain;
   }
 
-  stop(): void {
+  stop(ch?: number): void {
     this.flush();
-    this.cur = null;
-    this.pos = 0;
+    for (let i = 0; i < 2; i++) {
+      if (ch !== undefined && (ch & 1) !== i) continue;
+      this.voices[i].cur = null;
+      this.voices[i].pos = 0;
+    }
   }
 
   reset(): void {
-    this.cur = null;
-    this.pos = 0;
+    for (const v of this.voices) { v.cur = null; v.pos = 0; }
     this.ringWrite = 0;
     this.ringRead = 0;
     this.pendingCycles = 0;
@@ -185,12 +196,13 @@ export class MfmeSamplePlayer implements AudioSource {
     this.cycleRemainder -= frames * cpuClock;
     while (frames-- > 0) {
       let s = 0;
-      const cur = this.cur;
-      if (cur) {
-        const i = Math.floor(this.pos);
-        if (i >= cur.pcm.length) { this.cur = null; this.pos = 0; } else {
-          s = (cur.pcm[i] / 32768) * this.gain;
-          this.pos += this.stepPerFrame;
+      for (const v of this.voices) {
+        const cur = v.cur;
+        if (!cur) continue;
+        const i = Math.floor(v.pos);
+        if (i >= cur.pcm.length) { v.cur = null; v.pos = 0; } else {
+          s += (cur.pcm[i] / 32768) * this.gain * v.gain;
+          v.pos += v.stepPerFrame;
         }
       }
       this.ring[this.ringWrite] = s;

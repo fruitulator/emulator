@@ -218,6 +218,17 @@ export class Sr5iMech implements CcTalkDevice {
     return sealEvents(this.des.key, this.random, this.events, this.buffer, challenge);
   }
 
+  private monetaryId(position: number, challenge: number): number[] | null {
+    if (!this.des.key) return null;
+    const set = Sr5iMech.COIN_TABLES[this.currency] ?? Sr5iMech.COIN_TABLES[0]!;
+    const id = ascii(set[(position & 0xff) - 1] ?? '');
+    const body = id.length === 6
+      ? [position, 0x23, id[0], id[1], 0, 0, challenge, this.random() % 0xff, 0x30, ...id.slice(2), 0x31]
+      : [position, 0x2e, 0x2e, 0x2e, 0, 0, challenge, this.random() % 0xff, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e];
+    const crc = crc16(body.map((b) => b & 0xff));
+    return desEcb(this.des.key, [crc & 0xff, ...body.map((b) => b & 0xff), (crc >> 8) & 0xff], false);
+  }
+
   push(code: number, path: number): void {
     this.buffer.unshift([code & 0xff, path & 0xff]);
     this.buffer.length = Math.min(this.buffer.length, 5);
@@ -300,6 +311,8 @@ export class Sr5iMech implements CcTalkDevice {
       case CC.SWITCH_ENCRYPTION_KEY:
         this.enciphered = true;
         return this.des.switchKey(data);
+      case CC.READ_ENCRYPTED_MONETARY_ID:
+        return this.monetaryId(data[0] ?? 0, data[1] ?? 0);
       case CC.READ_ENCRYPTED_MECH_EVENTS: {
         const sealed = this.encryptedEvents(data[0] ?? 0);
         if (sealed) this.deliver();
