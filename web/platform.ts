@@ -91,7 +91,7 @@ const scorpion2: PlatformView = {
     { label: 'Token', bit: 4 },
   ],
   namedInputs: [
-    { label: 'Front door', strobe: 3, bit: 1, toggle: true, control: 'Service' },
+    { label: 'Front door', strobe: 3, bit: 1, toggle: true, invert: true, control: 'Service' },
     { label: 'Cashbox door', strobe: 3, bit: 0, toggle: true, invert: true, control: 'Cash' },
     { label: 'Refill key', strobe: 3, bit: 2, toggle: true, control: 'Refill' },
     { label: 'Test button', strobe: 9, bit: 0, control: 'Test' },
@@ -219,7 +219,7 @@ const mpu5: PlatformView = {
   matrix: { strobes: 6, bits: 8 },
   coinBit: 4,
   tokenBit: 4,
-  serialAcceptor: { coinChannel: [4, 3, 2, 1, 6, 5, 0, null], note: true },
+  serialAcceptor: { coinChannel: [4, 3, 2, 1, 6, 5, 0, null], note: true, parallelNote: true },
   acceptorCoinPort: { row: 10 },
 };
 

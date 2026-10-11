@@ -159,7 +159,19 @@ export interface FreshStart {
   by: 'attract' | 'alarm' | 'still';
   seconds: number;
   alarm?: string;
+  lines?: readonly string[];
+  savedLines?: readonly string[];
+  coin?: CoinTrial | null;
 }
+
+export interface CoinTrial {
+  moved: boolean;
+  before?: string;
+  after?: string;
+  why?: string;
+}
+
+const quoted = (l: string): string => (l.trim() ? l.trim() : str('bootwatch.a_dark_display'));
 
 export function judgeFreshStart(f: FreshStart): { saved: boolean; detail: string } {
   const was = str('bootwatch.it_started_from_its_saved');
@@ -172,5 +184,20 @@ export function judgeFreshStart(f: FreshStart): { saved: boolean; detail: string
       detail: str('bootwatch.n_started_again_without_the_2', { 0: was, 1: f.alarm ?? 'unnamed', 2: f.seconds }),
     };
   }
-  return { saved: false, detail: str('bootwatch.started_again_without_the_ram', { 0: f.seconds }) };
+  const saved = new Set(f.savedLines ?? []);
+  const only = (f.lines ?? []).filter((l) => !saved.has(l));
+  if (only.length && f.coin?.moved) {
+    return {
+      saved: true,
+      detail: str('bootwatch.n_started_again_without_the_3', {
+        0: was, 1: only.map(quoted).join(' / '), 2: f.seconds, 3: quoted(f.coin.before ?? ''), 4: quoted(f.coin.after ?? ''),
+      }),
+    };
+  }
+  const still = str('bootwatch.started_again_without_the_ram', { 0: f.seconds });
+  if (!f.coin) return { saved: false, detail: still };
+  const coin = f.coin.moved
+    ? str('bootwatch.one_coin_moved_its_display', { 0: quoted(f.coin.before ?? ''), 1: quoted(f.coin.after ?? '') })
+    : str('bootwatch.one_coin_did_not_move_its', { 0: f.coin.why ?? str('bootwatch.nothing_new_showed') });
+  return { saved: false, detail: `${still} ${coin}` };
 }

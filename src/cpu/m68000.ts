@@ -54,6 +54,8 @@ const SIZES = [Size.Byte, Size.Word, Size.Long] as const;
 
 export interface M68000Options {
   variant?: M68kVariant;
+  fullDataAddress?: boolean;
+  level7Latch?: boolean;
 }
 
 const CR_SFC = 0x000;
@@ -144,6 +146,7 @@ export class M68000 {
   readonly variant: M68kVariant;
 
   private readonly addrMask: number;
+  private readonly dataMask: number;
 
   vbr = 0;
   sfc = 0;
@@ -300,6 +303,8 @@ export class M68000 {
   constructor(private readonly bus: Bus16, opts: M68000Options = {}) {
     this.variant = opts.variant ?? '68000';
     this.addrMask = this.variant === '68000' ? 0xffffff : 0xffffffff;
+    this.dataMask = opts.fullDataAddress ? 0xffffffff : this.addrMask;
+    this.level7Latch = opts.level7Latch ?? false;
     this.isColdfire = this.variant === 'coldfire';
     this.isCpu32 = this.variant === 'cpu32';
     this.is68000 = this.variant === '68000';
@@ -350,6 +355,10 @@ export class M68000 {
 
   private busAddr(a: number): number {
     return (a & this.addrMask) >>> 0;
+  }
+
+  private dataAddr(a: number): number {
+    return (a & this.dataMask) >>> 0;
   }
 
   fillPrefetch(): void {
@@ -425,7 +434,7 @@ export class M68000 {
 
   private readMem(addr: number, size: Size, fc?: number): number {
     this.checkAlign(addr, size, false);
-    const a = this.busAddr(addr);
+    const a = this.dataAddr(addr);
     switch (size) {
       case Size.Byte:
         return this.bus.read8(a, fc);
@@ -433,13 +442,13 @@ export class M68000 {
         return this.bus.read16(a, fc);
       default:
         return ((this.bus.read16(a, fc) << 16)
-          | this.bus.read16(this.busAddr(a + 2), fc)) >>> 0;
+          | this.bus.read16(this.dataAddr(a + 2), fc)) >>> 0;
     }
   }
 
   private writeMem(addr: number, size: Size, v: number, fc?: number): void {
     this.checkAlign(addr, size, true);
-    const a = this.busAddr(addr);
+    const a = this.dataAddr(addr);
     switch (size) {
       case Size.Byte:
         this.bus.write8(a, v & 0xff, fc);
@@ -449,7 +458,7 @@ export class M68000 {
         break;
       default:
         this.bus.write16(a, (v >>> 16) & 0xffff, fc);
-        this.bus.write16(this.busAddr(a + 2), v & 0xffff, fc);
+        this.bus.write16(this.dataAddr(a + 2), v & 0xffff, fc);
         break;
     }
   }
@@ -632,6 +641,7 @@ export class M68000 {
     this.acr1 = 0;
     this.rambar = 0;
     this.mbar = 0;
+    this.level7Taken = false;
     this.a[7] = this.readMem(0, Size.Long) >>> 0;
     this.pc = this.readMem(4, Size.Long) >>> 0;
     this.halted = false;
@@ -687,6 +697,8 @@ export class M68000 {
 
   private irqLevel = 0;
   private irqVector: number | null = null;
+  private readonly level7Latch: boolean;
+  private level7Taken = false;
 
   setIRQ(level: number, vector: number | null = null): void {
     this.irqLevel = level & 7;
@@ -695,7 +707,7 @@ export class M68000 {
 
   interruptPending(): boolean {
     if (this.irqLevel === 0) return false;
-    if (this.irqLevel === 7) return true;
+    if (this.irqLevel === 7) return !this.level7Taken;
     return this.irqLevel > ((this.sr & SR_INT) >> 8);
   }
 
@@ -708,6 +720,7 @@ export class M68000 {
     if (!this.supervisor) this.setSR(this.sr | SR_S);
     this.sr &= ~SR_T & 0xffff;
     this.sr = (this.sr & ~SR_INT) | ((level << 8) & SR_INT);
+    if (level === 7 && this.level7Latch) this.level7Taken = true;
 
     this.pushFrame(oldSr, this.pc, vec);
 
@@ -1693,11 +1706,11 @@ export class M68000 {
     if (toMem) {
       for (let i = 0; i < n; i++) {
         const shift = (n - 1 - i) * 8;
-        this.bus.write8(this.busAddr(addr + i * 2), (this.d[dreg] >>> shift) & 0xff);
+        this.bus.write8(this.dataAddr(addr + i * 2), (this.d[dreg] >>> shift) & 0xff);
       }
     } else {
       let v = 0;
-      for (let i = 0; i < n; i++) v = (v << 8) | this.bus.read8(this.busAddr(addr + i * 2));
+      for (let i = 0; i < n; i++) v = (v << 8) | this.bus.read8(this.dataAddr(addr + i * 2));
       this.writeD(dreg, long ? Size.Long : Size.Word, v);
     }
     this.cycles += long ? 24 : 16;
@@ -1902,6 +1915,7 @@ export class M68000 {
           this.privilegeViolation();
           return;
         }
+        if ((this.sr & SR_INT) === SR_INT) this.level7Taken = false;
         if (this.variant === 'coldfire') {
           this.rteColdfire();
           return;

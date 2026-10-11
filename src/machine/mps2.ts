@@ -66,7 +66,7 @@ export class Mps2 implements Machine {
   readonly dataPak = new DataPak(CLOCK);
   private protocol = 0;
   private readonly sn = new Sn76489(CLOCK / 1);
-  private readonly jpmReels = new JpmReels(6);
+  private readonly jpmReels = new JpmReels(8);
   private readonly rom = new Uint8Array(0xc000);
   private readonly ram = new Uint8Array(0x10000);
 

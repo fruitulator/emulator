@@ -97,7 +97,7 @@ export function switchPanels(
     }));
   }
   const switches = card();
-  for (const n of layoutNamedInputs(view.namedInputs, info.switchIds ?? {})) {
+  for (const n of layoutNamedInputs(view.namedInputs, info.switchIds ?? {}, info.switchPresets)) {
     const { row } = checkRow(n.label, (checked) => {
       onNamed(namedInputId(n), n.invert ? !checked : checked);
     });

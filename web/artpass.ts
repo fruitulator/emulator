@@ -1,12 +1,13 @@
 import { onIdle } from './idle';
 import { decodeArtwork, importConcurrency } from './importer';
-import { onlyOneTab, probeBusy } from './busy';
+import { busyHolders, onlyOneTab, probeBusy } from './busy';
 import { listGames, type GameMeta } from './store';
 
 export interface ArtPassEvents {
   onTile?(hash: string): void;
   onProgress?(left: number, total: number): void;
   visible?(): ReadonlySet<string>;
+  onPaused?(paused: boolean): void;
 }
 
 export function artPassOrder(games: GameMeta[], visible: ReadonlySet<string> = new Set()): string[] {
@@ -48,7 +49,7 @@ const BUSY_POLL_MS = 1000;
 async function runPass(ev: ArtPassEvents): Promise<void> {
   const ran = await onlyOneTab('artpass', async () => {
     let games = await listGames();
-    const total = artPassOrder(games).length;
+    let total = artPassOrder(games).length;
     if (!total) return;
     console.log(`[library] ${total} game(s) to install; cards on screen first`);
     let done = 0;
@@ -57,14 +58,15 @@ async function runPass(ev: ArtPassEvents): Promise<void> {
     for (;;) {
       await new Promise<void>((resolve) => onIdle(resolve));
       if (await probeBusy()) {
-        if (!paused) { paused = true; console.log('[library] install paused: a machine is running'); }
+        if (!paused) { paused = true; ev.onPaused?.(true); console.log(`[library] install paused: a machine is running (${busyHolders()})`); }
         await sleep(BUSY_POLL_MS);
         continue;
       }
-      if (paused) { paused = false; console.log('[library] install resumed'); }
+      if (paused) { paused = false; ev.onPaused?.(false); console.log('[library] install resumed'); }
       const queue = artPassOrder(games, ev.visible?.()).filter((h) => !failed.has(h));
       const hash = queue[0];
       if (hash === undefined) break;
+      total = Math.max(total, done + queue.length);
       ev.onProgress?.(queue.length, total);
       const t0 = performance.now();
       try {

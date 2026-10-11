@@ -70,7 +70,6 @@ export function undrawnLayoutNotes(layout: Uint8Array | undefined): string[] {
     if (capPaintsNothing(c)) blankCaps++;
     const named = UNDRAWN_TYPES.get(c.type);
     if (named) add(`${named} (0x${c.type.toString(16)})`);
-    else if (c.type === 0x2d && (c.values.get('LampsEnabled') ?? 0)) add('flip reel lamps (0x2d)');
     else if (!hasTagMap(c.type)) add(`unknown (0x${c.type.toString(16)})`);
   }
   const lines: string[] = [];

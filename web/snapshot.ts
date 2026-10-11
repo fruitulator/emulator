@@ -38,6 +38,7 @@ export const DENY = new Set([
   'fittedPrize', 'fittedPercentage', 'optionSwitches1', 'doorMask', 'doorSwitches', 'panel',
   'varStake', 'bnvKey', 'desKeys', 'desFitted', 'machineCode',
   'partBnvKeys',
+  'ccTalkKeys',
   'dilLabels',
   'hoppersWord', 'hopperBits', 'hopperType', 'hopperOpto', 'reel56Optos', 'hopperMotor', 'parHopperFitted',
   'hopperLaw', 'hopper2Fitted', 'payoutLag',

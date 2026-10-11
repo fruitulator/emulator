@@ -28,3 +28,19 @@ export class StatedLines {
     }
   }
 }
+
+export interface OperatorPreset { id: number; made: boolean }
+
+const PRESETS = new WeakMap<object, OperatorPreset[]>();
+
+export function recordOperatorPreset(m: object, id: number, made: boolean): void {
+  const list = PRESETS.get(m) ?? [];
+  const at = list.findIndex((p) => p.id === id);
+  if (at >= 0) list.splice(at, 1);
+  list.push({ id, made });
+  PRESETS.set(m, list);
+}
+
+export function operatorPresetsOf(m: object): readonly OperatorPreset[] {
+  return PRESETS.get(m) ?? [];
+}

@@ -70,6 +70,7 @@ export interface CashLedger {
   inPence: number;
   outPence: number;
   unpricedOut: number;
+  unpricedIn?: number;
   tokenInPence: number;
   tokenOutPence: number;
   unpricedTokenOut: number;
@@ -81,6 +82,7 @@ export function newCashLedger(): CashLedger {
     inPence: 0,
     outPence: 0,
     unpricedOut: 0,
+    unpricedIn: 0,
     tokenInPence: 0,
     tokenOutPence: 0,
     unpricedTokenOut: 0,
@@ -102,6 +104,10 @@ export function ledgerOutMults(...axes: MoneyAxis[]): number[][] {
   return axes.map((a) => a.out.map((x, i) => (nets && (a.in[i] ?? 0) > 0 ? 0 : outMultToLedger(x))));
 }
 
+export function bookUnpricedIn(l: CashLedger, mult: number | undefined): void {
+  if (mult !== undefined && mult > 0) l.unpricedIn = (l.unpricedIn ?? 0) + mult;
+}
+
 export interface PaidOut {
   pence: number;
   coins: number;
@@ -112,7 +118,7 @@ export interface PaidOut {
 }
 
 export function paidOutSince(before: CashLedger, after: CashLedger): PaidOut {
-  const d = (f: keyof CashLedger) => after[f] - before[f];
+  const d = (f: keyof CashLedger) => (after[f] ?? 0) - (before[f] ?? 0);
   const pence = d('outPence');
   const coins = d('unpricedOut');
   const tokenPence = d('tokenOutPence');

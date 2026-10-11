@@ -5,10 +5,10 @@ import { glassText } from '../src/machine/layoutdisplay';
 import { MATRIX_COLS, MATRIX_MAP, MATRIX_PLANE, MATRIX_ROWS } from '../src/hw/epochmatrix';
 import { drawBackdrop } from './cabjson';
 import {
-  flipReelFace,
+  flipLight, flipReelFace,
   mfmeBoardReelPosition,
   mfmeFlipReelPosition,
-  paintFlip, paintReelBorder, paintBandStrip,
+  paintFlip, paintFlipLight, paintReelBorder, paintBandStrip,
   reelEffectivePosition,
   reelVisibleSymbols,
   reelWinLineRow,
@@ -23,6 +23,7 @@ import {
   type CabLamp,
   type Cabinet,
   type PrismLamp,
+  type FlipStrip,
   type ReelBand,
   type ReelBorder,
   type Rect,
@@ -353,8 +354,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const perRev = r?.stepsPerRevolution || f.halfSteps;
       const raw = !r ? 0 : perRev === f.halfSteps ? r.position : (r.position * f.halfSteps) / perRev;
       const pos = mfmeFlipReelPosition(m.layout.system, Math.round(raw), f.halfSteps);
+      const light = flipLayer(f, (n) => m.layoutLampLevel(n));
       withAngle(ctx, f, f.angle, () =>
-        paintFlip(ctx, f, f.canvas, f.canvas.width, f.canvas.height, flipReelFace(f, pos), f.overlay));
+        paintFlip(ctx, f, f.canvas, f.canvas.width, f.canvas.height, flipReelFace(f, pos), f.overlay, light));
     }
 
     cab.frameReels.forEach((fr) => {
@@ -1199,6 +1201,25 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     lastKey: string | null;
   }
   const fancyLights = new WeakMap<ReelBand, FancyLight | null>();
+
+  const flipLayers = new WeakMap<FlipStrip, { canvas: OffscreenCanvas; key: string }>();
+  function flipLayer(f: FlipStrip, lampLevel: (n: number) => number): OffscreenCanvas | undefined {
+    const plan = flipLight(f, lampLevel, LAMP_FULL);
+    if (!plan) return undefined;
+    const w = f.width - 2 * f.inset, h = f.height - 2 * f.inset;
+    if (w <= 0 || h <= 0) return undefined;
+    const key = `${plan.base.join(',')}|${plan.mask}|${plan.alpha}`;
+    let fl = flipLayers.get(f);
+    if (!fl) {
+      fl = { canvas: new OffscreenCanvas(w, h), key: '' };
+      flipLayers.set(f, fl);
+    }
+    if (fl.key !== key) {
+      fl.key = key;
+      paintFlipLight(fl.canvas.getContext('2d')!, w, h, plan, [f.mask1, f.mask2, f.mask3]);
+    }
+    return fl.canvas;
+  }
 
   function drawFancyLight(reel: ReelBand, lampLevel: (n: number) => number): void {
     let fl = fancyLights.get(reel);

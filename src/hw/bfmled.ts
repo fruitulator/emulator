@@ -20,7 +20,11 @@ function upsideDown(v: number): number {
 }
 
 export function bfmLedBit(raw: ArrayLike<number>, n: number): boolean {
-  if (n < 0 || n >= 256) return false;
+  if (n >= 256) {
+    const i = 32 + ((n - 256) >> 3);
+    return i < raw.length && ((raw[i] >> (n & 7)) & 1) !== 0;
+  }
+  if (n < 0) return false;
   return ((raw[((n >> 3) & 15) + (n >> 7) * 16] >> (n & 7)) & 1) !== 0;
 }
 

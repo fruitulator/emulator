@@ -1,15 +1,15 @@
 
-const DATA = 0x50;
-const HEADER = 0x40;
+const CMD_MOVE = 2;
+const CMD_CONFIGURE = 6;
+const CMD_POLL = 7;
+const CMD_READ_POSITIONS = 8;
+const CMD_IDENTIFY = 9;
+const CMD_SET_SPEED = 10;
 
-const CMD_MOVE = 0x62;
-const CMD_CONFIGURE = 0x66;
-const CMD_POLL = 0x67;
-const CMD_READ_POSITIONS = 0x68;
-const CMD_IDENTIFY = 0x69;
-const CMD_SET_SPEED = 0x6a;
+const ACK = 0x36;
 
-const ACK = 0x76;
+const REELS_PER_CHANNEL = 4;
+const CHANNELS = 2;
 
 const IDENTITY = 15;
 
@@ -41,6 +41,14 @@ interface JpmReel {
   accel: boolean;
 }
 
+interface JpmChannel {
+  base: number;
+  first: number;
+  rampAt: number;
+  left: number;
+  msg: number[];
+}
+
 export class JpmReels {
   readonly reels: JpmReel[] = [];
   optos = 0;
@@ -48,10 +56,15 @@ export class JpmReels {
   unknownSpeedCode = 0;
   readonly standInSteps: number[] = [];
 
-  private rampAt = rampBase(RAMP_FIRST_CODE);
-  private rxBuf: number[] = [];
+  private readonly channels: JpmChannel[] = [];
 
-  constructor(count = 6) {
+  get rampAt(): number { return this.channels[0].rampAt; }
+  set rampAt(v: number) { if (Number.isInteger(v) && v >= 0 && v < RAMP.length) this.channels[0].rampAt = v; }
+
+  constructor(count = CHANNELS * REELS_PER_CHANNEL) {
+    for (let ch = 0; ch < CHANNELS; ch++) {
+      this.channels.push({ base: 0x40 << ch, first: ch * REELS_PER_CHANNEL, rampAt: rampBase(RAMP_FIRST_CODE), left: 0, msg: [] });
+    }
     for (let i = 0; i < count; i++) {
       this.reels.push({
         pos: 0, reelpos: 0, stepsRemaining: 0, steps: DEFAULT_HALF_STEPS, adjust: 0, present: false, stepped: 0,
@@ -86,21 +99,26 @@ export class JpmReels {
       r.ramp = 0;
       r.accel = true;
     }
-    this.rampAt = rampBase(RAMP_FIRST_CODE);
-    this.rxBuf = [];
+    for (const c of this.channels) { c.rampAt = rampBase(RAMP_FIRST_CODE); c.left = 0; c.msg = []; }
     this.optos = 0;
     this.unknownSpeedCode = 0;
   }
 
   rxByte(b: number): number[] | null {
     b &= 0xff;
-    this.rxBuf.push(b);
-    if (b >= 0x60 && b <= 0x6f) {
-      const reply = this.dispatch(this.rxBuf);
-      this.rxBuf = [];
-      return reply;
+    const c = b & 0x40 ? this.channels[0] : b & 0x80 ? this.channels[1] : null;
+    if (!c) return null;
+    if (c.left !== 0) {
+      c.msg.push(b & 0xf);
+      if (--c.left !== 0) return null;
+      return this.dispatch(c);
     }
-    if (this.rxBuf.length > 32) this.rxBuf.shift();
+    if (b & 0x20) {
+      c.msg = [b & 0xf];
+      return this.dispatch(c);
+    }
+    c.left = (b & 0xf) * 2 + 1;
+    c.msg = [b & 0xf];
     return null;
   }
 
@@ -108,64 +126,68 @@ export class JpmReels {
     return ((msg[i] ?? 0) & 0xf) + 16 * ((msg[i + 1] ?? 0) & 0xf);
   }
 
-  private static emit(reply: number[], value: number): void {
-    reply.push(DATA | (value & 0xf), DATA | ((value >> 4) & 0xf));
+  private static emit(reply: number[], base: number, value: number): void {
+    reply.push(base | 0x10 | (value & 0xf), base | 0x10 | ((value >> 4) & 0xf));
   }
 
-  private dispatch(msg: number[]): number[] {
+  private dispatch(c: JpmChannel): number[] {
+    const msg = c.msg;
     const cmd = msg[msg.length - 1];
+    const head = msg[0];
+    const base = c.base;
+    const reel = (i: number): JpmReel | undefined => this.reels[c.first + i];
     const reply: number[] = [];
     switch (cmd) {
       case CMD_CONFIGURE: {
-        const pairs = msg.length > 1 ? msg[0] & 0xf : 0;
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < REELS_PER_CHANNEL; i++) {
           const v = JpmReels.pair(msg, 1 + i * 2);
-          const fitted = pairs === 4 ? v === 1 || v === 6 : i < 3;
-          if (this.reels[i]) this.reels[i].present = fitted;
+          const fitted = head === 4 ? v === 1 || v === 6 : i < 3;
+          const r = reel(i);
+          if (r) r.present = fitted;
         }
-        reply.push(ACK);
+        reply.push(base | ACK);
         break;
       }
       case CMD_SET_SPEED: {
         const code = JpmReels.pair(msg, 1);
-        if (code >= RAMP_FIRST_CODE && code <= RAMP_LAST_CODE) this.rampAt = rampBase(code);
+        if (code >= RAMP_FIRST_CODE && code <= RAMP_LAST_CODE) c.rampAt = rampBase(code);
         else this.unknownSpeedCode = code;
-        reply.push(ACK);
+        reply.push(base | ACK);
         break;
       }
       case CMD_MOVE: {
-        for (let i = 0; i < 4; i++) {
-          const base = 1 + i * 4;
-          const hundreds = (msg[base] ?? 0) & 0xf;
-          const reverse = ((msg[base + 1] ?? 0) & 0x8) !== 0;
-          const steps = ((msg[base + 2] ?? 0) & 0xf) + 16 * ((msg[base + 3] ?? 0) & 0xf) + 256 * hundreds;
-          const r = this.reels[i];
+        for (let i = 0; i < REELS_PER_CHANNEL; i++) {
+          const at = 1 + i * 4;
+          const hundreds = (msg[at] ?? 0) & 0xf;
+          const reverse = ((msg[at + 1] ?? 0) & 0x8) !== 0;
+          const steps = ((msg[at + 2] ?? 0) & 0xf) + 16 * ((msg[at + 3] ?? 0) & 0xf) + 256 * hundreds;
+          const r = reel(i);
           if (r && r.present) {
             r.stepsRemaining = reverse ? -steps : steps;
             if (steps !== 0) { r.ramp = 0; r.accel = true; }
           }
         }
-        reply.push(ACK);
+        reply.push(base | ACK);
         break;
       }
       case CMD_POLL: {
         let busy = 0;
-        for (let i = 0; i < 4; i++) {
-          const r = this.reels[i];
+        for (let i = 0; i < REELS_PER_CHANNEL; i++) {
+          const r = reel(i);
           if (r?.present && r.stepsRemaining !== 0) busy |= 1 << i;
         }
-        reply.push(HEADER | 1);
-        JpmReels.emit(reply, busy);
+        reply.push(base | 1);
+        JpmReels.emit(reply, base, busy);
         break;
       }
       case CMD_READ_POSITIONS: {
-        reply.push(HEADER | 4);
-        for (let i = 0; i < 4; i++) JpmReels.emit(reply, this.reels[i]?.pos ?? 0);
+        reply.push(base | 4);
+        for (let i = 0; i < REELS_PER_CHANNEL; i++) JpmReels.emit(reply, base, reel(i)?.pos ?? 0);
         break;
       }
       case CMD_IDENTIFY: {
-        reply.push(HEADER | 1);
-        JpmReels.emit(reply, IDENTITY);
+        reply.push(base | 1);
+        JpmReels.emit(reply, base, IDENTITY);
         break;
       }
       default:
@@ -174,17 +196,23 @@ export class JpmReels {
     return reply;
   }
 
+  private rampOf(n: number): number {
+    return this.channels[Math.min(CHANNELS - 1, Math.floor(n / REELS_PER_CHANNEL))].rampAt;
+  }
+
   subStep(n: number): number {
     const r = this.reels[n];
     if (!r || !r.present || r.stepsRemaining === 0 || r.timer <= 0) return 0;
-    const period = RAMP[this.rampAt + r.ramp];
+    const period = RAMP[this.rampOf(n) + r.ramp];
     return (r.stepsRemaining < 0 ? -1 : 1) * Math.min(1, Math.max(0, 1 - r.timer / period));
   }
 
   tick(cycles: number): void {
-    for (const r of this.reels) {
+    for (let n = 0; n < this.reels.length; n++) {
+      const r = this.reels[n];
+      const rampAt = this.rampOf(n);
       if (r.stepsRemaining === 0 || !r.present) continue;
-      if (r.timer === 0) { r.timer = RAMP[this.rampAt + r.ramp]; continue; }
+      if (r.timer === 0) { r.timer = RAMP[rampAt + r.ramp]; continue; }
       r.timer -= cycles;
       if (r.timer >= 1) continue;
       const dir = r.stepsRemaining < 0 ? -1 : 1;
@@ -192,7 +220,7 @@ export class JpmReels {
       const left = Math.abs(r.stepsRemaining);
       if (r.ramp < 3 && r.accel) r.ramp++;
       else if (left !== 0 && left < 5) { r.accel = false; r.ramp--; }
-      r.timer = left === 0 ? 0 : r.timer + RAMP[this.rampAt + r.ramp];
+      r.timer = left === 0 ? 0 : r.timer + RAMP[rampAt + r.ramp];
       r.pos = (r.pos + dir + r.steps) % r.steps;
       r.reelpos = (r.pos + r.adjust + r.steps) % r.steps;
       r.stepped += dir;

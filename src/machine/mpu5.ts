@@ -12,6 +12,7 @@ import { Sec } from '../hw/sec';
 import { Sr5iMech, Sch2Hopper, JcmEba, deviceFor, type CcTalkDevice } from '../hw/cctalk';
 import { HopperJitter } from '../hw/hopper';
 import { CcTalkBus } from '../hw/cctalkbus';
+import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
 import { DataPak, V20_CPU32_DATAPAK_CLOCK } from '../hw/datapak';
 import { BCO_PULSE_MS, BCO_UK, LINE, type BcoUkCoin } from '../hw/cashflow';
 import { Reel } from '../hw/reel';
@@ -24,7 +25,7 @@ import type { CabinetSwitch, CoinPortLines, Machine, MachineDisplay, AudioSource
 import { dilSwitchLabel } from './machine';
 import { newCashLedger } from './machine';
 import { fittedMech, mpu5CoinTable, readMpu5Mechs, type Mpu5Channel, type Mpu5Mechs } from './mpu5coins';
-import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
+import { COIN_NOTES, PARALLEL_NOTE_CHANNELS, coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
 import type { CoinWiringStatus } from './machine';
 import type { BoardPart } from './parts';
@@ -119,6 +120,8 @@ export class Mpu5 implements Bus16, Machine {
       busRead8: (addr) => this.read8(addr, 5),
       busWrite8: (addr, val) => this.write8(addr, val, 5),
       serialTx: (channel, v) => this.barbus.feedTx(channel, v),
+      portAIn: () => this.portAPins(),
+      portBIn: () => Mpu5.PORT_B_PINS,
     });
     this.sim.serial.sclkHz = Mpu5.DUART_X1;
     this.asic = new Mpu5Asic({
@@ -1050,6 +1053,7 @@ export class Mpu5 implements Bus16, Machine {
     }
     if (this.dataPakOut.length || this.dataPakIn.length) this.tickDataPak(span);
     this.tickCoin(span);
+    if (this.noteLeft > 0) this.tickNote(span);
     if (this.wiring) this.tickWiring(span);
     this.tickPayout(span);
     this.tickMeters(span);
@@ -1552,6 +1556,7 @@ export class Mpu5 implements Bus16, Machine {
   private static reachesFirmware(n: number): boolean {
     if (n >= 32 && n < 48) return true;
     if (n >= 80 && n < 88) return true;
+    if (n >= 88 && n < 96) return true;
     if (n >= 104 && n < 108) return true;
     return n >= 0 && n < 32 && (n & 7) < 4;
   }
@@ -1623,6 +1628,37 @@ export class Mpu5 implements Bus16, Machine {
 
   private static readonly NO_AUX = 0x06;
   nv4Fitted = false;
+
+  private portAPins(): number {
+    return ~(this.matrix[11] | this.noteRow) & 0xff;
+  }
+
+  private static readonly NOTE_HELD = Math.round(100 * MASTER_CLOCK / 1000);
+  private static readonly NOTE_BUSY = Math.round(105 * MASTER_CLOCK / 1000);
+  private noteRow = 0;
+  private noteLeft = 0;
+  readonly parallelNoteReaderFitted = true;
+
+  insertParallelNote(channel: number): NoteResult {
+    const value = [0x80, 0x40, 0x20][channel - 1];
+    if (value === undefined) return 'unprogrammed';
+    if (this.noteLeft > 0) return 'busy';
+    this.noteRow = value;
+    this.noteLeft = Mpu5.NOTE_BUSY;
+    if (this.wiredIn && this.booksMoney) {
+      const id = [...PARALLEL_NOTE_CHANNELS].find(([, c]) => c === channel)?.[0];
+      const pence = id === undefined ? null : COIN_NOTES.get(id)?.pence ?? null;
+      if (pence) { this.cashLedger.inPence += pence; this.wiring!.check.coin(pence, this.wiringState.now); }
+    }
+    return 'stacked';
+  }
+
+  private tickNote(cycles: number): void {
+    if ((this.noteLeft -= cycles) <= Mpu5.NOTE_BUSY - Mpu5.NOTE_HELD) this.noteRow = 0;
+    if (this.noteLeft < 0) this.noteLeft = 0;
+  }
+
+  private static readonly PORT_B_PINS = 0x01;
 
   private payoutEcho(): number {
     return this.payoutNibble() | this.switchNibble();
@@ -1732,6 +1768,22 @@ export class Mpu5 implements Bus16, Machine {
     return this.vendBus;
   }
 
+  private ccTalkKeys: CcTalkKeys = DEFAULT_CCTALK_KEYS;
+
+  setCcTalkKeys(keys: CcTalkKeys): void {
+    this.ccTalkKeys = keys;
+    for (const [address, dev] of Object.entries(this.ccTalkParts)) this.keyPart(Number(address), dev);
+  }
+
+  private keyPart(address: number, dev: CcTalkDevice): void {
+    const k = this.ccTalkKeys;
+    const keys = address === Mpu5.VEND_MECH ? k.mech
+      : address === Mpu5.VEND_HOPPER ? k.hopper1
+        : address === Mpu5.VEND_HOPPER2 ? k.hopper2
+          : address === Mpu5.VEND_NOTE ? k.note : null;
+    if (keys) applyPartKeys(dev, keys);
+  }
+
   fitVendBus(hoppers: readonly (string | null)[] = ['SCH 2', 'SCH 2']): void {
     if (this.vendBus) return;
     const bus = new CcTalkBus({
@@ -1740,6 +1792,7 @@ export class Mpu5 implements Bus16, Machine {
       frameGap: 50 * Mpu5.MS,
     });
     const mech = new Sr5iMech();
+    mech.desFitted = false;
     mech.onCredit = (channel) => {
       const pence = Sr5iMech.channelPence(channel);
       if (pence) this.cashLedger.inPence += pence;
@@ -1752,6 +1805,7 @@ export class Mpu5 implements Bus16, Machine {
       const dev = model.trim().toUpperCase() === 'NONE' ? null : deviceFor(model);
       if (!(dev instanceof Sch2Hopper)) return;
       dev.address = address;
+      dev.desFitted = false;
       dev.setPeriod(Mpu5.SERIAL_HOPPER_PERIOD);
       dev.onPaid = () => { this.cashLedger.outPence += 100; };
       bus.fit(address, dev);
@@ -1762,6 +1816,7 @@ export class Mpu5 implements Bus16, Machine {
     this.vendMech = mech;
     this.vendHoppers = payers;
     this.ccTalkParts = parts;
+    for (const [address, dev] of Object.entries(parts)) this.keyPart(Number(address), dev);
     mech.onLampWord = (word) => this.mechLamps.write(word);
     this.mechLamps.write(mech.lampWord);
   }
@@ -1789,6 +1844,7 @@ export class Mpu5 implements Bus16, Machine {
     const v = new JcmEba();
     v.address = Mpu5.VEND_NOTE;
     v.desFitted = false;
+    this.keyPart(Mpu5.VEND_NOTE, v);
     v.onStacked = (billType) => { this.cashLedger.inPence += JcmEba.billPence(billType) ?? 0; };
     this.vendBus.fit(Mpu5.VEND_NOTE, v);
     this.vendNote = v;
@@ -1947,6 +2003,14 @@ export class Mpu5 implements Bus16, Machine {
     this.binaryMech = mech === 'Binary';
   }
 
+  private get readsBinary(): boolean {
+    const m = this.mechs;
+    if (!m) return this.binaryMech;
+    const stated = this.binaryMech ? m.at.binary : m.at.parallel;
+    const other = this.binaryMech ? m.parallel : m.binary;
+    return stated.length === 0 && other ? !this.binaryMech : this.binaryMech;
+  }
+
   private coinPortF(): number {
     const port = this.coinPort & ~this.matrix[10];
     return this.binaryMech ? port & ~(LINE.A << Mpu5.BCO_SHIFT) : port;
@@ -1966,12 +2030,12 @@ export class Mpu5 implements Bus16, Machine {
     if (this.coinCycles > 0 || this.coinHold > 0) return;
     const pattern = this.coinPattern(bit);
     if (this.asic.regs[7] === 0 || pattern === 0) {
-      if (this.binaryMech) this.coinHold = Mpu5.BCO_REJECT_HOLD;
+      if (this.readsBinary) this.coinHold = Mpu5.BCO_REJECT_HOLD;
       this.coinsRefused++;
       return;
     }
     this.coinPort = 0xff ^ pattern;
-    if (this.binaryMech) {
+    if (this.readsBinary) {
       this.coinCycles = Mpu5.BCO_DWELL;
       this.coinHold = Mpu5.BCO_INTERVAL;
     } else {
@@ -1985,9 +2049,9 @@ export class Mpu5 implements Bus16, Machine {
     if (ch) {
       const c = ch.find((x) => x.bit === bit);
       if (!c) return 0;
-      return this.binaryMech ? c.pattern : c.pattern | ((Mpu5.COIN_LINES[bit] ?? 0) & ~Mpu5.PARALLEL_PORT_MASK);
+      return this.readsBinary ? c.pattern : c.pattern | ((Mpu5.COIN_LINES[bit] ?? 0) & ~Mpu5.PARALLEL_PORT_MASK);
     }
-    if (this.binaryMech) {
+    if (this.readsBinary) {
       const coin = Mpu5.BCO_COINS[bit];
       return coin ? BCO_UK[coin] << Mpu5.BCO_SHIFT : 0;
     }
@@ -1998,18 +2062,18 @@ export class Mpu5 implements Bus16, Machine {
 
   private fittedChannels(): Mpu5Channel[] | null {
     if (!this.mechs) return null;
-    const ch = fittedMech(this.mechs, this.binaryMech);
+    const ch = fittedMech(this.mechs, this.readsBinary);
     return Array.isArray(ch) ? ch : null;
   }
 
   get coinLineTable(): CoinLineTable | null {
     const ch = this.fittedChannels();
-    return ch ? mpu5CoinTable(ch, this.binaryMech ? 'binary' : 'parallel') : null;
+    return ch ? mpu5CoinTable(ch, this.readsBinary ? 'binary' : 'parallel') : null;
   }
 
   get coinLineTableRefusal(): string | null {
     if (!this.mechs) return 'no program loaded';
-    const ch = fittedMech(this.mechs, this.binaryMech);
+    const ch = fittedMech(this.mechs, this.readsBinary);
     return Array.isArray(ch) ? null : ch.refused;
   }
 
@@ -2135,7 +2199,7 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   get coinChutes(): readonly { label: string; bit: number }[] | undefined {
-    return this.binaryMech || this.serialHopper ? Mpu5.BINARY_CHUTES : undefined;
+    return this.readsBinary || this.serialHopper ? Mpu5.BINARY_CHUTES : undefined;
   }
 
   private static readonly BINARY_CHUTES: readonly { label: string; bit: number }[] = [
@@ -2154,11 +2218,11 @@ export class Mpu5 implements Bus16, Machine {
     const ch = this.fittedChannels();
     if (ch) {
       return {
-        compare: this.binaryMech ? Mpu5.BINARY_PORT_MASK : Mpu5.PARALLEL_PORT_MASK,
+        compare: this.readsBinary ? Mpu5.BINARY_PORT_MASK : Mpu5.PARALLEL_PORT_MASK,
         lines: ch.map((c) => ({ bit: c.bit, mask: this.coinPattern(c.bit) })),
       };
     }
-    return this.binaryMech ? Mpu5.BINARY_PORT : Mpu5.PARALLEL_PORT;
+    return this.readsBinary ? Mpu5.BINARY_PORT : Mpu5.PARALLEL_PORT;
   }
 
   private static readonly BINARY_PORT: CoinPortLines = {

@@ -53,6 +53,10 @@ export class Dm01 implements Bus {
     return (this.control & 0x08) === 0 || this.readPos !== this.writePos;
   }
 
+  get ready(): boolean {
+    return (this.control & 0x08) !== 0;
+  }
+
   run(cycles: number): void {
     this.credit += cycles;
     while (this.credit > 0) {
@@ -76,6 +80,7 @@ export class Dm01 implements Bus {
       case 0x2800:
         return 0;
       case 0x3000: {
+        if (this.readPos === this.writePos) return 0;
         const v = this.queue[this.readPos];
         this.readPos = (this.readPos + 1) % this.queue.length;
         if (this.readPos === this.writePos) this.cpu.setIRQ(false);

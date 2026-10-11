@@ -18,6 +18,7 @@ export type AutosaveTrigger = 'pause' | 'clear-ram';
 export function ledgerPayoutPercent(l: CashLedger): number | null {
   if (l.unpricedOut || l.unpricedTokenOut) return null;
   if (l.unpricedTokenIn) return null;
+  if (l.unpricedIn) return null;
   const take = l.inPence - l.tokenInPence;
   if (take <= 0) return null;
   return (100 * (l.outPence + l.tokenOutPence)) / take;
@@ -34,6 +35,7 @@ export interface MachineInfo {
   }[];
   capNames?: Record<number, { role: string; label: string }>;
   switchIds?: Partial<Record<SwitchControl, number>>;
+  switchPresets?: { id: number; made: boolean }[];
   coins?: CoinChute[];
   coinPort?: { compare: number; lines: { bit: number; mask: number }[] };
   unnamedCoins?: number[];

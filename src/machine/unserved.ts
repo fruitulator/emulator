@@ -93,7 +93,8 @@ export function unservedComponents(
 export function unservedLedLamps(
   m: Machine, layout: Uint8Array | undefined, system: string,
 ): UnservedComponent[] {
-  const driven = ((m as unknown as { ledOutputs?: Uint8Array }).ledOutputs?.length ?? 0) * 8;
+  const driven = (m as unknown as { ledCount?: number }).ledCount
+    ?? ((m as unknown as { ledOutputs?: Uint8Array }).ledOutputs?.length ?? 0) * 8;
   const lamps = declaredLedLamps(layout)
     .filter((d) => d.leds.some((n) => n >= driven));
   if (!lamps.length) return [];

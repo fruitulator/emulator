@@ -1,0 +1,44 @@
+.ui-crop {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--r-card);
+  background: var(--void);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+.ui-crop.dragging {
+  cursor: grabbing;
+}
+.ui-crop:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.ui-crop canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.ui-crop-mask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.ui-crop-round .ui-crop-mask {
+  border-radius: 50%;
+  box-shadow: 0 0 0 400px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.ui-crop-zoom {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}

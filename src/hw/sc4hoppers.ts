@@ -75,7 +75,7 @@ export class Sc4HopperPair {
     return this.test(n) ? 1 : this.units[n].countPin();
   }
 
-  readPay(): number {
+  readPay(rio = false): number {
     const s1 = this.pin(0);
     const s2 = this.pin(1);
     let hop: number;
@@ -85,14 +85,14 @@ export class Sc4HopperPair {
         break;
       case 0x00: {
         const v = (n: 0 | 1) => (((this.units[n].opto ? 1 : 0) ^ (this.test(n) ? 1 : 0)) ? 3 : 0);
-        hop = v(0) + v(1);
+        hop = (v(0) + v(1)) | 0x04;
         break;
       }
       default:
         hop = (s1 << 1) | (s2 ^ (this.units[1].running ? 1 : 0));
         break;
     }
-    return (hop & 0xff) | (this.enable2 ? 0x40 : 0) | 0x20 | 0x04;
+    return (hop & 0xff) | (this.enable2 ? 0x40 : 0) | 0x20 | (rio ? 0x04 : 0);
   }
 
   readUnfitted(rio: boolean, strobe13 = 0): number {

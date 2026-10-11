@@ -1,14 +1,29 @@
 import { M68000 } from '../cpu/m68000';
 import type { Bus16 } from '../cpu/bus68k';
 import { Ptm6840 } from '../hw/ptm6840';
+import { Pia6821 } from '../hw/pia6821';
 import { Acia6850 } from '../hw/acia6850';
+import { Mc68681 } from '../hw/mc68681';
 import { Scn2674 } from '../hw/scn2674';
 import { Saa1099 } from '../hw/saa1099';
 import { AY_RATE } from '../hw/ay8910';
 import { StrayCounter } from './strayaccess';
+import { okiPitchFromPtm } from './mpu4';
+
+export interface VideoOkiHost {
+  okiLatch(byte: number): void;
+  okiLines(lines: number): void;
+  okiStatus(): number;
+  okiPitch(pitch: number): void;
+  okiReset(): void;
+  okiBanks(): number;
+}
+
+export const VIDEO_OKI_PTM_CLOCK = 1_000_000;
 
 export const VIDEO_CLOCK = 10_000_000;
 const E_DIVIDE = 10;
+const DUART_X1_PER_CYCLE = 3_686_400 / VIDEO_CLOCK;
 const SAA_CLOCK = 8_000_000;
 
 export const VIDEO_COLUMNS = 63;
@@ -46,16 +61,39 @@ export class Mpu4VideoCard implements Bus16 {
   private mpu4AciaWasIrq = false;
 
   readonly scn = new Scn2674();
+
+  readonly duart = ((): Mc68681 => {
+    const d = new Mc68681();
+    d.inputPort = 0x20;
+    return d;
+  })();
+  private duartPhase = 0;
   readonly saa = new Saa1099(SAA_CLOCK, AY_RATE);
+
+  readonly soundPia = new Pia6821({ readA: () => 0, readB: () => this.soundPortBIn });
+  readonly soundPtm = new Ptm6840({ irqChanged: () => undefined });
+  private oki: VideoOkiHost | null = null;
+  private soundPortBIn = 0;
+  private soundCa2 = 0;
+  percentKey: number | null = null;
 
   readonly rowArgb = new Uint32Array(VIDEO_ROWS * 16);
   readonly rowRaw = new Uint8Array(VIDEO_ROWS * ROW_PALETTE_BYTES);
   readonly rowWritten = new Uint8Array(VIDEO_ROWS);
   private palIndex = 0;
 
+  paletteBt = false;
+  readonly btArgb = new Uint32Array(256).fill(0xff000000);
+  private btIndex = 0;
+  private btStep = 0;
+  private readonly btRgb = new Uint8Array(3);
+  private btReg = 0;
+
   readonly chrTable = new Uint8Array(0x1000);
   private chrCol = 0;
   private chrRow = 0;
+  chrBarcrest = true;
+  static readonly snapshotConfig: readonly string[] = ['chrBarcrest', 'percentKey', 'paletteBt'];
 
   readonly width = VIDEO_WIDTH;
   readonly height = VIDEO_HEIGHT;
@@ -66,7 +104,7 @@ export class Mpu4VideoCard implements Bus16 {
   readonly strays = new StrayCounter();
 
   constructor() {
-    this.cpu = new M68000(this);
+    this.cpu = new M68000(this, { fullDataAddress: true });
     this.ptm = new Ptm6840({
       irqChanged: () => undefined,
       output: (n, state) => {
@@ -117,6 +155,10 @@ export class Mpu4VideoCard implements Bus16 {
     this.xram = fitted ? new Uint8Array(0x40000) : null;
   }
 
+  attachOki(host: VideoOkiHost): void {
+    this.oki = host;
+  }
+
   reset(): void {
     this.resetPeripherals();
     this.mpu4Acia.reset();
@@ -127,11 +169,18 @@ export class Mpu4VideoCard implements Bus16 {
     this.mpu4AciaWasIrq = false;
     this.owed = 0;
     this.ptmPhase = 0;
+    this.duart.reset();
+    this.duart.inputPort = 0x20;
+    this.duartPhase = 0;
     this.cpu.reset();
   }
 
   private resetPeripherals(): void {
     this.ptm.reset();
+    this.soundPtm.reset();
+    this.soundPia.reset();
+    this.soundCa2 = 0;
+    this.oki?.okiReset();
     this.scn.reset();
     this.acia.reset();
     this.saa.reset();
@@ -179,12 +228,22 @@ export class Mpu4VideoCard implements Bus16 {
       const n = Math.floor(this.ptmPhase / E_DIVIDE);
       this.ptmPhase -= n * E_DIVIDE;
       this.ptm.tick(n);
+      this.soundPtm.tick(n);
     }
     this.scn.tick(cycles);
+    if (!this.duart.idle()) {
+      this.duartPhase += cycles * DUART_X1_PER_CYCLE;
+      const n = Math.floor(this.duartPhase);
+      this.duartPhase -= n;
+      if (n > 0) this.duart.tick(n);
+    } else {
+      this.duartPhase = 0;
+    }
     const aciaIrq = this.acia.irq();
     if (!aciaIrq && this.aciaWasIrq) this.mpu4Acia.setCts(false);
     this.aciaWasIrq = aciaIrq;
-    const level = this.scn.irq() ? 3 : aciaIrq ? 2 : this.ptm.irq() ? 1 : 0;
+    const level = this.duart.irq() ? 6
+      : this.scn.irq() ? 3 : aciaIrq ? 2 : this.ptm.irq() ? 1 : 0;
     this.cpu.setIRQ(level);
     if (this.scn.frameDone && this.scn.displayOn) {
       this.scn.frameDone = false;
@@ -210,6 +269,7 @@ export class Mpu4VideoCard implements Bus16 {
       const half = mode & 0x40 ? 0x10 : 0;
       if (this.rowWritten[row]) pal = row;
       const palBase = pal * 16;
+      const bt = this.paletteBt;
       let cell = (((hi << 8) | lo) & 0x3fff) * 2;
       const y0 = row * 8;
       for (let col = 0; col < VIDEO_COLUMNS; col++, cell += 2) {
@@ -226,9 +286,9 @@ export class Mpu4VideoCard implements Bus16 {
             const b3 = chr[(a + 3) & 0x1ffff];
             let o = (y0 + k * 2 + line) * VIDEO_WIDTH + x0;
             for (let bit = 7; bit >= 0; bit--, o++) {
-              const pen = (((b3 >> bit) & 1) | (((b2 >> bit) & 1) << 1)
-                | (((b1 >> bit) & 1) << 2) | (((b0 >> bit) & 1) << 3)) & planes;
-              const argb = this.rowArgb[palBase + pen];
+              const pen = ((b3 >> bit) & 1) | (((b2 >> bit) & 1) << 1)
+                | (((b1 >> bit) & 1) << 2) | (((b0 >> bit) & 1) << 3);
+              const argb = bt ? this.btArgb[(planes << 4) | pen] : this.rowArgb[palBase + (pen & planes)];
               if (out[o] !== argb) {
                 out[o] = argb;
                 changed = true;
@@ -243,6 +303,10 @@ export class Mpu4VideoCard implements Bus16 {
   }
 
   private paletteWrite(addr: number, val: number): void {
+    if (this.paletteBt) {
+      this.btWrite((addr >> 1) & 0xff, val);
+      return;
+    }
     if ((addr >> 1) & 1) {
       this.palIndex = val & 0x1f;
       if (this.palIndex === 0 && this.scn.row === 0) this.rowWritten.fill(0);
@@ -261,6 +325,7 @@ export class Mpu4VideoCard implements Bus16 {
   }
 
   private paletteRead(addr: number): number {
+    if (this.paletteBt) return ((addr >> 1) & 0xff) === 2 ? this.btReg : 0;
     if ((addr >> 1) & 1) return 0;
     const i = this.palIndex;
     const v = this.rowRaw[this.scn.row * ROW_PALETTE_BYTES + i];
@@ -268,10 +333,115 @@ export class Mpu4VideoCard implements Bus16 {
     return i & 1 ? v & 0x0f : v;
   }
 
+  private btWrite(reg: number, val: number): void {
+    if (reg === 1) {
+      this.btRgb[this.btStep] = (val << 2) & 0xff;
+      if (++this.btStep === 3) {
+        this.btArgb[this.btIndex] = (0xff000000
+          | (this.btRgb[0] << 16) | (this.btRgb[1] << 8) | this.btRgb[2]) >>> 0;
+        this.btIndex = (this.btIndex + 1) & 0xff;
+        this.btStep = 0;
+      }
+    } else if (reg === 2) {
+      this.btReg = val & 0xff;
+    } else if (reg === 4) {
+      this.btIndex = val & 0xff;
+      this.btStep = 0;
+    }
+  }
+
+  private highRead8(addr: number): number {
+    const page = (addr & 0xffffff00) >>> 0;
+    if (page === 0xffffd000) return this.cpu.d[0] & 0xff;
+    if (page === 0xffff8000) return this.acia.read((addr & 0xf) >> 1);
+    if (page === 0xffff9000) return this.ptm.read((addr & 0xf) >> 1);
+    this.strays.hit(addr);
+    return 0;
+  }
+
+  private highWrite8(addr: number, val: number): void {
+    const page = (addr & 0xffffff00) >>> 0;
+    if (page === 0xffffd000) { this.chrCol = val & 0x3f; return; }
+    if (page === 0xffff8000) {
+      this.acia.write((addr & 0xf) >> 1, val);
+      this.mpu4Acia.setDcd(this.acia.rts);
+      return;
+    }
+    if (page === 0xffff9000) { this.ptm.write((addr & 0xf) >> 1, val); return; }
+    this.strays.hit(addr);
+  }
+
   private chrRead(): number {
-    const v = this.chrTable[((this.chrRow & 0x3f) << 6) | this.chrCol];
+    if (!this.chrBarcrest) return this.chrCol & 0xfc;
+    const v = this.chrTable[(((this.chrRow & 0x3f) << 6) + this.chrCol) & 0xfff];
     this.chrRow = v;
     return (v << 2) & 0xf8;
+  }
+
+  private soundPtmWrite(reg: number, val: number): void {
+    this.soundPtm.write(reg, val);
+    if (reg === 3 || reg === 7) {
+      const { latch } = this.soundPtm.debugState();
+      this.oki?.okiPitch(okiPitchFromPtm(latch[0], latch[2], VIDEO_OKI_PTM_CLOCK));
+    }
+  }
+
+  private soundPiaRead(reg: number, bwb: boolean): number {
+    if (bwb) {
+      this.soundPortBIn = 0x10 | (this.percentKey === null ? 0 : ~this.percentKey & 0x0f);
+    } else {
+      this.soundPortBIn = (this.oki?.okiStatus() ?? 0xc0) & 0xc0;
+    }
+    return this.soundPia.read(reg);
+  }
+
+  private soundPiaWrite(reg: number, val: number, bwb: boolean): void {
+    const pia = this.soundPia;
+    const ora = pia.outA(), ddra = pia.ddrA(), orb = pia.outB(), ddrb = pia.ddrB();
+    let changedA = 0;
+    let changedB = 0;
+    let ca2Changed = false;
+    switch (reg & 3) {
+      case 0:
+        changedA = pia.peek(1) & 4
+          ? (ora ^ val) & ddra
+          : (~ddra & val & ~ora) | (~ora & ddra & ~val);
+        break;
+      case 1:
+        if (!(val & 0x20)) {
+          ca2Changed = this.soundCa2 !== 0;
+          this.soundCa2 = 0;
+        } else if (val & 0x10) {
+          const level = (val >> 3) & 1;
+          ca2Changed = level !== this.soundCa2;
+          this.soundCa2 = level;
+        }
+        break;
+      case 2:
+        changedB = pia.peek(3) & 4
+          ? (orb ^ val) & ddrb
+          : (~ddrb & val & ~orb) | (~orb & ddrb & ~val);
+        break;
+      default:
+        break;
+    }
+    pia.write(reg, val);
+    const oki = this.oki;
+    if (!oki) return;
+    changedA &= 0xff;
+    changedB &= 0xff;
+    const a = pia.outA();
+    if (bwb && oki.okiBanks() < 2) {
+      const lines = ((a & 0x80) >> 6) | this.soundCa2;
+      if (ca2Changed) oki.okiLines(lines);
+      if (changedA & 0x7f) oki.okiLatch(a);
+      if (changedA & 0x80) oki.okiLines(lines);
+    } else if (bwb) {
+      if (changedA) oki.okiLatch(a);
+    } else if (changedA & 0x7f) {
+      oki.okiLatch(a);
+    }
+    if (changedB & 3) oki.okiLines(pia.outB() & 3);
   }
 
   private romByte(addr: number): number {
@@ -283,6 +453,7 @@ export class Mpu4VideoCard implements Bus16 {
   }
 
   read8(addr: number): number {
+    if (addr > 0xffffff) return this.highRead8(addr);
     addr &= 0xffffff;
     if (addr < this.romCeiling()) return this.romByte(addr);
     if (addr >= 0x800000 && addr < 0x820000) return this.mainRam[addr - 0x800000];
@@ -295,11 +466,19 @@ export class Mpu4VideoCard implements Bus16 {
     if (page === 0xff8000 || page === 0xe00000) return this.acia.read((addr & 0xf) >> 1);
     if (page === 0xff9000 || page === 0xe01000) return this.ptm.read((addr & 0xf) >> 1);
     if (page === 0xe05000) return this.chrCol;
+    if (page === 0xe02000) return this.soundPiaRead((addr & 0xf) >> 1, true);
+    if (page === 0xe03000) return this.soundPtm.read((addr & 0xf) >> 1);
+    if (page === 0xe04000) return this.duart.read((addr & 0x1f) >> 1);
+    if (page === 0xffa000) {
+      if ((addr & 0xf0) === 0x40) return this.soundPtm.read((addr & 0xf) >> 1);
+      if ((addr & 0xf0) === 0x60) return this.soundPiaRead((addr & 0xf) >> 1, false);
+    }
     this.strays.hit(addr);
     return 0;
   }
 
   read16(addr: number): number {
+    if (addr > 0xffffff) { this.strays.hit(addr); return 0; }
     addr &= 0xffffff;
     if (addr < this.romCeiling()) return (this.romByte(addr) << 8) | this.romByte(addr + 1);
     if (this.xram && addr >= 0x600000 && addr < 0x640000) {
@@ -314,11 +493,13 @@ export class Mpu4VideoCard implements Bus16 {
       const o = addr - 0xc00000;
       return (this.charRam[o] << 8) | this.charRam[o + 1];
     }
+    if ((addr & 0xffff00) === 0xe02000) return this.soundPiaRead((addr & 0xf) >> 1, true);
     this.strays.hit(addr);
     return 0;
   }
 
   write8(addr: number, val: number): void {
+    if (addr > 0xffffff) { this.highWrite8(addr, val & 0xff); return; }
     addr &= 0xffffff;
     val &= 0xff;
     if (addr >= 0x800000 && addr < 0x820000) {
@@ -360,10 +541,31 @@ export class Mpu4VideoCard implements Bus16 {
       this.ptm.write((addr & 0xf) >> 1, val);
       return;
     }
+    if (page === 0xe02000) {
+      this.soundPiaWrite((addr & 0xf) >> 1, val, true);
+      return;
+    }
+    if (page === 0xe03000) {
+      this.soundPtmWrite((addr & 0xf) >> 1, val);
+      return;
+    }
+    if (page === 0xe04000) {
+      this.duart.write((addr & 0x1f) >> 1, val);
+      return;
+    }
+    if (page === 0xffa000 && (addr & 0xf0) === 0x40) {
+      this.soundPtmWrite((addr & 0xf) >> 1, val);
+      return;
+    }
+    if (page === 0xffa000 && (addr & 0xf0) === 0x60) {
+      this.soundPiaWrite((addr & 0xf) >> 1, val, false);
+      return;
+    }
     this.strays.hit(addr);
   }
 
   write16(addr: number, val: number): void {
+    if (addr > 0xffffff) { this.strays.hit(addr); return; }
     addr &= 0xffffff;
     const hi = (val >> 8) & 0xff;
     const lo = val & 0xff;
@@ -387,7 +589,7 @@ export class Mpu4VideoCard implements Bus16 {
       return;
     }
     if (addr === 0xffd000 || addr === 0xe05000) {
-      this.chrCol = hi & 0x3f;
+      this.chrCol = hi;
       return;
     }
     this.strays.hit(addr);

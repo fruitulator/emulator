@@ -22,8 +22,8 @@ export interface CabGeometry {
   bandReels?: (Omit<BandStrip, 'canvas' | 'overlay' | 'classic'>
     & { canvas: number; overlay?: number;
       classic?: Omit<BandClassic, 'mask'> & { mask?: number } })[];
-  flipReels?: (Omit<FlipStrip, 'canvas' | 'overlay'>
-    & { canvas: number; overlay?: number })[];
+  flipReels?: (Omit<FlipStrip, 'canvas' | 'overlay' | 'mask1' | 'mask2' | 'mask3'>
+    & { canvas: number; overlay?: number; mask1?: number; mask2?: number; mask3?: number })[];
   lamps: (Omit<CabLamp, 'states' | 'offState'> & {
     states: { n: number; canvas: number; down?: number }[];
     offState?: { nums: number[]; canvas: number; down?: number };
@@ -162,6 +162,9 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     flipReels: (cab.flipReels ?? []).map((f) => ({
       ...f, canvas: idFor(f.canvas),
       overlay: f.overlay ? idFor(f.overlay) : undefined,
+      mask1: f.mask1 ? idFor(f.mask1) : undefined,
+      mask2: f.mask2 ? idFor(f.mask2) : undefined,
+      mask3: f.mask3 ? idFor(f.mask3) : undefined,
     })),
     lamps: cab.lamps.map((l) => ({
       ...l,
@@ -264,6 +267,9 @@ export function assembleCabinet<A>(
     flipReels: (geo.flipReels ?? []).map((f) => ({
       ...f, canvas: get(f.canvas),
       overlay: f.overlay === undefined ? undefined : get(f.overlay),
+      mask1: f.mask1 === undefined ? undefined : get(f.mask1),
+      mask2: f.mask2 === undefined ? undefined : get(f.mask2),
+      mask3: f.mask3 === undefined ? undefined : get(f.mask3),
     })),
     lamps: geo.lamps.map((l) => ({
       ...l,

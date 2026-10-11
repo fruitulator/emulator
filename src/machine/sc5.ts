@@ -188,11 +188,33 @@ export class Sc5 implements Bus16, Machine {
     p[0] = 0;
   }
 
-  private feedPeer(): void {
-    if (!this.duart2.rxEnabled(1) || this.duart2.rxSpace(1) === 0) return;
-    this.duart2.receive(1, this.peerStream());
+  private peerLine: number[] = [];
+  private peerLeft = 0;
+
+  private peerCharCycles(): number {
+    const baud = this.duart2.txBaud(1) || 50;
+    const mr1 = this.duart2.getMr(1, 0);
+    const mr2 = this.duart2.getMr(1, 1);
+    const bits = (mr1 & 3) + 7 + ((~mr1 >> 4) & 1) + ((mr2 >> 3) & 1);
+    return Math.round((Math.floor(DUART_CLOCK / baud) * bits * MASTER_CLOCK) / DUART_CLOCK);
+  }
+
+  private feedPeer(span: number): void {
+    if (this.peerLine.length !== 0) {
+      this.peerLeft -= span;
+      while (this.peerLeft <= 0 && this.peerLine.length !== 0) {
+        const b = this.peerLine.shift()!;
+        if (this.duart2.rxEnabled(1)) this.duart2.receive(1, b);
+        if (this.peerLine.length !== 0) this.peerLeft += this.peerCharCycles();
+        else this.peerLeft = 0;
+      }
+      if (this.peerLine.length !== 0) return;
+    }
+    if (!this.duart2.rxEnabled(1) || (this.duart2.outputs() & 0x02) === 0) return;
+    this.peerLine.push(this.peerStream());
     const c = this.peerChallenge();
-    if (c !== null) this.duart2.receive(1, c);
+    if (c !== null) this.peerLine.push(c);
+    this.peerLeft = this.peerCharCycles();
   }
 
   private payFrame: number[] = [];
@@ -321,7 +343,7 @@ export class Sc5 implements Bus16, Machine {
   private applyDesFitted(): void {
     const set = (addr: number, v: boolean | null): void => {
       const d = this.bus.get(addr);
-      if (v !== null && d && 'desFitted' in d) (d as { desFitted: boolean }).desFitted = v;
+      if (d && 'desFitted' in d) (d as { desFitted: boolean }).desFitted = v ?? false;
     };
     set(CC_MECH, this.desFitted.mech);
     set(CC_NOTE, this.desFitted.note);
@@ -650,6 +672,7 @@ export class Sc5 implements Bus16, Machine {
   constructor() {
     this.volume.onLevel = (level) => this.ymz.setGain(level / 0xff);
     this.hookLedger();
+    this.applyDesFitted();
     this.syncCcTalkParts();
     this.resetVendLamps();
     this.installReflexHopperKey();
@@ -783,11 +806,18 @@ export class Sc5 implements Bus16, Machine {
     this.scanAcc = 0;
     this.scanRow = 0;
     this.scanPending = false;
+    this.specialHold = 0;
+    this.specialPending = 0;
+    this.specialScheduled = 0xff;
+    this.specialCommitted = 0xff;
+    this.specialLeds = 0;
     this.resetPeripherals();
     this.sim.reset(cause);
     this.duart.reset();
     this.duart2.reset();
     this.peer.fill(0);
+    this.peerLine = [];
+    this.peerLeft = 0;
     this.ymz.reset();
     this.vfd.reset();
     this.bd1.reset();
@@ -1152,6 +1182,22 @@ export class Sc5 implements Bus16, Machine {
   private muxWrite(addr: number, val: number): void {
     if (this.latchLamps(addr, val)) return;
 
+    {
+      const win = addr & 0x00ff0000;
+      const off = addr & 0xffff;
+      if ((win === 0x00010000 || win === 0x00020000) && off < 0x1400) {
+        const c = (off >> 4) & 0x3f;
+        if (c === 0x31) {
+          this.setSpecialBit(win === 0x00010000 ? 1 : 2, (val & 0xff) === 0x4d);
+          return;
+        }
+        if (c === 0x30 && win === 0x00010000) {
+          this.setSpecialBit(0, (val & 0x04) !== 0);
+          return;
+        }
+      }
+    }
+
     if (addr === 0x01020330) {
       this.drive(0, val & 0x0f);
       this.reel1Low = (val >> 4) & 0x03;
@@ -1180,6 +1226,7 @@ export class Sc5 implements Bus16, Machine {
     const secOff = addr & 0xffff;
     if ((addr & 0x00ff0000) === 0x00020000
       && (secOff & 0x03f0) === 0x0300 && secOff < 0x1400) {
+      if ((val ^ this.secLatch) & 0x08) this.setSpecialBit(3, (val & 0x08) !== 0);
       if ((val ^ this.secLatch) & 0x07) {
         this.sec.lineCall(this.busNow);
         this.sec.setCS((val & 0x04) !== 0);
@@ -1270,7 +1317,8 @@ export class Sc5 implements Bus16, Machine {
       if (!this.duart.idle()) this.duart.tick(ticks);
       if (!this.duart2.idle()) this.duart2.tick(ticks);
     }
-    this.feedPeer();
+    this.feedPeer(span);
+    if (this.specialHold > 0) this.tickSpecialLeds(span);
     this.scanAcc += span;
     if (this.scanAcc >= Sc5.SCAN_PERIOD) {
       this.scanAcc -= Sc5.SCAN_PERIOD;
@@ -1387,6 +1435,9 @@ export class Sc5 implements Bus16, Machine {
       if (this.rxQueue.length !== 0) {
         const toByte = this.rxQueue[0].at - this.busNow;
         if (toByte < budget) budget = toByte > 0 ? toByte : 0;
+      }
+      if (this.peerLine.length !== 0 && this.peerLeft < budget) {
+        budget = this.peerLeft > 0 ? this.peerLeft - 1 : 0;
       }
       this.cpu.regionBudget = budget;
     }
@@ -1569,7 +1620,43 @@ export class Sc5 implements Bus16, Machine {
   readonly seg7 = new BfmLed();
 
   get ledOutputs(): Uint8Array {
-    return this.seg7.raw;
+    this.ledTable.set(this.seg7.raw);
+    this.ledTable[32] = this.specialLeds;
+    return this.ledTable;
+  }
+
+  private readonly ledTable = new Uint8Array(33);
+
+  readonly ledCount = 260;
+
+  private specialLeds = 0;
+  private specialPending = 0;
+  private specialScheduled = 0xff;
+  private specialCommitted = 0xff;
+  private specialHold = 0;
+  private static readonly SPECIAL_HOLD = 60000;
+
+  private specialChanged(): void {
+    if (this.specialPending !== this.specialScheduled) {
+      this.specialHold = Sc5.SPECIAL_HOLD;
+      this.specialScheduled = this.specialPending;
+    }
+  }
+
+  private setSpecialBit(bit: number, on: boolean): void {
+    const m = 1 << bit;
+    if (((this.specialPending & m) !== 0) === on) return;
+    this.specialPending = on ? this.specialPending | m : this.specialPending & ~m;
+    this.specialChanged();
+  }
+
+  private tickSpecialLeds(span: number): void {
+    if (this.specialHold <= 0) return;
+    this.specialHold -= span;
+    if (this.specialHold < 1 && this.specialPending !== this.specialCommitted) {
+      this.specialLeds = this.specialPending & 0x0f;
+      this.specialCommitted = this.specialPending;
+    }
   }
 
   get segDigits(): Uint8Array {

@@ -32,6 +32,7 @@ export interface FrameLayout {
   muxLedFirst: number;
   ledBytes: number;
   ledKind?: 'bfm' | 'plain';
+  ledCount?: number;
   udfBytes: number;
   cellDots: boolean;
   videoWidth: number;
@@ -292,7 +293,7 @@ export function frameLayoutFor(
     ? { base: 0, bytes: 0 }
     : { base: driftBase, bytes: DIAG_RAM_BYTES[system] ?? 0 };
   const diagBytes = diag.bytes;
-  const dotBytes = system === 'SPACE' || system === 'SCORPION2' || system === 'MPU4PLASMA'
+  const dotBytes = system === 'SPACE' || system === 'SCORPION1' || system === 'SCORPION2' || system === 'SCORPION4' || system === 'MPU4PLASMA'
     ? rawDots(m)?.length ?? 0 : 0;
   const lcdBytes = system === 'PROCONN' ? 80
     : system === 'EPOCH' ? 32 + 0x400
@@ -301,6 +302,7 @@ export function frameLayoutFor(
   const muxLedBytes = ledBoard ? ledBoard.colours.length * 4 : 0;
   const ledBytes = (m as unknown as { ledOutputs?: Uint8Array }).ledOutputs?.length ?? 0;
   const ledKind = (m as unknown as { ledKind?: 'bfm' | 'plain' }).ledKind ?? 'bfm';
+  const ledCount = (m as unknown as { ledCount?: number }).ledCount;
   const dutyBytes = displayKind === 'none' ? 0 : 4;
   const cellDots = !device?.udfDots && !!device?.cellDots;
   const udfBytes = device?.udfDots ? 16 * 5 + (device.gfxDots?.length ?? 0) : cellDots ? 16 * 6 : 0;
@@ -337,6 +339,7 @@ export function frameLayoutFor(
     muxLedFirst: muxLedBytes ? Sc5LedBoard.FIRST_LED : 0,
     ledBytes,
     ledKind,
+    ...(ledCount !== undefined ? { ledCount } : {}),
     udfBytes,
     cellDots,
     videoWidth,
@@ -722,7 +725,7 @@ export class FrameView {
   private readonly ledsRaw: Uint8Array;
 
   ledServed(n: number): boolean {
-    return n >= 0 && n < this.layout.ledBytes * 8;
+    return n >= 0 && n < (this.layout.ledCount ?? this.layout.ledBytes * 8);
   }
 
   layoutLed(n: number): boolean {

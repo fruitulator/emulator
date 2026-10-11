@@ -898,7 +898,8 @@ export class Sys5 implements Bus16, Machine {
         default: return 0xffff;
       }
     }
-    if (a >= 0x04c100 && a <= 0x04c105) return 0x14 | (this.upd.active() ? 1 : 0);
+    if (a >= 0x04c100 && a <= 0x04c105) return 0x14 | (this.upd.busy() ? 1 : 0);
+    if (a === 0x044000 || a === 0x044002) return 0;
     this.strays.hit(a);
     return 0xffff;
   }

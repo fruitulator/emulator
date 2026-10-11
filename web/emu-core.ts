@@ -12,6 +12,7 @@ import { applyParts } from '../src/machine/parts';
 import { acceptorResolve, coinInputLine, viewFor } from './platform';
 import { declaredCoins, layoutInputButtons } from '../src/machine/layoutcoins';
 import { boardDefaultsOf, noteBoardDefault } from '../src/machine/boarddefaults';
+import { operatorPresetsOf } from '../src/machine/statedlines';
 import { schematicFor } from '../src/machine/schematics';
 import { Sc4 } from '../src/machine/sc4';
 import type { MachineInfo } from './emu-protocol';
@@ -105,6 +106,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       ...(sw.option ? { option: true } : {}),
     })),
     switchIds: layoutSwitchIdsFrom(game.layout, system),
+    ...(operatorPresetsOf(m).length ? { switchPresets: operatorPresetsOf(m).map((p) => ({ ...p })) } : {}),
     ...(m.capNames?.size
       ? { capNames: Object.fromEntries([...m.capNames].map(([b, c]) => [b, { role: c.role, label: c.label }])) }
       : {}),

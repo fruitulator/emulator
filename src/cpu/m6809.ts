@@ -931,7 +931,10 @@ export class M6809 {
     this.setFlag(Z, this.a === 0);
   }
 
+  illegalAsV20 = false;
+
   private illegal(op: number): void {
+    if (this.illegalAsV20 && op <= 0xff) return;
     throw new Error(
       `illegal opcode $${op.toString(16)} at $${((this.pc - 1) & 0xffff).toString(16).padStart(4, '0')}`,
     );

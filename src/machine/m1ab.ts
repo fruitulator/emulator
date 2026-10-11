@@ -331,7 +331,7 @@ export class M1ab implements Bus, Machine {
       writeA: (v) => {
         this.vfd.por((v & 0x40) !== 0);
         this.vfd.data((v & 0x10) !== 0);
-        this.vfd.sclk((v & 0x20) !== 0);
+        this.vfd.sclk((v & 0x20) === 0);
       },
       writeB: (v) => { this.driveTriacs(v); },
     });

@@ -8,6 +8,7 @@ import { StatedLines } from './statedlines';
 import { M6809 } from '../cpu/m6809';
 import type { SlideEffect } from '../layout/fmlconfig';
 import { Bd1 } from '../hw/bd1';
+import { Dm01, DM01_CLOCK } from '../hw/dm01';
 import { Reel } from '../hw/reel';
 import { MODEL_RELATIONS, parkAtV20PowerUp, resetReelsInPlace } from './v20optic';
 import { Upd7759, UPD7759_RATE } from '../hw/upd7759';
@@ -48,7 +49,7 @@ export interface IoAccess {
 }
 
 export class Sc1 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'programMem'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'programMem', 'dmBusySwitch'];
   readonly cpu: M6809;
   readonly ram = new Uint8Array(RAM_SIZE);
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -60,6 +61,72 @@ export class Sc1 implements Bus, Machine {
   private vfdBits = 0;
   private vfdSclk = 0;
   private vfdData = 0;
+
+  dm01: Dm01 | null = null;
+  private dmBusySwitch = 14;
+  private dmReady: boolean | null = null;
+  private dmClk = false;
+  private dmSel = false;
+  private dmShift = 0;
+  private dmBits = 0;
+  private dmResetPending = true;
+  private dmLines = 0;
+  private static readonly DM01_RATIO = DM01_CLOCK / CPU_CLOCK;
+
+  fitDotMatrix(rom: Uint8Array, busySwitch: number | null = null): void {
+    this.dm01 = new Dm01();
+    this.dm01.loadRom(rom);
+    this.dm01.reset();
+    this.dmBusySwitch = busySwitch !== null && busySwitch >= 0 && busySwitch < 64 ? busySwitch : 14;
+    this.dmReady = null;
+  }
+
+  get outputs(): { dots: Uint8Array } | undefined {
+    return this.dm01 ? { dots: this.dm01.dots } : undefined;
+  }
+
+  private dotMatrixSerial(v: number): void {
+    const sel = (v & 0x20) !== 0;
+    const clk = (v & 0x80) !== 0;
+    let byte = -1;
+    if (!sel) {
+      if (this.dmSel) {
+        this.dmShift = 0;
+        this.dmBits = 0;
+        this.dmResetPending = true;
+      }
+      this.dmSel = false;
+      this.dmClk = clk;
+    } else {
+      this.dmSel = true;
+      if (clk !== this.dmClk) {
+        this.dmClk = clk;
+        if (!clk) {
+          this.dmShift = ((this.dmShift << 1) | ((v & 0x40) === 0 ? 1 : 0)) & 0xff;
+          if (++this.dmBits === 8) {
+            this.dmBits = 0;
+            byte = this.dmShift;
+          }
+        }
+      }
+    }
+    if (this.dmResetPending) {
+      this.dmResetPending = false;
+      this.dm01!.reset();
+    } else if (byte >= 0) {
+      this.dm01!.queueChar(byte);
+    }
+  }
+
+  private runDotMatrix(cycles: number): void {
+    const d = this.dm01!;
+    d.run(cycles * Sc1.DM01_RATIO);
+    const ready = d.ready;
+    if (ready !== this.dmReady) {
+      this.dmReady = ready;
+      this.setInput(this.dmBusySwitch >> 3, this.dmBusySwitch & 7, ready);
+    }
+  }
 
   readonly reels = parkAtV20PowerUp([0, 1, 2, 3, 4, 5].map(
     () => new Reel({
@@ -356,6 +423,10 @@ export class Sc1 implements Bus, Machine {
 
       { id: 'alpha', label: 'VFD', part: 'BD1 - 16 char, bit-serial', device: this.vfd,
         signal: 'display' },
+      ...(this.dm01
+        ? [{ id: 'dm01', label: 'DOT MATRIX', part: 'DM01 - 65x21, own MC6809',
+            device: this.dm01 } as BoardPart]
+        : []),
       { id: 'ay', label: 'SOUND', part: 'AY8912', device: this.ay },
       { id: 'upd', label: 'SPEECH', part: 'uPD7759 (Viper)',
         ...(this.updFitted ? { device: this.upd } : {}) },
@@ -615,6 +686,16 @@ export class Sc1 implements Bus, Machine {
     if (this.nvram) this.ram.set(this.nvram);
     else this.ram.fill(0);
     this.inputRegs.set(this.idleInputs);
+    if (this.dm01) {
+      this.dm01.reset();
+      this.dmReady = null;
+      this.dmClk = false;
+      this.dmSel = false;
+      this.dmShift = 0;
+      this.dmBits = 0;
+      this.dmResetPending = true;
+      this.dmLines = 0;
+    }
     this.warmReset();
   }
 
@@ -742,6 +823,11 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a >= 0x2400 && a < 0x2600) {
+      if (this.dm01) {
+        if ((this.dmLines ^ v) & 0xe0) this.dotMatrixSerial(v);
+        this.dmLines = v;
+        return;
+      }
       if (!(v & 0x20)) {
         this.vfd.reset();
         this.vfdShift = 0;
@@ -912,6 +998,7 @@ export class Sc1 implements Bus, Machine {
 
     this.ay.tick(cycles, CPU_CLOCK);
     this.upd.tick(cycles, CPU_CLOCK);
+    if (this.dm01) this.runDotMatrix(cycles);
 
     if (this.coinCycles > 0) {
       this.coinCycles -= cycles;

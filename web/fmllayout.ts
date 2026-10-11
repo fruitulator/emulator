@@ -1118,6 +1118,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       states: [],
       offState: { nums: [], canvas: art },
+      ...(behindAReel(c) ? { underReel: true } : {}),
     });
   }
 
@@ -1171,6 +1172,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       states,
+      ...(behindAReel(c) ? { underReel: true } : {}),
     });
   }
 
@@ -1220,6 +1222,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const flaps = image(c, 'Band');
     if (!flaps || flaps.width <= 0 || flaps.height <= 0) continue;
     const num = (k: string): number | undefined => c.values.get(k) ?? c.defaults.get(k);
+    const masks = [image(c, 'LampMasks1'), image(c, 'LampMasks2'), image(c, 'LampMasks3')];
     flipReels.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       machineIndex: reelIndex.get(c.number) ?? 0, number: c.number,
@@ -1231,6 +1234,12 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       inset: num('FaceInset') ?? 4,
       borderWidth: num('BorderWidth') ?? 4,
       borderColour: num('BorderColour') ?? 0xff000000,
+      lampsEnabled: !!num('LampsEnabled'),
+      lampNums: [0, 1, 2].map((i) => c.subs?.[i] ?? -2),
+      ...(masks[0] ? { mask1: masks[0] } : {}),
+      ...(masks[1] ? { mask2: masks[1] } : {}),
+      ...(masks[2] ? { mask3: masks[2] } : {}),
+      lightFloor: reelLightFloor(0, 0, masks),
     });
   }
 
@@ -1581,6 +1590,13 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     });
 
   const bitmaps = buildBitmaps(comps, backdropBitmap);
+  const screenOverlay = bfmv ? image(bfmv, 'Overlay', false, true) : null;
+  if (bfmv && screenOverlay) {
+    bitmaps.push({
+      left: bfmv.x, top: bfmv.y, width: bfmv.width, height: bfmv.height, ...turn(bfmv),
+      image: null, overlay: screenOverlay, stretch: 0, pass: 'top',
+    });
+  }
 
   const content: Rect = { left: 0, top: 0, width, height };
   const asPart = (r: Rect, reel = false) => ({ x: r.left, y: r.top, width: r.width, height: r.height, reel });

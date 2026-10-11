@@ -83,6 +83,8 @@ export class Bda {
 
   onByte: ((data: number) => void) | null = null;
 
+  divert: ((data: number) => void) | null = null;
+
   private enabled = false;
   private lastClock = false;
   private shift = 0;
@@ -312,6 +314,10 @@ export class Bda {
   }
 
   writeChar(data: number): void {
+    if (this.divert) {
+      this.divert(data & 0xff);
+      return;
+    }
     this.writeCharRaw(data);
     this.sync();
     this.onByte?.(data & 0xff);

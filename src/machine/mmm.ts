@@ -9,8 +9,7 @@ import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
 import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine } from './machine';
-import { newCashLedger } from './machine';
-import type { SlideEffect } from '../layout/fmlconfig';
+import { bookUnpricedIn, ledgerOutMults, newCashLedger } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { ReelGeometry } from './layoutreels';
@@ -34,7 +33,7 @@ const COIN_GAP = Math.round(0.1 * MMM_CLOCK);
 const TRIAC_LINES = 13;
 
 export class Mmm implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'slidePence', 'triacInRaw', 'triacOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'triacInRaw', 'triacOutRaw', 'triacLedgerOut'];
 
   readonly digitKind: DigitKind = 'byte16';
   readonly clockHz = MMM_CLOCK;
@@ -69,13 +68,12 @@ export class Mmm implements Machine {
   private triacWord = 0;
   readonly triacPulses = new Uint32Array(TRIAC_LINES);
   get triacLevels(): number { return this.triacWord; }
-  private slidePence: SlideEffect[] = new Array(16).fill(null);
   private triacInRaw: number[] = [];
   private triacOutRaw: number[] = [];
+  private triacLedgerOut: number[] = [];
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
-  get slidesPriced(): boolean { return this.slidePence.some((p) => p !== null); }
 
   private serialCount = 0;
   private serialShift = 0;
@@ -136,13 +134,10 @@ export class Mmm implements Machine {
     }));
   }
 
-  setSlidePence(slides: readonly SlideEffect[]): void {
-    for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
-  }
-
   setTriacMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.triacInRaw = [...inMult];
     this.triacOutRaw = [...outMult];
+    this.triacLedgerOut = ledgerOutMults({ in: this.triacInRaw, out: this.triacOutRaw })[0];
   }
 
   layoutInput(id: number, on: boolean): void {
@@ -291,11 +286,8 @@ export class Mmm implements Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      const p = this.slidePence[i];
-      if (p === null || p === undefined) continue;
-      if (typeof p === 'number') this.cashLedger.outPence += p;
-      else if (p === 'token') this.cashLedger.unpricedTokenOut++;
-      else this.cashLedger.unpricedOut++;
+      this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
+      bookUnpricedIn(this.cashLedger, this.triacInRaw[i]);
     }
   }
 

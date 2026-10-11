@@ -2,7 +2,7 @@ import type { Machine } from './machine';
 import { bfmAlphaRoute, v20AlphaServe } from './layoutdisplay';
 import { ledgerOutMults } from './machine';
 import { gamFromJson, gamToJson, parseGam, type Gam, type GamJson } from './gam';
-import { parseDesKey, V20_DEFAULT_DES_KEY } from '../hw/des';
+import { gamCcTalkKeys } from './cctalkkeys';
 import {
   ReelBounce, bounceProfileFor, kindCanBounce, type BounceWiring,
 } from '../hw/reelbounce';
@@ -74,6 +74,7 @@ import {
   mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, layoutSwitchIdsFrom, m1abDongleConfig,
 } from '../layout/fmlconfig';
 import { parseLayout } from '../layout/fmlparse';
+import { recordOperatorPreset } from './statedlines';
 import { datReelChannels, datReelWiring } from '../layout/datreels';
 import { cabinetCoinPence, cabinetCoinSlots, declaredCoins, layoutInputButtons, parallelNoteChannels } from './layoutcoins';
 import { placeRomPairs } from './pairplacer';
@@ -448,6 +449,14 @@ const scorpion4: Platform = {
     if (image) m.loadRom(image);
     else m.loadRomPair(...prog!);
 
+    const sc4DotFile = game.gam?.slaveRoms
+      .map((n) => file(game, n)).find((f): f is GameFile => !!f);
+    if (sc4DotFile) {
+      const sc4DmLayout = decodedLayout(game.layout);
+      const dmBusy = sc4DmLayout ? readSwitchNumber(sc4DmLayout, 'SCORPION4', 'DM Busy') : null;
+      m.fitDotMatrix(sc4DotFile.bytes, dmBusy);
+    }
+
     const sndFirst = sndFiles.find((f) => /\.(evn|lo)$/i.test(f.name));
     const sndSecond = sndFiles.find((f) => /\.(odd|hi)$/i.test(f.name));
     const sndPair = sndFirst && sndSecond ? [sndFirst.bytes, sndSecond.bytes] as const : null;
@@ -568,14 +577,13 @@ const scorpion4: Platform = {
         ifWrong: 'Those slots refuse every note; the machine cannot take one.',
       });
     }
+    m.setCcTalkKeys(gamCcTalkKeys(game.gam?.settings));
     const sc4NoteName = sc4Layout ? readSetting(sc4Layout, 'SCORPION5', 'Note Acceptor') : null;
     const sc4NoteType = sc4NoteName === null ? 1
       : ({ None: 0, 'JCM EBA': 1, VEGA: 2, NV11: 3 } as Record<string, number>)[sc4NoteName] ?? 0;
-    const sc4Bnv = (game.gam?.settings.get('BNVkey') ?? '').trim();
     const sc4NoteFitted = m.fitNoteValidator(
       sc4NoteType,
       (sc4Layout ? readCheckboxSetting(sc4Layout, 'SCORPION5', 'Note Acceptor DES') : null) ?? false,
-      /^\d{6}$/.test(sc4Bnv) ? [...sc4Bnv].map(Number) : null,
     );
     if (sc4NoteName === null && sc4NoteFitted) {
       noteBoardDefault(m, {
@@ -595,6 +603,8 @@ const scorpion4: Platform = {
 
     const sc4Serial = [1, 2].map((n) => (sc4Layout ? readSetting(sc4Layout, 'SCORPION5', `Hopper ${n}`) : null));
     m.setSerialHoppers(sc4Serial);
+    m.setSerialHopperDes([1, 2].map((n) =>
+      (sc4Layout ? readCheckboxSetting(sc4Layout, 'SCORPION5', `Hopper ${n} DES`) : null)));
     sc4Serial.forEach((h, i) => {
       if (h === null) {
         noteBoardDefault(m, {
@@ -726,6 +736,13 @@ const scorpion1: Platform = {
       return p ? readLayoutWord(p, 0x53) : null;
     })();
     m.loadRom(progFiles.map((f) => f.bytes), (sc1Enc ?? 0) === 0);
+    const sc1DotFile = game.gam?.slaveRoms
+      .map((n) => file(game, n)).find((f): f is GameFile => !!f);
+    if (sc1DotFile) {
+      const sc1DmLayout = decodedLayout(game.layout);
+      const dmBusy = sc1DmLayout ? readSwitchNumber(sc1DmLayout, 'SCORPION1', 'DM Busy') : null;
+      m.fitDotMatrix(sc1DotFile.bytes, dmBusy);
+    }
     const props = storedLayoutProps(game);
     fitReels(m, game);
 
@@ -991,15 +1008,7 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
     }
   } else {
     const family = romLayout ? readSetting(romLayout, sys, 'Character') : null;
-    if (family !== null && family !== 'Barcrest') {
-      noteBoardDefault(m, {
-        axis: 'peripheral',
-        text: `${family} video security chip not built - the standard one stands in`,
-        ifWrong: 'The video card may report its security chip as wrong and refuse to start.',
-        node: 'chr',
-        unbuilt: 'security chip',
-      });
-    }
+    if (m.video) m.video.chrBarcrest = family === null || family === 'Barcrest';
   }
 
   const extender = fittedPeripheralsFrom(game.layout, game.gam?.system ?? '').lampExtender;
@@ -1152,6 +1161,15 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
     }
     if (isMfmeSamplePack(samples)) {
       m.setSamplePack(samples);
+      if (m.video) {
+        noteBoardDefault(m, {
+          axis: 'peripheral',
+          text: 'packed sounds on the video card not built - they stay silent',
+          ifWrong: 'The cabinet plays no sampled sound, or waits on a sound that never ends.',
+          node: 'video',
+          unbuilt: 'sound board',
+        });
+      }
       if (samples.length > 0x20000 && samples.length <= 0x40000 && sndFiles.length === 2) {
         noteBoardDefault(m, {
           axis: 'peripheral',
@@ -1196,7 +1214,11 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
     m.inputs.orange1 |= ((stakeKeyCode(index('Stake')) & 7) << (sys === 'MPU4VIDEO' ? 6 : 5)) & 0xff;
     const pctIndex = index('Percentage');
     const pct = pctIndex !== undefined ? percentKeyCode(pctIndex) : KEY_NOT_FITTED;
-    m.inputs.orange2 |= (pct & 0x0f) << 4;
+    const videoKey = m.video && game.layout
+      ? (() => { const p = decodedLayout(game.layout); return p ? readSetting(p, 'MPU4VIDEO', 'PC Key Location') === 'Video Board' : false; })()
+      : false;
+    if (videoKey) m.video!.percentKey = pct & 0x0f;
+    else m.inputs.orange2 |= (pct & 0x0f) << 4;
     m.inputs.orange2 |= jackpotKeyCode(index('Jackpot')) & 0x0f;
     noteKeysNotNamed(m, game, ['Stake', 'Jackpot', 'Percentage']);
   }
@@ -1270,24 +1292,7 @@ function buildMpu4VideoCard(m: Mpu4, game: Game): Mpu4VideoCard {
       node: 'chr',
     });
   }
-  if (payload && readSetting(payload, 'MPU4VIDEO', 'Palette Type') === 'bt481') {
-    noteBoardDefault(m, {
-      axis: 'peripheral',
-      text: 'video palette chip not built - the standard one stands in',
-      ifWrong: 'The screen shows wrong colours, or none.',
-      node: 'palette',
-      unbuilt: 'video palette',
-    });
-  }
-  if (payload && readSetting(payload, 'MPU4VIDEO', 'PC Key Location') === 'Video Board') {
-    noteBoardDefault(m, {
-      axis: 'peripheral',
-      text: 'percentage key on the video card not built - it reads as not fitted',
-      ifWrong: 'The game may run at the wrong percentage or refuse to start.',
-      node: 'video',
-      unbuilt: 'percentage key',
-    });
-  }
+  card.paletteBt = payload ? readSetting(payload, 'MPU4VIDEO', 'Palette Type') === 'bt481' : false;
   return card;
 }
 
@@ -1340,8 +1345,11 @@ function applyOperatorPresets(
     const arm = arms[control];
     if (!arm) continue;
     const stored = payload && arm.tag !== false ? readOperatorTag(payload, tag) : null;
-    if (stored) m.presetOperatorSwitch(stored.line, arm.made !== stored.invert, label);
-    else if (arm.fallback !== null) m.presetOperatorSwitch(arm.fallback, arm.made, label);
+    const line = stored ? stored.line : arm.fallback;
+    if (line === null) continue;
+    const made = stored ? arm.made !== stored.invert : arm.made;
+    m.presetOperatorSwitch(line, made, label);
+    recordOperatorPreset(m, line, made);
   }
 }
 const DEFAULT_PRESETS = {
@@ -1896,6 +1904,7 @@ const mpu5: Platform = {
     const mpu5Layout = decodedLayout(game.layout);
     m.nv4Fitted = mpu5Layout ? readSetting(mpu5Layout, 'MPU5', 'NV4 Note') === 'Yes' : false;
     m.lampTestPass = layoutLampTestPass(m, mpu5Layout, 'MPU5');
+    m.setCcTalkKeys(gamCcTalkKeys(game.gam?.settings));
     const networkId = mpu5Layout ? readSetting(mpu5Layout, 'MPU5', 'Network Id') : null;
     if (networkId === null || networkId === 'None') {
       const serialHoppers = [1, 2].map((n) => (mpu5Layout ? readSetting(mpu5Layout, 'SCORPION5', `Hopper ${n}`) : null));
@@ -2037,8 +2046,8 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
     if (sc5Leds && sc5Fitted.coinMech !== null && sc5Des.mech === null) {
       noteBoardDefault(m, {
         axis: 'peripheral',
-        text: 'coin mech encryption: assumed on - the layout does not say',
-        ifWrong: 'A coin mech that is not encrypted may be spoken to as if it were, and the game will report it faulty.',
+        text: 'coin mech encryption: off - the layout does not say',
+        ifWrong: 'A coin mech that is encrypted may be spoken to as if it were not, and the game will report it faulty.',
         node: TAILORED_IDS.coinMech,
       });
     }
@@ -2066,20 +2075,14 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
       });
     }
 
-    const desKey = (name: string) => {
-      const line = game.gam?.settings.get(name);
-      return line === undefined ? [...V20_DEFAULT_DES_KEY] : parseDesKey(line);
-    };
+    const sc5Keys = gamCcTalkKeys(game.gam?.settings);
+    const own = (k: readonly number[] | null) => (k ? [...k] : null);
     m.setDesKeys({
-      mech: desKey('MechDeskey'), hopper: desKey('Hop1Deskey'), hopper2: desKey('Hop2Deskey'), note: desKey('BNVDeskey'),
+      mech: own(sc5Keys.mech.des), hopper: own(sc5Keys.hopper1.des),
+      hopper2: own(sc5Keys.hopper2.des), note: own(sc5Keys.note.des),
     });
-    const bnv = (game.gam?.settings.get('BNVkey') ?? '').trim();
-    if (/^\d{6}$/.test(bnv)) m.setBnvKey([...bnv].map(Number));
-    const partBnv = (name: string): number[] | null => {
-      const v = (game.gam?.settings.get(name) ?? '').trim();
-      return /^\d{6}$/.test(v) ? [...v].map(Number) : null;
-    };
-    m.setPartBnvKeys({ mech: partBnv('MechBNVkey'), hopper: partBnv('Hop1BNVkey'), hopper2: partBnv('Hop2BNVkey') });
+    if (sc5Keys.note.bnv) m.setBnvKey([...sc5Keys.note.bnv]);
+    m.setPartBnvKeys({ mech: own(sc5Keys.mech.bnv), hopper: own(sc5Keys.hopper1.bnv), hopper2: own(sc5Keys.hopper2.bnv) });
 
     const setting = (name: string): number | undefined => {
       const v = Number(game.gam?.settings.get(name));
@@ -2428,6 +2431,26 @@ const sys1: Platform = {
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const payload = decodedLayout(game.layout);
     m.setStepMode((payload && readNumber(payload, 'SYS1', 'Step Mode')) ?? 0);
+    const sys1ReelType = payload ? readLayoutWord(payload, 0x37) : null;
+    if (sys1ReelType === 1 || sys1ReelType === 2) m.setReelType(sys1ReelType);
+    else if (sys1ReelType !== null && sys1ReelType !== 0) {
+      noteBoardDefault(m, {
+        axis: 'reel',
+        text: `reel type ${sys1ReelType} not built - four reels driven`,
+        ifWrong: 'The reels do not turn as the machine drives them, and it may never reach attract.',
+        node: TAILORED_IDS.reels,
+        unbuilt: 'reel drive',
+      });
+    }
+    if (m.reelType === 1 && reelGeometry(game.layout).some((g) => g.flip)) {
+      noteBoardDefault(m, {
+        axis: 'reel',
+        text: 'flip reel on a six-reel unit not built - it does not turn',
+        ifWrong: 'That reel stays still and the machine may report it faulty.',
+        node: TAILORED_IDS.reels,
+        unbuilt: 'reel drive',
+      });
+    }
     const sys1Slides = payload && triacSlidePence(payload, 'SYS1');
     if (sys1Slides) m.setSlidePence(sys1Slides);
     const sys1Meters = payload ? meterMoneyMap(payload, 'SYS1') : null;
@@ -2774,14 +2797,12 @@ const mmm: Platform = {
     m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const payload = decodedLayout(game.layout);
-    const slides = payload ? triacSlidePence(payload, 'MMM') : null;
-    if (slides) m.setSlidePence(slides);
     const money = payload ? meterMoneyMap(payload, 'MMM') : null;
     if (money) m.setTriacMoney(money.triacIn, money.triacOut);
     noteBoardDefault(m, {
       axis: 'meter',
-      text: 'money in not priced for this board - coins in are not booked',
-      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      text: 'money not priced for this board - coins in and payouts are counted, not priced',
+      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
       node: 'triacs',
     });
     m.reset();
@@ -2827,14 +2848,12 @@ const mpu2: Platform = {
         });
       }
     }
-    const slides = payload ? triacSlidePence(payload, 'MPU2') : null;
-    if (slides) m.setSlidePence(slides);
     const money = payload ? meterMoneyMap(payload, 'MPU2') : null;
     if (money) m.setTriacMoney(money.triacIn, money.triacOut);
     noteBoardDefault(m, {
       axis: 'meter',
-      text: 'money in not priced for this board - coins in are not booked',
-      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      text: 'money not priced for this board - coins in and payouts are counted, not priced',
+      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
       node: 'triacs',
     });
     m.reset();
@@ -2860,14 +2879,12 @@ const sys83: Platform = {
       refill: { fallback: 31, made: false },
     });
     const payload = decodedLayout(game.layout);
-    const slides = payload ? triacSlidePence(payload, 'SYS83') : null;
-    if (slides) m.setSlidePence(slides);
     const money = payload ? meterMoneyMap(payload, 'SYS83') : null;
     if (money) m.setMeterMoney(money);
     noteBoardDefault(m, {
       axis: 'meter',
-      text: 'money in not priced for this board - coins in are not booked',
-      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      text: 'money not priced for this board - coins in and payouts are counted, not priced',
+      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
       node: 'meters',
     });
     if (game.nvram) m.loadNvram(game.nvram);
@@ -3003,14 +3020,12 @@ const acevideo: Platform = {
     m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const payload = decodedLayout(game.layout);
-    const slides = payload ? triacSlidePence(payload, 'ACEVIDEO') : null;
-    if (slides) m.setSlidePence(slides);
     const money = payload ? meterMoneyMap(payload, 'ACEVIDEO') : null;
     if (money) m.setMeterMoney(money);
     noteBoardDefault(m, {
       axis: 'meter',
-      text: 'money in not priced for this board - coins in are not booked',
-      ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+      text: 'money not priced for this board - coins in and payouts are counted, not priced',
+      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
       node: 'meters',
     });
     if (game.nvram) m.loadNvram(game.nvram);
@@ -3027,7 +3042,6 @@ const pluto5: Platform = {
     const m = new Pluto5();
     m.loadRom(prog.map((f) => f.bytes));
     const payload = decodedLayout(game.layout);
-    if (payload) m.dotFitted = parseLayout(payload).some((c) => c.type === 0x1a);
     (game.gam?.sec ?? []).forEach((c, i) => {
       m.sec.counters[i] = c.value;
       if (c.label) m.sec.counterText[i] = c.label;

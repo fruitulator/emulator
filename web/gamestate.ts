@@ -38,7 +38,7 @@ export function idleNamedInputs(
   emu: { input(id: number, on: boolean): void }, game: Game, info: MachineInfo,
 ): void {
   if (hasOperatedSwitches(info)) return;
-  for (const n of layoutNamedInputs(viewFor(game.system).namedInputs, info.switchIds ?? {})) {
+  for (const n of layoutNamedInputs(viewFor(game.system).namedInputs, info.switchIds ?? {}, info.switchPresets)) {
     emu.input(namedInputId(n), n.invert ? true : false);
   }
 }

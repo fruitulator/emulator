@@ -87,8 +87,7 @@ export class Pluto5 implements Bus16, Machine {
   private readonly i2c: I2cBitBang;
 
   readonly dot = new AstraDotAlpha();
-  get display(): MachineDisplay | null { return this.dotFitted ? this.dot : null; }
-  dotFitted = false;
+  get display(): MachineDisplay { return this.dot; }
 
   readonly voices = [new AstraSound(ASTRA_SOUND_RATE), new AstraSound(ASTRA_SOUND_RATE)];
   private readonly mixer = new Mixer(this.voices);

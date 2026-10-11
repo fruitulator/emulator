@@ -63,7 +63,7 @@ export class DiagLog {
 
 const LEDGER_FIELDS: readonly (keyof CashLedger)[] = [
   'inPence', 'outPence', 'unpricedOut', 'tokenInPence', 'tokenOutPence', 'unpricedTokenOut',
-  'unpricedTokenIn',
+  'unpricedTokenIn', 'unpricedIn',
 ];
 
 function money(p: number): string {
@@ -71,7 +71,7 @@ function money(p: number): string {
 }
 
 function ledgerDelta(field: keyof CashLedger, d: number): string {
-  const counted = field === 'unpricedOut' || field === 'unpricedTokenOut' || field === 'unpricedTokenIn';
+  const counted = field === 'unpricedOut' || field === 'unpricedTokenOut' || field === 'unpricedTokenIn' || field === 'unpricedIn';
   return `${field} ${d > 0 ? '+' : ''}${counted ? d : money(d)}`;
 }
 
@@ -189,8 +189,8 @@ export class DiagWatch {
     const prev = this.lastLedger;
     if (prev) {
       const moved = LEDGER_FIELDS
-        .filter((f) => l[f] !== prev[f])
-        .map((f) => ledgerDelta(f, l[f] - prev[f]));
+        .filter((f) => (l[f] ?? 0) !== (prev[f] ?? 0))
+        .map((f) => ledgerDelta(f, (l[f] ?? 0) - (prev[f] ?? 0)));
       if (moved.length) {
         this.log.add('ledger', `${moved.join(', ')} → in ${money(l.inPence)} out ${money(l.outPence)}`);
       }

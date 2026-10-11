@@ -8,21 +8,27 @@ const locks = (): Locks | null =>
   (typeof navigator !== 'undefined' && (navigator as { locks?: Locks }).locks) || null;
 
 let held = 0;
+const holders = new Map<string, number>();
 let release: (() => void) | null = null;
 
-export function holdBusy(): () => void {
+export function holdBusy(tag = 'machine'): () => void {
   held++;
+  holders.set(tag, (holders.get(tag) ?? 0) + 1);
   if (held === 1) publish();
   let done = false;
   return () => {
     if (done) return;
     done = true;
     held--;
+    const n = (holders.get(tag) ?? 1) - 1;
+    if (n > 0) holders.set(tag, n); else holders.delete(tag);
     if (held === 0) { release?.(); release = null; }
   };
 }
 
 export const isBusy = (): boolean => held > 0;
+
+export const busyHolders = (): string => held > 0 ? [...holders.keys()].join(', ') : 'another tab';
 
 export async function probeBusy(): Promise<boolean> {
   if (held > 0) return true;

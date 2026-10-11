@@ -47,7 +47,7 @@ import { PlayKeys, showKeysRow } from './play/keys';
 import { answers, HeldButtons, PlayPointer } from './play/pointer';
 import { PlayAutosave } from './play/autosave';
 import { appendItems, menuItems, saveLog, saveState, stateDownload, type ActionId, type ActionSurface } from './play/actions';
-import { COINS_ON_GLASS, machineCoins, restoreCabinetSounds } from './menupanels';
+import { machineCoins, restoreCabinetSounds } from './menupanels';
 import {
   THUMB_MAX_W,
   THUMB_QUALITY,
@@ -468,9 +468,7 @@ function startGame(
       cabinet = cab;
       const coinControls = stampCoinInputs(cab.lamps, cabView, emu.info?.coins ?? cabView.coins);
       if (!coinControls) {
-        showNotice(machineCoins(emu.info, cabView).length
-          ? str('main.this_cabinet_s_layout_draws')
-          : COINS_ON_GLASS);
+        if (machineCoins(emu.info, cabView).length) showNotice(str('main.this_cabinet_s_layout_draws'));
       }
       refreshKeys?.();
       rebuildMenu?.();
@@ -698,7 +696,7 @@ function offerPickStop(): void {
 async function importFolderSets(sets: FolderSet[]): Promise<void> {
   stopBatch = false;
   batchRunning = true;
-  const unbusy = holdBusy();
+  const unbusy = holdBusy('import');
   busyStop.hidden = false;
   busyStop.disabled = false;
   busyBar.hidden = false;
@@ -1697,12 +1695,16 @@ function buildMenu(info: MachineInfo): void {
         if (!l) return;
         book.hidden = false;
         const rec = moneyWatch.rec;
-        inV.textContent = money(rec ? rec.total.inPence : l.inPence);
-        outV.textContent = rec
-          ? money(rec.total.outPence)
-          : l.unpricedOut
-          ? str('main.n_n_coins', { 0: money(l.outPence), 1: l.unpricedOut })
-          : money(l.outPence);
+        const t = rec ? rec.total : l;
+        const inCount = t.unpricedIn ?? 0;
+        inV.textContent = inCount
+          ? (t.inPence
+            ? `${money(t.inPence)} + ${str('main.n_meter_counts', { n: inCount })}`
+            : str('main.n_meter_counts', { n: inCount }))
+          : money(t.inPence);
+        outV.textContent = t.unpricedOut
+          ? str('main.n_n_coins', { 0: money(t.outPence), 1: t.unpricedOut })
+          : money(t.outPence);
         const tokParts: string[] = [];
         if (l.tokenOutPence) tokParts.push(money(l.tokenOutPence));
         if (l.unpricedTokenOut) {
@@ -1832,9 +1834,13 @@ const appActions: ActionSurface = {
   running: () => running,
   closeMenu,
   coin: (c) => {
-    emu.coin(c.bit);
-    effects.coin(undefined);
-    stopWatch.engage();
+    const booted = session.boot;
+    effects.coinDrop(undefined, () => {
+      if (booted !== session.boot) return null;
+      emu.coin(c.bit);
+      stopWatch.engage();
+      return 'accepted';
+    });
   },
   throwSwitch: (sw, checked) => {
     const said = throwPanelSwitch(sw, checked);
@@ -2925,17 +2931,19 @@ function loadSnapshotFile(file: File): void {
 }
 
 function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor']): void {
-  const f = emu.latestFrame();
-  if (f && !f.coinBusy && (f.coinRefusing >>> bit) & 1) {
+  if (!emu.latestFrame()) return;
+  const booted = session.boot;
+  effects.coinDrop(acceptor, () => {
+    const f = emu.latestFrame();
+    if (!f || booted !== session.boot) return null;
+    if (f.coinBusy) {
+      return 'refused';
+    }
     emu.coin(bit);
-    effects.coin(acceptor, 'refused');
-  } else if (f && !f.coinBusy) {
-    emu.coin(bit);
-    effects.coin(acceptor);
+    if ((f.coinRefusing >>> bit) & 1) return 'refused';
     stopWatch.engage();
-  } else if (f) {
-    effects.coin(acceptor, 'refused');
-  }
+    return 'accepted';
+  });
 }
 
 function coinsMenuHint(view: PlatformView): string {
@@ -3410,6 +3418,10 @@ function startArtworkPass(): void {
         artworkShown = false;
         status.textContent = '';
       }
+    },
+    onPaused: (paused) => {
+      if (batchRunning) return;
+      if (paused) { status.textContent = str('main.installing_paused'); artworkShown = true; }
     },
     visible: () => new Set(
       [...document.querySelectorAll<HTMLElement>('#tiles .art[data-hash]')]

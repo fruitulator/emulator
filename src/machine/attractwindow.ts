@@ -2,6 +2,7 @@ export interface Second {
   t: number; reels: boolean; ledger: boolean; glass: boolean; alarm: boolean; line: string;
   lamps?: number;
   pics?: readonly number[];
+  video?: number;
 }
 
 export const quiet = (s: Second): boolean => !s.reels && !s.ledger && !s.alarm;
@@ -33,13 +34,23 @@ export function varied(w: readonly Second[]): boolean {
   return count(w.slice(0, half)) >= PICTURES_MIN && count(w.slice(half)) >= PICTURES_MIN;
 }
 
+export const VIDEO_ATTRACT_MAX = 40;
+
+export const videoPlaying = (s: Second): boolean => (s.video ?? 0) > VIDEO_ATTRACT_MAX;
+
+export function videoShow(w: readonly Second[]): boolean {
+  return w.length > 0 && w.every((s) => quiet(s) && s.video !== undefined && s.video >= 1 && s.video <= VIDEO_ATTRACT_MAX);
+}
+
 const alive = (w: readonly Second[]): boolean => w.every(quiet) && w.some(moving);
 
-export const keepable = (w: readonly Second[]): boolean => alive(w) && varied(w);
+export const keepable = (w: readonly Second[]): boolean => (alive(w) && varied(w)) || videoShow(w);
 
 export function attractFired(secs: readonly Second[], windowS: number): boolean {
   if (secs.length < windowS) return false;
   const w = secs.slice(-windowS);
+  const long0 = Math.max(windowS, QUIET_LONG_S);
+  if (secs.length >= long0 && videoShow(secs.slice(-long0))) return true;
   if (!alive(w)) return false;
   if (secs.length < VARIETY_S) return false;
   const v = secs.slice(-VARIETY_S);

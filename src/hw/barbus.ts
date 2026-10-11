@@ -160,7 +160,25 @@ export class Barbus {
   private alphaCursor = 0;
   alphaWindow = 16;
 
+  alphaOn = true;
+
+  private alphaControl(len: number, data: number): void {
+    if (len === 1 && (data & 4) !== 0) { this.alphaOn = true; return; }
+    if (len === 1) this.alphaOn = false;
+    this.alphaReset();
+  }
+
+  private alphaReset(): void {
+    this.alphaCells.fill(0x20);
+    this.alphaPunct.fill(0);
+    this.alphaDuty = 0;
+    this.alphaCursor = 0;
+    this.alphaWindow = 16;
+    this.onAlpha?.(this.alphaCells, this.alphaPunct);
+  }
+
   private alphaWrite(payload: number[]): void {
+    if (!this.alphaOn) return;
     for (const b of payload) {
       if ((b & 0xe0) === 0xe0) { this.alphaDuty = b & 0x1f; continue; }
       if ((b & 0xf0) === 0xc0) { const n = b & 0x0f; this.alphaWindow = n === 0 ? 16 : n; continue; }
@@ -436,6 +454,11 @@ export class Barbus {
       }
     }
 
+    if ((addr & 0xfe) === 0x00 && (cmd & 0xf0) === 0x90) {
+      const long = (cmd & 0x0f) === 0x0f;
+      const len = long ? (body[2] ?? 0) : cmd & 0x0f;
+      this.alphaControl(len, body[long ? 3 : 2] ?? 0);
+    }
     if ((addr & 0xfe) === 0x00 && cmd >= 0xa1 && cmd <= 0xaf) {
       const payload = cmd === 0xaf ? body.slice(3, 3 + body[2]) : body.slice(2, 2 + (cmd - 0xa0));
       this.alphaWrite(payload);
@@ -522,6 +545,10 @@ export class Barbus {
       const unit = (body[0] >> 1) & 7;
       if ((cmd & 0xf0) === 0xc0) { this.muxSenseHold[unit] = (sub ?? 0) + 1; return [0x00]; }
       if ((cmd & 0xf0) === 0xd0) return [0x01, this.muxSense(unit)];
+      if ((cmd & 0xf0) === 0x90) {
+        const len = (cmd & 0x0f) === 0x0f ? (body[2] ?? 0) : cmd & 0x0f;
+        return len === 1 ? [0x01, 0x00] : [0x00];
+      }
       return [0x00];
     }
 

@@ -12,7 +12,7 @@ import { Mc68681 } from '../hw/mc68681';
 import { Sec } from '../hw/sec';
 import { Sc4HopperPair, locateSc4PayoutUnits, readSc4HopperCoins, type Sc4Coin, type Sc4HopperCoins, type Sc4PayoutUnits } from '../hw/sc4hoppers';
 import { JcmEba, Sch2Hopper, deviceFor } from '../hw/cctalk';
-import type { BnvKey } from '../hw/cctalkbnv';
+import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { DataPak } from '../hw/datapak';
 import { MeterConfirm } from '../hw/meterconfirm';
@@ -21,6 +21,7 @@ import { BfmLed } from '../hw/bfmled';
 import { Ymz280b } from '../hw/ymz280b';
 import { Bda } from '../hw/bda';
 import { Bd1 } from '../hw/bd1';
+import { Dm01, DM01_CLOCK } from '../hw/dm01';
 import { Reel } from '../hw/reel';
 import { percentageCode, prizeCode, sc4StakeBits } from '../hw/bfmkeys';
 import type { LayoutSwitch } from './layoutswitches';
@@ -81,7 +82,7 @@ export interface IoAccess {
 }
 
 export class Sc4 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'coinLinePattern', 'tokenLine', 'programMem'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'coinLinePattern', 'tokenLine', 'programMem', 'dmBusySwitch'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: M68307Sim;
@@ -105,6 +106,21 @@ export class Sc4 implements Bus16, Machine {
 
   setSerialHoppers(models: readonly (string | null)[]): void {
     this.serialHopperModels = [models[0] ?? 'SCH 2', models[1] ?? 'SCH 2'];
+  }
+
+  private serialHopperDes: readonly [boolean, boolean] = [false, false];
+
+  setSerialHopperDes(des: readonly (boolean | null)[]): void {
+    this.serialHopperDes = [des[0] ?? false, des[1] ?? false];
+    for (const [address, h] of this.ccHoppers) h.desFitted = this.serialHopperDes[address - 3] ?? false;
+  }
+
+  private ccTalkKeys: CcTalkKeys = DEFAULT_CCTALK_KEYS;
+
+  setCcTalkKeys(keys: CcTalkKeys): void {
+    this.ccTalkKeys = keys;
+    for (const [address, h] of this.ccHoppers) applyPartKeys(h, address === 3 ? keys.hopper1 : keys.hopper2);
+    if (this.ccNote) applyPartKeys(this.ccNote, keys.note);
   }
 
   private lastPayTxCycle = 0;
@@ -160,7 +176,7 @@ export class Sc4 implements Bus16, Machine {
     }
   }
 
-  fitNoteValidator(type: number, desFitted = false, bnvKey: BnvKey | null = null): boolean {
+  fitNoteValidator(type: number, desFitted = false): boolean {
     if (type !== 1) {
       this.ccNote = null;
       this.resetNoteLamps();
@@ -169,7 +185,7 @@ export class Sc4 implements Bus16, Machine {
     const v = new JcmEba();
     v.address = 0x28;
     v.desFitted = desFitted;
-    if (bnvKey) v.setStoredKey(bnvKey);
+    applyPartKeys(v, this.ccTalkKeys.note);
     v.onStacked = (billType) => { if (this.booksMoney) this.cashLedger.inPence += JcmEba.billPence(billType) ?? 0; };
     v.onLampWord = (word) => { this.noteLamps.write(word); this.packNoteLamps(); };
     this.ccNote = v;
@@ -204,6 +220,8 @@ export class Sc4 implements Bus16, Machine {
       const part = deviceFor(this.serialHopperModels[dest - 3]);
       if (!(part instanceof Sch2Hopper)) return;
       h = part;
+      h.desFitted = this.serialHopperDes[dest - 3] ?? false;
+      applyPartKeys(h, dest === 3 ? this.ccTalkKeys.hopper1 : this.ccTalkKeys.hopper2);
       h.setPeriod(Math.floor(MASTER_CLOCK / 6));
       const address = dest;
       h.onPaid = () => { if (!this.pricesOut()) this.bookHopperCoin(this.hopperCoins().cctalk.get(address) ?? null); };
@@ -343,6 +361,34 @@ export class Sc4 implements Bus16, Machine {
   });
   segmentedAlpha = false;
   readonly vfd2 = new Bda(7, true, true);
+  dm01: Dm01 | null = null;
+  private dmBusySwitch = 20;
+  private dmReady: boolean | null = null;
+  private dmSelect = false;
+  private static readonly DM01_RATIO = DM01_CLOCK / MASTER_CLOCK;
+
+  fitDotMatrix(rom: Uint8Array, busySwitch: number | null = null): void {
+    this.dm01 = new Dm01();
+    this.dm01.loadRom(rom);
+    this.dm01.reset();
+    this.dmBusySwitch = busySwitch !== null && busySwitch >= 0 && busySwitch < 128 ? busySwitch : 20;
+    this.dmReady = null;
+    this.vfd.divert = (b) => this.dm01!.queueChar(b);
+  }
+
+  get outputs(): { dots: Uint8Array } | undefined {
+    return this.dm01 ? { dots: this.dm01.dots } : undefined;
+  }
+
+  private runDotMatrix(cycles: number): void {
+    const d = this.dm01!;
+    d.run(cycles * Sc4.DM01_RATIO);
+    const ready = d.ready;
+    if (ready !== this.dmReady) {
+      this.dmReady = ready;
+      this.setInput(this.dmBusySwitch >> 3, this.dmBusySwitch & 7, ready);
+    }
+  }
   private ac2 = 0xff;
   private portB = 0;
   readonly reels = [0, 1, 2, 3, 4, 5].map(
@@ -644,6 +690,10 @@ export class Sc4 implements Bus16, Machine {
       { id: 'alpha', label: 'VFD', part: 'BDA - 16 char', device: this.vfd, signal: 'display' },
       { id: 'alpha2', label: 'VFD 2', part: 'AC2 - 16 char', device: this.vfd2,
         io: [[IO_BASE + 0x1370, IO_BASE + 0x137f]] },
+      ...(this.dm01
+        ? [{ id: 'dm01', label: 'DOT MATRIX', part: 'DM01 - 65x21, own MC6809',
+            device: this.dm01 } as BoardPart]
+        : []),
 
       { id: 'cpu', label: 'CPU', part: 'MC68307 EC000 - 16 MHz', device: this.cpu, cpu: true },
       { id: 'sim', label: 'SIM', part: 'ports - timers - I2C', device: this.sim },
@@ -1038,7 +1088,7 @@ export class Sc4 implements Bus16, Machine {
   readonly strayReads = new Map<number, number>();
 
   constructor() {
-    this.cpu = new M68000(this);
+    this.cpu = new M68000(this, { level7Latch: true });
     this.resetNoteLamps();
     this.parHopper.onCoin = (h) => {
       if (this.pricesOut()) return;
@@ -1064,6 +1114,9 @@ export class Sc4 implements Bus16, Machine {
         const r2 = this.reels[2];
         if (r2) { r2.traceClock = this.cpu.cycles >>> 0; r2.update((v >> 8) & 0x0f); }
         this.vfd.setSerial((v & 0x4000) !== 0, (v & 0x1000) !== 0, (v & 0x2000) === 0);
+        const select = (v & 0x4000) !== 0;
+        if (this.dm01 && this.dmSelect && !select) this.dm01.reset();
+        this.dmSelect = select;
         this.portB = v;
         this.updateAc2();
         this.updateOptics();
@@ -1240,7 +1293,7 @@ export class Sc4 implements Bus16, Machine {
       if (off === 0x0241) {
         const m13 = this.inputRegs[13];
         return this.parHopperFitted
-          ? this.parHopper.readPay() | (m13 & 0x9f)
+          ? this.parHopper.readPay(this.cabinetRio) | (m13 & 0x9f)
           : this.parHopper.readUnfitted(this.cabinetRio, m13);
       }
       if (off === 0x02e0) return 0x00;
@@ -1388,6 +1441,7 @@ export class Sc4 implements Bus16, Machine {
     this.mbus.rtc.tick(cycles);
     this.vfd.tick(cycles);
     this.bd1.tick(cycles);
+    if (this.dm01) this.runDotMatrix(cycles);
     this.serviceDataport(cycles);
     this.tickCoin();
     if (this.noteFitted) this.tickNote(cycles);

@@ -661,6 +661,8 @@ export class Tms9995 {
       }
     }
 
+    if (!this.has9995 && ir < 0x0200) return 4;
+
     if ((ir & 0xfff0) === 0x0080) {
       this.st = this.reg(ir & 15);
       return 4;
@@ -701,6 +703,7 @@ export class Tms9995 {
       return 25;
     }
 
+    if (!this.has9995) return 4;
     this.midFlag = 1;
     this.contextSwitch(0x0008, 1);
     return 14;

@@ -41,7 +41,7 @@ export class InlineEmu implements Emu {
   private halted = false;
   private unbusy: (() => void) | null = null;
   private busy(on: boolean): void {
-    if (on) this.unbusy ??= holdBusy();
+    if (on) this.unbusy ??= holdBusy('emulator');
     else { this.unbusy?.(); this.unbusy = null; }
   }
   private lastTickAt = 0;

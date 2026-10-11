@@ -94,8 +94,6 @@ const LOG_PART_NAMES: Record<UnbuiltPart, string> = {
   'reel controller': 'reel controller',
   'seven-segment driver': 'seven-segment driver',
   'program decoder': 'program decoder',
-  'video palette': 'video palette',
-  'percentage key': 'percentage key',
 };
 
 export function unbuiltLogText(parts: readonly string[]): string {

@@ -91,3 +91,22 @@
 .sheet-row.avatar-note[hidden] {
   display: none;
 }
+.sheet-row.sheet-crop {
+  display: block;
+  padding: 10px 0 6px;
+  cursor: default;
+}
+.sheet-row.sheet-crop:hover {
+  background: none;
+}
+.sheet-row.sheet-zoom {
+  border-top: 0;
+  min-height: 44px;
+  padding-top: 6px;
+}
+.sheet-row.sheet-zoom > span:first-child {
+  flex: none;
+  min-width: 48px;
+  color: var(--muted);
+  font-weight: 500;
+}

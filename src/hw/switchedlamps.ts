@@ -2,14 +2,14 @@ export class SwitchedLamps {
   readonly state: Uint8Array;
   readonly shown: Uint8Array;
 
-  constructor(readonly count: number) {
+  constructor(readonly count: number, readonly load: 0 | 0xff = 0xff) {
     this.state = new Uint8Array(count);
-    this.shown = new Uint8Array(count).fill(0xff);
+    this.shown = new Uint8Array(count).fill(load);
   }
 
   reset(): void {
     this.state.fill(0);
-    this.shown.fill(0xff);
+    this.shown.fill(this.load);
   }
 
   resetDark(): void {

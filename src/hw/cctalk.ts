@@ -1,6 +1,6 @@
 
 import { bnvDecodeFrame, bnvEncodeFrame, crc16, type BnvKey } from './cctalkbnv';
-import { desEcb } from './des';
+import { desEcb, V20_DEFAULT_DES_KEY } from './des';
 import { HopperJitter } from './hopper';
 
 export const CC = {
@@ -96,7 +96,7 @@ function sealEvents(
 }
 
 export class DesKey {
-  key: number[] | null = null;
+  key: number[] | null = [...V20_DEFAULT_DES_KEY];
 
   switchKey(data: readonly number[]): number[] | null {
     if (!this.key || data.length < 16) return null;

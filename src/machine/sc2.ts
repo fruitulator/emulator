@@ -65,7 +65,7 @@ export interface IoAccess {
 }
 
 export class Sc2 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'cabinetLines', 'coinTablesCache', 'programMem'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'cabinetLines', 'coinTablesCache', 'programMem', 'dmBusySwitch'];
   readonly cpu: M6809;
   readonly ram = new Uint8Array(RAM_SIZE);
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -75,10 +75,11 @@ export class Sc2 implements Bus, Machine {
 
   dm01: Dm01 | null = null;
 
-  private dmBusySwitch = 36;
+  private dmBusySwitch = 64;
+  private dmReady: boolean | null = null;
 
   setDmBusySwitch(id: number): void {
-    if (id >= 0 && id < 64 && (id & 7) < 5) this.dmBusySwitch = id;
+    if (id >= 0 && id < 12 * 8) { this.dmBusySwitch = id; this.dmReady = null; }
   }
 
   get outputs(): { dots: Uint8Array } | undefined {
@@ -89,6 +90,17 @@ export class Sc2 implements Bus, Machine {
     this.dm01 = new Dm01();
     this.dm01.loadRom(rom);
     this.dm01.reset();
+    this.dmReady = null;
+  }
+
+  private runDotMatrix(cycles: number): void {
+    const d = this.dm01!;
+    d.run(cycles);
+    const ready = d.ready;
+    if (ready !== this.dmReady) {
+      this.dmReady = ready;
+      this.setInput(this.dmBusySwitch >> 3, this.dmBusySwitch & 7, ready);
+    }
   }
 
   readonly eeprom = new Eeprom24c(1024, 0xa0);
@@ -765,6 +777,7 @@ export class Sc2 implements Bus, Machine {
     else this.ram.fill(0);
     this.inputRegs.set(this.idleInputs);
     this.dm01?.reset();
+    this.dmReady = null;
     this.warmReset();
   }
 
@@ -840,11 +853,7 @@ export class Sc2 implements Bus, Machine {
     if (a >= MUX_BASE && a < MUX_BASE + 0x0c) {
       const off = a - MUX_BASE;
       if (off >= 8) return 0xff;
-      let low = this.inputRegs[off] & 0x1f;
-      if (this.dm01 && off === (this.dmBusySwitch >> 3)) {
-        const bit = 1 << (this.dmBusySwitch & 7);
-        low = (low & ~bit & 0x1f) | (this.dm01.busy() ? 0 : bit);
-      }
+      const low = this.inputRegs[off] & 0x1f;
       const high = off < 4
         ? (this.inputRegs[off + 8] & 0x07) << 5
         : ((this.inputRegs[off + 4] << 2) & 0x60);
@@ -1044,7 +1053,7 @@ export class Sc2 implements Bus, Machine {
     this.upd.tick(cycles, CPU_CLOCK);
     this.opll.tick(cycles, CPU_CLOCK);
 
-    this.dm01?.run(cycles);
+    if (this.dm01) this.runDotMatrix(cycles);
 
     if (this.coinCycles > 0) {
       this.coinCycles -= cycles;

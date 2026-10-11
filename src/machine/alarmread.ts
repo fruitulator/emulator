@@ -16,7 +16,7 @@ const STRIM_ON_DIGITS = /(?:^|\s)(\d\.\d)(?=\s|$)/;
 
 export const ALARM_FORM_CORE: readonly AlarmFormCore[] = [
   { id: 'bacta-type-token', re: /\b(?:ERR|ALM)\b/, reads: 'alpha' },
-  { id: 'mars-strim-code', re: /(?:^|\s)(\d\.[0-9A-F])(?=\s+[A-Z£#])/, reads: 'alpha' },
+  { id: 'mars-strim-code', re: /^\s*(\d\.[0-9A-F])(?=\s+[A-Z£#])/, reads: 'alpha' },
   { id: 'mpu5-alarm-header', re: /\bALARM\b\s*\d+\s*[-‐-―]\s*[0-9A-F]+\b/, reads: 'alpha' },
   { id: 'bfm-system-status', re: /\bSYSTEM STATUS\b/, reads: 'alpha' },
   { id: 'jpm-error-equals', re: /\bERROR = (\d\.\d)(?![\d.])/, reads: 'alpha' },

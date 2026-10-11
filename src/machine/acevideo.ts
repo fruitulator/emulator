@@ -8,8 +8,7 @@ import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
 import type { AudioSource, CabinetSwitch, CashLedger, Machine } from './machine';
-import { newCashLedger } from './machine';
-import type { SlideEffect } from '../layout/fmlconfig';
+import { bookUnpricedIn, ledgerOutMults, newCashLedger } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { Reel } from '../hw/reel';
@@ -50,7 +49,7 @@ export class AceVideoScreen {
 }
 
 export class AceVideo implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'slidePence', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'meterLedgerOut', 'triacLedgerOut'];
 
   readonly clockHz = ACEVIDEO_CLOCK;
   readonly cpu: Z80;
@@ -66,7 +65,7 @@ export class AceVideo implements Machine {
 
   readonly video = new AceVideoScreen();
 
-  readonly lampStore = new SwitchedLamps(LAMP_COUNT);
+  readonly lampStore = new SwitchedLamps(LAMP_COUNT, 0);
   get lamps(): Uint8Array { return this.lampStore.shown; }
 
   readonly meters = new MeterConfirm();
@@ -84,15 +83,15 @@ export class AceVideo implements Machine {
   readonly triacPulses = new Uint32Array(TRIAC_LINES);
   a005 = 1;
 
-  private slidePence: SlideEffect[] = new Array(16).fill(null);
   private meterInRaw: number[] = [];
   private meterOutRaw: number[] = [];
   private triacInRaw: number[] = [];
   private triacOutRaw: number[] = [];
+  private meterLedgerOut: number[] = [];
+  private triacLedgerOut: number[] = [];
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
-  get slidesPriced(): boolean { return this.slidePence.some((p) => p !== null); }
 
   private calls = 0;
   private irqRequest = false;
@@ -173,10 +172,6 @@ export class AceVideo implements Machine {
     }));
   }
 
-  setSlidePence(slides: readonly SlideEffect[]): void {
-    for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
-  }
-
   setMeterMoney(map: {
     meterIn: readonly number[]; meterOut: readonly number[];
     triacIn: readonly number[]; triacOut: readonly number[];
@@ -185,6 +180,10 @@ export class AceVideo implements Machine {
     this.meterOutRaw = [...map.meterOut];
     this.triacInRaw = [...map.triacIn];
     this.triacOutRaw = [...map.triacOut];
+    [this.meterLedgerOut, this.triacLedgerOut] = ledgerOutMults(
+      { in: this.meterInRaw, out: this.meterOutRaw },
+      { in: this.triacInRaw, out: this.triacOutRaw },
+    );
   }
 
   layoutInput(id: number, on: boolean): void {
@@ -213,7 +212,6 @@ export class AceVideo implements Machine {
     this.latch3 = 0;
     this.triacWord = 0;
     this.a005 = 1;
-    this.lampStore.reset();
     this.coinTimer = 0;
     this.coinMask = 0;
   }
@@ -335,6 +333,8 @@ export class AceVideo implements Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+      this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
+      bookUnpricedIn(this.cashLedger, this.meterInRaw[i]);
     }
   }
 
@@ -346,11 +346,8 @@ export class AceVideo implements Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      const p = this.slidePence[i];
-      if (p === null || p === undefined) continue;
-      if (typeof p === 'number') this.cashLedger.outPence += p;
-      else if (p === 'token') this.cashLedger.unpricedTokenOut++;
-      else this.cashLedger.unpricedOut++;
+      this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
+      bookUnpricedIn(this.cashLedger, this.triacInRaw[i]);
     }
   }
 

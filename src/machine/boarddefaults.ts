@@ -9,9 +9,7 @@ export type UnbuiltPart =
   | 'reel drive'
   | 'reel controller'
   | 'seven-segment driver'
-  | 'program decoder'
-  | 'video palette'
-  | 'percentage key';
+  | 'program decoder';
 
 export interface BoardDefault {
   axis: BoardDefaultAxis;

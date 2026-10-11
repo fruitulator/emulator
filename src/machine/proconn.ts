@@ -465,7 +465,7 @@ export class Proconn implements Machine {
           return v;
         }
       case 1:
-        if (ab) return 0;
+        if (!ab) return 0;
         return (this.hopperFitted(2) ? (this.hoppers[1].opto ? 1 : 0) : (inv & 0x10) >> 4) | m[8];
       case 2:
         if (ab) return ~m[6] & 0xff;

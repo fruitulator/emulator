@@ -55,6 +55,10 @@ export function mfmeBoardReelPosition(
   if (system === 'M1AB') {
     return (((position + M1AB_DISPLAY_SHIFT) % steps) + steps) % steps;
   }
+  if (system === 'MPS2') {
+    const MPS2_ADJUST = 3;
+    return (((steps + MPS2_ADJUST - position) % steps) + steps) % steps;
+  }
   return position;
 }
 
@@ -125,6 +129,49 @@ export interface FlipStrip<A = ImageBitmap> extends Rect {
   inset: number;
   borderWidth: number;
   borderColour: number;
+  lampsEnabled?: boolean;
+  lampNums?: number[];
+  mask1?: A;
+  mask2?: A;
+  mask3?: A;
+  lightFloor?: [number, number, number];
+}
+
+export function flipLight(
+  f: Pick<FlipStrip<unknown>, 'lampsEnabled' | 'lampNums' | 'lightFloor'>,
+  level: (n: number) => number, full = 255,
+): { base: [number, number, number]; mask: 0 | 1 | 2 | null; alpha: number } | null {
+  if (!f.lampsEnabled) return null;
+  const floor = f.lightFloor ?? [255, 255, 255];
+  let out: { base: [number, number, number]; mask: 0 | 1 | 2 | null; alpha: number } =
+    { base: floor, mask: null, alpha: 0 };
+  for (let i = 0; i < 3; i++) {
+    const n = f.lampNums?.[i] ?? -2;
+    if (n === -2) continue;
+    const l = n === -1 ? full : Math.max(0, Math.min(full, level(n)));
+    if (l <= 0) continue;
+    out = { base: i === 0 ? floor : [255, 255, 255], mask: i as 0 | 1 | 2, alpha: l / full };
+  }
+  return out;
+}
+
+export function paintFlipLight(
+  lx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  w: number, h: number,
+  plan: { base: [number, number, number]; mask: 0 | 1 | 2 | null; alpha: number },
+  masks: readonly (CanvasImageSource | undefined)[],
+): void {
+  lx.save();
+  lx.globalCompositeOperation = 'source-over';
+  lx.globalAlpha = 1;
+  lx.fillStyle = `rgb(${plan.base[0]},${plan.base[1]},${plan.base[2]})`;
+  lx.fillRect(0, 0, w, h);
+  const m = plan.mask === null ? undefined : masks[plan.mask];
+  if (m && plan.alpha > 0) {
+    lx.globalAlpha = Math.min(1, plan.alpha);
+    lx.drawImage(m, 0, 0, w, h);
+  }
+  lx.restore();
 }
 
 export function mfmeFlipReelPosition(system: string, position: number, halfSteps: number): number {
@@ -157,6 +204,7 @@ export function paintFlip(
   f: Rect & Pick<FlipStrip<unknown>, 'stops' | 'inset' | 'borderWidth' | 'borderColour'>,
   flaps: CanvasImageSource, bandW: number, bandH: number,
   face: { stop: number; nudge: number }, overlay?: CanvasImageSource,
+  light?: CanvasImageSource,
 ): void {
   const { left: x, top: y, width: w, height: h, stops, inset: i } = f;
   const cellH = bandH / stops;
@@ -171,6 +219,11 @@ export function paintFlip(
   const fh = h - 3 * i;
   if (fw > 0 && fh > 0) {
     fx.drawImage(flaps, 0, face.stop * cellH, bandW, cellH, x + i, y + i + j, fw, fh);
+  }
+  if (light && fw > 0 && h - 2 * i > 0) {
+    fx.globalCompositeOperation = 'multiply';
+    fx.drawImage(light, x + i, y + i, fw, h - 2 * i);
+    fx.globalCompositeOperation = 'source-over';
   }
   fx.fillStyle = '#000';
   fx.fillRect(x + i, y + Math.trunc(h / 2) + j, Math.max(0, w - 2 * i + 1), 1);

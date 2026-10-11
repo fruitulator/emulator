@@ -61,6 +61,67 @@ export function mpu4OkiLatch(data: number, banks: number): number {
   return mpu4SampleSlot(d & 0x7f, d > 0x80 ? 1 : 0, banks);
 }
 
+export class OkiCardLines {
+  data = 0;
+  lines = 0x03;
+  ch2Phrase = -1;
+  ch2Rises = 0;
+  ch2Atten = 0;
+
+  reset(): void {
+    this.ch2Phrase = -1;
+    this.ch2Rises = 0;
+    this.ch2Atten = 0;
+    this.lines = 0x03;
+  }
+
+  edges(lines: number): number {
+    const changed = (this.lines ^ lines) & 0x03;
+    this.lines = lines & 0x03;
+    return changed;
+  }
+
+  drive(changed: number, oki: Msm6376): void {
+    const st = (this.lines & 1) !== 0;
+    const ch2 = (this.lines & 2) !== 0;
+    const stChanged = (changed & 1) !== 0;
+    const ch2Changed = (changed & 2) !== 0;
+    if (ch2 && !ch2Changed && stChanged && !st) {
+      if (this.data === 0) oki.stop();
+      else oki.play(this.data);
+    }
+    if (!ch2 && ch2Changed) this.ch2Rises = 0;
+    if (!ch2 && stChanged) {
+      if (!st) {
+        if (this.ch2Rises === 0) this.ch2Phrase = this.data;
+      } else {
+        this.ch2Rises++;
+        this.ch2Atten = this.ch2Rises === 1 ? 0 : this.ch2Atten + 1;
+      }
+    }
+    if (ch2 && ch2Changed && this.ch2Phrase >= 0) {
+      const n = this.ch2Phrase;
+      const a = this.ch2Atten;
+      const att = a === 1 ? 0x32 : a === 2 ? 100 : a;
+      if (n === 0) {
+        oki.stop();
+        this.ch2Phrase = -1;
+      } else {
+        if (!oki.voicePlaying(1)) this.ch2Phrase = -1;
+        oki.play(n, 1, (0xff - att) / 0xff);
+      }
+    }
+  }
+}
+
+export function okiPitchFromPtm(t1: number, t3: number, clock: number): number {
+  const t3h = t3 >> 8, t3l1 = (t3 & 0xff) + 1;
+  const q = Math.fround(Math.fround(t3h * t3l1 + 1) / Math.fround(2 * t1 + 2));
+  const whole = Math.trunc(q);
+  const mul = q - whole > 0.5 ? Math.trunc(Math.fround(q + 0.5)) : whole;
+  return ((Math.floor(clock / ((t3h + 1) * t3l1)) * mul) >>> 0) >>> 3;
+}
+
 export function mpu4SampleBanks(files: readonly Uint8Array[]): number[] {
   const bases: number[] = [];
   let offset = 0;
@@ -375,6 +436,7 @@ export class Mpu4 implements Bus, Machine {
 
   constructor() {
     this.cpu = new M6809(this);
+    this.cpu.illegalAsV20 = true;
     this.segBank0 = new SegColumnBank(this.outputs.leds, this.outputs.ledLevels, 0);
     this.segBank1 = new SegColumnBank(this.outputs.leds, this.outputs.ledLevels, 1);
 
@@ -491,7 +553,7 @@ export class Mpu4 implements Bus, Machine {
     this.icSound = new Pia6821({
       irqChanged,
       writeA: (v) => {
-        this.okiData = mpu4OkiLatch(v, this.sampleBankBases.length);
+        this.okiCard.data = mpu4OkiLatch(v, this.sampleBankBases.length);
       },
       writeB: (v) => this.okiPortB(v),
       writeCA2: (level) => this.okiResetLine(level),
@@ -595,12 +657,10 @@ export class Mpu4 implements Bus, Machine {
 
   private clockOkiFromPtm(): void {
     const { latch } = this.ptmSound.debugState();
-    const t1 = latch[0], t3 = latch[2];
-    const t3h = t3 >> 8, t3l1 = (t3 & 0xff) + 1;
-    const q = Math.fround(Math.fround(t3h * t3l1 + 1) / Math.fround(2 * t1 + 2));
-    const whole = Math.trunc(q);
-    const mul = q - whole > 0.5 ? Math.trunc(Math.fround(q + 0.5)) : whole;
-    const pitch = ((Math.floor(E_CLOCK / ((t3h + 1) * t3l1)) * mul) >>> 0) >>> 3;
+    this.clockOki(okiPitchFromPtm(latch[0], latch[2], E_CLOCK));
+  }
+
+  private clockOki(pitch: number): void {
     this.oki.setRate(pitch > 0 ? pitch : this.powerOnSampleRate);
   }
 
@@ -686,14 +746,11 @@ export class Mpu4 implements Bus, Machine {
     ];
   }
 
-  private okiData = 0;
-  private okiLines = 0x03;
+  private readonly okiCard = new OkiCardLines();
+  private readonly videoOkiCard = new OkiCardLines();
   private okiVolClock = false;
   private okiVolume = 0;
   private okiInReset = false;
-  private okiCh2Phrase = -1;
-  private okiCh2Rises = 0;
-  private okiCh2Atten = 0;
 
   private packNar = true;
   private packIdle = true;
@@ -718,8 +775,7 @@ export class Mpu4 implements Bus, Machine {
     this.okiVolClock = clock;
 
     const lines = v & 0x03;
-    const changed = this.okiLines ^ lines;
-    this.okiLines = lines;
+    const changed = this.okiCard.edges(lines);
     if (this.okiInReset || changed === 0) return;
     const st = (lines & 1) !== 0;
     const ch2 = (lines & 2) !== 0;
@@ -730,31 +786,7 @@ export class Mpu4 implements Bus, Machine {
       return;
     }
 
-    if (ch2 && !ch2Changed && stChanged && !st) {
-      if (this.okiData === 0) this.oki.stop();
-      else this.oki.play(this.okiData);
-    }
-    if (!ch2 && ch2Changed) this.okiCh2Rises = 0;
-    if (!ch2 && stChanged) {
-      if (!st) {
-        if (this.okiCh2Rises === 0) this.okiCh2Phrase = this.okiData;
-      } else {
-        this.okiCh2Rises++;
-        this.okiCh2Atten = this.okiCh2Rises === 1 ? 0 : this.okiCh2Atten + 1;
-      }
-    }
-    if (ch2 && ch2Changed && this.okiCh2Phrase >= 0) {
-      const n = this.okiCh2Phrase;
-      const a = this.okiCh2Atten;
-      const att = a === 1 ? 0x32 : a === 2 ? 100 : a;
-      if (n === 0) {
-        this.oki.stop();
-        this.okiCh2Phrase = -1;
-      } else {
-        if (!this.oki.voicePlaying(1)) this.okiCh2Phrase = -1;
-        this.oki.play(n, 1, (0xff - att) / 0xff);
-      }
-    }
+    this.okiCard.drive(changed, this.oki);
   }
 
   private volumeLevel = 0xff;
@@ -766,10 +798,7 @@ export class Mpu4 implements Bus, Machine {
 
   private okiResetLine(level: boolean): void {
     if (level && this.okiInReset) {
-      this.okiCh2Phrase = -1;
-      this.okiCh2Rises = 0;
-      this.okiCh2Atten = 0;
-      this.okiLines = 0x03;
+      this.okiCard.reset();
       this.packNar = true;
       this.packIdle = true;
       this.packNarTimer = 0;
@@ -780,8 +809,8 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private packCardStrobe(st: boolean, ch2: boolean, stChanged: boolean, ch2Changed: boolean): void {
-    if (ch2 && !ch2Changed && stChanged && !st && (this.packNar || this.okiData === 0)) {
-      const id = this.okiData;
+    if (ch2 && !ch2Changed && stChanged && !st && (this.packNar || this.okiCard.data === 0)) {
+      const id = this.okiCard.data;
       if (this.packSamples[id]) {
         this.packNar = false;
         if (!this.packActive[0]) {
@@ -794,24 +823,24 @@ export class Mpu4 implements Bus, Machine {
         }
       }
     }
-    if (!ch2 && ch2Changed) this.okiCh2Rises = 0;
+    if (!ch2 && ch2Changed) this.okiCard.ch2Rises = 0;
     if (!ch2 && stChanged) {
       if (!st) {
-        if (this.okiCh2Rises === 0) this.okiCh2Phrase = this.okiData;
+        if (this.okiCard.ch2Rises === 0) this.okiCard.ch2Phrase = this.okiCard.data;
       } else {
-        this.okiCh2Rises++;
-        this.okiCh2Atten = this.okiCh2Rises === 1 ? 0 : this.okiCh2Atten + 1;
+        this.okiCard.ch2Rises++;
+        this.okiCard.ch2Atten = this.okiCard.ch2Rises === 1 ? 0 : this.okiCard.ch2Atten + 1;
       }
     }
-    if (ch2 && ch2Changed && this.okiCh2Phrase >= 0) {
-      const id = this.okiCh2Phrase;
+    if (ch2 && ch2Changed && this.okiCard.ch2Phrase >= 0) {
+      const id = this.okiCard.ch2Phrase;
       if (this.packSamples[id]) {
         if (!this.packActive[1]) {
-          this.okiCh2Phrase = -1;
-          this.packCardStart(id, 1, Mpu4.packAttenGain(this.okiCh2Atten));
+          this.okiCard.ch2Phrase = -1;
+          this.packCardStart(id, 1, Mpu4.packAttenGain(this.okiCard.ch2Atten));
         } else {
           this.packStaged[1] = id;
-          this.packStagedAtten = this.okiCh2Atten;
+          this.packStagedAtten = this.okiCard.ch2Atten;
         }
       }
     }
@@ -834,8 +863,8 @@ export class Mpu4 implements Bus, Machine {
       if (this.packNarTimer <= 0) {
         this.packNarTimer = 0;
         this.packNar = true;
-        if ((this.okiLines & 1) === 0) {
-          this.packStaged[0] = this.okiData;
+        if ((this.okiCard.lines & 1) === 0) {
+          this.packStaged[0] = this.okiCard.data;
           this.packNar = false;
         }
       }
@@ -855,7 +884,7 @@ export class Mpu4 implements Bus, Machine {
     if (ended[0]) {
       const id = this.packStaged[0];
       if (id > 0 && this.packSamples[id]) {
-        if (this.okiLines & 1) this.packStaged[0] = -1;
+        if (this.okiCard.lines & 1) this.packStaged[0] = -1;
         this.packNarTimer = 500;
         this.packCardStart(id, 0, 1);
       } else {
@@ -1427,6 +1456,7 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private triacHopperBits(): number {
+    if (this.payoutType === 5) return 0x34;
     if (this.hopperType === 5) return 0x07;
     if (this.hopperType === 3) return 0x05;
     if (this.payoutType === 10) return 0x01;
@@ -1440,7 +1470,14 @@ export class Mpu4 implements Bus, Machine {
   private latchTriacs(v: number): void {
     let rising = v & ~this.outputs.triacs & 0xff;
     this.outputs.triacs = v;
-    if (this.hopperType === 3 || this.hopperType === 5) {
+    if (this.payoutType === 5) {
+      const latch = this.ic8 ? this.ic8.outB() : v;
+      this.hopper1?.motorDrive((latch & 0x10) === 0);
+      this.hopper2?.motorDrive((latch & 0x20) === 0);
+      this.hopper1Opto = (latch & 0x04) === 0;
+      this.hopper2Opto = (latch & 0x04) === 0;
+      rising &= ~0x34;
+    } else if (this.hopperType === 3 || this.hopperType === 5) {
       this.hopper1?.motorDrive((v & 0x01) !== 0);
       this.hopper1Opto = (v & 0x04) === 0;
       if (this.hopperType === 5) {
@@ -1667,7 +1704,7 @@ export class Mpu4 implements Bus, Machine {
   }
 
   setPayoutType(index: number): void {
-    this.setHopperType(index >= 1 && index <= 5 ? index : 0);
+    this.setHopperType(index >= 1 && index <= 5 ? index : index === 9 ? 5 : 0);
     this.payoutType = index;
     if (index === 6) {
       this.hopper1 = new Hopper(E_CLOCK, Mpu4.HOPPER_WAVEFORM);
@@ -1677,7 +1714,7 @@ export class Mpu4 implements Bus, Machine {
     }
   }
 
-  static readonly BUILT_PAYOUTS: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 5, 6, 10, 11, 13]);
+  static readonly BUILT_PAYOUTS: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 13]);
 
   setHopperType(t: number): void {
     this.hopperType = t;
@@ -2231,6 +2268,21 @@ export class Mpu4 implements Bus, Machine {
   attachVideo(card: Mpu4VideoCard): void {
     this.video = card;
     this.videoRam = new Uint8Array(0x8000);
+    const lines = this.videoOkiCard;
+    card.attachOki({
+      okiLatch: (v) => { lines.data = mpu4OkiLatch(v, this.sampleBankBases.length); },
+      okiLines: (v) => {
+        const changed = lines.edges(v);
+        if (changed) lines.drive(changed, this.oki);
+      },
+      okiStatus: () => (this.oki.nar ? 0x80 : 0) | (this.oki.busy ? 0 : 0x40),
+      okiPitch: (pitch) => this.clockOki(pitch),
+      okiReset: () => {
+        lines.reset();
+        lines.data = 0;
+      },
+      okiBanks: () => this.sampleBankBases.length,
+    });
   }
 
   private setStrobeBit(bit: number, state: boolean): void {

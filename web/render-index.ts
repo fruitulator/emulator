@@ -231,7 +231,9 @@ export function buildRenderIndex(
       extent: turned(rect(f.left, f.top, f.width, f.height), f),
       key: (m) => {
         const r = m.reels[reelIndex(m, f)];
-        return r ? mix(mix(mix(0, r.travel | 0), r.position | 0), bounceKey(r)) : 0;
+        let h = r ? mix(mix(mix(0, r.travel | 0), r.position | 0), bounceKey(r)) : 0;
+        if (f.lampsEnabled) for (const n of f.lampNums ?? []) if (n >= 0) h = mix(h, lampBit(m, n));
+        return h;
       },
     });
   }

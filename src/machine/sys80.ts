@@ -344,10 +344,19 @@ export class Sys80 implements Machine {
     return o;
   }
 
+  protected optoMask(): number {
+    let m = 0;
+    for (let i = 0; i < REEL_COUNT; i++) if (this.sreels[i].present) m |= 1 << i;
+    return m;
+  }
+
   protected readPort(addr: number): number {
     switch (addr & 0x1e0) {
       case 0x000: {
-        this.matrix[0] = (this.matrix[0] & 0xf0) | (this.optos() ^ 0xf);
+        {
+          const mask = this.optoMask();
+          this.matrix[0] = (this.matrix[0] & ~mask & 0xff) | ((this.optos() ^ 0xf) & mask);
+        }
         return (this.matrix[(addr >> 3) & 3] >> (addr & 7)) & 1;
       }
       case 0x020: {

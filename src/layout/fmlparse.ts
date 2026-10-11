@@ -484,6 +484,7 @@ const DISCREEL_TAGS: Record<number, [Role, string]> = {
 };
 
 const DISCREEL_HEADER_TAGS: Record<number, [Role, string]> = {
+  ...BASE_TAGS,
   0x0b: ['byte', ''], 0x1c: ['u32', 'NonNullSublampCount'],
   0x36: ['bitmap', 'Overlay'],
   0x38: ['subcount', 'SublampCount'], 0x39: ['subtable', 'SublampTable'],

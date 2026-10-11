@@ -21,6 +21,22 @@ export function namedInputId(n: NamedInput): number {
 export function layoutNamedInputs(
   platform: readonly NamedInput[],
   ids: Partial<Record<SwitchControl, number>>,
+  presets: readonly { id: number; made: boolean }[] = [],
+): NamedInput[] {
+  const out = addressNamedInputs(platform, ids);
+  if (!presets.length) return out;
+  const atRest = new Map(presets.map((p) => [p.id, p.made]));
+  return out.map((n) => {
+    const made = atRest.get(namedInputId(n));
+    if (made === undefined || !n.toggle) return n;
+    const { invert: _drop, ...rest } = n;
+    return made ? { ...rest, invert: true } : rest;
+  });
+}
+
+function addressNamedInputs(
+  platform: readonly NamedInput[],
+  ids: Partial<Record<SwitchControl, number>>,
 ): NamedInput[] {
   const seen = new Set<SwitchControl>();
   const out: NamedInput[] = platform.map((n) => {

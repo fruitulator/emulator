@@ -17,6 +17,7 @@ import type { DeclaredCoin } from './layoutcoins';
 import { detectPrices, linesOf, wiringKey, wiringStateFor, type CoinLine, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import { locateSys1Coins, locateSys1Payouts, locateSys1Solenoids, type Sys1Payouts, type Sys1Solenoids, sys1CoinLines, sys1CoinTable, sys1DryRun, sys1LineScripts, sys1MeterUnit, sys1ScriptLine, sys1TokenSequence, type Sys1CoinCode, type Sys1Mem } from './sys1coins';
 import { StrayCounter } from './strayaccess';
+import { V20_STEP_TABLE, v20OpticWindow } from './v20reels';
 
 const CLOCK = 4_000_000;
 const AY_CLOCK = 1_000_000;
@@ -27,11 +28,13 @@ const ROM_TOP = 0x8000;
 const RAM_SIZE = 0x800;
 const LAMP_COUNT = 256;
 const DIGIT_COUNT = 16;
-const REEL_COUNT = 4;
+const REEL_COUNT = 8;
+const REEL_BANK = 4;
 
 const REEL_STAND_IN_HALF_STEPS = 240;
 const REEL_STAND_IN_STOPS = 24;
 const STEP_BIT_MODULUS = 10;
+const SYS1_COIL_REMAP = [0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15];
 
 const COIN_HOLD = Math.round(0.1 * CLOCK);
 const COIN_GAP = Math.round(0.1 * CLOCK);
@@ -41,7 +44,13 @@ interface Sys1Reel {
   steps: number;
   flip: boolean;
   present: boolean;
+  last: number;
+  winStart: number;
+  winEnd: number;
+  inverted: boolean;
 }
+
+export type Sys1ReelType = 0 | 1 | 2;
 
 class Ppi {
   readonly chip: I8255;
@@ -152,7 +161,10 @@ export class Sys1 implements Machine {
     noteRomCut(this, roms.reduce((n, r) => n + r.length, 0), ROM_TOP);
     if (nvram) this.ram.set(nvram.subarray(0, RAM_SIZE));
     for (let i = 0; i < REEL_COUNT; i++) {
-      this.sreels.push({ pos: 0, steps: REEL_STAND_IN_HALF_STEPS, flip: false, present: false });
+      this.sreels.push({
+        pos: 0, steps: REEL_STAND_IN_HALF_STEPS, flip: false, present: false,
+        last: 0, winStart: 6, winEnd: 8, inverted: false,
+      });
       this.reels.push(new Reel({
         stepsPerRevolution: REEL_STAND_IN_HALF_STEPS, symbols: REEL_STAND_IN_STOPS,
       }));
@@ -174,6 +186,8 @@ export class Sys1 implements Machine {
       if (g.halfSteps > 0) r.steps = g.halfSteps;
       else this.noteReelStandIn(g.number);
       r.flip = !!g.flip;
+      r.inverted = !!g.invertedOpto;
+      [r.winStart, r.winEnd] = v20OpticWindow(g.optoTab);
       if (!(g.stops > 0)) this.noteReelStandIn(g.number);
       this.reels[g.number] = new Reel({
         stepsPerRevolution: r.steps,
@@ -201,6 +215,12 @@ export class Sys1 implements Machine {
   setDips(d1: number, d2: number): void { this.dip1 = d1 & 0xff; this.dip2 = d2 & 0xff; }
 
   setStepMode(mode: number): void { this.stepMode = mode === 1 ? 1 : 0; }
+
+  reelType: Sys1ReelType = 0;
+  setReelType(t: Sys1ReelType): void {
+    this.reelType = t;
+    this.optos = this.opticByte();
+  }
 
   setSwitches(sw: LayoutSwitch[]): void {
     this.switches = sw;
@@ -334,9 +354,15 @@ export class Sys1 implements Machine {
       if (this.sreels[3].present && this.sreels[3].flip) b = (b & 0x7f) | ((~this.optos & 8) << 4);
       this.ic37.inB = b;
     } else if (reg === 2) {
-      let step = 0;
-      for (let i = 0; i < REEL_COUNT; i++) if (this.sreels[i].pos % STEP_BIT_MODULUS === 0) step |= 1 << i;
-      this.ic37.inC = step | ((this.optos << 4) & 0xf0);
+      if (this.reelType === 0 || this.reelType === 2) {
+        const bankB = this.reelType === 2 && (this.ic25.pins[0] & 0x20) !== 0;
+        const base = bankB ? REEL_BANK : 0;
+        let step = 0;
+        for (let i = 0; i < REEL_BANK; i++) if (this.sreels[base + i].pos % STEP_BIT_MODULUS === 0) step |= 1 << i;
+        this.ic37.inC = step | (bankB ? this.optos & 0xf0 : (this.optos << 4) & 0xf0);
+      } else {
+        this.ic37.inC = (this.ic25.pins[1] & 0x40 ? this.optos >> 3 : this.optos) & 0xff;
+      }
     }
   }
 
@@ -394,39 +420,89 @@ export class Sys1 implements Machine {
       this.meterLines = m;
     }
     const c = p.pins[2];
-    if ((p.changed[1] & 0x0a) && (~b & 0x0a)) {
-      const ext = (c & 0x70) >> 4;
-      const on = c & 0x80 ? 0xff : 0;
-      if (!(b & 0x02)) this.lamps[87 - ext] = on;
-      if (!(b & 0x08)) this.lamps[95 - ext] = on;
+    if (this.reelType === 0) {
+      if ((p.changed[1] & 0x0a) && (~b & 0x0a)) {
+        const ext = (c & 0x70) >> 4;
+        const on = c & 0x80 ? 0xff : 0;
+        if (!(b & 0x02)) this.lamps[87 - ext] = on;
+        if (!(b & 0x08)) this.lamps[95 - ext] = on;
+      }
+      const clocks = p.changed[2] & c & 0x0f;
+      if (clocks) this.driveReels((c & 0xf0) | clocks, 0);
+    } else if (this.reelType === 2) {
+      const clocks = p.changed[2] & c & 0x0f;
+      if (clocks) this.driveReels((c & 0xf0) | clocks, a & 0x20 ? REEL_BANK : 0);
+    } else if (this.reelType === 1 && (p.changed[2] & c & 0x08)) {
+      this.sixReelAStrobe(c, b);
     }
-    const clocks = p.changed[2] & c & 0x0f;
-    if (clocks) this.driveReels((c & 0xf0) | clocks);
+  }
+
+  private sixReelAStrobe(c: number, b: number): void {
+    if ((c & 1) && (c & 7) !== 1) {
+      const reel = (b & 0x40 ? 6 : 3) - ((c & 7) >> 1);
+      this.coilStep(reel, SYS1_COIL_REMAP[(~c >> 4) & 0x0f]!);
+      return;
+    }
+    const v = (~c & 0x70) >> 4;
+    const hi = b & 0x40 ? 12 : 0;
+    const k = c & 0x0f;
+    const start = k === 10 ? 0x58 : k === 12 ? 0x54 : k === 14 ? 0x50 : -1;
+    if (start < 0) return;
+    for (let i = 0; i < 4; i++) this.lamps[hi + start + i] = (v >> i) & 1 ? 0xff : 0;
+  }
+
+  private coilStep(i: number, pattern: number): void {
+    const r = this.sreels[i];
+    if (!r || !pattern) return;
+    if ((((r.last ^ pattern) + 1) & 0x0f) <= 1) return;
+    r.last = pattern;
+    if (!r.present || r.flip) return;
+    const d = V20_STEP_TABLE[r.pos & 7]![pattern]!;
+    if (!d) return;
+    r.pos = (r.pos + d + r.steps) % r.steps;
+    this.reels[i].position = r.pos;
+    this.reels[i].travel += d;
+    this.optos = this.opticByte();
   }
 
   private writeDigit(d: number, v: number): void {
     if (d < DIGIT_COUNT) this.digits[d] = v & 0x7f;
   }
 
-  private driveReels(v: number): void {
-    for (let i = 0; i < REEL_COUNT; i++) {
+  private driveReels(v: number, bank: number): void {
+    for (let i = 0; i < REEL_BANK; i++) {
       if (!((v >> i) & 1)) continue;
-      const r = this.sreels[i];
+      const n = bank + i;
+      const r = this.sreels[n];
       if (!r.present) continue;
       const step = r.flip ? 1 : 2 - this.stepMode;
       const d = (v >> (4 + i)) & 1 ? -step : step;
       r.pos = ((r.pos + d + r.steps) % r.steps) & ~(step - 1);
-      this.reels[i].position = r.pos;
-      this.reels[i].travel += d;
+      this.reels[n].position = r.pos;
+      this.reels[n].travel += d;
     }
-    this.optos = this.opticByte();
+    this.optos = this.bankOptos(bank);
+  }
+
+  private bankOptos(bank: number): number {
+    let o = 0;
+    for (let i = 0; i < REEL_BANK; i++) {
+      const r = this.sreels[bank + i];
+      if (r.present && r.pos === (r.flip ? 2 : 0)) o |= 1 << i;
+    }
+    return o << bank;
   }
 
   private opticByte(): number {
+    if (this.reelType !== 1) return this.bankOptos(0);
     let o = 0;
     for (let i = 0; i < REEL_COUNT; i++) {
       const r = this.sreels[i];
-      if (r.present && r.pos === (r.flip ? 2 : 0)) o |= 1 << i;
+      if (!r.present || r.winStart === r.winEnd) continue;
+      const inWin = r.winStart < r.winEnd
+        ? r.winStart < r.pos && r.pos < r.winEnd
+        : r.pos < r.winEnd || r.winStart < r.pos;
+      if (inWin !== r.inverted) o |= 1 << i;
     }
     return o;
   }
@@ -495,7 +571,7 @@ export class Sys1 implements Machine {
       { id: 'rom', label: 'PROGRAM ROM', part: '32K from $0000', device: this.rom },
       { id: 'ay', label: 'SOUND', part: 'AY-3-8910 - DIP banks on its ports', device: this.ay },
       { id: 'cpu', label: 'CPU', part: 'Z80 - 4 MHz', device: this.cpu, cpu: true },
-      { id: 'reels', label: '4 REELS', part: 'stepper, IC25 port C', device: this.sreels },
+      { id: 'reels', label: this.reelType === 0 ? '4 REELS' : '6 REELS', part: 'stepper, IC25 port C', device: this.sreels },
       { id: 'hopper', label: 'HOPPER', part: 'not modelled' },
       { id: 'alpha', label: 'ALPHA', part: '16 char, bit-serial - IC25 port B',
         device: this.display ?? this.vfd, signal: 'display' },

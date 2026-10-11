@@ -135,7 +135,7 @@ export function bcosNameMap(rom: Uint8Array): Map<number, string> | null {
     let s = '';
     for (let i = a; i < rom.length && i < a + 32; i++) {
       const c = rom[i];
-      if (c === 0) return s.length >= 2 ? s : null;
+      if (c === 0) return s.length >= 1 ? s : null;
       if (c < 0x20 || c > 0x7e) return null;
       s += String.fromCharCode(c);
     }
@@ -143,11 +143,17 @@ export function bcosNameMap(rom: Uint8Array): Map<number, string> | null {
   };
   let best = -1;
   let bestLen = 0;
-  for (let p = 0; p + 6 <= rom.length; p += 2) {
-    let n = 0;
-    while (p + (n + 1) * 6 <= rom.length && nameAt(u32(rom, p + n * 6 + 2)) !== null) n++;
-    if (n > bestLen) { best = p; bestLen = n; }
-    if (n > 0) p += n * 6 - 2;
+  for (let r = 0; r < 6; r += 2) {
+    let start = r;
+    for (let p = r; p + 6 <= rom.length; p += 6) {
+      if (nameAt(u32(rom, p + 2)) !== null) continue;
+      const n = (p - start) / 6;
+      if (n > bestLen && u16(rom, p) === 0xffff && u32(rom, p + 2) === 0) {
+        best = start;
+        bestLen = n;
+      }
+      start = p + 6;
+    }
   }
   if (bestLen < 64) return null;
   const out = new Map<number, string>();

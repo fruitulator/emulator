@@ -99,6 +99,18 @@ export class CabinetEffects {
     if (s) this.play(s.first, s.then);
   }
 
+  coinDrop(acceptor: { note?: number; effect?: number } | undefined, land: () => CoinOutcome | null): void {
+    const drop = this.gate(EFFECT_GROUP.coins) ? coinSound(acceptor?.note, acceptor?.effect, 'accepted') : null;
+    const generation = this.generation;
+    const voice = drop ? this.play(drop.first, null, () => {
+      const outcome = land();
+      if (outcome === null || !this.enabled || generation !== this.generation) return;
+      const then = coinSound(acceptor?.note, acceptor?.effect, outcome)?.then ?? null;
+      if (then !== null) this.play(then);
+    }) : null;
+    if (!voice) land();
+  }
+
   frame(f: FrameView): void {
     if (f.seq === this.lastSeq && this.base?.epoch === f.epoch) return;
     this.lastSeq = f.seq;
@@ -274,7 +286,7 @@ export class CabinetEffects {
     return this.gain;
   }
 
-  private play(i: number, then: number | null = null): AudioBufferSourceNode | null {
+  private play(i: number, then: number | null = null, ended?: () => void): AudioBufferSourceNode | null {
     const ctx = this.host.context();
     const out = this.output();
     const buf = this.buffer(i);
@@ -290,6 +302,7 @@ export class CabinetEffects {
       this.live--;
       this.voices.delete(src);
       src.disconnect();
+      if (ended && generation === this.generation) ended();
       if (then !== null && this.enabled && generation === this.generation) this.play(then);
     };
     src.start();
