@@ -6,7 +6,7 @@ import { gamCcTalkKeys } from './cctalkkeys';
 import {
   ReelBounce, bounceProfileFor, kindCanBounce, type BounceWiring,
 } from '../hw/reelbounce';
-import { CONFIG_FILE, NO_GAME_FILE, hasGameFile } from './setfiles';
+import { CONFIG_FILE, NO_GAME_FILE, NO_MANIFEST, hasGameFile } from './setfiles';
 import { isEffectSample } from './effects';
 import { Sc4 } from './sc4';
 import { Sc2 } from './sc2';
@@ -430,6 +430,7 @@ const scorpion4: Platform = {
     const prog = image ? null : sc4Pair(progFiles);
     if (!image && !prog) {
       if (!hasGameFile(game.files)) throw new Error(NO_GAME_FILE);
+      if (!game.gam) throw new Error(NO_MANIFEST);
       if (!progFiles.length) throw noRoms(game, 'no SC4 program ROM pair (.evn/.odd or .hi/.lo)');
       throw new Error('no SC4 program ROM pair (.evn/.odd or .hi/.lo)');
     }
