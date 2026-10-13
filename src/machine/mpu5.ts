@@ -24,7 +24,7 @@ import type { LayoutSwitch } from './layoutswitches';
 import type { CabinetSwitch, CoinPortLines, Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult } from './machine';
 import { dilSwitchLabel } from './machine';
 import { newCashLedger } from './machine';
-import { fittedMech, mpu5CoinTable, readMpu5Mechs, type Mpu5Channel, type Mpu5Mechs } from './mpu5coins';
+import { fittedMech, mpu5CoinTable, readCoinValue, readMpu5Mechs, type CoinValue, type Mpu5Channel, type Mpu5Mechs } from './mpu5coins';
 import { COIN_NOTES, PARALLEL_NOTE_CHANNELS, coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
 import type { CoinWiringStatus } from './machine';
@@ -509,8 +509,22 @@ export class Mpu5 implements Bus16, Machine {
   setHopperCoinPence(one: number | null, two: number | null): void {
     this.hopperCoinPence = [one, two];
   }
+  private hopperCoinCents: [number | null, number | null] = [null, null];
+  setHopperCoinCents(one: number | null, two: number | null): void {
+    this.hopperCoinCents = [one, two];
+  }
 
   static hopperCoinPenceOf(program: Uint8Array, motorDevice: number): number | null {
+    const pence = Mpu5.hopperCoinOf(program, motorDevice)?.pence ?? null;
+    return pence !== null && pence <= 10_000 ? pence : null;
+  }
+
+  static hopperCoinCentsOf(program: Uint8Array, motorDevice: number): number | null {
+    const cents = Mpu5.hopperCoinOf(program, motorDevice)?.cents ?? null;
+    return cents !== null && cents > 0 && cents <= 1_000_000 ? cents : null;
+  }
+
+  private static hopperCoinOf(program: Uint8Array, motorDevice: number): CoinValue | null {
     const key = (-motorDevice) & 0xffff;
     const u16 = (i: number) => (program[i] << 8) | program[i + 1];
     const u32 = (i: number) => ((program[i] << 24) | (program[i + 1] << 16) | (program[i + 2] << 8) | program[i + 3]) >>> 0;
@@ -525,8 +539,7 @@ export class Mpu5 implements Bus16, Machine {
       if (first !== key) continue;
       const coin = u32(i + 22);
       if (coin + 10 > program.length || ((u32(coin) & 0xdfdfdfdf) >>> 0) !== 0x434f494e) continue;
-      const pence = u16(coin + 8);
-      return pence <= 10_000 ? pence : null;
+      return readCoinValue(program, coin);
     }
     return null;
   }
@@ -540,6 +553,7 @@ export class Mpu5 implements Bus16, Machine {
       else this.cashLedger.unpricedTokenOut++;
       return;
     }
+    if (this.coinsNotSterling) { this.bookForeignOut(this.hopperCoinCents[0]); return; }
     const drives = this.payoutDrives();
     if (drives & 0x02) this.cashLedger.outPence += 100;
     else if (drives & 0x01) this.cashLedger.outPence += 20;
@@ -1940,6 +1954,7 @@ export class Mpu5 implements Bus16, Machine {
       this.hopper2Coins++;
       const pence = this.hopperCoinPence[1];
       if (!this.booksMoney) {  }
+      else if (pence === null && this.coinsNotSterling) this.bookForeignOut(this.hopperCoinCents[1]);
       else if (pence === null) this.cashLedger.unpricedOut++;
       else if (pence > 0) this.cashLedger.outPence += pence;
       else this.cashLedger.unpricedTokenOut++;
@@ -2041,7 +2056,8 @@ export class Mpu5 implements Bus16, Machine {
     } else {
       this.coinCycles = Mpu5.COIN_DWELL;
     }
-    if (this.wiring) this.bookWiredCoin(bit);
+    if (this.wiredIn) this.bookWiredCoin(bit);
+    else if (this.coinsNotSterling) this.bookForeignCoin(bit);
   }
 
   private coinPattern(bit: number): number {
@@ -2049,7 +2065,8 @@ export class Mpu5 implements Bus16, Machine {
     if (ch) {
       const c = ch.find((x) => x.bit === bit);
       if (!c) return 0;
-      return this.readsBinary ? c.pattern : c.pattern | ((Mpu5.COIN_LINES[bit] ?? 0) & ~Mpu5.PARALLEL_PORT_MASK);
+      if (this.readsBinary || c.pence === null) return c.pattern;
+      return c.pattern | ((Mpu5.COIN_LINES[bit] ?? 0) & ~Mpu5.PARALLEL_PORT_MASK);
     }
     if (this.readsBinary) {
       const coin = Mpu5.BCO_COINS[bit];
@@ -2067,14 +2084,20 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   get coinLineTable(): CoinLineTable | null {
+    if (this.coinsNotSterling) return null;
     const ch = this.fittedChannels();
     return ch ? mpu5CoinTable(ch, this.readsBinary ? 'binary' : 'parallel') : null;
   }
 
   get coinLineTableRefusal(): string | null {
     if (!this.mechs) return 'no program loaded';
+    if (this.coinsNotSterling) return `the program's coins are not sterling (${this.mechs.notSterling.join(', ')})`;
     const ch = fittedMech(this.mechs, this.readsBinary);
     return Array.isArray(ch) ? null : ch.refused;
+  }
+
+  get coinsNotSterling(): boolean {
+    return (this.mechs?.notSterling.length ?? 0) > 0;
   }
 
   coinsRefused = 0;
@@ -2107,12 +2130,30 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   private get wiredIn(): boolean {
-    return this.wiring !== null && this.fittedChannels() !== null;
+    return this.wiring !== null && !this.coinsNotSterling && this.fittedChannels() !== null;
   }
 
   private cashInCounted(n: number): void {
     if (this.wiredIn) { if (this.booksMoney) this.wiring!.check.count(n, this.wiringState.now); return; }
-    if (this.booksMoney) this.cashLedger.inPence += n * this.meterPencePerPulse;
+    if (!this.booksMoney) return;
+    if (this.coinsNotSterling) return;
+    this.cashLedger.inPence += n * this.meterPencePerPulse;
+  }
+
+  private bookForeignCoin(bit: number): void {
+    if (!this.booksMoney) return;
+    const ch = this.fittedChannels()?.find((c) => c.bit === bit);
+    const l = this.cashLedger;
+    if (ch?.cents) l.euroInCents = (l.euroInCents ?? 0) + ch.cents;
+    else if (ch?.pence === 0) l.unpricedTokenIn++;
+    else if (ch?.pence) l.inPence += ch.pence;
+    else l.unpricedIn = (l.unpricedIn ?? 0) + 1;
+  }
+
+  private bookForeignOut(cents: number | null): void {
+    const l = this.cashLedger;
+    if (cents) l.euroOutCents = (l.euroOutCents ?? 0) + cents;
+    else l.unpricedOut++;
   }
 
   private bookWiredCoin(bit: number): void {
@@ -2123,7 +2164,7 @@ export class Mpu5 implements Bus16, Machine {
     if (!this.booksMoney || w.conflicts.includes(bit)) { w.check.coin(undefined, now); return; }
     const c = w.coins.get(bit);
     if (c === undefined) {
-      if (own.pence > 0) { this.cashLedger.inPence += own.pence; w.check.coin(own.pence, now); }
+      if (own.pence !== null && own.pence > 0) { this.cashLedger.inPence += own.pence; w.check.coin(own.pence, now); }
       else w.check.coin(null, now);
       return;
     }
@@ -2198,7 +2239,13 @@ export class Mpu5 implements Bus16, Machine {
     return this.coinCycles > 0 || this.coinHold > 0;
   }
 
-  get coinChutes(): readonly { label: string; bit: number }[] | undefined {
+  get coinChutes(): readonly { label: string; bit: number; pence?: number | null }[] | undefined {
+    const ch = this.coinsNotSterling ? this.fittedChannels() : null;
+    if (ch) {
+      const worth = (c: Mpu5Channel): number => c.pence ?? c.cents ?? -1;
+      return ch.filter((c) => c.pence !== 0).sort((x, y) => worth(y) - worth(x))
+        .map((c) => ({ label: c.label, bit: c.bit, pence: c.pence }));
+    }
     return this.readsBinary || this.serialHopper ? Mpu5.BINARY_CHUTES : undefined;
   }
 

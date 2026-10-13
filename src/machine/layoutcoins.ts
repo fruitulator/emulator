@@ -193,6 +193,38 @@ export function layoutInputButtons(layout: Uint8Array | undefined): number[] | n
   return out;
 }
 
+export function letteringNames(text: string): 'coin' | 'control' | null {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (!t || /^\d+$/.test(t)) return null;
+  return /\d\s*p\b|£\s*\d|€|\d\s*(c|ct|cts|cent|cents|pf|dm)\b|\b(fl|hfl|dm)\.?\s*\d|\btoken|\bcoin|\bpence\b/i.test(t)
+    ? 'coin'
+    : 'control';
+}
+
+export function layoutInputLettering(layout: Uint8Array | undefined): Map<number, 'coin' | 'control'> | null {
+  const payload = fmlPayload(layout);
+  if (!payload) return null;
+  let comps: ParsedComponent[];
+  try {
+    comps = parseLayout(payload);
+  } catch {
+    return null;
+  }
+  const out = new Map<number, 'coin' | 'control'>();
+  for (const c of comps) {
+    if (isAcceptor(c.values)) continue;
+    const b = c.values.get('ButtonNumber');
+    if (b === undefined) continue;
+    for (const [key, text] of c.texts) {
+      if (!/label|text/i.test(key)) continue;
+      const n = letteringNames(text);
+      if (n === 'coin') out.set(b, 'coin');
+      else if (n === 'control' && !out.has(b)) out.set(b, 'control');
+    }
+  }
+  return out;
+}
+
 export function cabinetCoinPence(layout: Uint8Array | undefined): Map<number, number> | null {
   const priced = new Map<number, number>();
   for (const c of declaredCoins(layout)) {

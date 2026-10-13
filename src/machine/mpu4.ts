@@ -114,12 +114,19 @@ export class OkiCardLines {
   }
 }
 
-export function okiPitchFromPtm(t1: number, t3: number, clock: number): number {
+export function okiPitchFromPtm(t1: number, t3: number, clock: number, cr1?: number, cr3?: number): number {
   const t3h = t3 >> 8, t3l1 = (t3 & 0xff) + 1;
   const q = Math.fround(Math.fround(t3h * t3l1 + 1) / Math.fround(2 * t1 + 2));
   const whole = Math.trunc(q);
   const mul = q - whole > 0.5 ? Math.trunc(Math.fround(q + 0.5)) : whole;
-  return ((Math.floor(clock / ((t3h + 1) * t3l1)) * mul) >>> 0) >>> 3;
+  const v20 = ((Math.floor(clock / ((t3h + 1) * t3l1)) * mul) >>> 0) >>> 3;
+  if (v20 > 0 || cr1 === undefined || cr3 === undefined) return v20;
+  if (!ptmTimer1FreeRuns(cr1, cr3)) return 0;
+  return (Math.floor(clock / (2 * (t1 + 1))) >>> 0) >>> 3;
+}
+
+function ptmTimer1FreeRuns(cr1: number, cr3: number): boolean {
+  return (cr3 & 0x80) === 0 && (cr1 & 0xaf) === 0x82;
 }
 
 export function mpu4SampleBanks(files: readonly Uint8Array[]): number[] {
@@ -218,6 +225,7 @@ function barcrestReel(): Reel {
   const r = new Reel({
     stepsPerRevolution: 96, symbols: 12, mame: true, mameDrive: 'barcrest',
     indexStart: MPU4_OPTIC_WINDOW[0], indexEnd: MPU4_OPTIC_WINDOW[1], indexPattern: 0, initPhase: 2,
+    v20Gate: true,
   });
   r.park(MPU4_REEL_POWER_UP);
   return r;
@@ -656,8 +664,8 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private clockOkiFromPtm(): void {
-    const { latch } = this.ptmSound.debugState();
-    this.clockOki(okiPitchFromPtm(latch[0], latch[2], E_CLOCK));
+    const { latch, cr } = this.ptmSound.debugState();
+    this.clockOki(okiPitchFromPtm(latch[0], latch[2], E_CLOCK, cr[0], cr[2]));
   }
 
   private clockOki(pitch: number): void {
@@ -2210,7 +2218,7 @@ export class Mpu4 implements Bus, Machine {
     }
     if (addr >= 0x08c0 && addr < 0x0900) {
       this.ptmSound.write(addr & 7, val);
-      if ((addr & 3) === 3) this.clockOkiFromPtm();
+      if ((addr & 3) === 3 || (addr & 7) <= 1) this.clockOkiFromPtm();
       return;
     }
     if (addr >= 0x0880 && addr < 0x0890 && this.soundCard === 5) {

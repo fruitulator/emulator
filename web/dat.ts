@@ -308,7 +308,9 @@ export interface CabLamp<A = ImageBitmap> {
   blend?: boolean;
   multi?: boolean;
   underReel?: boolean;
+  underVfd?: boolean;
   led?: boolean;
+  rgb?: { bits: number[]; faces: (A | null)[] };
   offUnder?: boolean;
   digitSeg?: { digit: number; seg: number };
   legend?: {
@@ -387,6 +389,7 @@ export interface Cabinet<A = ImageBitmap> {
   maygayMatrix?: MaygayMatrixPanel | null;
   epochMatrix?: EpochMatrixPanel | null;
   plasmaPanel?: PlasmaPanel | null;
+  bfmLeds?: BfmLedPanel[];
   videoScreen?: VideoScreen | null;
   rgbLeds?: RgbLed[];
   prismLamps?: PrismLamp<A>[];
@@ -513,6 +516,16 @@ export interface MaygayMatrixPanel extends Rect {
 
 export interface PlasmaPanel extends Rect {
   size: number;
+  on: number;
+  off: number;
+  bg: number;
+}
+
+export interface BfmLedPanel extends Rect {
+  xSize: number;
+  ySize: number;
+  digitSpacing: number;
+  ledSize: number;
   on: number;
   off: number;
   bg: number;

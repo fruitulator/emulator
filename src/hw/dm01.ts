@@ -5,7 +5,7 @@ export const DM01_CLOCK = 2_000_000;
 export const DM01_NMI_HZ = 1500;
 
 export class Dm01 implements Bus {
-  readonly cpu = new M6809(this);
+  readonly cpu = Object.assign(new M6809(this), { illegalAsV20: true });
 
   private readonly ram = new Uint8Array(0x2000);
   private readonly rom = new Uint8Array(0x10000);
@@ -32,6 +32,7 @@ export class Dm01 implements Bus {
 
   reset(): void {
     this.control = 0;
+    this.sent = false;
     this.xcounter = 0;
     this.readPos = 0;
     this.writePos = 0;
@@ -43,14 +44,13 @@ export class Dm01 implements Bus {
     this.cpu.reset();
   }
 
+  sent = false;
+
   queueChar(v: number): void {
     this.queue[this.writePos] = v & 0xff;
     this.writePos = (this.writePos + 1) % this.queue.length;
+    this.sent = true;
     this.cpu.setIRQ(true);
-  }
-
-  busy(): boolean {
-    return (this.control & 0x08) === 0 || this.readPos !== this.writePos;
   }
 
   get ready(): boolean {
@@ -101,6 +101,7 @@ export class Dm01 implements Bus {
     if (addr >= 0x4000) return;
     switch (addr) {
       case 0x2000: {
+        if (v & 0x01) this.sent = false;
         const changed = this.control ^ v;
         this.control = v;
         if (changed & 0x02 && !(v & 0x02)) this.xcounter = 0;

@@ -8,8 +8,10 @@ import { V20Reels } from './v20reels';
 import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine } from './machine';
-import { bookUnpricedIn, ledgerOutMults, newCashLedger } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, NamedCoin } from './machine';
+import { ledgerOutMults, newCashLedger } from './machine';
+import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
+import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { ReelGeometry } from './layoutreels';
@@ -74,6 +76,8 @@ export class Mmm implements Machine {
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
+  private readonly book = new CoinBook(this.cashLedger, MMM_CLOCK);
+  private readonly slots = new SlotCoins();
 
   private serialCount = 0;
   private serialShift = 0;
@@ -134,6 +138,14 @@ export class Mmm implements Machine {
     }));
   }
 
+  setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
+
+  setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
+
+  get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
+
+  nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
+
   setTriacMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.triacInRaw = [...inMult];
     this.triacOutRaw = [...outMult];
@@ -173,6 +185,7 @@ export class Mmm implements Machine {
     this.digits.fill(0);
     this.coinTimer = 0;
     this.coinMask = 0;
+    this.book.reset();
   }
 
   step(): number {
@@ -180,6 +193,7 @@ export class Mmm implements Machine {
     const c = this.cpu.step();
     this.ctc.tick(c);
     this.ay.tick(c, MMM_CLOCK);
+    this.book.elapse(c);
     if (this.coinTimer > 0) {
       this.coinTimer -= c;
       if (this.coinTimer <= COIN_GAP) this.matrix[this.coinRow] &= ~this.coinMask;
@@ -257,10 +271,10 @@ export class Mmm implements Machine {
 
   private ayData(v: number): void {
     const r = this.ay.selectedAddress;
-    const before = this.ay.regs[14];
+    const before = this.ay.portAOut;
     this.ay.write(v);
-    if (r === 0x0e && (this.ay.regs[7] & 0x40) && v !== before) {
-      this.setTriacs((this.triacWord & 0x1f00) | v);
+    if ((r === 0x07 || r === 0x0e) && this.ay.portAOut !== before) {
+      this.setTriacs((this.triacWord & 0x1f00) | this.ay.portAOut);
     }
   }
 
@@ -286,8 +300,8 @@ export class Mmm implements Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
-      bookUnpricedIn(this.cashLedger, this.triacInRaw[i]);
+      if (this.book.hasSlides) this.book.slide(i);
+      else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }
   }
 
@@ -320,6 +334,7 @@ export class Mmm implements Machine {
     this.coinMask = 1 << (raw & 7);
     this.coinTimer = COIN_HOLD + COIN_GAP;
     this.matrix[this.coinRow] |= this.coinMask;
+    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD);
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }

@@ -20,6 +20,7 @@ export interface CoinChute {
   pence?: number | null;
   token?: boolean;
   note?: number;
+  lineOnly?: boolean;
 }
 
 export interface CoinPortLines {
@@ -74,6 +75,8 @@ export interface CashLedger {
   tokenInPence: number;
   tokenOutPence: number;
   unpricedTokenOut: number;
+  euroInCents?: number;
+  euroOutCents?: number;
   unpricedTokenIn: number;
 }
 
@@ -83,6 +86,8 @@ export function newCashLedger(): CashLedger {
     outPence: 0,
     unpricedOut: 0,
     unpricedIn: 0,
+    euroInCents: 0,
+    euroOutCents: 0,
     tokenInPence: 0,
     tokenOutPence: 0,
     unpricedTokenOut: 0,
@@ -102,10 +107,6 @@ export interface MoneyAxis {
 export function ledgerOutMults(...axes: MoneyAxis[]): number[][] {
   const nets = axes.some((a) => a.out.some((x) => x < 0));
   return axes.map((a) => a.out.map((x, i) => (nets && (a.in[i] ?? 0) > 0 ? 0 : outMultToLedger(x))));
-}
-
-export function bookUnpricedIn(l: CashLedger, mult: number | undefined): void {
-  if (mult !== undefined && mult > 0) l.unpricedIn = (l.unpricedIn ?? 0) + mult;
 }
 
 export interface PaidOut {
@@ -135,7 +136,7 @@ export function paidOutSince(before: CashLedger, after: CashLedger): PaidOut {
 }
 
 export type DigitKind = 'none' | 'impact' | 'proconn' | 'words' | 'byte16' | 'byte64' | 'space' | 'mpu4led' | 'mpu5'
-  | 'sc4';
+  | 'sc4' | 'epoch';
 
 export interface Machine {
   readonly digitKind?: DigitKind;

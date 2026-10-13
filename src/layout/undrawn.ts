@@ -4,6 +4,11 @@ import { hasTagMap, parseLayout, type ParsedComponent } from './fmlparse';
 export const UNDRAWN_TYPES: ReadonlyMap<number, string> = new Map([
   [0x1b, 'border'],
   [0x1c, 'digit block'],
+  [0x2c, 'Astra LED display'],
+  [0x28, 'Maygay video'],
+  [0x24, 'BFM colour LED display'],
+  [0x27, 'reel bonus reel'],
+  [0x20, 'IGT VFD'],
 ]);
 
 const LINE_MAX_TYPES = 4;

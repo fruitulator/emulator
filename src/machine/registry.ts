@@ -41,13 +41,14 @@ import { deviceFor, Sch2Hopper } from '../hw/cctalk';
 import { Sc5, adder5ScreenSize } from './sc5';
 import { Mps2 } from './mps2';
 import { Sys80 } from './sys80';
-import { Sru, SRU_TONE_POT_DEFAULT, SRU_COIN_ROW, sruCoinsFromCabinet } from './sru';
+import { Sru, SRU_TONE_POT_DEFAULT, SRU_COIN_ROW, sruCoinsFromCabinet, sruFittedCoinLines, sruUnmarkedCoinLines } from './sru';
 import { BlackBox } from './blackbox';
 import { Mpu3, Mpu3DisplayPort } from './mpu3';
 import { Mmm } from './mmm';
 import { Mpu2, Mpu2ReelType } from './mpu2';
 import { Sys83 } from './sys83';
-import { AceVideo } from './acevideo';
+import { AceVideo, ACEVIDEO_COIN_LINES } from './acevideo';
+import { directCoinSlots, type BookedCoin } from './coinbook';
 import { Pluto5 } from './pluto5';
 import { Mpu4VideoCard } from './mpu4video';
 import { Mpu4PlasmaCard } from './mpu4plasma';
@@ -71,12 +72,12 @@ import {
   decodedLayout, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
   dipSwitchLabelsFrom,
   triacSlidePence, readSwitchNumber, readOperatorTag, readNumber, mpu4CharacteriserConfigFrom,
-  mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, layoutSwitchIdsFrom, m1abDongleConfig,
+  mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, layoutSwitchIdsFrom, m1abDongleConfig, type SlideEffect,
 } from '../layout/fmlconfig';
 import { parseLayout } from '../layout/fmlparse';
 import { recordOperatorPreset } from './statedlines';
 import { datReelChannels, datReelWiring } from '../layout/datreels';
-import { cabinetCoinPence, cabinetCoinSlots, declaredCoins, layoutInputButtons, parallelNoteChannels } from './layoutcoins';
+import { cabinetCoinPence, cabinetCoinSlots, declaredCoins, layoutInputButtons, layoutInputLettering, parallelNoteChannels } from './layoutcoins';
 import { placeRomPairs } from './pairplacer';
 
 const MPU4_COIN_ROW = 5;
@@ -538,6 +539,12 @@ const scorpion4: Platform = {
     if (sc4Protocol) {
       const p = decodedLayout(game.layout);
       m.fitDataport(sc4Protocol, p ? readSetting(p, 'SCORPION4', 'Serial Port') : null);
+    }
+
+    {
+      const p = decodedLayout(game.layout);
+      const rng = p ? readSetting(p, 'SCORPION4', 'RNG') : null;
+      m.fitRng(rng === 'Type 1' ? 1 : rng === 'Type 2' ? 2 : 0);
     }
 
     const sc4Sec = layoutSecFitted(game, 'SCORPION4');
@@ -1867,7 +1874,15 @@ const mpu5: Platform = {
     }
     const pence = Mpu5.meterPencePerPulseOf(m.rom);
     m.setHopperCoinPence(Mpu5.hopperCoinPenceOf(m.rom, 0x86), Mpu5.hopperCoinPenceOf(m.rom, 0x84));
-    if (pence !== null) m.setMeterPencePerPulse(pence);
+    m.setHopperCoinCents(Mpu5.hopperCoinCentsOf(m.rom, 0x86), Mpu5.hopperCoinCentsOf(m.rom, 0x84));
+    if (m.coinsNotSterling) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'this program\'s coins are not sterling - money in and out is kept in its own money, not pounds',
+        ifWrong: 'Money put into or paid out of this machine is shown in that money, not as a pound total.',
+        node: TAILORED_IDS.coinMech,
+      });
+    } else if (pence !== null) m.setMeterPencePerPulse(pence);
     else {
       noteBoardDefault(m, {
         axis: 'meter',
@@ -2383,8 +2398,7 @@ const sys80: Platform = {
       node: TAILORED_IDS.meters,
     });
     if (s80Meters) m.setMeterMoney(s80Meters.meterIn, s80Meters.meterOut);
-    m.setLayoutCoins(declaredCoins(game.layout));
-    const s80Why = 'A grid that prices a meter the program does not pulse for coins books the wrong money in.';
+    m.setLayoutCoins(declaredCoins(game.layout), layoutInputButtons(game.layout) ?? [], layoutInputLettering(game.layout) ?? new Map());
     if (m.coinsPricedByPlays) {
       noteBoardDefault(m, {
         axis: 'coin',
@@ -2395,15 +2409,15 @@ const sys80: Platform = {
     } else if (!m.programReadsCoins && m.coinLineTable) {
       noteBoardDefault(m, {
         axis: 'coin',
-        text: 'the program\'s coin credits fit more than one price - coins in book at the layout\'s meter grid',
-        ifWrong: s80Why,
+        text: 'the program\'s coin credits fit more than one price - coins in counted, value not known unless the cabinet says',
+        ifWrong: 'A coin of known value shows as a coin of unknown value.',
         node: TAILORED_IDS.coinMech,
       });
     } else if (!m.programReadsCoins) {
       noteBoardDefault(m, {
         axis: 'coin',
-        text: 'the program\'s coin code was not read - coins in book at the layout\'s meter grid',
-        ifWrong: s80Why,
+        text: 'the program\'s coin code was not read - coins in counted at the slot, value not known unless the cabinet says',
+        ifWrong: 'A coin the program turns away is still counted as money in.',
         node: TAILORED_IDS.coinMech,
       });
     }
@@ -2669,8 +2683,21 @@ const sru: Platform = {
     }
     const sruCoins = sruCoinsFromCabinet(cabinetCoinSlots(game.layout, SRU_COIN_ROW));
     m.setCoinPence(sruCoins);
-    if (sruCoins.some((c) => c === null)) {
-      if (sruCoins.every((c) => c === null)) {
+    const sruDeclared = declaredCoins(game.layout);
+    const sruLettering = layoutInputLettering(game.layout) ?? new Map<number, 'coin' | 'control'>();
+    const fitted = sruFittedCoinLines(sruDeclared, layoutInputButtons(game.layout) ?? [], sruLettering);
+    m.setFittedCoinLines(fitted);
+    if (sruUnmarkedCoinLines(sruDeclared, sruLettering, fitted).length) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'some coin slots are controls the cabinet does not mark as coins - taken as coin slots',
+        ifWrong: 'A button wired to a spare coin line is offered and booked as a coin slot.',
+        node: TAILORED_IDS.coinMech,
+      });
+    }
+    const fittedCoins = sruCoins.filter((_, i) => fitted === null || fitted.includes(20 + i));
+    if (fittedCoins.some((c) => c === null)) {
+      if (fittedCoins.every((c) => c === null)) {
         noteBoardDefault(m, {
           axis: 'coin',
           text: 'what each coin slot takes is not known for this cabinet - the player is asked once',
@@ -2714,6 +2741,23 @@ const blackbox: Platform = {
           ifWrong: 'A cabinet fitted with a tone generator plays no tones.',
         });
       }
+      const pick = <T extends string>(control: string, values: Record<T, number>): number | undefined => {
+        const v = readSetting(bbLayout, 'BLACKBOX', control);
+        return v !== null && v in values ? values[v as T] : undefined;
+      };
+      const reelType = pick('Reel Type', { Solenoid: 0, Stepper: 1 });
+      m.stepperReels = (reelType ?? 0) === 1;
+      if (reelType === undefined) {
+        noteBoardDefault(m, {
+          axis: 'reel',
+          text: 'reel type not stated by the layout - solenoid reels assumed',
+          ifWrong: 'A cabinet with stepper reels never turns them.',
+        });
+      }
+      m.motorDrive = pick('Motor Drive', { B10: 0, B13: 1 }) ?? 0;
+      m.motorRelay = pick('Motor Relay', { None: 0, M8: 1 }) ?? 1;
+      m.nvramFitted = (pick('NVRAM', { No: 0, Yes: 1 }) ?? 0) === 1;
+      m.row5Shift = pick('Test / Run', { C3: 0, C5: 1, C6: 2 }) ?? 1;
       const meters = meterMoneyMap(bbLayout, 'BLACKBOX');
       noteBoardDefault(m, {
         axis: 'meter',
@@ -2800,17 +2844,45 @@ const mmm: Platform = {
     const payload = decodedLayout(game.layout);
     const money = payload ? meterMoneyMap(payload, 'MMM') : null;
     if (money) m.setTriacMoney(money.triacIn, money.triacOut);
-    noteBoardDefault(m, {
-      axis: 'meter',
-      text: 'money not priced for this board - coins in and payouts are counted, not priced',
-      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
-      node: 'triacs',
-    });
+    wireCoinMoney(m, game, payload, 'MMM', 'triacs');
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
     return m;
   },
 };
+
+interface CoinMoneyBoard {
+  setSlides(slides: readonly SlideEffect[] | null): void;
+  setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void;
+  readonly unnamedCoinLines: readonly number[];
+}
+
+function wireCoinMoney(
+  m: CoinMoneyBoard, game: Game, payload: Uint8Array | null, system: string, node: string,
+  boardLines: readonly number[] = [],
+): void {
+  const slides = payload ? triacSlidePence(payload, system) : null;
+  m.setSlides(slides);
+  const slots = new Map<number, BookedCoin>(directCoinSlots(declaredCoins(game.layout)));
+  for (const l of boardLines) if (!slots.has(l)) slots.set(l, null);
+  m.setCoinSlots(slots);
+  if (m.unnamedCoinLines.length) {
+    noteBoardDefault(m, {
+      axis: 'coin',
+      text: 'the cabinet does not say which coin each slot takes - coins in are counted, value not known',
+      ifWrong: 'Bookkeeping shows such coins as a count with no value; play is not affected.',
+      node: 'coins',
+    });
+  }
+  if (!slides?.some((s) => s !== null)) {
+    noteBoardDefault(m, {
+      axis: 'peripheral',
+      text: 'the layout names no payout slide - money out is counted from the meters, not priced',
+      ifWrong: 'Bookkeeping shows payouts as a count with no value; play is not affected.',
+      node,
+    });
+  }
+}
 
 const mpu2: Platform = {
   system: 'MPU2',
@@ -2851,12 +2923,7 @@ const mpu2: Platform = {
     }
     const money = payload ? meterMoneyMap(payload, 'MPU2') : null;
     if (money) m.setTriacMoney(money.triacIn, money.triacOut);
-    noteBoardDefault(m, {
-      axis: 'meter',
-      text: 'money not priced for this board - coins in and payouts are counted, not priced',
-      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
-      node: 'triacs',
-    });
+    wireCoinMoney(m, game, payload, 'MPU2', 'triacs');
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
     return m;
@@ -2882,12 +2949,7 @@ const sys83: Platform = {
     const payload = decodedLayout(game.layout);
     const money = payload ? meterMoneyMap(payload, 'SYS83') : null;
     if (money) m.setMeterMoney(money);
-    noteBoardDefault(m, {
-      axis: 'meter',
-      text: 'money not priced for this board - coins in and payouts are counted, not priced',
-      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
-      node: 'meters',
-    });
+    wireCoinMoney(m, game, payload, 'SYS83', 'meters');
     if (game.nvram) m.loadNvram(game.nvram);
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
@@ -3023,12 +3085,7 @@ const acevideo: Platform = {
     const payload = decodedLayout(game.layout);
     const money = payload ? meterMoneyMap(payload, 'ACEVIDEO') : null;
     if (money) m.setMeterMoney(money);
-    noteBoardDefault(m, {
-      axis: 'meter',
-      text: 'money not priced for this board - coins in and payouts are counted, not priced',
-      ifWrong: 'Bookkeeping shows money in and out as meter counts rather than pounds; play is not affected.',
-      node: 'meters',
-    });
+    wireCoinMoney(m, game, payload, 'ACEVIDEO', 'meters', ACEVIDEO_COIN_LINES);
     if (game.nvram) m.loadNvram(game.nvram);
     m.reset();
     return m;

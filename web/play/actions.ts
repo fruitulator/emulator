@@ -6,7 +6,7 @@ import type { DiagEntry } from '../diaglog';
 import type { Game } from '../../src/machine/registry';
 import { card, menuRow } from '../ui/rows';
 import { MENU_ICONS } from '../ui/icons';
-import { cabinetSoundsRow, coinsPanel, reelBounceRow, switchPanels, type OwnCoins } from '../menupanels';
+import { cabinetSoundsRow, coinsPanel, reelBounceRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
 import { downloadRow, uploadRow, type PanelDownload, type PanelUpload } from '../panelmenu';
 import { saveDiagLog, saveSnapshot } from '../downloads';
 import { UNBUILT_NOTE_TEXT, stopNoteParts } from '../stopnote';
@@ -24,6 +24,7 @@ export interface ActionSurface {
   closeMenu(): void;
   coin(c: CoinChoice): void;
   coinList?(): OwnCoins | null;
+  readonly coinNaming?: CoinNaming;
   throwSwitch(sw: PanelSwitch, on: boolean): void;
   namedSwitch(id: number, level: boolean): void;
   readonly effects: CabinetEffects;
@@ -108,7 +109,7 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
   for (const id of ids) {
     switch (id) {
       case 'coins':
-        nav('coins', coinsPanel(m.info, m.view, m.system, (c) => s.coin(c), s.coinList ? () => s.coinList!() : undefined));
+        nav('coins', coinsPanel(m.info, m.view, m.system, (c) => s.coin(c), s.coinList ? () => s.coinList!() : undefined, s.coinNaming));
         break;
       case 'switches':
         for (const p of switchPanels(m.info, m.view, (sw, on) => s.throwSwitch(sw, on),

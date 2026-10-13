@@ -2,11 +2,13 @@
 type Role =
   | 'bool' | 'byte' | 'u16' | 'u32' | 'i32' | 'f32' | 'color'
   | 'font' | 'bitmap' | 'text' | 'subcount' | 'subtable' | 'nested'
-  | 'raw16' | 'raw24' | 'raw48' | 'raw1536';
+  | 'raw4' | 'raw16' | 'raw24' | 'raw48' | 'raw1536'
+  | 'axis'
+  | 'atext' | 'wtext';
 
 const FIXED: Partial<Record<Role, number>> = {
-  bool: 1, byte: 1, u16: 2, u32: 4, i32: 4, f32: 4, color: 4, subcount: 4,
-  raw16: 16, raw24: 24, raw48: 48, raw1536: 1536,
+  bool: 1, byte: 1, axis: 1, u16: 2, u32: 4, i32: 4, f32: 4, color: 4, subcount: 4,
+  raw4: 4, raw16: 16, raw24: 24, raw48: 48, raw1536: 1536,
 };
 
 interface TagMap {
@@ -41,7 +43,7 @@ function applyDefaults(c: ParsedComponent, map: TagMap): void {
 
 const LAMP_V20_EXTRA: Record<number, [Role, string]> = {
   0x18: ['byte', ''],
-  0x1f: ['text', ''], 0x20: ['text', ''],
+  0x1f: ['atext', ''], 0x20: ['atext', ''],
   0x2a: ['raw16', ''], 0x2b: ['raw16', ''], 0x2c: ['raw16', ''], 0x2d: ['raw16', ''],
   0x2e: ['raw16', ''], 0x2f: ['raw16', ''], 0x30: ['raw16', ''], 0x31: ['raw16', ''],
   0x3e: ['raw16', ''], 0x3f: ['raw16', ''], 0x40: ['raw16', ''], 0x41: ['raw16', ''],
@@ -51,7 +53,7 @@ const LAMP_V20_EXTRA: Record<number, [Role, string]> = {
 
 const LAMP_NESTED = m({
   ...LAMP_V20_EXTRA,
-  0x1b: ['text', ''], 0x1c: ['text', ''],
+  0x1b: ['atext', ''], 0x1c: ['atext', ''],
   0x01: ['bitmap', 'Sublamp1'], 0x02: ['bitmap', 'Sublamp2'],
   0x0f: ['bitmap', 'Sublamp3'], 0x10: ['bitmap', 'Sublamp4'],
   0x36: ['bitmap', 'Sublamp5'], 0x37: ['bitmap', 'Sublamp6'],
@@ -73,9 +75,9 @@ const LAMP_NESTED = m({
   0x44: ['color', 'Sublamp11Colour'], 0x45: ['color', 'Sublamp12Colour'],
   0x06: ['color', 'OffImageColour'], 0x25: ['color', 'OutlineColour'],
   0x19: ['font', ''], 0x1a: ['font', ''], 0x1d: ['font', ''], 0x1e: ['font', ''],
-  0x26: ['text', 'On1Text'], 0x27: ['text', 'On2Text'], 0x28: ['text', ''], 0x29: ['text', ''],
+  0x26: ['wtext', 'On1Text'], 0x27: ['wtext', 'On2Text'], 0x28: ['wtext', ''], 0x29: ['wtext', ''],
   0x4e: ['font', ''], 0x4f: ['font', ''], 0x50: ['font', ''], 0x51: ['font', ''],
-  0x52: ['text', ''], 0x53: ['text', ''], 0x54: ['text', ''], 0x55: ['text', ''],
+  0x52: ['wtext', ''], 0x53: ['wtext', ''], 0x54: ['wtext', ''], 0x55: ['wtext', ''],
   0x07: ['bool', 'Graphic'], 0x08: ['bool', 'NoOutline'], 0x09: ['bool', 'Transparent'],
   0x17: ['bool', 'Blend'], 0x23: ['bool', 'ClickAll'], 0x24: ['bool', 'LED'],
   0x69: ['bool', 'RGBLED'], 0x6c: ['bool', 'PreserveAspect'],
@@ -119,9 +121,9 @@ const LAMP2 = m({
   0x6a: ['u32', 'PieSize'], 0x6b: ['u32', 'PieStart'], 0x68: ['raw24', ''],
   0x19: ['font', ''], 0x1a: ['font', ''], 0x1d: ['font', ''], 0x1e: ['font', ''],
   0x4e: ['font', ''], 0x4f: ['font', ''], 0x50: ['font', ''], 0x51: ['font', ''],
-  0x26: ['text', 'On1Text'], 0x27: ['text', 'On2Text'], 0x28: ['text', 'Label'], 0x29: ['text', ''],
-  0x52: ['text', ''], 0x53: ['text', ''], 0x54: ['text', ''], 0x55: ['text', ''],
-  0x1b: ['text', 'Label2'], 0x1c: ['text', 'Label3'],
+  0x26: ['wtext', 'On1Text'], 0x27: ['wtext', 'On2Text'], 0x28: ['wtext', 'Label'], 0x29: ['wtext', ''],
+  0x52: ['wtext', ''], 0x53: ['wtext', ''], 0x54: ['wtext', ''], 0x55: ['wtext', ''],
+  0x1b: ['atext', 'Label2'], 0x1c: ['atext', 'Label3'],
   0x5c: ['raw24', ''], 0x5d: ['raw24', ''], 0x5e: ['raw24', ''], 0x5f: ['raw24', ''],
   0x60: ['raw24', ''], 0x61: ['raw24', ''], 0x62: ['raw24', ''], 0x63: ['raw24', ''],
   0x64: ['raw24', ''], 0x65: ['raw24', ''], 0x66: ['raw24', ''], 0x67: ['raw24', ''],
@@ -149,6 +151,9 @@ const BANDREEL_TAGS: Record<number, [Role, string]> = {
   0x3b: ['u32', ''],
   0x36: ['bitmap', 'Overlay'], 0x09: ['bitmap', 'Band'],
   0x07: ['bitmap', 'LampMasks1'], 0x0d: ['bitmap', 'LampMasks2'], 0x16: ['bitmap', 'LampMasks3'],
+  0x0a: ['byte', 'Orientation'], 0x0b: ['bool', 'Reversed'], 0x0f: ['bool', 'InvertedOpto'],
+  0x08: ['bitmap', 'Overlay'], 0x11: ['byte', ''], 0x12: ['byte', ''], 0x14: ['u32', ''],
+  0x15: ['byte', ''],
 };
 
 const BANDREEL = m(BANDREEL_TAGS, undefined, undefined, {
@@ -167,13 +172,16 @@ const LED_TAGS: Record<number, [Role, string]> = {
 
 const LED: TagMap = {
   tags: LED_TAGS,
-  second: m({ 0x05: ['bool', 'Led'] }),
+  second: m({
+    0x01: LED_TAGS[0x01], 0x02: LED_TAGS[0x02], 0x03: LED_TAGS[0x03], 0x04: LED_TAGS[0x04],
+    0x05: LED_TAGS[0x05], 0x06: LED_TAGS[0x06], 0x07: LED_TAGS[0x07],
+  }),
   defaults: { SelectedStyleIndex: 0, SelectedSegmentIndex: 0xffffffff },
 };
 
 const LAMP = m({
   0x1c: ['u32', 'DefinedLampCount'], 0x38: ['subcount', 'SublampCount'],
-  0x39: ['subtable', 'SublampTable'], 0x3f: ['text', 'OffText'],
+  0x39: ['subtable', 'SublampTable'], 0x3f: ['wtext', 'OffText'],
   0x27: ['font', 'Font'], 0x3b: ['u32', ''], 0x3c: ['bool', 'Inverted'],
   0x17: ['bool', ''], 0x29: ['bool', 'Lockout'],
   0x49: ['i32', 'CoinNoteId'], 0x48: ['u32', 'EffectId'],
@@ -182,9 +190,9 @@ const LAMP = m({
   0x2a: ['bool', 'Shortcut2Enabled'], 0x2b: ['u32', 'Shortcut2'],
   0x3e: ['bool', ''], 0x46: ['bitmap', 'Overlay'], 0x36: ['bitmap', 'Overlay'],
   0x68: ['u32', ''], 0x19: ['bool', 'CoinSelected'], 0x1a: ['u32', 'CoinId'], 0x08: ['u32', ''],
-  0x25: ['byte', ''],
+  0x25: ['u32', ''],
   0x07: ['bool', 'Graphic'], 0x09: ['bool', 'Transparent'],
-  0x28: ['text', 'Label'], 0x1b: ['text', 'Label2'],
+  0x28: ['atext', 'Label'], 0x1b: ['atext', 'Label2'],
   0x01: ['bitmap', 'Sublamp1'], 0x02: ['bitmap', 'Sublamp2'],
   0x0f: ['bitmap', 'Sublamp3'], 0x10: ['bitmap', 'Sublamp4'],
   0x03: ['bitmap', 'OffImage'],
@@ -203,10 +211,10 @@ const BUTTON = m({
   0x01: ['u32', 'ShapeId'], 0x49: ['i32', 'CoinNoteId'], 0x48: ['u32', 'EffectId'],
   0x27: ['font', 'Font'], 0x1c: ['u32', 'NonNullSublampCount'],
   0x38: ['subcount', 'SublampCount'],
-  0x39: ['subtable', 'SublampTable'], 0x3b: ['u32', ''], 0x3f: ['text', 'Label'],
+  0x39: ['subtable', 'SublampTable'], 0x3b: ['u32', ''], 0x3f: ['wtext', 'Label'],
   0x30: ['bool', ''], 0x0d: ['i32', 'XOffset'], 0x0e: ['i32', 'YOffset'],
   0x19: ['bool', 'CoinSelected'],
-  0x28: ['text', 'Label'], 0x1a: ['u32', 'CoinId'],
+  0x28: ['atext', 'Label'], 0x1a: ['u32', 'CoinId'],
   0x4c: ['byte', ''],
 });
 
@@ -232,7 +240,7 @@ const REEL_INNER = m({
   0x0d: ['color', 'BorderColour'],
   0x0e: ['bitmap', 'Band'], 0x0f: ['bitmap', 'LampMasks1'],
   0x11: ['u32', 'ReelHeight'],
-  0x12: ['byte', ''], 0x13: ['bool', 'Reversed'],
+  0x12: ['axis', ''], 0x13: ['bool', 'Reversed'],
   0x15: ['u32', 'Bounce'], 0x16: ['bool', 'OpaqueBand'], 0x17: ['u32', 'Filter'],
   0x19: ['bitmap', 'LampMasks2'], 0x1a: ['bool', 'LedsEnabled'],
   0x1c: ['bitmap', 'Gradient'], 0x1e: ['u32', 'ReelNbrOffset'], 0x1f: ['u32', 'ReelMode'],
@@ -240,6 +248,8 @@ const REEL_INNER = m({
   0x24: ['color', 'WinlinesColour'], 0x25: ['i32', 'WidthDiff'],
   0x26: ['color', 'BackgroundFillColour'], 0x27: ['u32', 'MirroredLevel'],
   0x28: ['bitmap', 'LampMasks3'], 0x29: ['byte', 'OffLevel'], 0x2a: ['byte', 'SelectedOffColourId'],
+  0x10: ['bitmap', 'Overlay'], 0x14: ['u32', ''], 0x18: ['byte', ''], 0x1d: ['byte', ''],
+  0x1b: ['u32', ''], 0x22: ['u32', ''], 0x23: ['u32', ''],
 });
 
 const REEL = m({
@@ -288,15 +298,15 @@ const SEVENSEG = m({
 }, SEVENSEG_INNER, SEVENSEG_INNER);
 
 const CHECKBOX = m({
-  0x28: ['text', 'Label'],
+  0x28: ['atext', 'Label'],
   0x01: ['bool', 'Checked'], 0x02: ['bitmap', 'Image'], 0x36: ['bitmap', 'Overlay'],
-  0x27: ['font', 'Font'], 0x3b: ['u32', ''], 0x3f: ['text', 'Label'],
+  0x27: ['font', 'Font'], 0x3b: ['u32', ''], 0x3f: ['wtext', 'Label'],
   0x4c: ['byte', ''],
 });
 
 const LABEL = m({
-  0x28: ['text', 'Label'],
-  0x3b: ['u32', ''], 0x3f: ['text', 'Label'], 0x36: ['bitmap', 'Overlay'],
+  0x28: ['atext', 'Label'],
+  0x3b: ['u32', ''], 0x3f: ['wtext', 'Label'], 0x36: ['bitmap', 'Overlay'],
   0x39: ['i32', 'Lamp'], 0x01: ['color', 'BackgroundColour'], 0x02: ['bool', 'Transparent'],
   0x27: ['font', 'Font'],
   0x38: ['u32', ''], 0x1c: ['u32', 'DefinedLampCount'],
@@ -340,7 +350,7 @@ const BORDER_INNER = m({
 
 const BORDER = m({
   0x0a: ['bool', ''], 0x0b: ['bool', ''], 0x37: ['u32', ''],
-  0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''], 0x3f: ['text', 'Label'],
+  0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''], 0x3f: ['wtext', 'Label'],
 }, BORDER_INNER, BORDER_INNER, {
   OuterColour: 0xffff0000, InnerColour: 0xff00ff00, BorderWidth: 8, Spacing: 9,
 });
@@ -363,7 +373,7 @@ const BASE_TAGS: Record<number, [Role, string]> = {
   0x48: ['u32', 'EffectId'], 0x49: ['i32', 'CoinNoteId'], 0x4a: ['u32', 'InhibitLamp'],
   0x38: ['subcount', 'SublampCount'], 0x39: ['subtable', 'SublampTable'],
   0x3a: ['subtable', ''],
-  0x27: ['font', 'Font'], 0x28: ['text', ''], 0x3f: ['text', ''],
+  0x27: ['font', 'Font'], 0x28: ['atext', ''], 0x3f: ['wtext', ''],
   0x36: ['bitmap', 'Overlay'],
 };
 
@@ -429,9 +439,49 @@ const PLASMADISPLAY_TAGS: Record<number, [Role, string]> = {
 };
 const PLASMADISPLAY = m({ ...BASE_TAGS }, m(PLASMADISPLAY_TAGS), m(PLASMADISPLAY_TAGS));
 
+const BFMLED_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'XSize'], 0x02: ['u32', 'YSize'], 0x03: ['u32', 'DigitSpacing'],
+  0x04: ['color', 'OnColour'], 0x05: ['color', 'OffColour'], 0x06: ['color', 'BackColour'],
+  0x07: ['u32', 'LedSize'],
+};
+const BFMLED = m({ ...BASE_TAGS }, m(BFMLED_TAGS), m(BFMLED_TAGS));
+
+const ASTRAMATRIX_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'Size'],
+  0x02: ['color', 'OnColour'], 0x03: ['color', 'OffColour'], 0x04: ['color', 'BackgroundColour'],
+};
+const ASTRAMATRIX = m({ ...BASE_TAGS }, m(ASTRAMATRIX_TAGS), m(ASTRAMATRIX_TAGS));
+
+const MAYGAYVIDEO_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'Quality'], 0x02: ['bool', 'Vertical'],
+};
+const MAYGAYVIDEO = m({ ...BASE_TAGS }, m(MAYGAYVIDEO_TAGS), m(MAYGAYVIDEO_TAGS));
+
+const BFMCOLOURLED_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'Size'], 0x02: ['raw4', ''],
+  0x03: ['color', 'OffColour'], 0x04: ['color', 'BackgroundColour'],
+  0x05: ['u32', 'Spacing'],
+};
+const BFMCOLOURLED = m({ ...BASE_TAGS }, m(BFMCOLOURLED_TAGS), m(BFMCOLOURLED_TAGS));
+
+const REELBONUSREEL_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'Number'], 0x02: ['u32', 'SymbolPos'],
+  0x03: ['bitmap', 'Lamp1On'], 0x04: ['bitmap', 'Lamp2On'],
+  0x05: ['bitmap', 'Lamp3On'], 0x06: ['bitmap', 'Lamp4On'],
+  0x07: ['bitmap', 'Mask'], 0x08: ['bitmap', 'Background'],
+};
+const REELBONUSREEL = m({ ...BASE_TAGS }, m(REELBONUSREEL_TAGS), m(REELBONUSREEL_TAGS));
+
+const IGTVFD_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'DotSize'], 0x02: ['u32', 'DotSpacing'],
+  0x03: ['color', 'OnColour'], 0x04: ['color', 'OffColour'], 0x05: ['color', 'BackgroundColour'],
+};
+const IGTVFD = m({ ...BASE_TAGS }, m(IGTVFD_TAGS), m(IGTVFD_TAGS));
+
 const BFMVIDEO = m({
   0x01: ['u32', 'VideoMode'], 0x36: ['bitmap', 'Overlay'],
   0x33: ['bool', ''], 0x3b: ['u32', ''],
+  0x0b: ['byte', ''], 0x02: ['u32', ''],
 });
 
 const PRISMLAMP = m({
@@ -448,6 +498,7 @@ const BFMALPHA = m({
   0x01: ['color', 'Colour'], 0x02: ['u32', 'OffLevel'],
   0x03: ['u32', 'DigitWidth'], 0x04: ['u32', 'Columns'],
   0x05: ['bitmap', 'CharacterImage'], 0x40: ['bool', 'Reversed'],
+  0x06: ['bool', 'Reversed'],
   0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''],
 });
 
@@ -465,6 +516,7 @@ const RGBLED = m({
 
 const DISCREEL_TAGS: Record<number, [Role, string]> = {
   0x01: ['u32', 'HalfSteps'], 0x02: ['u32', 'Stops'], 0x03: ['u32', 'Resolution'],
+  0x04: ['bool', 'InvertedOpto'],
   0x05: ['i32', 'BandOffset'], 0x06: ['u32', 'Darkness'], 0x08: ['u32', 'OuterLampSize'],
   0x0a: ['u32', 'OuterH'], 0x0b: ['u32', 'OuterL'], 0x0c: ['u32', 'InnerH'],
   0x0d: ['u32', 'InnerL'], 0x11: ['u32', 'InnerLampSize'],
@@ -541,6 +593,14 @@ const DEFAULTS: Record<number, Record<string, number>> = {
   0x13: { XSize: 2, YSize: 2, DotSpacing: 1, DigitSpacing: 2,
     OnColour: 0xff00ffff, OffColour: 0xff002c2c, BackgroundColour: 0x00000000 },
   0x23: { Size: 5, OnColour: 0xffff8d1c, OffColour: 0xff000000, BackgroundColour: 0xff000000 },
+  0x15: { XSize: 4, YSize: 4, DigitSpacing: 4, LedSize: 4,
+    OnColour: 0xffff0000, OffColour: 0xff000000, BackColour: 0xff000000 },
+  0x2c: { Size: 7, OnColour: 0xffff0000, OffColour: 0xff000000, BackgroundColour: 0xff000000 },
+  0x28: { Quality: 0, Vertical: 0 },
+  0x24: { Size: 7, Spacing: 2, OffColour: 0xff000000, BackgroundColour: 0xff000000 },
+  0x27: { Number: 0x60, SymbolPos: 0 },
+  0x20: { DotSize: 1, DotSpacing: 2, OnColour: 0xff00ff00, OffColour: 0xff000000,
+    BackgroundColour: 0xff000000 },
   0x26: { SelectedStyle: 0, MaxLED: 1, NoOutline: 0, NoShadow: 0,
     AdjustedOff: 0xff7f0000, AdjustedRed: 0xff000000, AdjustedGreen: 0xff000000,
     AdjustedRedGreen: 0xff000000, AdjustedBlue: 0xff000000, AdjustedRedBlue: 0xff000000,
@@ -556,7 +616,9 @@ const MAPS: Record<number, TagMap> = {
   0x0c: BFMALPHA, 0x0d: DOTMATRIX, 0x13: DOTALPHA, 0x26: RGBLED,
   0x16: EPOCHDOTALPHA, 0x22: EPOCHMATRIX, 0x29: PRISMLAMP, 0x2e: MAYGAYMATRIX,
   0x1f: BFMVIDEO, 0x2d: FLIPREEL, 0x0f: BARCRESTVIDEO, 0x23: PLASMADISPLAY,
-  0x21: ACEVIDEO,
+  0x21: ACEVIDEO, 0x15: BFMLED,
+  0x2c: ASTRAMATRIX, 0x28: MAYGAYVIDEO, 0x24: BFMCOLOURLED, 0x27: REELBONUSREEL,
+  0x20: IGTVFD,
 };
 
 export function hasTagMap(type: number): boolean {
@@ -566,7 +628,6 @@ export function hasTagMap(type: number): boolean {
 const DELTAS: Record<number, [number, number]> = {
   0x14: [7, 7],
   0x22: [2, 2],
-  0x1f: [2, 2],
 };
 
 export interface ParsedComponent {
@@ -598,7 +659,11 @@ function parseGeometry(d: Uint8Array, c: ParsedComponent, rewriteDelta: number, 
   c.height = u32(d, 16);
   c.width = u32(d, 21);
   c.number = i32(d, 26);
-  const pos = 30;
+  let pos = 30;
+  if (pos + 5 <= d.length && d[pos] === 0x06 && d[pos + 5] === 0x07) {
+    c.values.set('#6', u32(d, pos + 1));
+    pos += 5;
+  }
   if (pos + 7 > d.length || d[pos] !== 0x07) return pos;
   if (isWireAngle(d, pos + 1)) {
     const v = (d[pos + 3] | (d[pos + 4] << 8)) << 16 >> 16;
@@ -632,6 +697,8 @@ function valueLength(d: Uint8Array, o: number, role: Role, sublampCount: number)
   switch (role) {
     case 'font': return o + 4 > d.length ? -1 : 4 + u32(d, o) + 10;
     case 'text': return textShape(d, o)?.len ?? -1;
+    case 'atext': return o + 4 > d.length ? -1 : 4 + u32(d, o);
+    case 'wtext': return o + 4 > d.length ? -1 : 4 + u32(d, o) * 2;
     case 'bitmap':
       return o + 6 > d.length || d[o] !== 0x42 || d[o + 1] !== 0x4d ? -1 : u32(d, o + 2);
     case 'subtable': return sublampCount * 4;
@@ -647,14 +714,29 @@ export function setTagObserver(
   tagObserver = fn;
 }
 
-function walkTags(d: Uint8Array, start: number, map: TagMap, c: ParsedComponent, allowSeparator: boolean): number {
+function walkTags(
+  d: Uint8Array, start: number, map: TagMap, c: ParsedComponent, allowSeparator: boolean, top = false,
+): number {
   let o = start;
   let active = map;
   let sublampCount = 0;
   let guard = 0;
   let separators = 0;
+  let inBase = top;
   while (o < d.length && guard++ < 65536) {
     const b = d[o];
+    if (b === 0x00 && inBase && !allowSeparator) {
+      inBase = false;
+      const own = active.nested ?? active.second ?? active;
+      const nextTag = d[o + 1];
+      if (nextTag === 0x00) { o++; active = own; continue; }
+      const e = nextTag !== undefined ? own.tags[nextTag] : undefined;
+      if (e) {
+        const len2 = valueLength(d, o + 2, e[0], sublampCount);
+        if (len2 >= 0 && o + 2 + len2 <= d.length) { o++; active = own; continue; }
+      }
+      return o + 1;
+    }
     if (b === 0x00) {
       if (allowSeparator && separators < 16) {
         const next = active.second ?? active;
@@ -673,6 +755,7 @@ function walkTags(d: Uint8Array, start: number, map: TagMap, c: ParsedComponent,
         && (active.nested || !active.tags[0x4c])) {
       if (c.orientation === undefined) c.orientation = d[o + 1];
       o += 3;
+      inBase = false;
       if (active.nested) {
         const end = walkTags(d, o, active.nested, c, allowSeparator);
         if (end < 0) return -1;
@@ -696,6 +779,7 @@ function walkTags(d: Uint8Array, start: number, map: TagMap, c: ParsedComponent,
     }
 
     if (role === 'subcount') sublampCount = u32(d, o);
+    if (role === 'axis' && c.orientation === undefined) c.orientation = d[o];
     if (role === 'subtable') {
       const subs: number[] = [];
       for (let i = 0; i < sublampCount; i++) subs.push(i32(d, o + i * 4));
@@ -712,9 +796,9 @@ function walkTags(d: Uint8Array, start: number, map: TagMap, c: ParsedComponent,
       c.values.set(key, u32(d, o));
     } else if (role === 'f32') {
       c.values.set(key, new DataView(d.buffer, d.byteOffset + o, 4).getFloat32(0, true));
-    } else if (role === 'text') {
+    } else if (role === 'text' || role === 'atext' || role === 'wtext') {
       const n = u32(d, o);
-      const utf16 = textShape(d, o)?.utf16 ?? true;
+      const utf16 = role === 'wtext' || (role === 'text' && (textShape(d, o)?.utf16 ?? true));
       let s = '';
       if (utf16) {
         for (let i = 0; i < n && o + 4 + i * 2 + 1 < d.length; i++) {
@@ -766,6 +850,22 @@ function componentStart(p: Uint8Array): number {
   return -1;
 }
 
+function widenBandReelSublamps(c: ParsedComponent): void {
+  const old = c.subs;
+  if (!old || old.length !== 0x14) return;
+  const wide = new Array<number>(0x3c).fill(-2);
+  for (let i = 0; i < 0x14; i++) wide[Math.floor(i / 5) + i] = old[i];
+  c.subs = wide;
+}
+
+function bfmLedSizeFromX(c: ParsedComponent): void {
+  const x = c.values.get('XSize');
+  if (x === undefined) return;
+  const keys = [...c.values.keys()];
+  const led = keys.indexOf('LedSize');
+  if (led < 0 || led < keys.indexOf('XSize')) c.values.set('LedSize', x);
+}
+
 export function parseLayout(p: Uint8Array): ParsedComponent[] {
   const start = componentStart(p);
   if (start < 0) return [];
@@ -799,9 +899,11 @@ export function parseLayout(p: Uint8Array): ParsedComponent[] {
           || type === 0x0f
           || type === 0x23
           || type === 0x21;
-        const end = walkTags(value, ext, map, c, separated);
+        const end = walkTags(value, ext, map, c, separated, true);
         if (end >= 0 && end !== value.length && !c.stop) c.stop = { off: end, tag: -1 };
         c.clean = end === value.length;
+        if (type === 0x08) widenBandReelSublamps(c);
+        if (type === 0x15) bfmLedSizeFromX(c);
         applyDefaults(c, map);
       } catch {
         c.clean = false;

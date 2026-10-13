@@ -2,6 +2,7 @@ import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, Coi
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import { CoinBook, SlotCoins, type BookedCoin } from './coinbook';
 import { locateSys80Coins, sys80CoinTable, sys80ProgramCoins, sys80PlayMeterPrice, type Sys80CoinCode } from './sys80coins';
 import { Reel } from '../hw/reel';
 import { MeterConfirm } from '../hw/meterconfirm';
@@ -25,6 +26,8 @@ import { noteRomCut } from './boarddefaults';
 const CLOCK = 2_500_000;
 const RAM_LO = 0x3000;
 const RAM_HI = 0x4000;
+const RAM_LO_V20 = 0x3800;
+const PAGED_IMAGE = 0x4000;
 const INT1_PERIOD = 1042;
 const INT2_PERIOD = 25000;
 const REFRESH_TICK = 800;
@@ -38,6 +41,8 @@ const REEL_COUNT = 4;
 const REEL_STAND_IN_HALF_STEPS = 96;
 const REEL_STAND_IN_STOPS = 12;
 export const REEL_ADJUST = 7;
+
+export const SYS80_FALLBACK_COIN_LINES: readonly number[] = [19, 20, 21, 22];
 
 const SYS80_NIBBLE = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
@@ -85,7 +90,9 @@ interface Sys80Reel {
 export class Sys80 implements Machine {
   static readonly snapshotConfig: readonly string[] = [
     'switches',
-    'coinCodeCache', 'coinPriceCache', 'pricedByPlays', 'coinSlots', 'wiring', 'meterInRaw', 'meterOutRaw',
+    'coinCodeCache', 'coinPriceCache', 'pricedByPlays', 'coinSlots', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw',
+    'layoutSlotLines', 'plainSlots',
+    'rom', 'romBytes',
   ];
 
   readonly digitKind: DigitKind = 'words';
@@ -99,6 +106,9 @@ export class Sys80 implements Machine {
   protected readonly speaker = new OneBitSpeaker(CLOCK, AY_RATE, { bassFreq: BASE_BOARD_BASS_FREQ });
   private readonly mixer = new Mixer([this.ay, this.speaker]);
   readonly memory = new Uint8Array(0x10000);
+  private readonly rom = new Uint8Array(0xd000);
+  private romBytes = 0;
+  protected romPage = 0;
   portMap: PortEntry[] = defaultPortMap();
   portMapFromLayout = false;
 
@@ -119,13 +129,16 @@ export class Sys80 implements Machine {
     return this.triacs & 0xff;
   }
 
+  private static readonly OWED_WAIT = CLOCK * 3;
   private readonly ledger = newCashLedger();
+  private readonly coinBook = new CoinBook(this.ledger, Sys80.OWED_WAIT);
+  private readonly slotCoins = new SlotCoins();
   private meterInPence: number[] = [];
   private meterOutPence: number[] = [];
   private tokenInMeter = -1;
   private tokenOutMeter = -1;
   get cashLedger(): CashLedger | undefined {
-    return this.meterInPence.length ? this.ledger : undefined;
+    return this.ledger;
   }
 
   static readonly METER_UNIT_PENCE = 10;
@@ -145,15 +158,10 @@ export class Sys80 implements Machine {
     this.gridTotals.in += this.meterInRaw[i] ?? 0;
     this.gridTotals.out += this.meterOutRaw[i] ?? 0;
     if (!this.booksMoney) return;
-    const inP = this.coinsFromProgram() ? 0 : this.meterInPence[i] ?? 0;
     const outP = this.meterOutPence[i] ?? 0;
-    if (inP) {
-      if (i === this.tokenInMeter) this.ledger.tokenInPence += inP;
-      else this.ledger.inPence += inP;
-    }
     if (outP) {
       if (i === this.tokenOutMeter) this.ledger.tokenOutPence += outP;
-      else this.ledger.outPence += outP;
+      else this.coinBook.cashOut(outP);
     }
   }
 
@@ -187,8 +195,13 @@ export class Sys80 implements Machine {
 
   constructor(roms: readonly Uint8Array[], nvram?: Uint8Array) {
     let off = 0;
-    for (const r of roms) { this.memory.set(r.subarray(0, Math.max(0, RAM_LO - off)), off); off += r.length; }
-    noteRomCut(this, off, RAM_LO);
+    for (const r of roms) {
+      this.memory.set(r.subarray(0, Math.max(0, RAM_LO - off)), off);
+      if (off < this.rom.length) this.rom.set(r.subarray(0, this.rom.length - off), off);
+      off += r.length;
+    }
+    this.romBytes = off;
+    noteRomCut(this, off, off === PAGED_IMAGE ? PAGED_IMAGE : RAM_LO_V20);
     if (nvram) this.memory.set(nvram.subarray(0, RAM_HI - RAM_LO), RAM_LO);
     for (let i = 0; i < REEL_COUNT; i++) {
       this.sreels.push({
@@ -306,6 +319,7 @@ export class Sys80 implements Machine {
     this.lastReelport = -1;
     this.triacs = this.meterLines = 0;
     this.meterBank.reset();
+    this.coinBook.reset();
     this.ledShift.fill(0);
     this.ledData.fill(0);
     this.duart.reset();
@@ -316,12 +330,17 @@ export class Sys80 implements Machine {
     this.lamps.fill(0);
     this.digits.fill(0);
     this.digitTime.fill(0);
+    this.romPage = 0;
     this.cpu.reset();
   }
 
   protected busRead(a: number): number {
     a &= 0xffff;
-    if (a < RAM_LO || (a >= 0x3400 && a < RAM_HI)) return this.memory[a];
+    if (a < RAM_LO_V20) {
+      const src = a >= 0x2000 && this.romPage && this.romBytes === PAGED_IMAGE ? a + 0x1000 : a;
+      return this.rom[src]!;
+    }
+    if (a < RAM_HI) return this.memory[a];
     this.strays.hit(a);
     return 0;
   }
@@ -330,7 +349,7 @@ export class Sys80 implements Machine {
 
   protected busWrite(a: number, v: number): void {
     a &= 0xffff;
-    if (a >= RAM_LO && a < RAM_HI) this.memory[a] = v & 0xff;
+    if (a >= RAM_LO_V20 && a < RAM_HI) this.memory[a] = v & 0xff;
     else if (a >= RAM_HI) this.strays.hit(a);
   }
 
@@ -499,6 +518,9 @@ export class Sys80 implements Machine {
       case PortType.Sound:
         if (e.value <= 1) this.speaker.write(e.value, value);
         return;
+      case PortType.RomPage:
+        this.romPage = (value ^ 1) & 0xff;
+        return;
       default:
         return;
     }
@@ -522,6 +544,7 @@ export class Sys80 implements Machine {
   step(): number {
     const c = this.cpu.step();
     if (this.judging || this.owedWait > 0) this.judgeCoinStep(c);
+    this.coinBook.elapse(c);
     this.tickMeters(c);
     if (++this.refresh >= 100000) this.refresh = 0;
     if (this.refresh % REFRESH_TICK === 0) this.ageSeg();
@@ -585,8 +608,8 @@ export class Sys80 implements Machine {
         note: 'Modelled as timed matrix pulses (insertCoin), not as a mech.' },
       { id: 'ports', label: 'CRU OUTPUT PORTS', part: '512 lines - meaning per set (layout tag $9C)', device: this.portWrites },
       { id: 'iocard', label: 'I/O CARD', part: 'CRU $00-$1F - matrix + reel optos', device: this.matrix },
-      { id: 'ram', label: 'BATTERY RAM', part: '4K at $3000', device: this.memory },
-      { id: 'rom', label: 'PROGRAM ROM', part: 'up to 12K from $0000', device: this.memory },
+      { id: 'ram', label: 'BATTERY RAM', part: '2K at $3800', device: this.memory },
+      { id: 'rom', label: 'PROGRAM ROM', part: 'up to 14K from $0000; 16K paged at $2000', device: this.rom },
       { id: 'ay', label: 'SOUND', part: 'AY-3-8910 - CRU $140', device: this.ay },
       { id: 'speaker', label: 'SPEAKER', part: '1-bit - "Sound" port type', device: this.speaker },
       { id: 'cpu', label: 'CPU', part: 'TMS9980A - 2.5 MHz', device: this.cpu, cpu: true },
@@ -627,10 +650,13 @@ export class Sys80 implements Machine {
     if (this.coinTimer > 0 || bit < 0 || bit > 31) return;
     const code = this.coinCode();
     if (code && !code.lines.some((l) => l.line === bit)) { this.coinsRefused++; return; }
+    const slots = this.readsProgramCoins && !code ? this.layoutSlotLines : null;
+    if (slots && !slots.includes(bit)) { this.coinsRefused++; return; }
     this.coinInput = bit;
     this.layoutInput(bit, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;
-    if (!this.coinsFromProgram()) return;
+    if (!this.readsProgramCoins) return;
+    if (!code) { this.bookDropped(bit); return; }
     this.judgeCount[bit] = this.judgeCount[bit]! + 1;
     this.judgeWait[bit] = Sys80.JUDGE_WAIT;
     this.judging = true;
@@ -700,11 +726,6 @@ export class Sys80 implements Machine {
     return this.priced()?.coins?.get(line) ?? null;
   }
 
-  private coinsFromProgram(): boolean {
-    const p = this.priced();
-    return !!p && (!!p.coins || this.wiring !== null);
-  }
-
   get programReadsCoins(): boolean {
     return !!this.priced()?.coins;
   }
@@ -721,6 +742,16 @@ export class Sys80 implements Machine {
   }
 
   get coinChutes(): readonly CoinChute[] | undefined {
+    const unread = this.readsProgramCoins && !this.coinCode();
+    const slots = unread ? this.layoutSlotLines ?? SYS80_FALLBACK_COIN_LINES : null;
+    if (slots) {
+      return slots.map((bit): CoinChute => {
+        const c = this.slotCoins.coinOn(bit);
+        if (typeof c === 'number') return { label: c >= 100 ? `£${c % 100 ? (c / 100).toFixed(2) : c / 100}` : `${c}p`, bit, pence: c };
+        if (c !== null) return { label: 'Token', bit, pence: typeof c === 'object' ? c.token : null, token: true };
+        return { label: `Coin input ${bit}`, bit, pence: null, lineOnly: true };
+      });
+    }
     const coins = this.readsProgramCoins ? this.priced()?.coins : null;
     if (!coins) return undefined;
     const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
@@ -803,9 +834,19 @@ export class Sys80 implements Machine {
   private bookTaken(line: number): void {
     const taken = this.programCoin(line);
     if (this.wiring) { this.bookWiredCoin(line, taken); return; }
-    if (!taken) return;
+    if (!taken) { this.coinBook.coin(this.slotCoins.coinOn(line)); return; }
     this.bookCoin(taken.coin);
     this.bookChange(line, taken.change);
+  }
+
+  private bookDropped(line: number): void {
+    const w = this.wiring;
+    if (w) {
+      if (!this.booksMoney || w.conflicts.includes(line)) return;
+      const c = w.coins.get(line);
+      if (c !== undefined) { this.coinBook.coin(typeof c === 'number' ? c : c.token === null ? 'token' : { token: c.token }, COIN_HOLD); return; }
+    }
+    this.coinBook.coin(this.slotCoins.coinOn(line), COIN_HOLD);
   }
 
   private bookCoin(c: SlotCoin): void {
@@ -833,7 +874,6 @@ export class Sys80 implements Machine {
     this.owedWait = Sys80.OWED_WAIT;
   }
 
-  private static readonly OWED_WAIT = CLOCK * 3;
   private owedPorts: number[] = [];
   private owedCounts: number[] = [];
   private owedPence: number[] = [];
@@ -883,6 +923,7 @@ export class Sys80 implements Machine {
     const c = w.coins.get(line);
     if (c === undefined) {
       if (taken) { this.bookCoin(taken.coin); this.bookChange(line, taken.change); }
+      else this.coinBook.coin(this.slotCoins.coinOn(line));
       return;
     }
     if (taken) {
@@ -899,19 +940,41 @@ export class Sys80 implements Machine {
 
   private coinSlots: number[] = [];
 
-  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+  private layoutSlotLines: number[] | null = null;
+
+  setLayoutCoins(
+    list: readonly DeclaredCoin[],
+    plain: readonly number[] = [],
+    lettering: ReadonlyMap<number, 'coin' | 'control'> = new Map(),
+  ): void {
+    const drawn = new Set<number>();
+    for (const b of plain) if (b >= 0 && b <= 31 && lettering.get(b) === 'coin') drawn.add(b);
     const slots = new Set<number>();
+    const stated = new Map<number, BookedCoin>();
     for (const c of list) {
       if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
-      if (c.pence !== null) continue;
       const line = sys80SlotLine(c);
-      if (line >= 0 && line <= 31) slots.add(line);
+      if (line < 0 || line > 31) continue;
+      drawn.add(line);
+      const coin: BookedCoin = c.pence !== null ? (c.token ? { token: c.pence } : c.pence) : c.token ? 'token' : null;
+      const had = stated.get(line);
+      stated.set(line, had === undefined || JSON.stringify(had) === JSON.stringify(coin) ? coin : null);
+      if (c.pence !== null) continue;
+      slots.add(line);
     }
     this.coinSlots = [...slots].sort((a, b) => a - b);
+    this.slotCoins.setLines(stated);
+    this.layoutSlotLines = drawn.size ? [...drawn].sort((a, b) => a - b) : null;
+    this.plainSlots = [...drawn].filter((l) => !stated.has(l)).sort((a, b) => a - b);
   }
+  private plainSlots: number[] = [];
 
   get unnamedCoinLines(): readonly number[] {
-    return this.readsProgramCoins ? this.coinSlots : [];
+    if (!this.readsProgramCoins) return [];
+    if (this.coinCode()) return this.coinSlots;
+    if (!this.layoutSlotLines) return [...new Set([...this.coinSlots, ...SYS80_FALLBACK_COIN_LINES])].sort((a, b) => a - b);
+    if (!this.plainSlots.length) return this.coinSlots;
+    return [...new Set([...this.coinSlots, ...this.plainSlots])].sort((a, b) => a - b);
   }
 
   private meterInRaw: number[] = [];

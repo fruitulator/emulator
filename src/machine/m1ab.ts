@@ -44,8 +44,6 @@ export const CPU_CLOCK = MASTER_CLOCK / 4;
 const DUART_CLOCK = 3_686_400;
 const METER_TICK_INSTRUCTIONS = 1000;
 export const PSG_CLOCK = MASTER_CLOCK / 4;
-const SCAN_HZ = 2_000;
-
 const RAM_SIZE = 0x2000;
 const ROM_SIZE = 0x10000;
 
@@ -308,8 +306,6 @@ export class M1ab implements Bus, Machine {
   private okiControl = 1;
   private okiPollCount = 0;
 
-  private lampStrobe = 0;
-  private scanCycles = 0;
   powerFail = false;
 
   private static readonly MAINS_HZ = 100;
@@ -319,6 +315,7 @@ export class M1ab implements Bus, Machine {
 
   constructor() {
     this.cpu = new M6809(this);
+    this.cpu.illegalAsV20 = true;
     this.duart = new Mc68681({
       irqChanged: () => { this.cpu.setIRQ(this.duart.irq()); },
       txByte: (ch, v) => {
@@ -335,11 +332,8 @@ export class M1ab implements Bus, Machine {
       },
       writeB: (v) => { this.driveTriacs(v); },
     });
-    this.kbd = new I8279({
-      scanLine: (v) => { this.lampStrobe = v; },
-      readReturn: () => this.sensorRow(this.lampStrobe & 7),
-    });
-    this.kbd2 = new I8279();
+    this.kbd = new I8279({ rowRead: (row) => this.sensorRow(row) ^ 0xff }, true);
+    this.kbd2 = new I8279({}, false);
     this.mixer = new Mixer([this.oki, this.opll]);
     parkAtV20PowerUp(this.reelUnits, MODEL_RELATIONS.M1AB);
     this.reset();
@@ -587,6 +581,7 @@ export class M1ab implements Bus, Machine {
     () => new Reel({
       stepsPerRevolution: 96, symbols: 16, mame: true, mameDrive: 'starpoint',
       indexStart: M1AB_OPTIC_WINDOW[0], indexEnd: M1AB_OPTIC_WINDOW[1], indexPattern: 0, initPhase: 4,
+      v20Gate: true,
     }),
   );
 
@@ -1052,8 +1047,6 @@ export class M1ab implements Bus, Machine {
   reset(): void {
     this.bank = 0;
     this.powerFail = false;
-    this.scanCycles = 0;
-    this.lampStrobe = 0;
     this.lampHistory.reset();
     this.opLamps.reset();
     this.lamps.set(this.opLamps.shown, M1ab.OP_LAMPS);
@@ -1100,14 +1093,6 @@ export class M1ab implements Bus, Machine {
 
     const confirmed = this.meterBank.advance(1, METER_TICK_INSTRUCTIONS);
     if (confirmed) for (let i = 0; i < 8; i++) if (confirmed & (1 << i)) this.meterConfirmed(i);
-
-    this.scanCycles += cycles;
-    const scanPeriod = Math.floor(CPU_CLOCK / SCAN_HZ);
-    while (this.scanCycles >= scanPeriod) {
-      this.scanCycles -= scanPeriod;
-      this.kbd.scan();
-      this.kbd2.scan();
-    }
 
     if (this.coinCycles > 0 && (this.coinCycles -= cycles) <= 0) {
       this.inputs.switches[3] &= ~this.coinMask & 0xff;

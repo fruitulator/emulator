@@ -72,6 +72,15 @@ export function cabLampLit(m: FrameView, lp: Pick<CabLamp, 'led' | 'digitSeg'>, 
   return lp.led && m.ledServed(n) ? m.layoutLed(n) : m.layoutLamp(n);
 }
 
+export const RGB_LED_FACE: readonly number[] = [0, 1, 2, 4, 3, 5, 6, 7];
+
+export function rgbLampFace(m: FrameView, lp: Pick<CabLamp<unknown>, 'led' | 'digitSeg' | 'rgb'>): number {
+  if (!lp.rgb) return 0;
+  let mask = 0;
+  lp.rgb.bits.forEach((n, k) => { if (k < 3 && n >= 0 && cabLampLit(m, lp, n)) mask |= 1 << k; });
+  return RGB_LED_FACE[mask & 7];
+}
+
 const RGB_DIES = { led: true } as const;
 
 export function rgbLedFrameColour(m: FrameView, led: RgbLed): number {
@@ -101,6 +110,7 @@ function lampExtent(lp: CabLamp<Sized>): IntRect {
   if (lp.offState) {
     e = union(e, rect(lp.left, lp.top, lp.offState.canvas.width, lp.offState.canvas.height));
   }
+  for (const f of lp.rgb?.faces ?? []) if (f) e = union(e, rect(lp.left, lp.top, f.width, f.height));
   if (lp.legend) {
     const lines = (t: string | undefined): number =>
       t ? t.split(/\r?\n/).filter((s) => s.length).length : 0;
@@ -303,6 +313,7 @@ export function buildRenderIndex(
         let h = 0;
         for (const st of lp.states) h = mix(h, cabLampLevel(m, lp, st.n));
         if (lp.offState) h = mix(h, lp.offState.nums.some((n) => cabLampLit(m, lp, n)) ? 1 : 0);
+        if (lp.rgb) h = mix(h, rgbLampFace(m, lp));
         if (lp.offDim) h = mix(h, lp.offDim.nums.some((n) => cabLampLit(m, lp, n)) ? 1 : 0);
         if (lp.legend && lp.legend.lamp >= 0) h = mix(h, lampBit(m, lp.legend.lamp));
         if (lp.legend?.input !== undefined) h = mix(h, heldInput(lp.legend.input) ? 1 : 0);
@@ -344,6 +355,17 @@ export function buildRenderIndex(
         }
         let h = 0;
         for (const lamp of s.seg) h = mix(h, lamp >= 0 && m.layoutLamp(lamp) ? 1 : 0);
+        return h;
+      },
+    });
+  }
+
+  for (const b of cab.bfmLeds ?? []) {
+    els.push({
+      extent: turned(rect(b.left, b.top, b.width, b.height), b),
+      key: (m) => {
+        let h = 0;
+        for (let i = 0; i < 20; i++) h = mix(h, m.layoutDigit(i));
         return h;
       },
     });

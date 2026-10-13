@@ -158,6 +158,7 @@ export class Sys5 implements Bus16, Machine {
       mame: true, mameDrive: 'starpoint',
       stepsPerRevolution: 200, symbols: 16,
       indexStart: 1, indexEnd: 3, indexPattern: 0, initPhase: 2,
+      v20Gate: true,
     }),
   ), MODEL_RELATIONS.SYS5);
 
@@ -859,11 +860,11 @@ export class Sys5 implements Bus16, Machine {
 
   private ioRead(a: number): number {
     this.noteIo(a, false);
-    if (a >= 0x046020 && a <= 0x046023) {
-      return (a & 2) ? this.acia[0].read() : this.acia[0].status();
+    if (a >= 0x046020 && a <= 0x04603f) {
+      return a >= 0x046022 ? this.acia[0].read() : this.acia[0].status();
     }
-    if (a >= 0x046040 && a <= 0x04604f) return this.ptm.read((a >> 1) & 7) & 0xff;
-    if (a >= 0x046060 && a <= 0x046067) return this.pia.read((a >> 1) & 3) & 0xff;
+    if (a >= 0x046040 && a <= 0x04605f) return this.ptm.read((a >> 1) & 7) & 0xff;
+    if (a >= 0x046060 && a <= 0x04607f) return this.pia.read((a >> 1) & 3) & 0xff;
     if (a >= 0x046080 && a <= 0x04609f) return 0xffff;
 
     if (a >= 0x048000 && a <= 0x04801f) {
@@ -901,7 +902,7 @@ export class Sys5 implements Bus16, Machine {
     if (a >= 0x04c100 && a <= 0x04c105) return 0x14 | (this.upd.busy() ? 1 : 0);
     if (a === 0x044000 || a === 0x044002) return 0;
     this.strays.hit(a);
-    return 0xffff;
+    return 0;
   }
 
   readonly strays = new StrayCounter();

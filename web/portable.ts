@@ -1,6 +1,7 @@
 import {
   classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms, type GameFile,
 } from '../src/machine/registry';
+import { damagedRoms } from '../src/machine/textcopy';
 import { CONFIG_FILE } from '../src/machine/setfiles';
 import {
   decodePak, decodeSrcs, decodeStat, encodeMeta, encodeSrcs, encodeStat, readMeta, repackPak,
@@ -177,6 +178,7 @@ export async function importPunnet(
     playCount: prev ? playCountOf(prev) : record?.playCount ?? 0,
     ...listOrDrop('missingRoms', missingProgramRoms(game)),
     ...listOrDrop('missingSound', missingSoundRoms(game)),
+    ...listOrDrop('damagedRoms', damagedRoms(game)),
     ...listOrDrop('linkedInstances', linkedInstances(game)),
     layoutProps: (record?.layoutProps
       && record.layoutProps.layout === game.layoutName?.toLowerCase()

@@ -30,11 +30,6 @@ export type ImportRequest =
     }
   | {
       id: number;
-      op: 'decodeArtwork';
-      hash: string;
-    }
-  | {
-      id: number;
       op: 'refreshThumb';
       hash: string;
     }

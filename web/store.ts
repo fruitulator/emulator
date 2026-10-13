@@ -18,9 +18,11 @@ export interface GameMeta {
   playCount?: number;
   missingRoms?: string[];
   missingSound?: string[];
+  damagedRoms?: string[];
   linkedInstances?: string[];
   decodeVersion: number;
-  decodeStatus: 'ok' | 'partial' | 'fallback' | 'pending';
+  decodeStatus: 'ok' | 'partial' | 'fallback';
+  cabinetDeferred?: true;
   decode?: { clean: number; total: number };
   autoSave: boolean;
   sizeBytes: number;

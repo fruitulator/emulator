@@ -215,6 +215,29 @@ export function declaredBankDigits(layout: Uint8Array | undefined): DeclaredDisp
   return out;
 }
 
+export function declaredBfmLeds(layout: Uint8Array | undefined): DeclaredDisplay[] {
+  const out: DeclaredDisplay[] = [];
+  const payload = fmlPayload(layout);
+  if (!payload) return out;
+  let comps: ParsedComponent[];
+  try {
+    comps = parseLayout(payload);
+  } catch {
+    return out;
+  }
+  for (const c of comps) {
+    if (c.type !== 0x15) continue;
+    out.push({
+      component: 'BFMLED',
+      type: c.type,
+      rect: c.width > 0 && c.height > 0
+        ? { left: c.x, top: c.y, width: c.width, height: c.height }
+        : null,
+    });
+  }
+  return out;
+}
+
 export function declaredLedLamps(
   layout: Uint8Array | undefined,
 ): (DeclaredDisplay & { leds: number[] })[] {

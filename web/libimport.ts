@@ -41,6 +41,9 @@ export function landedFlaws(meta: GameMeta): string[] {
   if (meta.missingRoms?.length) {
     flaws.push(str('libimport.missing_roms_n', { 0: meta.missingRoms.join(', ') }));
   }
+  if (meta.damagedRoms?.length) {
+    flaws.push(str('libimport.damaged_in_copying_n', { 0: meta.damagedRoms.join(', ') }));
+  }
   if (meta.decodeStatus === 'fallback') flaws.push(str('libimport.no_artwork_layout_not_decoded'));
   if (meta.linkedInstances?.length) {
     flaws.push(str('libimport.linked_bank_drives_n_other', { 0: meta.linkedInstances.length }));

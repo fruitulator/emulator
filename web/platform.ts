@@ -20,6 +20,7 @@ export interface PlatformView {
     tokenLine: number;
     directRows?: readonly number[];
     directIds?: boolean;
+    plainControlDrops?: boolean;
   };
   acceptorByChute?: boolean;
   acceptorCoinPort?: { row: number };
@@ -141,7 +142,7 @@ const impact: PlatformView = {
   coinBit: 0,
   tokenBit: 4,
   acceptorByChute: true,
-  coinRegister: { maskRow: 9, lineOfBit: { 9: [0, 1, 2, 3, 4, 5, -1, -1] }, tokenNote: -1, tokenLine: -1 },
+  coinRegister: { maskRow: 9, lineOfBit: { 9: [0, 1, 2, 3, 4, 5, -1, -1] }, tokenNote: -1, tokenLine: -1, plainControlDrops: true },
   serialAcceptor: { parallelNote: true },
 };
 
@@ -412,6 +413,7 @@ const sys80: PlatformView = {
       2: [16, 17, 18, 19, 20, 21, 22, 23], 3: [24, 25, 26, 27, 28, 29, 30, 31],
     },
     tokenNote: -1, tokenLine: -1,
+    plainControlDrops: true,
   },
   nonSwitchInputs: [0, 1, 2, 3, 5, 16, 19, 20, 21, 22, 23, 24, 25],
   inputNames: {
@@ -649,7 +651,12 @@ const sys83: PlatformView = {
 };
 
 const acevideo: PlatformView = {
-  coins: [],
+  coins: [
+    { label: 'Coin 1', bit: 0x110 },
+    { label: 'Coin 2', bit: 0x111 },
+    { label: 'Coin 3', bit: 0x112 },
+    { label: 'Coin 4', bit: 0x113 },
+  ],
   namedInputs: [],
   playButtons: [],
   matrix: { strobes: 3, bits: 8 },
@@ -859,6 +866,14 @@ export function coinInputLine(
   }
   const direct = 0x100 | button;
   return reg.directIds && coins.some((c) => c.bit === direct) ? direct : -1;
+}
+
+export function plainCoinDrop(
+  view: Pick<PlatformView, 'coinRegister'>,
+  lp: { acceptor?: unknown; coinInput?: number },
+): number {
+  if (lp.acceptor || lp.coinInput === undefined || lp.coinInput < 0) return -1;
+  return view.coinRegister?.plainControlDrops ? lp.coinInput : -1;
 }
 
 export function stampCoinInputs(

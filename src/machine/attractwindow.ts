@@ -2,6 +2,7 @@ export interface Second {
   t: number; reels: boolean; ledger: boolean; glass: boolean; alarm: boolean; line: string;
   lamps?: number;
   pics?: readonly number[];
+  screen?: readonly number[];
   video?: number;
 }
 
@@ -34,6 +35,18 @@ export function varied(w: readonly Second[]): boolean {
   return count(w.slice(0, half)) >= PICTURES_MIN && count(w.slice(half)) >= PICTURES_MIN;
 }
 
+export const SCREEN_SHARE = 2 / 3;
+
+export function screenShow(w: readonly Second[]): boolean {
+  if (w.length < QUIET_LONG_S || !w.every(quiet)) return false;
+  const moved = w.filter((s) => (s.screen?.length ?? 0) > 1).length;
+  if (moved < Math.ceil(w.length * SCREEN_SHARE)) return false;
+  const v = w.slice(-VARIETY_S);
+  const half = Math.floor(v.length / 2);
+  const count = (h: readonly Second[]): number => new Set(h.flatMap((s) => s.screen ?? [])).size;
+  return count(v.slice(0, half)) >= PICTURES_MIN && count(v.slice(half)) >= PICTURES_MIN;
+}
+
 export const VIDEO_ATTRACT_MAX = 40;
 
 export const videoPlaying = (s: Second): boolean => (s.video ?? 0) > VIDEO_ATTRACT_MAX;
@@ -50,7 +63,7 @@ export function attractFired(secs: readonly Second[], windowS: number): boolean 
   if (secs.length < windowS) return false;
   const w = secs.slice(-windowS);
   const long0 = Math.max(windowS, QUIET_LONG_S);
-  if (secs.length >= long0 && videoShow(secs.slice(-long0))) return true;
+  if (secs.length >= long0 && (videoShow(secs.slice(-long0)) || screenShow(secs.slice(-long0)))) return true;
   if (!alive(w)) return false;
   if (secs.length < VARIETY_S) return false;
   const v = secs.slice(-VARIETY_S);

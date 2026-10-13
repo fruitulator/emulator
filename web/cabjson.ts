@@ -24,9 +24,10 @@ export interface CabGeometry {
       classic?: Omit<BandClassic, 'mask'> & { mask?: number } })[];
   flipReels?: (Omit<FlipStrip, 'canvas' | 'overlay' | 'mask1' | 'mask2' | 'mask3'>
     & { canvas: number; overlay?: number; mask1?: number; mask2?: number; mask3?: number })[];
-  lamps: (Omit<CabLamp, 'states' | 'offState'> & {
+  lamps: (Omit<CabLamp, 'states' | 'offState' | 'rgb'> & {
     states: { n: number; canvas: number; down?: number }[];
     offState?: { nums: number[]; canvas: number; down?: number };
+    rgb?: { bits: number[]; faces: (number | null)[] };
   })[];
   vfd: Cabinet['vfd'];
   vfdIsDots: boolean;
@@ -49,6 +50,7 @@ export interface CabGeometry {
   epochDotAlpha?: Cabinet['epochDotAlpha'];
   maygayMatrix?: Cabinet['maygayMatrix'];
   plasmaPanel?: Cabinet['plasmaPanel'];
+  bfmLeds?: Cabinet['bfmLeds'];
   epochMatrix?: Cabinet['epochMatrix'];
   videoScreen?: Cabinet['videoScreen'];
   rgbLeds?: Cabinet['rgbLeds'];
@@ -166,7 +168,7 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
       mask2: f.mask2 ? idFor(f.mask2) : undefined,
       mask3: f.mask3 ? idFor(f.mask3) : undefined,
     })),
-    lamps: cab.lamps.map((l) => ({
+    lamps: cab.lamps.map(({ rgb, ...l }) => ({
       ...l,
       states: l.states.map((s) => ({
         n: s.n, canvas: idFor(s.canvas), ...(s.down ? { down: idFor(s.down) } : {}),
@@ -178,6 +180,7 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
           ...(l.offState.down ? { down: idFor(l.offState.down) } : {}),
         }
         : undefined,
+      ...(rgb ? { rgb: { bits: rgb.bits, faces: rgb.faces.map((f) => (f ? idFor(f) : null)) } } : {}),
     })),
     vfd: cab.vfd ? { ...cab.vfd } : null,
     vfdIsDots: cab.vfdIsDots,
@@ -207,6 +210,7 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     epochDotAlpha: cab.epochDotAlpha ?? null,
     maygayMatrix: cab.maygayMatrix ?? null,
     plasmaPanel: cab.plasmaPanel ?? null,
+    bfmLeds: cab.bfmLeds ?? [],
     epochMatrix: cab.epochMatrix ?? null,
     videoScreen: cab.videoScreen ?? null,
     rgbLeds: cab.rgbLeds ?? [],
@@ -271,7 +275,7 @@ export function assembleCabinet<A>(
       mask2: f.mask2 === undefined ? undefined : get(f.mask2),
       mask3: f.mask3 === undefined ? undefined : get(f.mask3),
     })),
-    lamps: geo.lamps.map((l) => ({
+    lamps: geo.lamps.map(({ rgb, ...l }) => ({
       ...l,
       states: l.states.map((s) => ({
         n: s.n,
@@ -285,6 +289,7 @@ export function assembleCabinet<A>(
           ...(l.offState.down === undefined ? {} : { down: get(l.offState.down) }),
         }
         : undefined,
+      ...(rgb ? { rgb: { bits: rgb.bits, faces: rgb.faces.map((f) => (f === null ? null : get(f))) } } : {}),
     })),
     vfd: geo.vfd,
     vfdIsDots: geo.vfdIsDots,
@@ -314,6 +319,7 @@ export function assembleCabinet<A>(
     epochDotAlpha: geo.epochDotAlpha ?? null,
     maygayMatrix: geo.maygayMatrix ?? null,
     plasmaPanel: geo.plasmaPanel ?? null,
+    bfmLeds: geo.bfmLeds ?? [],
     epochMatrix: geo.epochMatrix ?? null,
     videoScreen: geo.videoScreen ?? null,
     rgbLeds: geo.rgbLeds ?? [],
@@ -457,6 +463,7 @@ export function componentBounds(
   for (const d of [cab.epochDotAlpha, cab.maygayMatrix, cab.epochMatrix, cab.plasmaPanel]) {
     if (d) spanR(d);
   }
+  for (const d of cab.bfmLeds ?? []) spanR(d);
   if (cab.videoScreen) {
     const d = cab.videoScreen;
     spanR(d);
@@ -662,6 +669,7 @@ function stillDisplays(fx: Ctx, cab: Cabinet<ImageData> | Cabinet<ImageBitmap>):
   if (cab.epochDotAlpha) face(cab.epochDotAlpha, cab.epochDotAlpha.bg);
   if (cab.maygayMatrix) face(cab.maygayMatrix, cab.maygayMatrix.bg);
   if (cab.plasmaPanel) face(cab.plasmaPanel, cab.plasmaPanel.bg);
+  for (const d of cab.bfmLeds ?? []) face(d, d.bg);
   if (cab.epochMatrix) face(cab.epochMatrix, cab.epochMatrix.bg);
   if (cab.vfd) face(cab.vfd, cab.vfdColours?.bg, '#050505');
   if (cab.videoScreen) face(cab.videoScreen, null);

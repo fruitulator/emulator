@@ -99,6 +99,6 @@ export default defineConfig(({ mode }) => ({
     __BUILD_ID__: JSON.stringify(commit),
     __BOARD_STAMPS__: JSON.stringify(boardStamps(dirname(fileURLToPath(import.meta.url)))),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
-    __HAS_ARCADE__: JSON.stringify(hasArcade && mode !== 'production' && mode !== 'live'),
+    __HAS_ARCADE__: JSON.stringify(hasArcade),
   },
 }));

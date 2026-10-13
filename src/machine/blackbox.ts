@@ -25,6 +25,8 @@ const METER_TICK_SLICES = 1000;
 const METER_HOLD_TICKS = 5;
 const METER_UNIT_PENCE = 2;
 
+const EM_REEL_CYCLES = 6000;
+
 const SEGMENTS = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f, 0, 0, 0, 0, 0xb4, 0];
 
 const DIGIT_PAGE: Record<number, number> = { 0x600: 0, 0x580: 1, 0x200: 2, 0x480: 3, 0x500: 4 };
@@ -64,7 +66,10 @@ export class BlackBox implements Bus, Machine {
   readonly rom = new Uint8Array(0x2000);
   readonly nvram = new Uint8Array(64);
   nvramFitted = true;
-  row5Shift = 0;
+  row5Shift = 1;
+  stepperReels = true;
+  motorDrive = 0;
+  motorRelay = 1;
 
   readonly matrix = new Uint8Array(8);
   readonly lamps = new Uint8Array(0x60);
@@ -103,6 +108,9 @@ export class BlackBox implements Bus, Machine {
 
   private reelSet: Reel[] = [];
   private optics = 0;
+  private emOptics = 0;
+  private readonly emStopped = new Uint8Array(4);
+  private emAcc = 0;
 
   private nmiAcc = 0;
   private irqAcc = 0;
@@ -223,6 +231,15 @@ export class BlackBox implements Bus, Machine {
     this.slices++;
     if (this.slices % METER_TICK_SLICES === 0) this.tickMeters();
     this.tone.tick(c, BLACKBOX_CLOCK);
+    if (!this.stepperReels) {
+      this.emAcc += c;
+      if (this.emAcc > EM_REEL_CYCLES) {
+        this.emAcc -= EM_REEL_CYCLES;
+        if ((0x10 << this.motorDrive) & this.latch[1]) {
+          this.emReelTick(this.latch[1] & 0x0f, this.motorRelay ? this.latch[2] & 0x80 : 0);
+        }
+      }
+    }
     this.nmiAcc += c;
     this.irqAcc += c;
     if (this.nmiAcc > NMI_CYCLES) {
@@ -313,8 +330,8 @@ export class BlackBox implements Bus, Machine {
     const a = (this.orb >> 5) & 7;
     const d = (this.orb >> 4) & 1;
     const v = (this.orb >> 4) & 0x0f;
-    if (page === 0x100) { this.stepReel(v); return; }
-    if (page === 0x180) { this.dirLatch = (this.dirLatch & ~(1 << a)) | (d << a); return; }
+    if (page === 0x100) { if (this.stepperReels) this.stepReel(v); return; }
+    if (page === 0x180) { if (this.stepperReels) this.dirLatch = (this.dirLatch & ~(1 << a)) | (d << a); return; }
     const digit = DIGIT_PAGE[page];
     if (digit !== undefined) this.digits[digit] = SEGMENTS[v];
     const lamp = LAMP_PAGE[page];
@@ -349,7 +366,7 @@ export class BlackBox implements Bus, Machine {
     let v = 0;
     if (en & 1) v |= (this.matrix[2] >> bit) & 1;
     if (en & 2) v |= (this.matrix[4] >> bit) & 1;
-    if (en & 4) v |= (this.optics >> bit) & 1;
+    if (en & 4) v |= ((this.stepperReels ? this.optics : this.emOptics) >> bit) & 1;
     if ((8 << this.row5Shift) & en && bit < 2) v |= (this.matrix[5] >> bit) & 1;
     return v << 7;
   }
@@ -384,6 +401,31 @@ export class BlackBox implements Bus, Machine {
       if (OPTIC_TABLE[i] & 1) o &= ~m;
     });
     this.optics = o & 0xff;
+  }
+
+  private emReelTick(drive: number, reverse: number): void {
+    const dir = reverse ? -1 : 1;
+    this.reelSet.forEach((reel, r) => {
+      if (r > 3) return;
+      const m = 1 << r;
+      if (drive & m) this.emStopped[r] = 0;
+      if (this.emStopped[r]) return;
+      const steps = reel.stepsPerRevolution;
+      reel.position = (reel.position + dir + steps) % steps;
+      reel.travel += dir;
+      const perSymbol = Math.floor(steps / reel.symbols);
+      const into = perSymbol > 0 ? reel.position % perSymbol : 0;
+      if (into === 0) this.emStopped[r] = 1;
+      const idx = 1 << (2 * r);
+      const sym = 2 << (2 * r);
+      if (into >= 4 && into <= 6) {
+        this.emOptics |= sym;
+        const short = steps - reel.position;
+        if (short >= 4 && short <= 6) this.emOptics |= idx;
+      } else {
+        this.emOptics &= ~(idx | sym);
+      }
+    });
   }
 
   private triacWrite(word: number): void {
@@ -645,7 +687,7 @@ export class BlackBox implements Bus, Machine {
       { id: 'nvram', label: 'NVRAM', part: '64 x 4 on port A', device: this.nvram },
       { id: 'rom', label: 'PROGRAM ROM', part: '8K card - $6000-$7FFF', device: this.rom },
       { id: 'cpu', label: 'CPU', part: 'MC6802 - 1 MHz', device: this.cpu, cpu: true },
-      { id: 'reels', label: '3 REELS', part: 'stepper, output page $100', device: this.reelSet },
+      { id: 'reels', label: '3 REELS', part: this.stepperReels ? 'stepper, output page $100' : 'solenoid, latch $3000 - optics on $1800', device: this.reelSet },
       { id: 'tone', label: 'SOUND', part: this.soundType === null ? 'tone generator - not stated' : ['NE566', 'NE555', 'NE555-2'][this.soundType], device: this.tone },
     ];
   }

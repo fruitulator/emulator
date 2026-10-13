@@ -62,6 +62,7 @@ export const BOARD_ALARM_FORMS: Readonly<Record<string, readonly string[]>> = {
   ACEVIDEO: [],
   PLUTO5: [],
   MPU4PLASMA: [],
+  MPU4VIDEO: [],
 };
 
 export const FLASH_CODE_LEADS: Readonly<Record<string, RegExp>> = {
@@ -89,6 +90,8 @@ const NO_FORMS_WHY: Readonly<Record<string, string>> = {
   PLUTO5: 'this board shows a fault as plain text alternating with a number, in words each game'
     + ' chooses, so a fault cannot be told apart from attract text',
   MPU4PLASMA: 'this board shows its messages as a picture on its dot display, which is not read'
+    + ' as text here',
+  MPU4VIDEO: 'this board shows its messages as a picture on its video screen, which is not read'
     + ' as text here',
 };
 

@@ -63,7 +63,7 @@ export class DiagLog {
 
 const LEDGER_FIELDS: readonly (keyof CashLedger)[] = [
   'inPence', 'outPence', 'unpricedOut', 'tokenInPence', 'tokenOutPence', 'unpricedTokenOut',
-  'unpricedTokenIn', 'unpricedIn',
+  'unpricedTokenIn', 'unpricedIn', 'euroInCents', 'euroOutCents',
 ];
 
 function money(p: number): string {
@@ -72,7 +72,8 @@ function money(p: number): string {
 
 function ledgerDelta(field: keyof CashLedger, d: number): string {
   const counted = field === 'unpricedOut' || field === 'unpricedTokenOut' || field === 'unpricedTokenIn' || field === 'unpricedIn';
-  return `${field} ${d > 0 ? '+' : ''}${counted ? d : money(d)}`;
+  const euro = field === 'euroInCents' || field === 'euroOutCents';
+  return `${field} ${d > 0 ? '+' : ''}${counted ? d : euro ? `€${(d / 100).toFixed(2)}` : money(d)}`;
 }
 
 export class DiagWatch {

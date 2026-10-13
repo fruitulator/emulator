@@ -4,6 +4,17 @@ function fold6(code: number): number {
   return folded > 0 && folded < 0x20 ? folded + 0x40 : folded;
 }
 
+const COLON_SEGMENTS = Uint8Array.from([
+  0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00,
+  0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00,
+  0x40, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78, 0x00,
+  0x01, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x02, 0x01, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x40, 0x40, 0x40, 0x40, 0x00,
+  0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x20, 0x40, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x08, 0x08, 0x08, 0x00, 0x08, 0x08, 0x08, 0x00, 0x00, 0x00,
+]);
+
 const BIT_REVERSE = Uint8Array.from({ length: 256 }, (_, b) => {
   let r = 0;
   for (let i = 0; i < 8; i++) if (b & (1 << i)) r |= 0x80 >> i;
@@ -29,13 +40,13 @@ export class Bda {
   private userDef = 0;
   private readonly userDefBytes: number;
   private customSkip = 0;
-  private custom = 0;
-  private udfNext = 0;
   protected readonly modeCmdUserDef: boolean;
 
   private extended = false;
   private asciiCharset = false;
-  private readonly udfSlot = new Uint8Array(128);
+  private readonly udfDefined = new Uint8Array(128);
+  private readonly udfGlyphs = new Uint8Array(128 * 5);
+  private readonly cellUdf = new Uint8Array(16 * 5);
   readonly udfDots = new Uint8Array(16 * 5);
   private readonly udfData = new Uint8Array(7);
 
@@ -50,6 +61,7 @@ export class Bda {
   private fillOutside = false;
 
   private readonly scrollQueue = new Uint8Array(48);
+  private readonly scrollUdf = new Uint8Array(48 * 5);
   private scrollCount = 0;
   private scrollRead = 0;
   private scrollCollect = false;
@@ -91,8 +103,17 @@ export class Bda {
   private bits = 0;
 
   private sync(): void {
-    if (this.mirrored) for (let i = 0; i < 16; i++) this.chars[i] = this.cells[15 - i];
-    else this.chars.set(this.cells);
+    for (let i = 0; i < 16; i++) {
+      const cell = this.mirrored ? 15 - i : i;
+      const v = this.cells[cell];
+      if (v & UDF_CELL) {
+        this.chars[i] = UDF_CELL | i;
+        this.udfDots.set(this.cellUdf.subarray(cell * 5, cell * 5 + 5), i * 5);
+      } else {
+        this.chars[i] = v;
+        this.udfDots.fill(0, i * 5, i * 5 + 5);
+      }
+    }
     const g = this.gfxDots;
     for (let i = 0; i < 16; i++) {
       const cell = this.mirrored ? 15 - i : i;
@@ -106,14 +127,19 @@ export class Bda {
     }
   }
 
-  private setCell(cell: number, v: number): void {
+  private setCell(cell: number, v: number, glyph?: Uint8Array): void {
     this.cells[cell] = v;
+    if (v & UDF_CELL) {
+      const code = v & 0x7f;
+      this.cellUdf.set(glyph ?? this.udfGlyphs.subarray(code * 5, code * 5 + 5), cell * 5);
+    }
     this.gfxOn.fill(0, cell * 6, cell * 6 + 6);
     this.flash &= ~(1 << cell);
   }
 
   private moveCell(to: number, from: number): void {
     this.cells[to] = this.cells[from];
+    this.cellUdf.copyWithin(to * 5, from * 5, from * 5 + 5);
     this.gfxCol.copyWithin(to * 6, from * 6, from * 6 + 6);
     this.gfxOn.copyWithin(to * 6, from * 6, from * 6 + 6);
     this.flash = (this.flash & ~(1 << to)) | (((this.flash >> from) & 1) << to);
@@ -145,7 +171,13 @@ export class Bda {
   }
 
   private cellFor(code: number): number {
-    if (this.udfSlot[code]) return UDF_CELL | (this.udfSlot[code] - 1);
+    if (this.udfDefined[code]) return UDF_CELL | code;
+    return this.romCell(code);
+  }
+
+  private romCell(code: number): number {
+    if (code === 0x26) return 0x20;
+    if (!this.asciiCharset && (code === 0x3a || code === 0x3b)) return 0x20;
     return this.asciiCharset ? code : fold6(code);
   }
 
@@ -169,7 +201,8 @@ export class Bda {
     while (this.scrollLeft < 1) {
       const [start, end] = this.window();
       if (start <= end) for (let i = start; i < end; i++) this.moveCell(i, i + 1);
-      this.setCell(end & 15, this.scrollQueue[this.scrollRead++]);
+      const q = this.scrollRead++;
+      this.setCell(end & 15, this.scrollQueue[q], this.scrollUdf.subarray(q * 5, q * 5 + 5));
       moved = true;
       if (this.scrollRead < this.scrollCount && this.scrollPeriod > 0) this.scrollLeft += this.scrollPeriod;
       else {
@@ -216,12 +249,13 @@ export class Bda {
     this.userDef = 0;
     this.extended = false;
     this.asciiCharset = false;
-    this.udfSlot.fill(0);
+    this.udfDefined.fill(0);
+    this.udfGlyphs.fill(0);
+    this.cellUdf.fill(0);
+    this.scrollUdf.fill(0);
     this.udfDots.fill(0);
     this.udfData.fill(0);
     this.customSkip = 0;
-    this.custom = 0;
-    this.udfNext = 0;
     this.blankFlag = false;
     this.duty = 31;
     this.gfxCol.fill(0);
@@ -255,14 +289,8 @@ export class Bda {
   private loadUserGlyph(): void {
     const d = this.udfData;
     const code = d[5] & 0x7f;
-    let slot = this.udfSlot[code] - 1;
-    if (slot < 0) {
-      slot = this.udfNext;
-      this.udfNext = (this.udfNext + 1) & 0x0f;
-      for (let c = 0; c < this.udfSlot.length; c++) if (this.udfSlot[c] === slot + 1) this.udfSlot[c] = 0;
-      this.udfSlot[code] = slot + 1;
-    }
-    const col = this.udfDots.subarray(slot * 5, slot * 5 + 5);
+    this.udfDefined[code] = 1;
+    const col = this.udfGlyphs.subarray(code * 5, code * 5 + 5);
     col.fill(0);
     for (let row = 0; row < 7; row++) {
       for (let c = 0; c < 5; c++) {
@@ -276,8 +304,8 @@ export class Bda {
   cellGlyph(cell: number): Uint8Array | null {
     const c = this.chars[cell & 15];
     if (!(c & UDF_CELL)) return null;
-    const slot = c & 0x0f;
-    return this.udfDots.subarray(slot * 5, slot * 5 + 5);
+    const i = c & 0x0f;
+    return this.udfDots.subarray(i * 5, i * 5 + 5);
   }
 
   text(): string {
@@ -344,7 +372,12 @@ export class Bda {
         this.scrollCollect = false;
         if (this.scrollCount !== 0) this.scrollLeft = this.scrollPeriod;
       } else if (this.scrollCount < this.scrollQueue.length) {
-        this.scrollQueue[this.scrollCount++] = this.cellFor(data & 0x7f);
+        const v = this.cellFor(data & 0x7f);
+        if (v & UDF_CELL) {
+          const code = v & 0x7f;
+          this.scrollUdf.set(this.udfGlyphs.subarray(code * 5, code * 5 + 5), this.scrollCount * 5);
+        }
+        this.scrollQueue[this.scrollCount++] = v;
       }
       return;
     }
@@ -357,21 +390,24 @@ export class Bda {
       return;
     }
 
-    if (this.customSkip > 0) {
-      this.custom = ((this.custom >> 8) | (data << 8)) & 0xffff;
-      if (--this.customSkip > 0) return;
-      const slot = this.udfSlot[0];
-      if (this.custom & 1 || !slot) this.place(0x20, true);
-      else this.place(UDF_CELL | (slot - 1), true);
-      return;
-    }
-
     if (this.userDef > 0) {
       this.userDef--;
       if (this.modeCmdUserDef) {
         this.udfData[this.userDef] = data;
         if (this.userDef === 0) this.loadUserGlyph();
       }
+      return;
+    }
+
+    if (this.customSkip > 0) {
+      const base = this.customSkip === 2 ? 0 : 8;
+      const glyph = this.udfGlyphs.subarray(0x3a * 5, 0x3a * 5 + 5);
+      for (let k = 0; k < 8; k++) {
+        if (!((data >> k) & 1)) continue;
+        for (let c = 0; c < 5; c++) glyph[c] |= COLON_SEGMENTS[(base + k) * 6 + c] & 0x7f;
+      }
+      if (--this.customSkip > 0) return;
+      this.place(UDF_CELL | 0x3a, true);
       return;
     }
 
@@ -437,8 +473,7 @@ export class Bda {
           if (data === 0xb8) this.fillOutside = true;
           if (data === 0xbc && this.extended) {
             this.asciiCharset = true;
-            this.udfSlot.fill(0);
-            for (let k = 0; k < 16; k++) this.udfSlot[k] = k + 1;
+            this.udfDefined.fill(0);
           }
           break;
         }
@@ -496,8 +531,14 @@ export class Bda {
   }
 
   private character(code: number): void {
-    if (this.udfSlot[code]) {
-      this.place(UDF_CELL | (this.udfSlot[code] - 1), true);
+    if (code === 0x3a && this.modeCmdUserDef) {
+      this.udfGlyphs.fill(0, 0x3a * 5, 0x3a * 5 + 5);
+      this.udfDefined[0x3a] = 1;
+      this.customSkip = 2;
+      return;
+    }
+    if (this.udfDefined[code]) {
+      this.place(UDF_CELL | code, true);
       return;
     }
     switch (code) {
@@ -513,24 +554,10 @@ export class Bda {
         this.place(code, false);
         return;
       case 0x3a:
-        if (!this.modeCmdUserDef) {
-          this.userDef = this.userDefBytes;
-          return;
-        }
-        if (!this.asciiCharset) {
-          this.customSkip = 2;
-          this.custom = 0;
-          return;
-        }
-        break;
-      case 0x3b:
-        if (!this.asciiCharset) return;
-        break;
-      case 0x26:
-        if (!this.asciiCharset) return;
-        break;
+        this.userDef = this.userDefBytes;
+        return;
     }
-    this.place(this.asciiCharset ? code : fold6(code), true);
+    this.place(this.romCell(code), true);
   }
 
   private place(ascii: number, move = true, change = true): void {

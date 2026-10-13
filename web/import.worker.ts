@@ -2,6 +2,7 @@ import {
   classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms,
   type Game, type GameFile, type LayoutProps,
 } from '../src/machine/registry';
+import { damagedRoms } from '../src/machine/textcopy';
 import { CONFIG_FILE } from '../src/machine/setfiles';
 import { reelGeometryFromPayload } from '../src/machine/layoutreels';
 import { layoutSwitchesFromPayload } from '../src/machine/layoutswitches';
@@ -61,6 +62,15 @@ async function decodeLayout(game: Game): Promise<{
   return { cab, props };
 }
 
+async function decodeLayoutOrNone(game: Game): Promise<Awaited<ReturnType<typeof decodeLayout>>> {
+  try {
+    return await decodeLayout(game);
+  } catch (e) {
+    console.warn('[library] layout could not be decoded; no artwork until it is opened', e);
+    return { cab: null, props: undefined };
+  }
+}
+
 async function postCabinet(id: number, cab: Cabinet<ImageData> | null): Promise<void> {
   if (!cab) {
     post({ id, kind: 'cabinet', geo: null, bitmaps: [] });
@@ -96,11 +106,14 @@ async function importUpload(
   const hash = (req.files && req.hash) || await hashGameFiles(files);
 
   if (req.deferArtwork) {
+    setPhase('decoding');
+    if (game.layout) post({ id, kind: 'progress', stage: 'decoding' });
+    const { cab, props } = await decodeLayoutOrNone(game);
     setPhase('caching');
-    const meta = await persistGame(hash, game, null, (stage) => {
+    const meta = await persistGame(hash, game, cab, (stage) => {
       setPhase(stage);
       post({ id, kind: 'progress', stage });
-    }, req.fallbackName, undefined, !req.background, spares, true);
+    }, req.fallbackName, props, !req.background, spares, 'thumb');
     post({ id, kind: 'cached', hash, meta });
     return;
   }
@@ -187,6 +200,7 @@ async function openPak(
       post({ id, kind: 'cabinet', geo: cached.geo, bitmaps }, bitmaps.map(([, b]) => b));
       const roms = missingProgramRoms(game);
       const sound = missingSoundRoms(game);
+      const damaged = damagedRoms(game);
       const linked = linkedInstances(game);
       const stamped = storedMeta.contentHash !== undefined
         && storedMeta.contentRule === CONTENT_RULE;
@@ -203,6 +217,7 @@ async function openPak(
         variants: game.variants,
         missingRoms: roms.length ? roms : undefined,
         missingSound: sound.length ? sound : undefined,
+        damagedRoms: damaged.length ? damaged : undefined,
         linkedInstances: linked.length ? linked : undefined,
         contentHash: stamped ? storedMeta.contentHash : await contentHashOf(files),
         contentRule: CONTENT_RULE,
@@ -227,26 +242,9 @@ async function openPak(
     post({ id, kind: 'progress', stage });
   }, undefined, props, req.play !== false, spares);
   post({ id, kind: 'cached', hash, meta });
-  console.log(`[library] refreshed ${game.name} to decode v${DECODE_VERSION}`);
-}
-
-async function decodeArtwork(hash: string): Promise<GameMeta | null> {
-  const meta = await getMeta(hash);
-  if (!meta || meta.decodeStatus !== 'pending') return meta;
-  const bytes = await getPak(hash);
-  if (!bytes) return meta;
-  const pak = decodePak(bytes);
-  const files = decodeSrcs(pak.chunk('SRCS'));
-  let spares: GameFile[] = [];
-  try {
-    if (pak.has('SPAR')) spares = decodeSrcs(pak.chunk('SPAR'));
-  } catch (e) {
-    console.warn('[library] spare state unreadable', e);
-  }
-  const hasGam = files.some((f) => CONFIG_FILE.test(f.name));
-  const game = classifyGame(files, hasGam ? undefined : meta.name, meta.variant);
-  const { cab, props } = await decodeLayout(game);
-  return persistGame(hash, game, cab, undefined, undefined, props, false, spares);
+  console.log(storedMeta?.cabinetDeferred && pak.decodeVersion === DECODE_VERSION
+    ? `[library] built the cabinet cache for ${game.name} on its first open`
+    : `[library] refreshed ${game.name} to decode v${DECODE_VERSION}`);
 }
 
 async function refreshThumb(hash: string): Promise<GameMeta | null> {
@@ -313,11 +311,6 @@ async function handle(req: ImportRequest): Promise<void> {
     } else if (req.op === 'contentHash') {
       setPhase('stamp');
       const meta = await backfillContentHash(req.hash);
-      if (!meta) throw new CodedError('game missing from library', 'missing-pak');
-      post({ id: req.id, kind: 'stamped', meta });
-    } else if (req.op === 'decodeArtwork') {
-      setPhase('decoding');
-      const meta = await decodeArtwork(req.hash);
       if (!meta) throw new CodedError('game missing from library', 'missing-pak');
       post({ id: req.id, kind: 'stamped', meta });
     } else if (req.op === 'refreshThumb') {

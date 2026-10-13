@@ -66,12 +66,15 @@ export const LAMP_HALF = 128;
 export const EPOCH_LAMP_LEVELS: readonly number[] =
   [0x28, 0x46, 0x64, 0x82, 0xa0, 0xbe, 0xdc, 0xff];
 
+export const EPOCH_LED_LEVELS: readonly number[] =
+  [0x00, 0x24, 0x48, 0x6c, 0x90, 0xb4, 0xd8, 0xff];
+
 const FLAG_COIN_BUSY = 1;
 const FLAG_HALTED = 2;
 const FLAG_PAUSED = 4;
 
 export const EFFECT_LINES = 16;
-export const FRAME_FORMAT = 2;
+export const FRAME_FORMAT = 4;
 const EFFECT_BYTES = (EFFECT_LINES * 2 + 2) * 4 + 4 + 4 + 4;
 const TRIAC_LEVELS_KNOWN = 0x80000000;
 
@@ -175,7 +178,7 @@ function rawDigits(m: Machine, kind: DigitKind): Uint8Array | Uint16Array | null
     const l = b.outputs!.leds!;
     return new Uint8Array(l.buffer, l.byteOffset, l.length * 2);
   }
-  if (kind === 'mpu5') return b.segDigits!;
+  if (kind === 'mpu5' || kind === 'epoch') return b.segDigits!;
   return null;
 }
 
@@ -500,6 +503,8 @@ export function decodeLamp(kind: LampKind, raw: Uint8Array, n: number, phase = 0
 
 export const MPU5_DIGITS = 72;
 
+export const EPOCH_DIGITS = 64;
+
 export function decodeDigitLevel(kind: DigitKind, raw: Uint8Array, n: number): number {
   if (kind === 'mpu4led') {
     const cells = raw.length / 2;
@@ -511,6 +516,9 @@ export function decodeDigitLevel(kind: DigitKind, raw: Uint8Array, n: number): n
 export function decodeDigitSegLevel(kind: DigitKind, raw: Uint8Array, n: number, seg: number): number {
   if (kind === 'mpu5') {
     return n >= 0 && n < MPU5_DIGITS && seg >= 0 && seg < 8 ? raw[MPU5_DIGITS + n * 8 + seg] : 0xff;
+  }
+  if (kind === 'epoch') {
+    return n >= 0 && n < EPOCH_DIGITS && seg >= 0 && seg < 8 ? raw[EPOCH_DIGITS + n * 8 + seg] : 0xff;
   }
   return decodeDigitLevel(kind, raw, n);
 }
@@ -535,6 +543,8 @@ export function decodeDigit(
       return raw[n & 0x3f];
     case 'mpu4led':
       return n >= 0 && n < raw.length / 2 ? raw[n] : 0;
+    case 'epoch':
+      return n >= 0 && n < EPOCH_DIGITS ? raw[n] : 0;
     case 'mpu5':
       return n >= 0 && n < MPU5_DIGITS ? raw[n] : 0;
     case 'none':

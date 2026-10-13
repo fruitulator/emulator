@@ -67,6 +67,7 @@ export interface ReelConfig {
   mfmeJpm?: boolean;
   flip?: boolean;
   mameDrive?: 'starpoint' | 'barcrest';
+  v20Gate?: boolean;
 }
 
 const NEWJPM: readonly (readonly number[])[] = [
@@ -142,6 +143,8 @@ export class Reel {
   private mPhase = 0;
   private mOldPhase = 0;
   private mOldPattern = 0;
+  private readonly v20Gate: boolean;
+  private gateLast = 0;
 
   constructor(cfg: ReelConfig = {}) {
     this.stepsPerRevolution = cfg.stepsPerRevolution ?? 48;
@@ -162,6 +165,7 @@ export class Reel {
     this.indexPattern = cfg.indexPattern ?? 0;
     this.initPhase = cfg.initPhase ?? 0;
     this.indexTrail = cfg.indexTrail ?? 0;
+    this.v20Gate = cfg.v20Gate ?? false;
     this.mPhase = this.initPhase;
     this.mOldPhase = this.initPhase;
   }
@@ -184,6 +188,7 @@ export class Reel {
     this.mPhase = this.initPhase;
     this.mOldPhase = this.initPhase;
     this.mOldPattern = 0;
+    this.gateLast = 0;
     this.sinceIndex = -1;
   }
 
@@ -224,7 +229,14 @@ export class Reel {
       }
       return d;
     }
-    if (this.mame) return this.updateMame(nibble & 0x0f);
+    if (this.mame) {
+      const p = nibble & 0x0f;
+      if (this.v20Gate && p !== 0 && p !== this.gateLast) {
+        if ((p ^ this.gateLast) === 0x0f) return 0;
+        this.gateLast = p;
+      }
+      return this.updateMame(p);
+    }
     const next = this.phaseTable[nibble & 0x0f];
     if (next < 0) {
       if (this.phase >= 0) this.releasedPhase = this.phase;

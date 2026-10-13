@@ -197,7 +197,3 @@ export function backfillContentHash(hash: string): Promise<GameMeta> {
 export function refreshThumb(hash: string): Promise<GameMeta> {
   return request({ id: nextId++, op: 'refreshThumb', hash }, {}, [], true);
 }
-
-export function decodeArtwork(hash: string): Promise<GameMeta> {
-  return request({ id: nextId++, op: 'decodeArtwork', hash }, {}, [], true);
-}

@@ -112,6 +112,7 @@ export class Sc2 implements Bus, Machine {
     () => new Reel({
       stepsPerRevolution: 96, symbols: 16, mame: true,
       indexStart: 1, indexEnd: 3, indexPattern: 0, initPhase: 4,
+      v20Gate: true,
     }),
   ), MODEL_RELATIONS.SCORPION2);
 
@@ -158,7 +159,10 @@ export class Sc2 implements Bus, Machine {
   private irqStatus = 0;
   private timerStat = 0;
 
-  private static readonly WATCHDOG_CYCLES = Math.floor(CPU_CLOCK * 0.1);
+  private static readonly ALPHA_BUSY_CYCLES = 2000;
+  private alphaBusyCycles = 0;
+
+  private static readonly WATCHDOG_RELOAD = 250_000;
   private watchdogCycles = 0;
   watchdogResets = 0;
 
@@ -318,6 +322,7 @@ export class Sc2 implements Bus, Machine {
 
   constructor() {
     this.cpu = new M6809(this);
+    this.cpu.illegalAsV20 = true;
     this.initE2ram();
     this.inputRegs.set(this.idleInputs);
   }
@@ -794,6 +799,7 @@ export class Sc2 implements Bus, Machine {
     this.irqStatus = 0;
     this.timerStat = 0;
     this.watchdogCycles = 0;
+    this.alphaBusyCycles = 0;
     this.upd.reset();
     this.opll.reset();
     this.soundBankHigh = 0;
@@ -847,7 +853,7 @@ export class Sc2 implements Bus, Machine {
       for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic()) v |= 1 << i;
       v &= this.reelFit.mask;
       if (this.upd.active()) v |= 0x80;
-      if (this.dm01?.busy()) v |= 0x40;
+      if (this.alphaBusyCycles > 0 || this.dm01?.sent) v |= 0x40;
       return v;
     }
     if (a >= MUX_BASE && a < MUX_BASE + 0x0c) {
@@ -930,7 +936,7 @@ export class Sc2 implements Bus, Machine {
         this.timerEnabled = (v & 1) !== 0;
         return;
       case 0x2332:
-        this.watchdogCycles = 0;
+        this.watchdogCycles = Sc2.WATCHDOG_RELOAD;
         return;
       case 0x2330:
         this.payLatch = v;
@@ -965,6 +971,7 @@ export class Sc2 implements Bus, Machine {
       case 0x2800:
         if (this.dm01) this.dm01.queueChar(v);
         else this.vfd.writeChar(v);
+        this.alphaBusyCycles = Sc2.ALPHA_BUSY_CYCLES;
         return;
       case 0x2900:
         this.vfd.reset();
@@ -1016,6 +1023,7 @@ export class Sc2 implements Bus, Machine {
     if (this.pendingOut.deadline && this.ledgerClock >= this.pendingOut.deadline) this.commitPendingOut();
 
     if (this.ackDue > 0) this.ackDue -= cycles;
+    if (this.alphaBusyCycles > 0) this.alphaBusyCycles -= cycles;
 
     if (dropIrq) {
       this.cpu.setIRQ(false);
@@ -1042,12 +1050,13 @@ export class Sc2 implements Bus, Machine {
       }
     }
 
-    this.watchdogCycles += cycles;
-    if (this.watchdogCycles >= Sc2.WATCHDOG_CYCLES) {
-      this.watchdogCycles = 0;
-      this.watchdogResets++;
-      this.warmReset();
-      return cycles;
+    if (this.watchdogCycles > 0) {
+      this.watchdogCycles -= cycles;
+      if (this.watchdogCycles <= 0) {
+        this.watchdogResets++;
+        this.warmReset();
+        return cycles;
+      }
     }
 
     this.upd.tick(cycles, CPU_CLOCK);

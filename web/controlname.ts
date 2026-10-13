@@ -14,10 +14,10 @@ export function acceptorLine(
 
 function slotPrice(
   line: number,
-  coins: readonly { label: string; bit: number }[],
+  coins: readonly { label: string; bit: number; lineOnly?: boolean }[],
 ): string | undefined {
   const coin = coins.find((c) => c.bit === line);
-  if (!coin) return undefined;
+  if (!coin || coin.lineOnly) return undefined;
   return coin.label === 'Token' ? str('controlname.token_slot') : str('controlname.coin_slot_n', { 0: coin.label });
 }
 

@@ -166,3 +166,37 @@ export function readCoinAnswers(raw: unknown): Record<string, NamedCoin> {
   }
   return out;
 }
+
+export interface NamingChoice { label: string; coin: NamedCoin }
+
+export function namingChoices(): NamingChoice[] {
+  return [
+    ...CASH_COINS.map((p): NamingChoice => ({ label: cashLabel(p), coin: p })),
+    { label: slotCoinLabel({ token: null }), coin: 'token' },
+  ];
+}
+
+export function namedCoinLabel(c: NamedCoin): string {
+  return c === 'token' ? slotCoinLabel({ token: null }) : cashLabel(c);
+}
+
+export interface NamingInfo {
+  unnamedCoins?: readonly number[];
+  namesCoins?: boolean;
+  coins?: readonly { bit: number; token?: boolean; pence?: number | null }[];
+}
+
+export function slotsToName(info: NamingInfo | null | undefined, answers: Readonly<Record<string, NamedCoin>>): number[] {
+  if (!info?.namesCoins || !info.unnamedCoins?.length) return [];
+  return [...info.unnamedCoins]
+    .filter((l) => String(l) in answers || !info.coins?.some((c) => c.bit === l && c.token))
+    .sort((a, b) => a - b);
+}
+
+export function mustName(line: number, info: NamingInfo | null | undefined, answers: Readonly<Record<string, NamedCoin>>): boolean {
+  return !(String(line) in answers) && slotsToName(info, answers).includes(line);
+}
+
+export function withCoinAnswer(answers: Readonly<Record<string, NamedCoin>>, line: number, coin: NamedCoin): Record<string, NamedCoin> {
+  return { ...answers, [String(line)]: coin };
+}

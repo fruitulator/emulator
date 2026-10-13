@@ -206,6 +206,10 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
     const badge = chip(blocked.label, 'warn');
     badge.title = blocked.detail;
     plat.push(badge);
+  } else if (g.damagedRoms?.length) {
+    const badge = chip(str('gamelist.damaged_file'), 'warn');
+    badge.title = str('gamelist.n_this_file_looks_damaged', { 0: g.damagedRoms.join(', ') });
+    plat.push(badge);
   }
 
   const inner: HTMLElement[] = [];

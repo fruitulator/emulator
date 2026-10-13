@@ -158,6 +158,18 @@ export class Upd7759 implements AudioSource {
     this.fifoIn = data & 0xff;
   }
 
+  hasSample(n: number, bank = this.romBank): boolean {
+    if (this.rom.length === 0) return false;
+    const base = ((bank & 3) * BANK_SIZE) % this.rom.length;
+    if (!upd7759Header(this.rom, base)) return false;
+    return n <= this.rom[base];
+  }
+
+  stop(): void {
+    this.setResetLine(false);
+    this.setResetLine(true);
+  }
+
   busy(): boolean {
     return this.state === STATE_IDLE;
   }

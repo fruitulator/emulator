@@ -953,6 +953,8 @@
     <style>@import "/web/ui/stars.css";</style>
     <style>@import "/web/ui/tabs.css";</style>
     <style>@import "/web/ui/sitenav.css";</style>
+    <style>@import "/web/ui/beta.css";</style>
+    <style>@import "/web/ui/tip.css";</style>
     <style>
       [hidden] {
         display: none !important;
@@ -1209,8 +1211,8 @@
       <input id="folder" type="file" webkitdirectory multiple />
       <span id="cacheNote" hidden data-str="index.saving_to_library">saving to library…</span>
       <span id="offlineNote" hidden></span>
-      <button id="to-library" class="iconbtn" type="button" aria-label="Open the library" title="Library" data-str-title="index.library" data-str-aria-label="index.open_the_library"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16M8 8v12M12 6v14M16 6l4 14"/></svg></button>
-      <button id="to-orbit" class="iconbtn" type="button" hidden aria-label="Back to the carousel" title="Home" data-str-title="index.home" data-str-aria-label="index.back_to_the_carousel"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></button>
+      <button id="to-library" class="iconbtn" type="button" aria-label="Open the library" data-str-aria-label="index.open_the_library"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16M8 8v12M12 6v14M16 6l4 14"/></svg></button>
+      <button id="to-orbit" class="iconbtn" type="button" hidden aria-label="Back to the carousel" data-str-aria-label="index.back_to_the_carousel"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></button>
       <button id="aboutBtn" class="iconbtn upload about" aria-label="About Fruitulator" aria-haspopup="dialog" aria-expanded="false" data-str-aria-label="index.about_fruitulator"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 16.5v-5"/><path d="M12 7.8h.01"/></svg></button>
       </div>
       <div class="game-only" id="soundGroup" hidden>

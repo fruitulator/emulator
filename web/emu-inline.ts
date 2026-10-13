@@ -1,4 +1,3 @@
-import { holdBusy } from './busy';
 import { machineFor, type Game } from '../src/machine/registry';
 import type { CoinChute, CoinWiringStatus, Machine, NamedCoin } from '../src/machine/machine';
 import type { CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
@@ -21,6 +20,7 @@ import type { AutosaveTrigger, CashLedger, DiagEntry, MachineInfo } from './emu-
 import { DiagLog, DiagWatch, audioReportText } from './diaglog';
 import { undrawnLayoutNotes } from '../src/layout/undrawn';
 import { watchSettingReads, unreadSettingLine } from '../src/layout/unreadsettings';
+import { damagedRomLine, damagedRoms } from '../src/machine/textcopy';
 import type { Snapshot } from './snapshot';
 
 export class InlineEmu implements Emu {
@@ -39,11 +39,6 @@ export class InlineEmu implements Emu {
   private recorder: Recorder | null = null;
   private paused = false;
   private halted = false;
-  private unbusy: (() => void) | null = null;
-  private busy(on: boolean): void {
-    if (on) this.unbusy ??= holdBusy('emulator');
-    else { this.unbusy?.(); this.unbusy = null; }
-  }
   private lastTickAt = 0;
   private seq = 0;
   private epoch = 0;
@@ -77,7 +72,6 @@ export class InlineEmu implements Emu {
 
   load(opts: EmuLoadOptions): Promise<MachineInfo> {
     this.epoch++;
-    this.busy(true);
     this.halted = false;
     this.paused = false;
     this.lastTickAt = 0;
@@ -122,7 +116,9 @@ export class InlineEmu implements Emu {
         optionKeys: opts.optionKeys, panelSwitches: opts.panelSwitches, namedCoins: opts.namedCoins,
       };
       this.infoValue = buildMachineInfo(opts.game, m, this.layout);
-      this.settingNotes = reads.finish().map(unreadSettingLine);
+      this.settingNotes = [
+        ...damagedRoms(opts.game).map(damagedRomLine), ...reads.finish().map(unreadSettingLine),
+      ];
       this.systemName = this.infoValue.system;
       this.inputLabels = {};
       this.coinLabels = {};
@@ -157,7 +153,6 @@ export class InlineEmu implements Emu {
       steps = runBudget(m, budget, this.benchStep);
     } catch (e) {
       this.halted = true;
-      this.busy(false);
       console.error('[emu] machine halted', e);
       this.onHalted?.((e as Error).message || 'machine halted');
       return this.view;
@@ -280,13 +275,11 @@ export class InlineEmu implements Emu {
   }
 
   pause(): void {
-    this.busy(false);
     this.paused = true;
     this.lastTickAt = 0;
   }
 
   resume(): void {
-    this.busy(true);
     this.paused = false;
     this.lastTickAt = 0;
   }

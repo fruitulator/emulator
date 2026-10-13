@@ -1,5 +1,5 @@
 import type { Machine } from './machine';
-import { declaredDisplays, declaredBankDigits, declaredLedLamps } from './layoutdisplay';
+import { declaredDisplays, declaredBankDigits, declaredBfmLeds, declaredLedLamps } from './layoutdisplay';
 import { declaredReels } from './layoutreels';
 import type { ReelFit } from './reelfit';
 import { declaredCoins, COIN_NOTE_BLANK } from './layoutcoins';
@@ -64,7 +64,8 @@ export function unservedDigits(
 ): UnservedComponent[] {
   if (hasDigitBank) return [];
   const declared = declaredBankDigits(layout);
-  return declared.map((d) => ({
+  const leds = declaredBfmLeds(layout);
+  return [...declared.map((d) => ({
     axis: 'digit' as const,
     component: d.component,
     type: d.type,
@@ -73,7 +74,15 @@ export function unservedDigits(
       + ` bank modelled - so they are drawn struck out rather than dark.`
       + ` Everything else on the machine still runs.`,
     rect: d.rect,
-  }));
+  })), ...leds.map((d) => ({
+    axis: 'digit' as const,
+    component: d.component,
+    type: d.type,
+    reason: `this cabinet draws an LED dot display lit from a digit bank, and`
+      + ` the ${system} board here has no digit bank modelled - so it is drawn`
+      + ` struck out rather than dark. Everything else on the machine still runs.`,
+    rect: d.rect,
+  }))];
 }
 
 export function unservedComponents(

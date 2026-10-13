@@ -6,7 +6,7 @@ import {
   type RgbLed,
   SEG_METRICS,
 } from './dat';
-import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, VideoScreen } from './dat';
+import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, BfmLedPanel, VideoScreen } from './dat';
 import { applyOpaqueBand, reelLightFloor } from './reellight';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
@@ -168,6 +168,7 @@ const enum Type {
   MaygayMatrix = 0x2e,
   PlasmaDisplay = 0x23,
   EpochMatrix = 0x22,
+  BfmLed = 0x15,
   Disc = 0x06,
   RgbLed = 0x26,
   BFMVideo = 0x1f,
@@ -543,7 +544,7 @@ export function isFmlLayout(payload: Uint8Array): boolean {
   return true;
 }
 
-type LampKey = false | 'alpha' | 'alphaonly';
+export type LampKey = false | 'alpha' | 'alphaonly';
 
 function image(
   c: ParsedComponent, purpose: string, chroma: boolean | LampKey = false, alpha = false,
@@ -730,6 +731,15 @@ function sublampSlots(c: ParsedComponent): { slot: number; n: number }[] {
 
 const LIT_DEFAULT = 0xffffff00;
 
+function maskFace(face: ImageData | null, mask: ImageData | null, blend: boolean): ImageData | null {
+  if (!face || !mask) return face;
+  if (face.width !== mask.width || face.height !== mask.height) return face;
+  const out = newImageData(face.width, face.height);
+  out.data.set(face.data);
+  if (blend) alphaByMask(out, mask); else multiplyByMask(out, mask);
+  return out;
+}
+
 function sublampStates(
   c: ParsedComponent, slots: { slot: number; n: number }[], fallback: ImageData,
   keyed: LampKey, maskOnly: boolean, echoed: Set<number>,
@@ -747,14 +757,8 @@ function sublampStates(
   const maskFor = (slot: number): ImageData | null =>
     (maskOnly ? null : fitMask(image(c, `SublampMask${slot}`, false)));
   const blend = !!val(c, 'Blend');
-  const masked = (face: ImageData | null, mask: ImageData | null): ImageData | null => {
-    if (!face || !mask) return face;
-    if (face.width !== mask.width || face.height !== mask.height) return face;
-    const out = newImageData(face.width, face.height);
-    out.data.set(face.data);
-    if (blend) alphaByMask(out, mask); else multiplyByMask(out, mask);
-    return out;
-  };
+  const masked = (face: ImageData | null, mask: ImageData | null): ImageData | null =>
+    maskFace(face, mask, blend);
   const additive = blend;
   let lastPictured: ImageData | null = null;
   let lastDown: ImageData | null = null;
@@ -782,6 +786,27 @@ function sublampStates(
   }
   return states.length ? states
     : [{ n: slots[0]?.n ?? c.number, ...withDown(fallback, fallbackDown) }];
+}
+
+export function rgbLedFaces(
+  c: ParsedComponent, pictured: ImageData | null, keyed: LampKey, maskOnly: boolean,
+  colour: ((slot: number) => ImageData | null) | null,
+): (ImageData | null)[] {
+  const blend = !!val(c, 'Blend');
+  const faces: (ImageData | null)[] = [null];
+  let last: ImageData | null = null;
+  for (let i = 1; i <= 7; i++) {
+    if (colour) { faces.push(colour(i)); continue; }
+    const own = i === 1 ? pictured
+      : maskOnly
+        ? tintPool(image(c, `SublampMask${i}`, false), val(c, `Sublamp${i}Colour`) ?? LIT_DEFAULT)
+        : fitToRect(image(c, `Sublamp${i}`, keyed), c.width, c.height);
+    const face = own ?? (blend && i > 1 ? last : null);
+    if (own) last = own;
+    const mask = maskOnly ? null : fitToRect(image(c, `SublampMask${i}`, false), c.width, c.height, false);
+    faces.push(maskFace(face, mask, blend));
+  }
+  return faces;
 }
 
 function tokenAcceptor(c: ParsedComponent): boolean | undefined {
@@ -1017,6 +1042,24 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     return reelWindows.some(({ c: r, i }) => ci < i
       && c.x < r.x + r.width && r.x < c.x + c.width && c.y < r.y + r.height && r.y < c.y + c.height);
   };
+  const alphaish = comps.filter((c) =>
+    c.type === Type.AlphaNew || c.type === Type.Alpha || c.type === Type.BFMAlpha
+    || c.type === Type.AlphaStrip);
+  const disp = alphaish.find((c) => c.type === Type.AlphaNew) ?? alphaish[0];
+  const dots = comps.find((c) => c.type === Type.DotAlpha);
+  const vfdComp = disp ?? dots;
+  const vfdIndex = vfdComp ? streamIndex.get(vfdComp) ?? -1 : -1;
+  const behindAVfd = (c: ParsedComponent): boolean => {
+    if (!vfdComp) return false;
+    const ci = streamIndex.get(c) ?? -1;
+    const r = vfdComp;
+    return ci >= 0 && ci < vfdIndex
+      && c.x < r.x + r.width && r.x < c.x + c.width && c.y < r.y + r.height && r.y < c.y + c.height;
+  };
+  const zFlags = (c: ParsedComponent) => ({
+    ...(behindAReel(c) ? { underReel: true } : {}),
+    ...(behindAVfd(c) ? { underVfd: true } : {}),
+  });
   for (const c of comps) {
     if (c.type !== Type.Lamp) continue;
     if (!sublampSlots(c).length && !isAcceptor(c.values) && !isUnwiredBox(c)) continue;
@@ -1059,6 +1102,15 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
           && c.values.has('OffImageColour')))
       && c.width > 0 && c.height > 0;
     let colourStates: { n: number; canvas: ImageData }[] = [];
+    const colourFaceFor = (slot: number): ImageData | null => {
+      const argb = c.values.get(`Sublamp${slot}Colour`)
+        ?? c.values.get('Sublamp1Colour') ?? val(c, `Sublamp${slot}Colour`);
+      if (argb === undefined) return null;
+      const face = newImageData(c.width, c.height);
+      fillShape(face, 0, 0, c.width, c.height, argb, val(c, 'ShapeIndex') ?? 0, shapeOutline(c), 0,
+        shapeParams(c));
+      return face;
+    };
     if (colourFace) {
       const shape = val(c, 'ShapeIndex') ?? 0;
       for (const { slot, n } of (slots.length ? slots : nums.map((n2) => ({ slot: 1, n: n2 })))) {
@@ -1091,12 +1143,21 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         : colourStates,
       ...(btn !== undefined ? { button: btn } : {}),
       ...(acceptor ? { acceptor } : {}),
-      ...(behindAReel(c) ? { underReel: true } : {}),
+      ...zFlags(c),
       offState: off ? { nums, canvas: off, ...(offDown ? { down: offDown } : {}) }
         : brightOff
           ? { nums, canvas: brightOff, ...(brightOffDown ? { down: brightOffDown } : {}) }
           : darkFace ? { nums, canvas: darkFace } : undefined,
       ...(c.values.get('LED') ? { led: true } : {}),
+      ...(val(c, 'RGBLED') && (on || colourFace)
+        ? {
+          rgb: {
+            bits: [1, 2, 3].map((k) => slots.find((sl) => sl.slot === k)?.n ?? -1),
+            faces: on ? rgbLedFaces(c, on, keyed, maskOnly, null)
+              : rgbLedFaces(c, null, keyed, false, colourFaceFor),
+          },
+        }
+        : {}),
       offDim: bareGraphic ? { nums, alpha: 0.5 } : undefined,
       blend: pool ? true : undefined,
       multi: val(c, 'Blend') ? true : undefined,
@@ -1118,7 +1179,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       states: [],
       offState: { nums: [], canvas: art },
-      ...(behindAReel(c) ? { underReel: true } : {}),
+      ...zFlags(c),
     });
   }
 
@@ -1172,7 +1233,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       states,
-      ...(behindAReel(c) ? { underReel: true } : {}),
+      ...zFlags(c),
     });
   }
 
@@ -1211,6 +1272,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const resting = frames[0];
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      ...(behindAVfd(c) ? { underVfd: true } : {}),
       states,
       offState: resting ? { nums: states.map((s) => s.n), canvas: resting } : undefined,
     });
@@ -1268,6 +1330,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     }
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      ...(behindAVfd(c) ? { underVfd: true } : {}),
       states: [
         ...(on ? [{ n: onLamp, canvas: on }] : []),
         ...(lamp2 ? [{ n: c.subs![1], canvas: lamp2 }] : []),
@@ -1307,12 +1370,14 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     if (seg < 0 && lampNo < 0) {
       lamps.push({
         left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+        ...(behindAVfd(c) ? { underVfd: true } : {}),
         states: [], offState: { nums: [], canvas: ledFace(c.width, c.height, offColour, style) },
       });
       continue;
     }
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      ...(behindAVfd(c) ? { underVfd: true } : {}),
       states: [{ n, canvas: ledFace(c.width, c.height, onColour, style) }],
       offState: { nums: [n], canvas: ledFace(c.width, c.height, offColour, style) },
       offUnder: true,
@@ -1419,6 +1484,19 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       }
     : null;
 
+  const bfmLeds: BfmLedPanel[] = comps
+    .filter((c) => c.type === Type.BfmLed && c.width > 0 && c.height > 0)
+    .map((c) => ({
+      left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      xSize: Math.max(1, val(c, 'XSize') ?? 4),
+      ySize: Math.max(1, val(c, 'YSize') ?? 4),
+      digitSpacing: Math.max(0, val(c, 'DigitSpacing') ?? 4),
+      ledSize: Math.max(1, val(c, 'LedSize') ?? 4),
+      on: val(c, 'OnColour') ?? 0xffff0000,
+      off: val(c, 'OffColour') ?? 0xff000000,
+      bg: val(c, 'BackColour') ?? 0xff000000,
+    }));
+
   const emx = comps.find((c) => c.type === Type.EpochMatrix && c.width > 0 && c.height > 0);
   const epochMatrix: EpochMatrixPanel | null = emx
     ? {
@@ -1439,10 +1517,6 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ? { left: bfmv.x, top: bfmv.y, width: bfmv.width, height: bfmv.height, ...turn(bfmv), chip: 0 }
     : null;
 
-  const alphaish = comps.filter((c) =>
-    c.type === Type.AlphaNew || c.type === Type.Alpha || c.type === Type.BFMAlpha
-    || c.type === Type.AlphaStrip);
-  const disp = alphaish.find((c) => c.type === Type.AlphaNew) ?? alphaish[0];
   const dmd = comps.find((c) => c.type === Type.DotMatrix && c.width > 0 && c.height > 0);
   if (!dotMatrix && dmd) {
     const pitch = Math.max(1, val(dmd, 'Size') ?? 7);
@@ -1462,7 +1536,6 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     };
   }
 
-  const dots = comps.find((c) => c.type === Type.DotAlpha);
   let vfd: Rect | null = null;
   let vfdIsDots = false;
   let vfdColours: Cabinet<ImageData>['vfdColours'] = null;
@@ -1609,6 +1682,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...(maygayMatrix ? [maygayMatrix] : []),
     ...(epochMatrix ? [epochMatrix] : []),
     ...(plasmaPanel ? [plasmaPanel] : []),
+    ...bfmLeds,
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
   ], background, backgroundOffset.x);
@@ -1627,6 +1701,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     maygayMatrix,
     epochMatrix,
     plasmaPanel,
+    bfmLeds,
     videoScreen,
     rgbLeds,
     prismLamps,

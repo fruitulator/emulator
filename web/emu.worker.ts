@@ -20,6 +20,7 @@ import { DiagLog, DiagWatch, audioReportText } from './diaglog';
 import { StallWatch } from './stallwatch';
 import { undrawnLayoutNotes } from '../src/layout/undrawn';
 import { watchSettingReads, unreadSettingLine } from '../src/layout/unreadsettings';
+import { damagedRomLine, damagedRoms } from '../src/machine/textcopy';
 import { str } from './i18n';
 
 const post = (msg: EmuResponse, transfer: Transferable[] = []): void => {
@@ -333,7 +334,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
       followBuffer = Math.round((req.follow.bufferMs / 1000) * m.clockHz);
     }
     const info = buildMachineInfo(req.game, m, layout);
-    settingNotes = reads.finish().map(unreadSettingLine);
+    settingNotes = [...damagedRoms(req.game).map(damagedRomLine), ...reads.finish().map(unreadSettingLine)];
     schematic = info.schematic;
     if (info.codegen === 'wasm') {
       console.log(`[emu] ROM optimiser: WASM core executes ${info.system} — the JS interpreter/dynarec is off`);

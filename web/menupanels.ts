@@ -1,7 +1,9 @@
 import type { MachineInfo } from './emu-protocol';
 import type { PlatformView } from './platform';
 import type { CabinetEffects } from './effects';
-import { card, checkRow } from './ui/rows';
+import { caption, card, checkRow } from './ui/rows';
+import type { NamingSlot } from './coinslots';
+import { namedCoinLabel } from './coinask';
 import { MENU_ICONS } from './ui/icons';
 import { hasOperatedSwitches, layoutNamedInputs, namedInputId, testLabelsForPanel, testRowsForPanel } from './switchids';
 import { reelBounceOn, setReelBounceOn } from './bouncepref';
@@ -19,9 +21,19 @@ export function coinsPanel(
   info: MachineInfo, view: PlatformView, system: string | undefined,
   onCoin: (c: { label: string; bit: number }) => void,
   own?: () => OwnCoins | null,
+  naming?: CoinNaming,
 ): HTMLElement {
   const coins = document.createElement('div');
   coins.className = 'menu-grid';
+  if (naming?.slots().length) return withNaming(coinsGrid(coins, info, view, system, onCoin, own), naming);
+  return coinsGrid(coins, info, view, system, onCoin, own);
+}
+
+function coinsGrid(
+  coins: HTMLElement, info: MachineInfo, view: PlatformView, system: string | undefined,
+  onCoin: (c: { label: string; bit: number }) => void,
+  own?: () => OwnCoins | null,
+): HTMLElement {
   const fill = (): boolean => {
     const mine = own?.();
     if (!mine) return false;
@@ -48,6 +60,47 @@ export function coinsPanel(
     coins.append(p);
   }
   return coins;
+}
+
+export interface CoinNaming {
+  slots(): readonly NamingSlot[];
+  change(line: number, at: { x: number; y: number } | null, done: () => void): void;
+}
+
+function withNaming(grid: HTMLElement, naming: CoinNaming): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'menu-stack';
+  const cap = caption(str('menupanels.coin_slots'));
+  const box = card();
+  const fill = (): void => {
+    const slots = naming.slots();
+    cap.hidden = box.hidden = !slots.length;
+    box.replaceChildren(...slots.map((s, i) => {
+      const r = document.createElement('button');
+      r.type = 'button';
+      r.className = 'menu-row menu-stat coin-name-row';
+      const l = document.createElement('span');
+      l.className = 'row-label';
+      l.textContent = slots.length === 1 ? str('menupanels.coin_slot') : str('menupanels.coin_slot_n', { 0: i + 1 });
+      const v = document.createElement('span');
+      v.className = 'row-value';
+      v.textContent = s.coin === null ? str('menupanels.not_set') : namedCoinLabel(s.coin);
+      r.append(l, v);
+      r.addEventListener('click', (ev) => {
+        const b = r.getBoundingClientRect();
+        const at = ev.detail > 0 ? { x: ev.clientX, y: ev.clientY } : { x: b.left + b.width * 0.75, y: b.top + b.height / 2 };
+        naming.change(s.line, at, fill);
+      });
+      return r;
+    }));
+  };
+  fill();
+  wrap.append(grid, cap, box);
+  wrap.addEventListener(PANEL_SHOW, () => {
+    grid.dispatchEvent(new Event(PANEL_SHOW));
+    fill();
+  });
+  return wrap;
 }
 
 export interface OwnCoins { coins: readonly { label: string; bit: number }[]; note?: string }

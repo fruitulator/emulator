@@ -8,7 +8,8 @@ import { M68307Sim, SIM_BASE } from '../hw/m68307';
 import { opticWindowForFlag } from '../layout/datreels';
 import { Eeprom24c } from '../hw/eeprom';
 import { findSecurityKey, Sc4Mbus } from '../hw/sc4mbus';
-import { Mc68681 } from '../hw/mc68681';
+import { Mc68681, X1_HZ } from '../hw/mc68681';
+import { RngUnit } from '../hw/rngunit';
 import { Sec } from '../hw/sec';
 import { Sc4HopperPair, locateSc4PayoutUnits, readSc4HopperCoins, type Sc4Coin, type Sc4HopperCoins, type Sc4PayoutUnits } from '../hw/sc4hoppers';
 import { JcmEba, Sch2Hopper, deviceFor } from '../hw/cctalk';
@@ -43,6 +44,7 @@ const RAM_BASE = 0x800000;
 const RAM_SIZE = 0x010000;
 const IO_BASE = 0x810000;
 const IO_SIZE = 0x010000;
+const BOARD_WATCHDOG_CYCLES = 0x1fcba60;
 
 const YMZ_OFF = 0x1245;
 const YMZ_OFF_END = 0x124c;
@@ -126,7 +128,10 @@ export class Sc4 implements Bus16, Machine {
   private lastPayTxCycle = 0;
 
   private duartTx(ch: 0 | 1, v: number): void {
-    if (ch !== 1) return;
+    if (ch === 0) {
+      if (this.rng.type === 1) this.rng.request(v);
+      return;
+    }
     this.duart.receive(1, v);
     if (this.totalCycles - this.lastPayTxCycle > 100_000) this.payFrame = [];
     this.lastPayTxCycle = this.totalCycles;
@@ -138,6 +143,28 @@ export class Sc4 implements Bus16, Machine {
     } else if (f.length > 32) {
       f.shift();
     }
+  }
+
+  readonly rng = new RngUnit();
+  private rngByte = -1;
+  private rngDue = 0;
+
+  fitRng(type: number): void {
+    this.rng.type = type === 1 || type === 2 ? type : 0;
+  }
+
+  private serviceRng(cycles: number): void {
+    if (this.rngByte < 0) {
+      const b = this.rng.next();
+      if (b === null) return;
+      this.rngByte = b;
+      this.rngDue = Math.round((this.duart.characterTicks(0) * MASTER_CLOCK) / X1_HZ);
+      return;
+    }
+    this.rngDue -= cycles;
+    if (this.rngDue > 0) return;
+    if (this.duart.rxEnabled(0)) this.duart.receive(0, this.rngByte);
+    this.rngByte = -1;
   }
 
   private ccReply: { at: number; b: number }[] = [];
@@ -557,8 +584,7 @@ export class Sc4 implements Bus16, Machine {
 
   private totalCycles = 0;
 
-  private haltSteps = 0;
-  private haltPc = -1;
+  private boardWatchdog = 0;
 
   private secFitted = false;
 
@@ -1234,6 +1260,7 @@ export class Sc4 implements Bus16, Machine {
     this.strayReads.clear();
     this.sim.reset();
     this.duart.reset();
+    this.rngByte = -1;
     this.sec.abortTransfer();
     this.parHopper.reset();
     this.seg7.reset();
@@ -1256,7 +1283,7 @@ export class Sc4 implements Bus16, Machine {
     resetReelsInPlace(this.reels);
     this.updateOptics();
     this.cpu.reset();
-    this.haltSteps = 0;
+    this.boardWatchdog = 0;
   }
 
   private noteIo(addr: number, isWrite: boolean): void {
@@ -1330,6 +1357,7 @@ export class Sc4 implements Bus16, Machine {
     }
     if (a >= IO_BASE && a < IO_BASE + IO_SIZE) {
       const off = a - IO_BASE;
+      if (off < 0x1400) this.boardWatchdog = BOARD_WATCHDOG_CYCLES;
       this.noteIo(a, true);
       this.io[off] = v;
       if (off === 0x0301) this.parHopper.writeP03(v);
@@ -1431,12 +1459,8 @@ export class Sc4 implements Bus16, Machine {
     const cycles = this.cpu.step();
     this.totalCycles += cycles;
     this.serviceCcTalk();
-    if ((this.cpu.pc >>> 0) === this.haltPc) {
-      if (++this.haltSteps >= 1000) this.warmReset();
-    } else {
-      this.haltPc = this.cpu.pc >>> 0;
-      this.haltSteps = 0;
-    }
+    if (this.rng.type) this.serviceRng(cycles);
+    if (this.boardWatchdog > 0 && (this.boardWatchdog -= cycles) <= 0) this.warmReset();
     this.sim.tick(cycles);
     this.mbus.rtc.tick(cycles);
     this.vfd.tick(cycles);

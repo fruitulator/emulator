@@ -44,8 +44,11 @@ export class Tms9995 {
   readonly variant: Tms99xxVariant;
   private readonly levelLine = [false, false, false, false, false];
 
+  private readonly addrMask: number;
+
   constructor(private readonly bus: Tms9995Bus, opts: Tms9995Options = {}) {
     this.variant = opts.variant ?? '9995';
+    this.addrMask = this.variant === '9980a' ? 0x3fff : 0xffff;
   }
 
   setLevel(level: number, active: boolean): void {
@@ -85,7 +88,7 @@ export class Tms9995 {
   }
 
   readWord(addr: number): number {
-    addr &= 0xfffe;
+    addr &= this.addrMask & 0xfffe;
     if (addr === 0xfffa && this.has9995) return this.decValue & 0xffff;
     if (this.isOnchip(addr)) {
       const i = addr & 0xfe;
@@ -95,7 +98,7 @@ export class Tms9995 {
   }
 
   writeWord(addr: number, v: number): void {
-    addr &= 0xfffe;
+    addr &= this.addrMask & 0xfffe;
     v &= 0xffff;
     if (addr === 0xfffa && this.has9995) {
       this.decStart = this.decValue = v;
@@ -112,14 +115,14 @@ export class Tms9995 {
   }
 
   readByte(addr: number): number {
-    addr &= 0xffff;
+    addr &= this.addrMask;
     if ((addr & 0xfffe) === 0xfffa && this.has9995) return (addr & 1 ? this.decValue : this.decValue >> 8) & 0xff;
     if (this.isOnchip(addr)) return this.onchip[addr & 0xff];
     return this.bus.read8(addr) & 0xff;
   }
 
   writeByte(addr: number, v: number): void {
-    addr &= 0xffff;
+    addr &= this.addrMask;
     v &= 0xff;
     if ((addr & 0xfffe) === 0xfffa && this.has9995) {
       const w = addr & 1 ? v : v << 8;

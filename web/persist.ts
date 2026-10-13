@@ -2,6 +2,7 @@ import {
   classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms, spareRams,
   type Game, type GameFile, type LayoutProps,
 } from '../src/machine/registry';
+import { damagedRoms } from '../src/machine/textcopy';
 import type { Cabinet } from './dat';
 import { MAKER_RULE, makerOf } from './maker';
 import { THUMB_RULE, dehydrateCabinet, encodePng, makeThumb } from './cabjson';
@@ -40,21 +41,23 @@ function decodeStatusOf(cab: { decode?: { clean: number; total: number } } | nul
   return d && d.total > 0 && d.clean < d.total ? 'partial' : 'ok';
 }
 
+export type ArtworkWrite = 'full' | 'thumb';
+
 export function pakMetaOf(
   game: Game,
   cab: { decode?: { clean: number; total: number } } | null,
   contentHash: string,
-  pending = false,
+  artwork: ArtworkWrite = 'full',
 ): PakMeta {
   return {
     name: game.name,
     system: game.system,
     created: Date.now(),
-    decodeStatus: pending && !cab ? 'pending' : decodeStatusOf(cab),
+    decodeStatus: decodeStatusOf(cab),
     ...(cab?.decode ? { decode: cab.decode } : {}),
     files: game.files.map((f) => ({ name: f.name, size: f.bytes.length })),
     variant: game.variant,
-    ...(cab && game.layoutName ? { layout: game.layoutName.toLowerCase() } : {}),
+    ...(cab && artwork === 'full' && game.layoutName ? { layout: game.layoutName.toLowerCase() } : {}),
     contentHash,
   };
 }
@@ -92,7 +95,27 @@ function carriedHistory(prev: GameMeta | null): { playedAt: number | undefined; 
   };
 }
 
-export async function persistGame(
+export function persistGame(...args: Parameters<typeof writeGame>): Promise<GameMeta> {
+  return oneWritePerGame(args[0], () => writeGame(...args));
+}
+
+const writing = new Map<string, Promise<unknown>>();
+async function oneWritePerGame<T>(hash: string, fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined'
+    ? (navigator as { locks?: { request(name: string, cb: () => Promise<T>): Promise<T> } }).locks
+    : undefined;
+  if (locks) return locks.request(`fruitulator:persist:${hash}`, fn);
+  const before = writing.get(hash) ?? Promise.resolve();
+  const run = before.catch(() => undefined).then(fn);
+  writing.set(hash, run);
+  try {
+    return await run;
+  } finally {
+    if (writing.get(hash) === run) writing.delete(hash);
+  }
+}
+
+async function writeGame(
   hash: string,
   game: Game,
   cab: Cabinet<ImageData> | Cabinet<ImageBitmap> | null,
@@ -101,7 +124,7 @@ export async function persistGame(
   layoutProps?: LayoutProps,
   played = true,
   spares?: GameFile[],
-  pendingArtwork = false,
+  artwork: ArtworkWrite = 'full',
 ): Promise<GameMeta> {
   const enc = new TextEncoder();
   const prev = await getMeta(hash);
@@ -109,19 +132,22 @@ export async function persistGame(
     : prev?.batteries?.some(inSpareDir) ? await storedSpares(hash) : [];
   const contentHash = await contentHashOf(game.files);
   const chunks: PakChunkIn[] = [
-    { type: 'META', bytes: encodeMeta(pakMetaOf(game, cab, contentHash, pendingArtwork)), deflate: true },
+    { type: 'META', bytes: encodeMeta(pakMetaOf(game, cab, contentHash, artwork)), deflate: true },
     { type: 'SRCS', bytes: encodeSrcs(game.files) },
   ];
   if (spare.length) chunks.push({ type: 'SPAR', bytes: encodeSrcs(spare), deflate: true });
   let thumb: Uint8Array | null = null;
+  const cache = cab && artwork === 'full';
   if (cab) {
     onStage?.('encoding');
-    const { geo, assets } = dehydrateCabinet<ImageData | ImageBitmap>(cab);
-    const imgs = await Promise.all(
-      assets.map(async (a) => ({ id: a.id, bytes: await encodePng(a.image) })),
-    );
-    chunks.push({ type: 'CABJ', bytes: enc.encode(JSON.stringify(geo)), deflate: true });
-    chunks.push({ type: 'IMGS', bytes: encodeImgs(imgs) });
+    if (cache) {
+      const { geo, assets } = dehydrateCabinet<ImageData | ImageBitmap>(cab);
+      const imgs = await Promise.all(
+        assets.map(async (a) => ({ id: a.id, bytes: await encodePng(a.image) })),
+      );
+      chunks.push({ type: 'CABJ', bytes: enc.encode(JSON.stringify(geo)), deflate: true });
+      chunks.push({ type: 'IMGS', bytes: encodeImgs(imgs) });
+    }
     thumb = await makeThumb(cab);
     if (thumb) chunks.push({ type: 'THMB', bytes: thumb });
   }
@@ -138,7 +164,8 @@ export async function persistGame(
     addedAt: prev?.addedAt ?? Date.now(),
     lastPlayedAt: Date.now(),
     decodeVersion: DECODE_VERSION,
-    decodeStatus: pendingArtwork && !cab ? 'pending' : decodeStatusOf(cab),
+    decodeStatus: decodeStatusOf(cab),
+    ...(cab && !cache ? { cabinetDeferred: true as const } : {}),
     ...(cab?.decode ? { decode: cab.decode } : {}),
     autoSave: prev?.autoSave ?? true,
     sizeBytes: pak.length,
@@ -154,6 +181,7 @@ export async function persistGame(
     playCount: history.playCount + (played ? 1 : 0),
     ...listOrDrop('missingRoms', missingProgramRoms(game)),
     ...listOrDrop('missingSound', missingSoundRoms(game)),
+    ...listOrDrop('damagedRoms', damagedRoms(game)),
     ...listOrDrop('linkedInstances', linkedInstances(game)),
     layoutProps: layoutProps ?? prev?.layoutProps,
     contentHash,
@@ -165,7 +193,9 @@ export async function persistGame(
     if (thumb && !prev?.thumbFromPlay) await putThumb(hash, thumb);
     await putMeta(meta);
   } catch (e) {
-    if (!prev) await deleteGame(hash).catch(() => undefined);
+    if (!prev && !(await getMeta(hash).catch(() => null))) {
+      await deleteGame(hash).catch(() => undefined);
+    }
     throw e;
   }
   return meta;

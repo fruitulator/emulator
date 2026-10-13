@@ -13,11 +13,12 @@ export interface MoneyTotals {
 export const LEDGER_FIELDS = [
   'inPence', 'outPence', 'unpricedOut', 'tokenInPence', 'tokenOutPence', 'unpricedTokenOut', 'unpricedTokenIn',
   'unpricedIn',
+  'euroInCents', 'euroOutCents',
 ] as const;
 const n = (x: number | undefined): number => x ?? 0;
 
 export function zeroLedger(): CashLedger {
-  return { inPence: 0, outPence: 0, unpricedOut: 0, unpricedIn: 0, tokenInPence: 0, tokenOutPence: 0, unpricedTokenOut: 0, unpricedTokenIn: 0 };
+  return { inPence: 0, outPence: 0, unpricedOut: 0, unpricedIn: 0, euroInCents: 0, euroOutCents: 0, tokenInPence: 0, tokenOutPence: 0, unpricedTokenOut: 0, unpricedTokenIn: 0 };
 }
 
 export function emptyRecord(now: number): MoneyTotals {

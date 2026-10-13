@@ -49,7 +49,7 @@ import { dotGlyph } from './dotfont';
 import { DOT_ALPHA_INTENSITY, dotAlphaCanvas, dotAlphaDot } from './dotalpha';
 import { drawnBounce } from './bouncepref';
 import {
-  advanceSettleCounters, featureReelContinuous, buildRenderIndex, cabLampLevel, cabLampLit, drawnBandIndex,
+  advanceSettleCounters, featureReelContinuous, buildRenderIndex, cabLampLevel, cabLampLit, drawnBandIndex, rgbLampFace,
   newSettleMemory, parkedForDraw, platformReelOffsetSteps, platformRequiresReversal,
   reelCentreRow, rgbLedFrameColour, type IndexedElement, type IntRect, reelIndex,
 } from './render-index';
@@ -403,6 +403,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     applyReelLight(m, cab);
     drawBitmaps(m, cab, 'reels');
 
+    for (const lp of cab.lamps) if (lp.underVfd && !lp.underReel) drawLamp(lp);
     const vfd = cab.vfd;
     if (vfd && cab.vfdIsDots) {
       withAngle(ctx, vfd, vfd.angle, () => drawDotMatrix(m, vfd, vfdSegColours ?? null, vfdDots));
@@ -423,7 +424,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       if (lp.offUnder && lp.offState) {
         ctx.drawImage(held && lp.offState.down ? lp.offState.down : lp.offState.canvas, lp.left, lp.top);
       }
-      for (const st of lp.states) {
+      const rgbFace = lp.rgb ? rgbLampFace(m, lp) : -1;
+      if (lp.rgb && rgbFace > 0) {
+        const face = lp.rgb.faces[rgbFace];
+        if (face) ctx.drawImage(face, lp.left, lp.top);
+      }
+      for (const st of lp.rgb ? [] : lp.states) {
         const lit = cabLampLevel(m, lp, st.n);
         if (lit) {
           if (lp.blend) ctx.globalCompositeOperation = 'lighter';
@@ -435,7 +441,8 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         }
       }
       if (lp.offState) {
-        if (!lp.offUnder && !lp.offState.nums.some((n) => cabLampLit(m, lp, n))) {
+        if (!lp.offUnder && (lp.rgb ? rgbFace === 0
+          : !lp.offState.nums.some((n) => cabLampLit(m, lp, n)))) {
           const face = held && lp.offState.down ? lp.offState.down : lp.offState.canvas;
           ctx.drawImage(face, lp.left, lp.top);
         }
@@ -479,7 +486,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         }
       }
     }
-    for (const lp of cab.lamps) if (!lp.underReel) drawLamp(lp);
+    for (const lp of cab.lamps) if (!lp.underReel && !lp.underVfd) drawLamp(lp);
     drawBitmaps(m, cab, 'lamps');
     if (cab.segDisplays?.length) drawSegDisplays(m, cab.segDisplays);
     drawBitmaps(m, cab, 'digits');
@@ -497,6 +504,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     if (em) withAngle(ctx, em, em.angle, () => drawEpochMatrix(m, em));
     const pp = cab.plasmaPanel;
     if (pp) withAngle(ctx, pp, pp.angle, () => drawPlasmaPanel(m, pp));
+    for (const bl of cab.bfmLeds ?? []) withAngle(ctx, bl, bl.angle, () => drawBfmLed(m, bl));
     if (vs) withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs));
     drawBitmaps(m, cab, 'top');
     drawUnserved(m);
@@ -662,6 +670,41 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       }
       ctx.fillStyle = argbToCss(want ? p.on : p.off);
       ctx.fill();
+    }
+  }
+
+  function drawBfmLed(m: FrameView, p: NonNullable<Cabinet['bfmLeds']>[number]): void {
+    const X = p.xSize, Y = p.ySize, DS = p.digitSpacing;
+    const kx = p.width / ((X * 5 + DS) * 4 + 21);
+    const ky = p.height / (Y * 8 + 14);
+    ctx.fillStyle = argbToCss(p.bg);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
+    const r = Math.max(0, (p.ledSize - 1) / 2);
+    if (!(r > 0)) return;
+    const clip = 2 * r > Math.min(X, Y);
+    const on = argbToCss(p.on);
+    const off = argbToCss(p.off);
+    for (let i = 0; i < 20; i++) {
+      const cell = m.layoutDigit(i);
+      const byte = ((cell << 1) | (cell >> 7)) & 0xff;
+      const count = i % 5 === 4 && i !== 19 ? 8 : 7;
+      const x0 = Math.floor(i / 5) * DS + 3 + (X + 1) * i;
+      for (let k = 0; k < count; k++) {
+        const cx = k < 7 ? x0 : x0 + X;
+        const cy = 4 + k * (Y + 1);
+        const l = p.left + cx * kx, t = p.top + cy * ky;
+        if (clip) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(l, t, X * kx, Y * ky);
+          ctx.clip();
+        }
+        ctx.fillStyle = (byte >> k) & 1 ? on : off;
+        ctx.beginPath();
+        ctx.ellipse(l + (X / 2 + 0.5) * kx, t + (Y / 2 + 0.5) * ky, r * kx, r * ky, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (clip) ctx.restore();
+      }
     }
   }
 

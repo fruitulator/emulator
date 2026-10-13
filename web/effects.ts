@@ -17,6 +17,8 @@ const REEL_STILL_FRAMES = 3;
 
 const MAX_PER_FRAME = 4;
 
+export const COIN_DROP_SLACK_MS = 250;
+
 export interface EffectsHost {
   context(): AudioContext | null;
   effectsOutput(): AudioNode | null;
@@ -51,6 +53,7 @@ export class CabinetEffects {
   private live = 0;
   private voices = new Set<AudioBufferSourceNode>();
   private generation = 0;
+  private drops = new Set<{ cut: () => void }>();
   private gain: GainNode | null = null;
   private reelVoice: (AudioBufferSourceNode | null)[] = [];
   private reelStill: number[] = [];
@@ -99,16 +102,43 @@ export class CabinetEffects {
     if (s) this.play(s.first, s.then);
   }
 
-  coinDrop(acceptor: { note?: number; effect?: number } | undefined, land: () => CoinOutcome | null): void {
+  coinDrop(
+    acceptor: { note?: number; effect?: number } | undefined,
+    land: () => CoinOutcome | null,
+    cut?: () => void,
+  ): void {
     const drop = this.gate(EFFECT_GROUP.coins) ? coinSound(acceptor?.note, acceptor?.effect, 'accepted') : null;
     const generation = this.generation;
-    const voice = drop ? this.play(drop.first, null, () => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pending = {
+      cut: (): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        this.drops.delete(pending);
+        cut?.();
+      },
+    };
+    const arrive = (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      this.drops.delete(pending);
       const outcome = land();
-      if (outcome === null || !this.enabled || generation !== this.generation) return;
+      if (outcome === null || !this.enabled || generation !== this.generation || !this.running()) return;
       const then = coinSound(acceptor?.note, acceptor?.effect, outcome)?.then ?? null;
       if (then !== null) this.play(then);
-    }) : null;
-    if (!voice) land();
+    };
+    const voice = drop ? this.play(drop.first, null, arrive) : null;
+    if (!voice) {
+      settled = true;
+      land();
+      return;
+    }
+    this.drops.add(pending);
+    const seconds = voice.buffer?.duration ?? 0;
+    timer = setTimeout(arrive, seconds * 1000 + COIN_DROP_SLACK_MS);
   }
 
   frame(f: FrameView): void {
@@ -317,6 +347,7 @@ export class CabinetEffects {
 
   silence(): void {
     this.generation++;
+    for (const d of [...this.drops]) d.cut();
     this.stopAll();
     for (const src of [...this.voices]) this.stop(src);
   }

@@ -51,8 +51,15 @@ const TOKEN_OUT_LINE = 7;
 const REEL_STAND_IN_HALF_STEPS = 96;
 const REEL_STAND_IN_STOPS = 12;
 
+const SET_REELS_COUNT = 6;
+const SET_REELS_ADJUST = 3;
+
+function v20UnfittedReelpos(pos: number, bankSteps: number): number {
+  return ((bankSteps - pos) % bankSteps + bankSteps) % bankSteps;
+}
+
 export class Mps2 implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['fitted', 'wiring', 'coinSlots'];
+  static readonly snapshotConfig: readonly string[] = ['fitted', 'windowOnly', 'wiring', 'coinSlots'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -339,13 +346,14 @@ export class Mps2 implements Machine {
   private invalidAccess = 1;
   private clearDown = 1;
 
-  readonly reels = [0, 1, 2, 3, 4, 5].map(
+  readonly reels = [0, 1, 2, 3, 4, 5, 6, 7].map(
     () => new Reel({ stepsPerRevolution: REEL_STAND_IN_HALF_STEPS, symbols: REEL_STAND_IN_STOPS }),
   );
 
   reelFit: ReelFit = { mask: 0x3f, channels: 6, beyond: [] };
 
   setFittedReels(channels: readonly number[]): ReelFit {
+    if (!channels.length) this.reels.length = Math.min(this.reels.length, SET_REELS_COUNT);
     this.reelFit = fitReelBank(this.reels, channels);
     return this.reelFit;
   }
@@ -380,7 +388,18 @@ export class Mps2 implements Machine {
 
   setReelGeometry(geometry: readonly ReelGeometry[]): void {
     for (const g of geometry) {
-      if (g.number < 0 || g.number >= 6) continue;
+      if (g.number < 0) continue;
+      if (g.number >= SET_REELS_COUNT) {
+        if (g.number >= this.jpmReels.reels.length) continue;
+        this.windowOnly[g.number] = true;
+        this.reels[g.number] = new Reel({
+          stepsPerRevolution: g.halfSteps > 0 ? g.halfSteps : this.jpmReels.reels[g.number].steps,
+          symbols: g.stops > 0 ? g.stops : REEL_STAND_IN_STOPS,
+        });
+        this.reels[g.number].position = this.windowPosition(g.number);
+        if (g.stops <= 0 && !this.standInStops.includes(g.number)) this.standInStops.push(g.number);
+        continue;
+      }
       this.fitted[g.number] = true;
       this.jpmReels.reels[g.number].present = true;
       this.jpmReels.setGeometry(g.number, g.halfSteps, -3);
@@ -397,6 +416,16 @@ export class Mps2 implements Machine {
   }
 
   private readonly standInStops: number[] = [];
+
+  private windowOnly: boolean[] = [false, false, false, false, false, false, false, false];
+
+  private windowPosition(i: number): number {
+    const jr = this.jpmReels.reels[i];
+    if (!this.windowOnly[i]) return jr.pos;
+    const hs = this.reels[i].stepsPerRevolution;
+    const v20 = v20UnfittedReelpos(jr.pos, jr.steps) % hs;
+    return ((hs + SET_REELS_ADJUST - v20) % hs + hs) % hs;
+  }
 
   setDips(d1: number, d2 = 0): void { this.dip1 = d1 & 0xff; this.dip2 = d2 & 0xff; }
 
@@ -443,7 +472,7 @@ export class Mps2 implements Machine {
   setReelPosition(i: number, pos: number): void {
     this.jpmReels.setPosition(i, pos);
     const r = this.reels[i];
-    if (r && this.jpmReels.reels[i]?.present) r.position = this.jpmReels.reels[i].pos;
+    if (r && this.jpmReels.reels[i]?.present) r.position = this.windowPosition(i);
   }
 
   batteryRam(): Uint8Array { return this.ram.slice(RAM_LO, RAM_LO + 0x800); }
@@ -675,7 +704,7 @@ export class Mps2 implements Machine {
         const jr = this.jpmReels.reels[i];
         const r = this.reels[i];
         if (r) {
-          r.position = jr.pos;
+          r.position = this.windowPosition(i);
           r.travel += jr.stepped;
         }
         jr.stepped = 0;

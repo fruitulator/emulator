@@ -59,6 +59,7 @@ export class Sys85 implements Bus, Machine {
       stepsPerRevolution: 96, symbols: 16, mame: true,
       indexStart: 1, indexEnd: 3, indexPattern: 0, initPhase: 4,
       indexTrail: SYS85_INDEX_TRAIL,
+      v20Gate: true,
     }),
   ), MODEL_RELATIONS.SYS85);
 
@@ -184,6 +185,7 @@ export class Sys85 implements Bus, Machine {
 
   constructor() {
     this.cpu = new M6809(this);
+    this.cpu.illegalAsV20 = true;
     this.inputRegs.set(this.idleInputs);
   }
 

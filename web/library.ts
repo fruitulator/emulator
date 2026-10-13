@@ -25,6 +25,7 @@ export {
 } from './gamelist';
 
 import { siteNav } from './ui/sitenav';
+import { bubbleTip } from './ui/tip';
 
 export interface LibraryHandlers {
   onOpen(hash: string, resume: boolean): void;
@@ -573,6 +574,9 @@ export function wireLibraryControls(h: LibraryHandlers): void {
     if (!lib.hidden && ringReady) setView('orbit');
   });
   document.getElementById('to-library')!.addEventListener('click', () => setView('grid'));
+  bubbleTip(document.getElementById('to-library')!, str('ui.tip.library_name'), str('ui.tip.library'));
+  bubbleTip(document.getElementById('to-orbit')!, str('ui.tip.home_name'), str('ui.tip.home'));
+  bubbleTip(document.getElementById('aboutBtn')!, str('ui.tip.about_name'), str('ui.tip.about'));
   document.getElementById('aboutBtn')!.before(siteNav({ here: 'games' }));
   document.getElementById('to-orbit')!.addEventListener('click', () => {
     if (ringReady) setView('orbit');

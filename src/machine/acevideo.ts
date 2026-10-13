@@ -7,11 +7,15 @@ import { BASE_BOARD_BASS_FREQ } from '../hw/blipleak';
 import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, Machine } from './machine';
-import { bookUnpricedIn, ledgerOutMults, newCashLedger } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, CoinChute, Machine, NamedCoin } from './machine';
+import { ledgerOutMults, newCashLedger } from './machine';
+import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
+import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { Reel } from '../hw/reel';
+
+export const ACEVIDEO_COIN_LINES: readonly number[] = [0x110, 0x111, 0x112, 0x113];
 
 export const ACEVIDEO_CLOCK = 2_500_000;
 const RAM_SIZE = 0x100;
@@ -92,6 +96,8 @@ export class AceVideo implements Machine {
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
+  private readonly book = new CoinBook(this.cashLedger, ACEVIDEO_CLOCK);
+  private readonly slots = new SlotCoins();
 
   private calls = 0;
   private irqRequest = false;
@@ -214,6 +220,7 @@ export class AceVideo implements Machine {
     this.a005 = 1;
     this.coinTimer = 0;
     this.coinMask = 0;
+    this.book.reset();
   }
 
   step(): number {
@@ -237,6 +244,7 @@ export class AceVideo implements Machine {
     this.tone(c);
     this.vblankLeft -= c;
     this.rowLeft -= c;
+    this.book.elapse(c);
     if (this.coinTimer > 0) {
       this.coinTimer -= c;
       if (this.coinTimer <= COIN_GAP) this.matrix[this.coinRow] &= ~this.coinMask;
@@ -333,8 +341,7 @@ export class AceVideo implements Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-      this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
-      bookUnpricedIn(this.cashLedger, this.meterInRaw[i]);
+      if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
     }
   }
 
@@ -346,8 +353,8 @@ export class AceVideo implements Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
-      bookUnpricedIn(this.cashLedger, this.triacInRaw[i]);
+      if (this.book.hasSlides) this.book.slide(i);
+      else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }
   }
 
@@ -440,6 +447,27 @@ export class AceVideo implements Machine {
     this.coinMask = 1 << (raw & 7);
     this.coinTimer = COIN_HOLD + COIN_GAP;
     this.matrix[this.coinRow] |= this.coinMask;
+    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD);
+  }
+
+  setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
+
+  setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void {
+    this.slots.setLines(lines);
+    this.chuteCache = null;
+  }
+
+  get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
+
+  nameCoin(line: number, coin: NamedCoin): void {
+    this.slots.name(line, coin);
+    this.chuteCache = null;
+  }
+
+  private chuteCache: CoinChute[] | null = null;
+  get coinChutes(): readonly CoinChute[] | undefined {
+    this.chuteCache ??= this.slots.chutes((line) => `Coin ${line - ACEVIDEO_COIN_LINES[0] + 1}`);
+    return this.chuteCache.length ? this.chuteCache : undefined;
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }

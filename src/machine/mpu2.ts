@@ -10,8 +10,10 @@ import { placeRomFlat } from './pairplacer';
 import { v20PiaWrite } from './mpu3';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, Machine } from './machine';
-import { bookUnpricedIn, ledgerOutMults, newCashLedger } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, Machine, NamedCoin } from './machine';
+import { ledgerOutMults, newCashLedger } from './machine';
+import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
+import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { ReelGeometry } from './layoutreels';
@@ -74,6 +76,8 @@ export class Mpu2 implements Bus, Machine {
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
+  private readonly book = new CoinBook(this.cashLedger, MPU2_CLOCK);
+  private readonly slots = new SlotCoins();
 
   solenoidDir = 0;
   private reelSelect = 0;
@@ -144,6 +148,14 @@ export class Mpu2 implements Bus, Machine {
     }));
   }
 
+  setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
+
+  setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
+
+  get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
+
+  nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
+
   setTriacMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.triacInRaw = [...inMult];
     this.triacOutRaw = [...outMult];
@@ -180,6 +192,7 @@ export class Mpu2 implements Bus, Machine {
     this.coinFlag = false;
     this.coinTimer = 0;
     this.coinMask = 0;
+    this.book.reset();
     this.speaker.reset();
     this.lampsAB();
     this.lampsCtl();
@@ -263,6 +276,7 @@ export class Mpu2 implements Bus, Machine {
       this.windowClosed = false;
       this.windowCount = COIN_WINDOW;
     }
+    this.book.elapse(c);
     if (this.coinTimer > 0) {
       this.coinTimer -= c;
       if (this.coinTimer <= COIN_GAP) this.matrix[this.coinRow] &= ~this.coinMask;
@@ -386,8 +400,7 @@ export class Mpu2 implements Bus, Machine {
       if (rising & (1 << i)) {
         this.gridTotals.in += this.triacInRaw[i] ?? 0;
         this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-        this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
-        bookUnpricedIn(this.cashLedger, this.triacInRaw[i]);
+        if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
       }
     }
     const r = this.relayTriac;
@@ -407,6 +420,7 @@ export class Mpu2 implements Bus, Machine {
       fired = true;
       if (!(this.triacWord & (1 << i))) continue;
       this.triacPulses[i]++;
+      this.book.slide(i);
     }
     return fired;
   }
@@ -428,6 +442,7 @@ export class Mpu2 implements Bus, Machine {
       this.coinTimer = COIN_HOLD_ROW + COIN_GAP;
     }
     this.matrix[this.coinRow] |= this.coinMask;
+    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), this.coinTimer - COIN_GAP);
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }

@@ -132,6 +132,7 @@ export class Sc1 implements Bus, Machine {
     () => new Reel({
       stepsPerRevolution: 96, symbols: 16, mame: true,
       indexStart: 1, indexEnd: 3, indexPattern: 0, initPhase: 4,
+      v20Gate: true,
     }),
   ), MODEL_RELATIONS.SCORPION1);
 
@@ -187,6 +188,7 @@ export class Sc1 implements Bus, Machine {
 
   readonly upd = new Upd7759();
   private updFitted = false;
+  private updAsked = false;
 
   private readonly mixer = new Mixer([this.upd, this.ay]);
 
@@ -267,6 +269,7 @@ export class Sc1 implements Bus, Machine {
 
   constructor() {
     this.cpu = new M6809(this);
+    this.cpu.illegalAsV20 = true;
     this.inputRegs.set(this.idleInputs);
   }
 
@@ -729,6 +732,7 @@ export class Sc1 implements Bus, Machine {
     this.triacWord = 0;
     this.ay.reset();
     this.upd.reset();
+    this.updAsked = false;
     this.ackQueue = [];
     this.ackDue = 0;
     this.dataPak.reset();
@@ -791,7 +795,7 @@ export class Sc1 implements Bus, Machine {
     }
     if (a >= 0x3408 && a <= 0x340a) return a === 0x3408 ? this.mux2Input : 0;
     if (a === 0x3801) {
-      const ready = this.updFitted && this.upd.active() ? 0 : 1;
+      const ready = this.updFitted && this.updAsked && this.upd.active() ? 0 : 1;
       return ready | (this.updFitted ? 2 : 0);
     }
     this.strays.hit(a);
@@ -943,9 +947,19 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a > 0x3800 && a < 0x3900 && this.updFitted) {
-      this.upd.portW(v & 0x3f);
-      this.upd.setStartLine(false);
-      this.upd.setStartLine(true);
+      if ((v & 0x80) === 0) {
+        this.updAsked = false;
+        this.upd.stop();
+      } else if ((v & 0x40) === 0) {
+        const n = v & 0x3f;
+        this.updAsked = this.upd.hasSample(n);
+        if (this.updAsked) {
+          this.upd.stop();
+          this.upd.portW(n);
+          this.upd.setStartLine(false);
+          this.upd.setStartLine(true);
+        }
+      }
       return;
     }
     if (a >= 0x3800 && a < 0x3900) return;

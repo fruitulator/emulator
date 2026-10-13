@@ -380,9 +380,9 @@ export class Mpu4VideoCard implements Bus16 {
 
   private soundPtmWrite(reg: number, val: number): void {
     this.soundPtm.write(reg, val);
-    if (reg === 3 || reg === 7) {
-      const { latch } = this.soundPtm.debugState();
-      this.oki?.okiPitch(okiPitchFromPtm(latch[0], latch[2], VIDEO_OKI_PTM_CLOCK));
+    if (reg === 3 || reg === 7 || reg <= 1) {
+      const { latch, cr } = this.soundPtm.debugState();
+      this.oki?.okiPitch(okiPitchFromPtm(latch[0], latch[2], VIDEO_OKI_PTM_CLOCK, cr[0], cr[2]));
     }
   }
 

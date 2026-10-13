@@ -22,9 +22,15 @@ npm run build    # a production build in dist/
 
 ## Licence
 
-BSD 3-Clause; see [LICENSE](LICENSE). Parts of the emulation are ported from,
-or written with reference to, [MAME](https://www.mamedev.org/), whose files
-carry the same licence; LICENSE lists them.
+GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later);
+see [LICENSE](LICENSE). If you change Fruitulator and share it, or run your
+changed copy as a website, you must publish your source under the same
+licence. Releases before 13 October 2026 were published under the BSD
+3-Clause License and those copies stay under it.
+
+Parts of the emulation are ported from, or written with reference to,
+[MAME](https://www.mamedev.org/); those parts keep MAME's BSD 3-Clause
+licence, and LICENSE lists them.
 
 ## Thanks
 

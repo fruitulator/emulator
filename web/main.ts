@@ -1,6 +1,7 @@
 import {
   classifyGame, linkedInstances, missingProgramRoms, platformFor, type Game,
 } from '../src/machine/registry';
+import { damagedRoms } from '../src/machine/textcopy';
 import { type FrameView } from '../src/machine/framestate';
 import { SchematicPanel } from './schematic';
 import { BulbLab } from './bulblab';
@@ -21,10 +22,8 @@ import {
 } from './ingest';
 import { readZipDirectory } from './zipdir';
 import { collectionEntries } from './punnetpack';
-import { convertLegacyThumbs, refreshStaleThumbs } from './rethumb';
+import { refreshStaleThumbs } from './rethumb';
 import { backfillContentHashes } from './backfill';
-import { prepareArtwork } from './artpass';
-import { holdBusy } from './busy';
 import {
   CLOUD_HINT, importFolderSet, landedFlaws, listArchives, stageText, unplayableReason,
 } from './libimport';
@@ -48,6 +47,10 @@ import { answers, HeldButtons, PlayPointer } from './play/pointer';
 import { PlayAutosave } from './play/autosave';
 import { appendItems, menuItems, saveLog, saveState, stateDownload, type ActionId, type ActionSurface } from './play/actions';
 import { machineCoins, restoreCabinetSounds } from './menupanels';
+import { mustName, readCoinAnswers, withCoinAnswer } from './coinask';
+import { namingSlots } from './coinslots';
+import { openCoinNaming } from './ui/coinmenu';
+import type { NamedCoin } from '../src/machine/machine';
 import {
   THUMB_MAX_W,
   THUMB_QUALITY,
@@ -72,7 +75,7 @@ import {
 import { deflateSync, strToU8 } from 'fflate';
 import { parseTitle } from './title';
 import { layoutPoint, pickControl } from './cabhit';
-import { viewFor, acceptorResolve, stampCoinInputs, type PlatformView } from './platform';
+import { viewFor, acceptorResolve, plainCoinDrop, stampCoinInputs, type PlatformView } from './platform';
 import { virtualDisplayReversed } from '../src/machine/layoutdisplay';
 import {
   reelEffectivePosition,
@@ -106,6 +109,7 @@ import {
 } from './magnifier';
 import { platformReelOffsetSteps, platformRequiresReversal, reelIndex } from './render-index';
 import { str, applyStrings } from './i18n';
+import { moneyInText, moneyOutText } from './moneytext';
 
 applyStrings();
 
@@ -310,6 +314,8 @@ class Session {
   hash: string | null = null;
   autoSave = true;
   meta: GameMeta | null = null;
+  coinAnswers: Record<string, NamedCoin> = {};
+  coinUnsure = new Set<number>();
 }
 const session = new Session();
 const stateStore: StateStore = localStateStore;
@@ -366,6 +372,10 @@ function startGame(
   stopWatch.reset(performance.now());
   stopNote.clear();
   stopParts = [];
+  const damaged = damagedRoms(game);
+  if (damaged.length) {
+    showNotice(str('main.n_looks_damaged_by_a', { 0: damaged.join(', ') }), { autoClose: false });
+  }
   let machineUp = false;
   let cabinetSettled = false;
   const settle = (): void => { if (machineUp && cabinetSettled) hideBusy(); };
@@ -375,11 +385,14 @@ function startGame(
     machineUp = true;
     settle();
   };
+  session.coinAnswers = readCoinAnswers(session.meta?.coinAnswers);
+  session.coinUnsure.clear();
   void emu.load({
     game,
     snapshot,
     optionKeys: readSavedOptionKeys(game),
     panelSwitches: readSavedPanelSwitches(game),
+    namedCoins: session.coinAnswers,
     benchStep: BENCH_STEP,
     noAudio: NO_AUDIO,
     bench: BENCH,
@@ -406,6 +419,9 @@ function startGame(
       stopParts = stopNoteParts(info.boardDefaults);
       if (stopParts.length) console.log(`[fruitulator] ${unbuiltLogText(stopParts)}`);
       hwBridge?.gameLoaded(game.name, info.system, info.coins);
+      infoBoot = booted;
+      stampCabinetCoins();
+      refreshKeys?.();
       idleNamedInputs(emu, game, info);
       buildMenu(info);
     })
@@ -466,10 +482,7 @@ function startGame(
       const cabView = viewFor(game.system);
       capsAreSwitches(cab.lamps, cabView.nonSwitchInputs);
       cabinet = cab;
-      const coinControls = stampCoinInputs(cab.lamps, cabView, emu.info?.coins ?? cabView.coins);
-      if (!coinControls) {
-        if (machineCoins(emu.info, cabView).length) showNotice(str('main.this_cabinet_s_layout_draws'));
-      }
+      stampCabinetCoins();
       refreshKeys?.();
       rebuildMenu?.();
       if (BULB_LAB_AT_START && !bulbLab.active) {
@@ -564,6 +577,7 @@ function handleUpload(src: UploadSource, fallbackName?: string): void {
           session.hash = meta.hash;
           session.meta = meta;
           session.autoSave = meta.autoSave;
+          adoptCoinAnswers(meta);
         } else {
           hideBusy();
           status.textContent = str('main.n_added_tap_its_card', { 0: meta.name });
@@ -696,7 +710,6 @@ function offerPickStop(): void {
 async function importFolderSets(sets: FolderSet[]): Promise<void> {
   stopBatch = false;
   batchRunning = true;
-  const unbusy = holdBusy('import');
   busyStop.hidden = false;
   busyStop.disabled = false;
   busyBar.hidden = false;
@@ -763,7 +776,6 @@ async function importFolderSets(sets: FolderSet[]): Promise<void> {
     trace(`batch done: ${added} added, ${known} known, ${failed.length} failed`);
     clearImporting();
     batchRunning = false;
-    unbusy();
     busyStop.hidden = true;
     busyBar.hidden = true;
     hideBusy();
@@ -771,7 +783,6 @@ async function importFolderSets(sets: FolderSet[]): Promise<void> {
       await renderLibrary(libraryHandlers)
         .catch((e) => console.warn('[library] refresh after batch failed', e));
     }
-    startArtworkPass();
   }
 
   showImportReport({
@@ -1093,8 +1104,24 @@ function appReason(r: string): string {
 emu.onAutosave = (blob, trigger) => autosave.pushed(blob, trigger);
 
 emu.onCoins = () => {
+  stampCabinetCoins();
+  refreshKeys?.();
   rebuildMenu?.();
 };
+
+let infoBoot = 0;
+let noSlotCheckedBoot = 0;
+
+function stampCabinetCoins(): void {
+  const game = session.game;
+  if (!cabinet || !game) return;
+  const view = viewFor(game.system);
+  const info = infoBoot === session.boot ? emu.info : null;
+  const n = stampCoinInputs(cabinet.lamps, view, info?.coins ?? view.coins);
+  if (!info || n || noSlotCheckedBoot === session.boot) return;
+  noSlotCheckedBoot = session.boot;
+  if (machineCoins(info, view).length && !damagedRoms(game).length) showNotice(str('main.this_cabinet_s_layout_draws'));
+}
 
 autosave.watchPage(window);
 
@@ -1178,6 +1205,7 @@ async function openFromLibrary(hash: string, resume: boolean, variant?: string):
         if (session.hash === hash) {
           session.meta = meta;
           session.autoSave = meta.autoSave;
+          adoptCoinAnswers(meta);
           if (!onFirstFrameDrawn) hideBusy();
         }
         requestStoragePersist();
@@ -1649,6 +1677,7 @@ async function clearRamNow(): Promise<string | null> {
   const why = await emu.clearRam({
     optionKeys: readSavedOptionKeys(game),
     panelSwitches: readSavedPanelSwitches(game),
+    namedCoins: session.coinAnswers,
   });
   if (why) return str('main.not_cleared_n', { 0: why });
   if (session.hash && !session.autoSave) {
@@ -1696,15 +1725,8 @@ function buildMenu(info: MachineInfo): void {
         book.hidden = false;
         const rec = moneyWatch.rec;
         const t = rec ? rec.total : l;
-        const inCount = t.unpricedIn ?? 0;
-        inV.textContent = inCount
-          ? (t.inPence
-            ? `${money(t.inPence)} + ${str('main.n_meter_counts', { n: inCount })}`
-            : str('main.n_meter_counts', { n: inCount }))
-          : money(t.inPence);
-        outV.textContent = t.unpricedOut
-          ? str('main.n_n_coins', { 0: money(t.outPence), 1: t.unpricedOut })
-          : money(t.outPence);
+        inV.textContent = moneyInText(t);
+        outV.textContent = moneyOutText(t);
         const tokParts: string[] = [];
         if (l.tokenOutPence) tokParts.push(money(l.tokenOutPence));
         if (l.unpricedTokenOut) {
@@ -1834,13 +1856,25 @@ const appActions: ActionSurface = {
   running: () => running,
   closeMenu,
   coin: (c) => {
-    const booted = session.boot;
-    effects.coinDrop(undefined, () => {
-      if (booted !== session.boot) return null;
-      emu.coin(c.bit);
-      stopWatch.engage();
-      return 'accepted';
+    nameThen(c.bit, () => {
+      const booted = session.boot;
+      effects.coinDrop(undefined, () => {
+        if (booted !== session.boot) return null;
+        emu.coin(c.bit);
+        stopWatch.engage();
+        return 'accepted';
+      });
     });
+  },
+  coinNaming: {
+    slots: () => namingSlots(cabinet?.lamps ?? [], viewFor(session.game?.system ?? ''), emu.info, session.coinAnswers),
+    change: (line, at, done) => {
+      openCoinNaming({
+        at,
+        current: session.coinAnswers[String(line)] ?? null,
+        onName: (coin) => { setCoinAnswer(line, coin); done(); },
+      });
+    },
   },
   throwSwitch: (sw, checked) => {
     const said = throwPanelSwitch(sw, checked);
@@ -2914,7 +2948,7 @@ function loadSnapshotFile(file: File): void {
         return;
       }
       const booted = ++session.boot;
-      void emu.load({ game, snapshot: snap, optionKeys: readSavedOptionKeys(game), panelSwitches: readSavedPanelSwitches(game), bench: BENCH, noRegions: NO_REGIONS, wasm: USE_WASM })
+      void emu.load({ game, snapshot: snap, optionKeys: readSavedOptionKeys(game), panelSwitches: readSavedPanelSwitches(game), namedCoins: session.coinAnswers, bench: BENCH, noRegions: NO_REGIONS, wasm: USE_WASM })
         .then((info) => {
           if (booted !== session.boot) return;
           audio.attach(info.audioRate);
@@ -2946,6 +2980,57 @@ function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor']): void {
   });
 }
 
+let lastPress: { x: number; y: number; t: number } | null = null;
+addEventListener('pointerdown', (ev) => { lastPress = { x: ev.clientX, y: ev.clientY, t: performance.now() }; }, true);
+
+function pressPoint(): { x: number; y: number } | null {
+  return lastPress && performance.now() - lastPress.t < 1000 ? { x: lastPress.x, y: lastPress.y } : null;
+}
+
+function nameThen(line: number, go: () => void): void {
+  if (session.coinUnsure.has(line) || !mustName(line, emu.info, session.coinAnswers)) { go(); return; }
+  const booted = session.boot;
+  const still = (): boolean => booted === session.boot && running;
+  openCoinNaming({
+    at: pressPoint(),
+    onName: (coin) => {
+      if (!still()) return;
+      setCoinAnswer(line, coin);
+      go();
+    },
+    onUnsure: () => {
+      if (!still()) return;
+      session.coinUnsure.add(line);
+      go();
+    },
+  });
+}
+
+function setCoinAnswer(line: number, coin: NamedCoin): void {
+  session.coinAnswers = withCoinAnswer(session.coinAnswers, line, coin);
+  session.coinUnsure.delete(line);
+  emu.nameCoin(line, coin);
+  if (session.hash) saveCoinAnswers(session.hash);
+}
+
+function saveCoinAnswers(hash: string): void {
+  const answers = session.coinAnswers;
+  if (session.meta?.hash === hash) session.meta = { ...session.meta, coinAnswers: answers };
+  void getMeta(hash)
+    .then((m) => (m ? putMeta({ ...m, coinAnswers: answers }) : undefined))
+    .catch((e) => console.warn('[library] coin name not saved', e));
+}
+
+function adoptCoinAnswers(meta: GameMeta): void {
+  const stored = readCoinAnswers(meta.coinAnswers);
+  for (const [line, coin] of Object.entries(stored)) {
+    if (!(line in session.coinAnswers)) emu.nameCoin(Number(line), coin);
+  }
+  const unsaved = Object.keys(session.coinAnswers).some((k) => stored[k] !== session.coinAnswers[k]);
+  session.coinAnswers = { ...stored, ...session.coinAnswers };
+  if (unsaved) saveCoinAnswers(meta.hash);
+}
+
 function coinsMenuHint(view: PlatformView): string {
   return machineCoins(emu.info, view).length ? str('main.menu_coins_puts_money_in') : '';
 }
@@ -2973,11 +3058,17 @@ function activate(lp: CabLamp, pointerId: number): void {
       showNotice(str('main.this_slot_is_drawn_on', { 0: coinsMenuHint(view) }));
       return;
     }
-    dropCoinAt(bit, lp.acceptor);
+    nameThen(bit, () => dropCoinAt(bit, lp.acceptor));
     return;
   }
   if (lp.coinInput !== undefined && lp.coinInput >= 0 && emu.info?.namesCoins && emu.info.unnamedCoins?.includes(lp.coinInput)) {
-    dropCoinAt(lp.coinInput);
+    const line = lp.coinInput;
+    nameThen(line, () => dropCoinAt(line));
+    return;
+  }
+  const dropLine = plainCoinDrop(viewFor(session.game?.system ?? ''), lp);
+  if (dropLine >= 0) {
+    dropCoinAt(dropLine);
     return;
   }
   if (lp.button !== undefined) pressInput(pointerId, lp.button);
@@ -3398,40 +3489,10 @@ Object.assign(window, {
 
 wireLibraryControls(libraryHandlers);
 
-convertLegacyThumbs();
 refreshStaleThumbs((hash) => {
   if (librarySection.hidden || batchRunning) return;
   refreshArtwork(hash);
 });
-function startArtworkPass(): void {
-  prepareArtwork({
-    onTile: (hash) => {
-      if (batchRunning) return;
-      refreshArtwork(hash);
-    },
-    onProgress: (left, total) => {
-      if (batchRunning) return;
-      if (left > 0) {
-        status.textContent = str('main.preparing_artwork_n_of_n', { 0: total - left + 1, 1: total });
-        artworkShown = true;
-      } else if (artworkShown) {
-        artworkShown = false;
-        status.textContent = '';
-      }
-    },
-    onPaused: (paused) => {
-      if (batchRunning) return;
-      if (paused) { status.textContent = str('main.installing_paused'); artworkShown = true; }
-    },
-    visible: () => new Set(
-      [...document.querySelectorAll<HTMLElement>('#tiles .art[data-hash]')]
-        .filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; })
-        .map((el) => el.dataset.hash!),
-    ),
-  });
-}
-let artworkShown = false;
-startArtworkPass();
 backfillContentHashes(() => {
   if (librarySection.hidden || batchRunning) return;
   void renderLibrary(libraryHandlers)

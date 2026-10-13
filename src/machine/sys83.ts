@@ -14,8 +14,10 @@ import { V20Reels } from './v20reels';
 import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, MachineDisplay } from './machine';
-import { bookUnpricedIn, ledgerOutMults, newCashLedger } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, MachineDisplay, NamedCoin } from './machine';
+import { ledgerOutMults, newCashLedger } from './machine';
+import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
+import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import type { ReelGeometry } from './layoutreels';
@@ -115,6 +117,8 @@ export class Sys83 implements Bus, Machine {
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
+  private readonly book = new CoinBook(this.cashLedger, SYS83_CLOCK, true);
+  private readonly slots = new SlotCoins();
 
   private calls = 0;
   private nmiCount = 0;
@@ -190,6 +194,14 @@ export class Sys83 implements Bus, Machine {
     }));
   }
 
+  setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
+
+  setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
+
+  get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
+
+  nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
+
   setMeterMoney(map: {
     meterIn: readonly number[]; meterOut: readonly number[];
     triacIn: readonly number[]; triacOut: readonly number[];
@@ -245,6 +257,7 @@ export class Sys83 implements Bus, Machine {
     this.digits.fill(0);
     this.coinTimer = 0;
     this.coinMask = 0;
+    this.book.reset();
     this.cpu.reset();
     this.cpu.irq1Enabled = true;
   }
@@ -278,6 +291,7 @@ export class Sys83 implements Bus, Machine {
     }
     this.speaker.tick(c);
     this.ay.tick(c, SYS83_CLOCK);
+    this.book.elapse(c);
     if (this.watchdog !== 0) {
       this.watchdog -= c;
       if (this.watchdog <= 0) {
@@ -445,8 +459,7 @@ export class Sys83 implements Bus, Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-      this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
-      bookUnpricedIn(this.cashLedger, this.meterInRaw[i]);
+      if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
     }
   }
 
@@ -461,8 +474,8 @@ export class Sys83 implements Bus, Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
-      bookUnpricedIn(this.cashLedger, this.triacInRaw[i]);
+      if (this.book.hasSlides) this.book.slide(i);
+      else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }
     this.lampStore.writeAt(0x80, TRIAC_LINES, word);
   }
@@ -484,6 +497,7 @@ export class Sys83 implements Bus, Machine {
       this.coinTimer = COIN_HOLD_ROW + COIN_GAP;
     }
     this.matrix[this.coinRow] |= this.coinMask;
+    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), this.coinTimer - COIN_GAP);
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }

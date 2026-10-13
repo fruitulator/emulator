@@ -1,53 +1,7 @@
-import { THUMB_RULE, encodeThumb, imageMime } from './cabjson';
+import { THUMB_RULE } from './cabjson';
 import { onIdle } from './idle';
 import { refreshThumb } from './importer';
-import { getThumb, lastPlayed, listGames, putThumb, type GameMeta } from './store';
-
-let started = false;
-
-export function convertLegacyThumbs(): void {
-  if (started) return;
-  started = true;
-  void (async () => {
-    const games = await listGames();
-    const queue = games.filter((g) => g.hasThumb && g.thumbRule === THUMB_RULE)
-      .map((g) => g.hash);
-    let converted = 0;
-    let saved = 0;
-
-    const next = (): void => {
-      const hash = queue.pop();
-      if (hash === undefined) {
-        if (converted) {
-          console.log(`[library] re-encoded ${converted} thumbnail(s), ` +
-            `${(saved / 1048576).toFixed(1)} MB reclaimed`);
-        }
-        return;
-      }
-      void (async () => {
-        try {
-          const bytes = await getThumb(hash);
-          if (bytes && imageMime(bytes) === 'image/png') {
-            const bmp = await createImageBitmap(
-              new Blob([bytes as BlobPart], { type: 'image/png' }),
-            );
-            const next = await encodeThumb(bmp);
-            bmp.close();
-            if (next.byteLength < bytes.byteLength) {
-              await putThumb(hash, next);
-              converted++;
-              saved += bytes.byteLength - next.byteLength;
-            }
-          }
-        } catch (e) {
-          console.warn('[library] thumbnail re-encode failed', hash, e);
-        }
-        onIdle(next);
-      })();
-    };
-    onIdle(next);
-  })().catch((e) => console.warn('[library] thumbnail re-encode pass failed', e));
-}
+import { lastPlayed, listGames, type GameMeta } from './store';
 
 let refreshing = false;
 
@@ -58,7 +12,7 @@ export function refreshStaleThumbs(onTile?: (hash: string) => void): void {
   refreshing = true;
   void (async () => {
     const games = await listGames();
-    const stale = games.filter((g) => g.decodeStatus !== 'pending' && g.thumbRule !== THUMB_RULE);
+    const stale = games.filter((g) => g.thumbRule !== THUMB_RULE);
     const played = (g: GameMeta): number => lastPlayed(g) ?? 0;
     const queue = stale
       .map((g, i) => ({ hash: g.hash, played: played(g), i }))

@@ -151,7 +151,7 @@ export class PlayKeys {
 
   watchWindow(win: Window = window, opts: { hideOnResize?: boolean } = {}): () => void {
     const blur = (): void => this.focusLost();
-    const hide = (): void => this.hideHints();
+    const hide = (): void => { if (win.document.hidden) this.focusLost(); else this.hideHints(); };
     win.addEventListener('blur', blur);
     win.document.addEventListener('visibilitychange', hide);
     if (opts.hideOnResize !== false) win.addEventListener('resize', hide);

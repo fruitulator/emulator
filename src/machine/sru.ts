@@ -7,6 +7,8 @@ import { SRU_BASS_FREQ } from '../hw/blipleak';
 import { AY_RATE } from '../hw/ay8910';
 import { Mixer } from '../hw/mixer';
 import { newCashLedger, type CashLedger, type CabinetSwitch, type CoinChute, type NamedCoin } from './machine';
+import { CoinBook, type BookedCoin } from './coinbook';
+import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import type { SlideEffect } from '../layout/fmlconfig';
 
 const SRU_CLOCK = 1_500_000;
@@ -15,10 +17,11 @@ const INT2_PERIOD = 15000;
 const REFRESH_TICK = 800;
 const COIN_HOLD = Math.round(0.15 * SRU_CLOCK);
 const COIN_GAP = Math.round(0.15 * SRU_CLOCK);
+const CHANGE_GAP = SRU_CLOCK;
 
 const inRam = (a: number) => (a >= 0x0c00 && a < 0x1000) || (a >= 0x1400 && a < 0x1800);
 
-export type SruCoin = number | { token: number } | 'token' | null;
+export type SruCoin = BookedCoin;
 
 export const SRU_COIN_ROW = 2;
 
@@ -36,6 +39,36 @@ export function sruCoinsFromCabinet(
     out[bit - 4] = s.pence;
   }
   return out;
+}
+
+export function sruFittedCoinLines(
+  declared: readonly DeclaredCoin[],
+  plainButtons: readonly number[],
+  lettering: ReadonlyMap<number, 'coin' | 'control'> = new Map(),
+): number[] | null {
+  const lines = sruAcceptorLines(declared);
+  for (const b of plainButtons) if (b >= 20 && b <= 23 && lettering.get(b) !== 'control') lines.add(b);
+  if (lines.size) return [...lines].sort((a, b) => a - b);
+  const named = [20, 21, 22, 23].filter((b) => lettering.get(b) === 'control');
+  return named.length ? [20, 21, 22, 23].filter((b) => !named.includes(b)) : null;
+}
+
+function sruAcceptorLines(declared: readonly DeclaredCoin[]): Set<number> {
+  const lines = new Set<number>();
+  for (const c of declared) {
+    const mask = coinRowPattern(c, SRU_COIN_ROW) ?? 0;
+    for (let b = 4; b < 8; b++) if (mask & (1 << b)) lines.add(16 + b);
+  }
+  return lines;
+}
+
+export function sruUnmarkedCoinLines(
+  declared: readonly DeclaredCoin[],
+  lettering: ReadonlyMap<number, 'coin' | 'control'>,
+  fitted: readonly number[] | null,
+): number[] {
+  const acc = sruAcceptorLines(declared);
+  return (fitted ?? [20, 21, 22, 23]).filter((b) => !acc.has(b) && lettering.get(b) !== 'coin');
 }
 
 const TONE_VOLTS = [6.764, 7.309, 7.848, 8.39, 8.926, 9.412, 10.0];
@@ -69,6 +102,7 @@ export class Sru extends Sys80 {
   static override readonly snapshotConfig: readonly string[] = [
     ...Sys80.snapshotConfig, 'slides',
     'coinPence', 'layoutCoinPence', 'chuteCache',
+    'fitted',
   ];
 
   override readonly clockHz = SRU_CLOCK;
@@ -217,6 +251,7 @@ export class Sru extends Sys80 {
       this.t2 -= INT2_PERIOD;
       if (this.int2En) { this.latched |= 2; this.updateInt(); }
     }
+    this.book.elapse(c);
     if (this.coinTimer > 0) {
       const was = this.coinTimer;
       this.coinTimer -= c;
@@ -247,6 +282,7 @@ export class Sru extends Sys80 {
   }
 
   private readonly gross = newCashLedger();
+  private readonly book = new CoinBook(this.gross, CHANGE_GAP);
   override get cashLedger(): CashLedger | undefined {
     return this.coinPence.some((p) => p !== null) || this.slides.some((s) => s !== null)
       ? this.gross
@@ -256,6 +292,7 @@ export class Sru extends Sys80 {
   private slides: SlideEffect[] = [null, null, null, null, null, null, null, null];
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 8; i++) this.slides[i] = slides[i] ?? null;
+    this.book.setSlides(this.slides);
   }
 
   private coinPence: SruCoin[] = [null, null, null, null];
@@ -267,13 +304,19 @@ export class Sru extends Sys80 {
 
   override get unnamedCoinLines(): readonly number[] {
     const out: number[] = [];
-    for (let i = 0; i < 4; i++) if (this.layoutCoinPence[i] === null) out.push(20 + i);
+    for (let i = 0; i < 4; i++) if (this.fitted[i] && this.layoutCoinPence[i] === null) out.push(20 + i);
     return out;
+  }
+
+  private fitted: boolean[] = [true, true, true, true];
+  setFittedCoinLines(lines: readonly number[] | null): void {
+    for (let i = 0; i < 4; i++) this.fitted[i] = lines === null || lines.includes(20 + i);
+    this.chuteCache = null;
   }
 
   nameCoin(line: number, coin: NamedCoin): void {
     const i = line - 20;
-    if (i < 0 || i > 3 || this.layoutCoinPence[i] !== null) return;
+    if (i < 0 || i > 3 || !this.fitted[i] || this.layoutCoinPence[i] !== null) return;
     if (coin === 'token') this.coinPence[i] = 'token';
     else if (Number.isInteger(coin) && coin > 0) this.coinPence[i] = coin;
     else return;
@@ -282,21 +325,19 @@ export class Sru extends Sys80 {
 
   private chuteCache: CoinChute[] | null = null;
   override get coinChutes(): readonly CoinChute[] | undefined {
-    if (this.coinPence.every((p) => p === null)) return undefined;
-    this.chuteCache ??= this.coinPence.map((p, i): CoinChute => {
+    if (this.coinPence.every((p) => p === null) && this.fitted.every(Boolean)) return undefined;
+    this.chuteCache ??= this.coinPence.flatMap((p, i): CoinChute[] => {
+      if (!this.fitted[i]) return [];
       const bit = 20 + i;
-      if (typeof p === 'number') return { label: coinName(p), bit, pence: p };
-      if (p === 'token' || (p && typeof p === 'object')) return { label: 'Token', bit, pence: null, token: true };
-      return { label: `Coin line ${bit - 16}`, bit };
+      if (typeof p === 'number') return [{ label: coinName(p), bit, pence: p }];
+      if (p === 'token' || (p && typeof p === 'object')) return [{ label: 'Token', bit, pence: null, token: true }];
+      return [{ label: `Coin line ${bit - 16}`, bit }];
     });
     return this.chuteCache;
   }
 
   private bookSlide(line: number): void {
-    const s = this.slides[line];
-    if (s === 'token') this.gross.unpricedTokenOut++;
-    else if (s === 'unpriced') this.gross.unpricedOut++;
-    else if (typeof s === 'number') this.gross.outPence += s;
+    this.book.slide(line);
   }
 
   private readonly bookedPulses = new Uint32Array(8);
@@ -313,13 +354,12 @@ export class Sru extends Sys80 {
 
   override insertCoin(bit: number): void {
     if (this.coinTimer > 0 || bit < 0 || bit > 39) return;
+    if (bit >= 20 && bit <= 23 && !this.fitted[bit - 20]) { this.coinsRefused++; return; }
     this.coinInput = bit;
     this.layoutInput(bit, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;
     const p = this.coinPence[bit - 20];
-    if (typeof p === 'number') this.gross.inPence += p;
-    else if (p === 'token') this.gross.unpricedTokenIn++;
-    else if (p && typeof p === 'object') this.gross.tokenInPence += p.token;
+    if (p !== undefined) this.book.coin(p, COIN_HOLD);
   }
 
   override get parts(): BoardPart[] {

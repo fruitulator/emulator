@@ -15,7 +15,7 @@ import { Sec } from '../hw/sec';
 import { EpochMatrix } from '../hw/epochmatrix';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import type { ReelGeometry } from './layoutreels';
-import { EPOCH_LAMP_LEVELS, LAMP_FULL } from './framestate';
+import { EPOCH_LAMP_LEVELS, EPOCH_LED_LEVELS, EPOCH_DIGITS, LAMP_FULL } from './framestate';
 import type { BoardPart } from './parts';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
@@ -63,13 +63,15 @@ const OUTPUT_BASE = 0x1000;
 
 const FLASH_RATES = 0x1200;
 const LAMP_DIM = 0x1218;
+const LED_FLASH_RATES = 0x120c;
+const LED_DIM = 0x1219;
 const DIP_BANK_1 = 0x121a;
 const DIP_BANK_2 = 0x121b;
 
 export class Epoch implements Machine {
   static readonly snapshotConfig: readonly string[] = ['layoutCoins', 'wiring'];
 
-  readonly digitKind: DigitKind = 'sc4';
+  readonly digitKind: DigitKind = 'epoch';
   readonly clockHz = 16_000_000;
 
   private readonly rom = new Uint8Array(0x200000);
@@ -784,19 +786,53 @@ export class Epoch implements Machine {
     return this.ram[LAMP_DIM] & 7;
   }
 
+  ledPhase(): number {
+    const ms = this.clockHz / 1000;
+    const r = this.ram.subarray(LED_FLASH_RATES, LED_FLASH_RATES + 12);
+    if (!r.some((x) => x !== 0)) return 0;
+    const cycles = this.dev.cpu.totalCycles;
+    let bits = 0;
+    for (let i = 0; i < 6; i++) {
+      const p0 = (r[i * 2 + 1] + 1) * ms;
+      const p1 = (r[i * 2] + 1) * ms;
+      if (cycles % (p0 + p1) >= p0) bits |= 1 << i;
+    }
+    return bits;
+  }
+
+  ledLevel(n: number, phase = this.ledPhase()): number {
+    const b = this.ram[LED_BASE + n];
+    const rate = Math.min((b >> 1) & 7, 6);
+    const lit = rate === 0 ? (b & 1) !== 0 : ((phase >> (rate - 1)) & 1) !== (b >> 7);
+    if (!lit) return 0;
+    return b & 0x40 ? EPOCH_LED_LEVELS[this.ram[LED_DIM] & 7] : LAMP_FULL;
+  }
+
   get segDigits(): Uint8Array {
-    const out = new Uint8Array(32);
-    for (let k = 0; k < 32; k++) {
-      const base = LED_BASE + (k & 16 ? 128 : 0) + (k & 15);
+    const out = this.digitSnapshot;
+    const phase = this.ledPhase();
+    for (let k = 0; k < EPOCH_DIGITS; k++) {
+      const base = (k >> 4) * 128 + (k & 15);
       let row = 0;
-      for (let b = 0; b < 8; b++) if (this.ram[base + (b << 4)] & 1) row |= 1 << b;
+      for (let b = 0; b < 8; b++) {
+        const lv = this.ledLevel(base + (b << 4), phase);
+        if (lv) row |= 1 << b;
+        out[EPOCH_DIGITS + k * 8 + b] = lv || LAMP_FULL;
+      }
       out[k] = row;
     }
     return out;
   }
 
+  private readonly digitSnapshot = new Uint8Array(EPOCH_DIGITS * 9);
+
   layoutDigit(n: number): number {
-    return n >= 0 && n < 32 ? this.segDigits[n] : 0;
+    return n >= 0 && n < EPOCH_DIGITS ? this.segDigits[n] : 0;
+  }
+
+  layoutDigitSegLevel(n: number, seg: number): number {
+    return n >= 0 && n < EPOCH_DIGITS && seg >= 0 && seg < 8
+      ? this.segDigits[EPOCH_DIGITS + n * 8 + seg] : LAMP_FULL;
   }
 
   setSwitch(n: number, on: boolean): void {

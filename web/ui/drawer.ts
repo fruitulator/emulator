@@ -20,6 +20,8 @@ export class MenuDrawer {
     el.backdrop.addEventListener('click', () => this.close());
     for (const e of [el.menu, el.fly]) {
       e.addEventListener('pointerleave', (ev) => {
+        const to = ev.relatedTarget as Element | null;
+        if (to?.closest?.('.dd-float')) return;
         if (ev.pointerType === 'mouse') this.scheduleFlyoutClose();
       });
       e.addEventListener('pointerenter', () => window.clearTimeout(this.flyTimer));

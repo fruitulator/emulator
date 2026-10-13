@@ -1,5 +1,7 @@
 import { UI_ICONS } from './icons';
 import { str } from '../i18n';
+import { betaTag } from './beta';
+import { bubbleTip } from './tip';
 
 declare const __HAS_ARCADE__: boolean;
 
@@ -7,13 +9,13 @@ export function hasArcade(): boolean {
   return typeof __HAS_ARCADE__ !== 'undefined' && __HAS_ARCADE__;
 }
 
-function link(href: string, icon: string, label: string, title: string, id: string): HTMLAnchorElement {
+function link(href: string, icon: string, label: string, tip: [name: string, what: string], id: string): HTMLAnchorElement {
   const a = document.createElement('a');
   a.className = 'iconbtn';
   a.id = id;
   a.href = href;
   a.setAttribute('aria-label', label);
-  a.title = title;
+  bubbleTip(a, ...tip);
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   s.setAttribute('viewBox', '0 0 24 24');
   s.setAttribute('aria-hidden', 'true');
@@ -29,7 +31,7 @@ export function aboutButton(): HTMLButtonElement {
   b.className = 'iconbtn about';
   b.id = 'aboutBtn';
   b.setAttribute('aria-label', str('index.about_fruitulator'));
-  b.title = str('index.about');
+  bubbleTip(b, str('ui.tip.about_name'), str('ui.tip.about'));
   b.setAttribute('aria-haspopup', 'dialog');
   b.setAttribute('aria-expanded', 'false');
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -54,9 +56,13 @@ export function siteNav(o: { here: 'games' | 'arcades'; about?: boolean }): HTML
   nav.className = 'ui-sitenav';
   nav.setAttribute('aria-label', str('ui.sitenav.sections'));
   if (o.here === 'games') {
-    if (hasArcade()) nav.append(link('/arcade/', UI_ICONS.cabinet, str('index.arcades'), str('index.arcades'), 'to-arcade'));
+    if (hasArcade()) {
+      const a = link('/arcade/', UI_ICONS.cabinet, str('index.arcades_beta'), [str('ui.tip.arcades_name'), str('ui.tip.arcades')], 'to-arcade');
+      a.append(betaTag());
+      nav.append(a);
+    }
   } else {
-    nav.append(link('/', UI_ICONS.library, str('index.open_the_library'), str('index.library'), 'to-games'));
+    nav.append(link('/', UI_ICONS.library, str('index.open_the_library'), [str('ui.tip.my_games_name'), str('ui.tip.my_games')], 'to-games'));
   }
   if (o.about) nav.append(aboutButton());
   nav.hidden = !nav.childElementCount;

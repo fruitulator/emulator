@@ -3,8 +3,16 @@ import type { CoinLineTable, Refusal } from './coinwiring';
 
 export interface Mpu5Channel {
   bit: number;
-  pence: number;
+  pence: number | null;
+  label: string;
+  cents?: number;
   pattern: number;
+}
+
+export interface CoinValue {
+  pence: number | null;
+  cents: number | null;
+  label: string;
 }
 
 export interface Mpu5Mechs {
@@ -12,6 +20,59 @@ export interface Mpu5Mechs {
   binary: Mpu5Channel[] | null;
   at: { parallel: number[]; binary: number[] };
   refused: { parallel: string | null; binary: string | null };
+  notSterling: string[];
+}
+
+const u16At = (rom: Uint8Array, a: number): number => (rom[a]! << 8) | rom[a + 1]!;
+const u32At = (rom: Uint8Array, a: number): number =>
+  ((rom[a]! << 24) | (rom[a + 1]! << 16) | (rom[a + 2]! << 8) | rom[a + 3]!) >>> 0;
+
+export function coinRecordName(rom: Uint8Array, coin: number): string | null {
+  let end = -1;
+  for (let j = coin + 0x10; j + 4 <= rom.length && j < coin + 0x200; j += 2) {
+    if (u32At(rom, j) === coin) { end = j - 4; break; }
+  }
+  if (end < 0) return null;
+  for (let k = coin + 4; k + 4 <= end; k += 2) {
+    const p = u32At(rom, k);
+    if (p <= k + 3 || p >= end) continue;
+    let s = '';
+    let q = p;
+    for (; q < end && rom[q] !== 0; q++) {
+      const ch = rom[q]!;
+      if (ch < 0x20 || ch > 0x7e) { s = ''; break; }
+      s += String.fromCharCode(ch);
+    }
+    if (s && q < end) return s;
+  }
+  return null;
+}
+
+export function penceLabel(p: number): string {
+  if (p < 100) return `${p}p`;
+  return p % 100 === 0 ? `£${p / 100}` : `£${(p / 100).toFixed(2)}`;
+}
+
+function centsLabel(c: number): string {
+  return c % 100 === 0 ? `€${c / 100}` : `€${(c / 100).toFixed(2)}`;
+}
+
+export function readCoinValue(rom: Uint8Array, coin: number): CoinValue {
+  const credits = u16At(rom, coin + 8);
+  const name = coinRecordName(rom, coin);
+  if (credits === 0) return { pence: 0, cents: null, label: 'token' };
+  if (name === null) return { pence: credits, cents: null, label: penceLabel(credits) };
+  const gbp = /^\s*(\d+)\s*P\s*$/i.exec(name);
+  if (gbp) {
+    const p = Number(gbp[1]);
+    return p === credits ? { pence: p, cents: null, label: penceLabel(p) } : { pence: null, cents: null, label: name.trim() };
+  }
+  const eur = /^\s*(\d+)(?:[.,](\d{1,2}))?\s*EU(?:R|RO)?\s*$/i.exec(name);
+  if (eur) {
+    const cents = Number(eur[1]) * 100 + (eur[2] ? Number(eur[2].padEnd(2, '0')) : 0);
+    return { pence: null, cents, label: centsLabel(cents) };
+  }
+  return { pence: null, cents: null, label: name.trim() };
 }
 
 const BIT_OF_PENCE = new Map<number, number>([[5, 0], [10, 1], [20, 2], [50, 3], [100, 4], [200, 5]]);
@@ -25,7 +86,7 @@ const tagIs = (rom: Uint8Array, a: number, t: string): boolean =>
 export function readMpu5Mechs(rom: Uint8Array): Mpu5Mechs {
   const u16 = (a: number): number => (rom[a]! << 8) | rom[a + 1]!;
   const u32 = (a: number): number => ((rom[a]! << 24) | (rom[a + 1]! << 16) | (rom[a + 2]! << 8) | rom[a + 3]!) >>> 0;
-  const none = (why: string): Mpu5Mechs => ({ parallel: null, binary: null, at: { parallel: [], binary: [] }, refused: { parallel: why, binary: why } });
+  const none = (why: string): Mpu5Mechs => ({ parallel: null, binary: null, at: { parallel: [], binary: [] }, refused: { parallel: why, binary: why }, notSterling: [] });
   const table = findDeviceTable(rom);
   if (table < 0) return none('no BCOS device table in the program');
   const device = (id: number): { level: number; mask: number } | null => {
@@ -57,6 +118,7 @@ export function readMpu5Mechs(rom: Uint8Array): Mpu5Mechs {
     binary: b.channels,
     at: { parallel: kinds.parallel.map((r) => r.at), binary: kinds.binary.map((r) => r.at) },
     refused: { parallel: p.why, binary: b.why },
+    notSterling: [...new Set([...kinds.parallel, ...kinds.binary].flatMap((r) => r.channels.filter((c) => c.pence === null).map((c) => c.label)))],
   };
 }
 
@@ -77,6 +139,7 @@ function readRecord(
     masks.push(d.mask);
   }
   const channels: Mpu5Channel[] = [];
+  const foreign: (CoinValue & { pattern: number })[] = [];
   let multi = false;
   for (let i = 0; i < 8; i++) {
     const e = a + 0x1e + i * stride;
@@ -93,11 +156,22 @@ function readRecord(
       pattern |= m;
     }
     if (code & (code - 1)) multi = true;
-    const pence = u16(coin + 8);
-    const bit = pence === 0 ? TOKEN_BIT : BIT_OF_PENCE.get(pence);
+    const v = readCoinValue(rom, coin);
+    if (v.pence === null) {
+      if (!foreign.some((c) => c.label === v.label)) foreign.push({ ...v, pattern });
+      continue;
+    }
+    const bit = v.pence === 0 ? TOKEN_BIT : BIT_OF_PENCE.get(v.pence);
     if (bit === undefined) continue;
     if (channels.some((c) => c.bit === bit)) continue;
-    channels.push({ bit, pence, pattern });
+    channels.push({ bit, pence: v.pence, label: v.label, pattern });
+  }
+  foreign.sort((x, y) => (x.cents ?? Infinity) - (y.cents ?? Infinity));
+  for (const f of foreign) {
+    let bit = 0;
+    while (bit < TOKEN_BIT && channels.some((c) => c.bit === bit)) bit++;
+    if (bit >= TOKEN_BIT) break;
+    channels.push({ bit, pence: null, label: f.label, ...(f.cents !== null ? { cents: f.cents } : {}), pattern: f.pattern });
   }
   if (!channels.length) return null;
   channels.sort((x, y) => x.bit - y.bit);
@@ -106,7 +180,7 @@ function readRecord(
 
 export function mpu5CoinTable(channels: readonly Mpu5Channel[], kind: 'parallel' | 'binary'): CoinLineTable {
   return {
-    lines: channels.filter((c) => c.pence > 0).map((c) => ({ line: c.bit, credits: c.pence, change: [] })),
+    lines: channels.flatMap((c) => (c.pence !== null && c.pence > 0 ? [{ line: c.bit, credits: c.pence, change: [] }] : [])),
     pricePerCredit: 1,
     source: `MPU5 ${kind} coin mech record`,
   };

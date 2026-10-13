@@ -27,6 +27,7 @@ export const DENY = new Set([
   'mfmeJpm', 'mame',
   'tonePeriods',
   'hoppersFlag',
+  'illegalAsV20',
   'meterInPence', 'meterOutPence', 'meterInMult', 'meterOutMult', 'meterMapFitted',
   'meterMapStated', 'meterPencePerPulse', 'secInMult', 'secOutMult',
   'hopperCoinPence', 'hopperCoinRecords', 'tokenPayout', 'payoutUnits',

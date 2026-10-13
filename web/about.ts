@@ -5,8 +5,6 @@ import { openDialog, type Dialog } from './ui/dialog';
 import { buildStamp } from './downloads';
 import { str } from './i18n';
 
-export const COMMUNITY_URL = 'https://desertislandfruits.com/';
-
 export const REPO_URL = 'https://github.com/fruitulator/emulator';
 
 export const ISSUES_URL = `${REPO_URL}/issues`;
@@ -14,7 +12,7 @@ export const ISSUES_URL = `${REPO_URL}/issues`;
 export const INTRO: readonly string[] = [
   str('about.fruitulator_lets_you_play_classic'),
   str('about.it_runs_the_original_game'),
-  str('about.games_are_not_included_community', { 0: COMMUNITY_URL }),
+  str('about.games_are_not_included'),
   str('about.anything_you_add_stays_on'),
 ];
 
@@ -74,7 +72,6 @@ export const CREDITS: readonly Credit[] = [
 ];
 
 export const ABOUT_LINKS: readonly string[] = [
-  COMMUNITY_URL,
   REPO_URL,
   ISSUES_URL,
   ...CREDITS.flatMap((c) => (c.url ? [c.url] : [])),
@@ -130,6 +127,7 @@ export function renderAbout(build: string): HTMLElement {
   issues.append(rowIcon(UI_ICONS.bug, 'about-repo-icon', 18), el('span', undefined, str('about.report_a_bug_or_suggest')));
   links.append(repo, issues);
   root.append(links);
+  root.append(el('p', 'about-licence', str('about.free_software_under_the_gnu')));
 
   const thanks = el('section', 'about-sec');
   thanks.append(el('h3', undefined, str('about.thanks')));

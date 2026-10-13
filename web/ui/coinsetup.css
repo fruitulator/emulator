@@ -74,6 +74,14 @@
 .coin-menu:focus-visible {
   outline: none;
 }
+.coin-menu-title {
+  padding: 6px 12px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+  white-space: nowrap;
+}
 .coin-slot + .coin-slot {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -147,4 +155,9 @@
 .wz-slot-mark.on::before {
   background: var(--accent);
   color: #fff;
+}
+button.coin-name-row {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
 }

@@ -34,6 +34,8 @@ function placement(lamps: readonly CabLamp<unknown>[], content: Rect): CabLamp<u
   for (const lp of lamps) {
     if (!onCabinet(lp, content)) continue;
     if (!best) { best = lp; continue; }
+    const hid = !!lp.underVfd, bestHid = !!best.underVfd;
+    if (hid !== bestHid) { if (!hid) best = lp; continue; }
     const a = drawsArt(lp), b = drawsArt(best);
     if (a !== b) { if (a) best = lp; continue; }
     const area = lp.width * lp.height, bestArea = best.width * best.height;

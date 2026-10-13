@@ -1,4 +1,6 @@
 import { str } from '../i18n';
+import { namedCoinLabel, namingChoices } from '../coinask';
+import type { NamedCoin } from '../../src/machine/machine';
 
 export interface CoinMenuRow { label: string; sub?: string }
 
@@ -12,6 +14,7 @@ export function coinMenuOpen(): boolean {
 
 export function openCoinMenu(o: {
   rows: readonly CoinMenuRow[];
+  title?: string;
   at: { x: number; y: number } | null;
   onPick: (i: number) => void;
   onClose?: () => void;
@@ -47,6 +50,13 @@ export function openCoinMenu(o: {
     });
     return li;
   });
+  if (o.title) {
+    const t = document.createElement('li');
+    t.className = 'coin-menu-title';
+    t.setAttribute('role', 'presentation');
+    t.textContent = o.title;
+    list.append(t);
+  }
   list.append(...opts);
 
   function setActive(i: number): void {
@@ -115,4 +125,29 @@ export function openCoinMenu(o: {
   const menu: CoinMenu = { close };
   current = menu;
   return menu;
+}
+
+export function openCoinNaming(o: {
+  at: { x: number; y: number } | null;
+  current?: NamedCoin | null;
+  onName: (coin: NamedCoin) => void;
+  onUnsure?: () => void;
+  onClose?: () => void;
+}): CoinMenu {
+  const choices = namingChoices();
+  const rows: CoinMenuRow[] = choices.map((c) => ({
+    label: c.label,
+    ...(o.current !== undefined && o.current !== null && namedCoinLabel(o.current) === c.label ? { sub: str('coinmenu.now') } : {}),
+  }));
+  if (o.onUnsure) rows.push({ label: str('coinmenu.not_sure') });
+  return openCoinMenu({
+    rows,
+    title: str('coinmenu.which_coin_is_this'),
+    at: o.at,
+    onPick: (i) => {
+      if (i < choices.length) o.onName(choices[i].coin);
+      else o.onUnsure?.();
+    },
+    ...(o.onClose ? { onClose: o.onClose } : {}),
+  });
 }

@@ -18,7 +18,7 @@ export type AutosaveTrigger = 'pause' | 'clear-ram';
 export function ledgerPayoutPercent(l: CashLedger): number | null {
   if (l.unpricedOut || l.unpricedTokenOut) return null;
   if (l.unpricedTokenIn) return null;
-  if (l.unpricedIn) return null;
+  if (l.unpricedIn || l.euroInCents || l.euroOutCents) return null;
   const take = l.inPence - l.tokenInPence;
   if (take <= 0) return null;
   return (100 * (l.outPence + l.tokenOutPence)) / take;

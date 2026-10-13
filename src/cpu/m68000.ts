@@ -642,6 +642,7 @@ export class M68000 {
     this.rambar = 0;
     this.mbar = 0;
     this.level7Taken = false;
+    this.level7Edge = false;
     this.a[7] = this.readMem(0, Size.Long) >>> 0;
     this.pc = this.readMem(4, Size.Long) >>> 0;
     this.halted = false;
@@ -699,15 +700,20 @@ export class M68000 {
   private irqVector: number | null = null;
   private readonly level7Latch: boolean;
   private level7Taken = false;
+  private level7Edge = false;
 
   setIRQ(level: number, vector: number | null = null): void {
+    if ((level & 7) === 7 && this.irqLevel !== 7) this.level7Edge = true;
     this.irqLevel = level & 7;
     this.irqVector = vector;
   }
 
   interruptPending(): boolean {
     if (this.irqLevel === 0) return false;
-    if (this.irqLevel === 7) return !this.level7Taken;
+    if (this.irqLevel === 7) {
+      if (!this.level7Latch) return true;
+      return !this.level7Taken && (this.level7Edge || (this.sr & SR_INT) !== SR_INT);
+    }
     return this.irqLevel > ((this.sr & SR_INT) >> 8);
   }
 
@@ -720,7 +726,10 @@ export class M68000 {
     if (!this.supervisor) this.setSR(this.sr | SR_S);
     this.sr &= ~SR_T & 0xffff;
     this.sr = (this.sr & ~SR_INT) | ((level << 8) & SR_INT);
-    if (level === 7 && this.level7Latch) this.level7Taken = true;
+    if (level === 7 && this.level7Latch) {
+      this.level7Taken = true;
+      this.level7Edge = false;
+    }
 
     this.pushFrame(oldSr, this.pc, vec);
 

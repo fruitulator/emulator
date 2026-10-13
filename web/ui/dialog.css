@@ -114,6 +114,11 @@
 .about-body .about-repo:hover .about-repo-icon {
   color: var(--text);
 }
+.about-body .about-licence {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
 .about-sec {
   margin-top: 24px;
 }

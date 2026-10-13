@@ -258,6 +258,7 @@ export class Impact implements Bus16, Machine {
     () => new Reel({
       stepsPerRevolution: 96, symbols: 16, mame: true,
       indexStart: 1, indexEnd: 3, indexPattern: 0, initPhase: 4,
+      v20Gate: true,
     }),
   ), MODEL_RELATIONS.IMPACT);
 
@@ -305,6 +306,12 @@ export class Impact implements Bus16, Machine {
   private readonly coinMasks = [0, 0, 0, 0, 0, 0];
 
   readonly upd = new Upd7759();
+
+  private soundBank = 0;
+  private soundAsked = false;
+  private soundWanted = -1;
+  private soundWantedBank = 0;
+  private soundDelay = 0;
 
   get parts(): BoardPart[] {
     return [
@@ -883,6 +890,11 @@ export class Impact implements Bus16, Machine {
     this.dataPakWait = 0;
     this.dataPakIn = [];
     this.upd.reset();
+    this.soundAsked = false;
+    this.soundDelay = 0;
+    this.soundWanted = -1;
+    this.soundWantedBank = 0;
+    this.soundBank = 0;
     this.globalVolume = 0;
     this.potSteps = 0;
     this.potReversed = false;
@@ -1009,8 +1021,12 @@ export class Impact implements Bus16, Machine {
 
   private volumeW(v: number): void {
     const changed = this.volumeLatch ^ v;
-    this.upd.setRomBank((v >> 1) & 3);
-    this.upd.setResetLine((v & 0x01) !== 0);
+    this.soundBank = (v >> 1) & 3;
+    if (!(v & 0x01) && this.soundWanted >= 0) {
+      this.soundDelay = 0;
+      this.soundWanted = -1;
+      this.upd.stop();
+    }
     if (changed & 0x10 && !(v & 0x10) && !(v & 0x40)) {
       if (v & 0x20) {
         if (this.globalVolume < 99) this.globalVolume++;
@@ -1031,6 +1047,50 @@ export class Impact implements Bus16, Machine {
       this.upd.gain = Math.min(level, 255) / 255;
     }
     this.volumeLatch = v & 0xff;
+  }
+
+  static readonly SOUND_DELAY = 2000;
+
+  private soundBusy(): boolean {
+    return this.upd.active() || this.soundDelay > 0;
+  }
+
+  private soundPortW(n: number): void {
+    if (this.soundAsked) {
+      if (this.soundWanted < 0) this.soundAsked = false;
+      else if (!this.soundBusy()) {
+        this.soundWanted = -1;
+        this.soundAsked = false;
+      }
+    }
+    if (this.soundAsked) return;
+    this.soundWanted = this.upd.hasSample(n, this.soundBank) ? n : -1;
+    this.soundWantedBank = this.soundBank;
+    this.soundAsked = true;
+    this.soundDelay = Impact.SOUND_DELAY;
+  }
+
+  private tickSoundDelay(cycles: number): void {
+    this.soundDelay -= cycles;
+    if (this.soundDelay > 0) return;
+    this.soundDelay = 0;
+    this.upd.stop();
+    if (this.soundWanted >= 0) {
+      this.upd.portW(this.soundWanted);
+      this.upd.setStartLine(false, this.soundWantedBank);
+      this.upd.setStartLine(true);
+    }
+  }
+
+  private soundBusyR(): number {
+    if (this.soundWanted < 0) {
+      this.soundAsked = false;
+      return 1;
+    }
+    if (this.soundBusy()) return 0;
+    this.soundWanted = -1;
+    this.soundAsked = false;
+    return 1;
   }
 
   private noteIo(addr: number, isWrite: boolean): void {
@@ -1116,7 +1176,7 @@ export class Impact implements Bus16, Machine {
     if (a >= PPI_BASE && a < PPI_END) {
       return mask & 0x00ff ? this.ppi.read((a >> 1) & 3) & 0xff : 0;
     }
-    if (a === UPD_BASE + 4) return this.upd.busy() ? 1 : 0;
+    if (a === UPD_BASE + 4) return this.soundBusyR();
     if (a >= 0x480086 && a < 0x4800a0) return 0x0001;
     if (a >= LATCH_BASE && a < LATCH_END) return 0xffff;
     if (a >= 0x4801c0 && a < 0x4801e0) {
@@ -1152,11 +1212,7 @@ export class Impact implements Bus16, Machine {
     }
     switch (a) {
       case 0x480080:
-        if (mask & 0x00ff) {
-          this.upd.portW(v & 0xff);
-          this.upd.setStartLine(false);
-          this.upd.setStartLine(true);
-        }
+        if (mask & 0x00ff) this.soundPortW(v & 0xff);
         return;
       case 0x480082:
         if (mask & 0x00ff) this.volumeW(v & 0xff);
@@ -1237,6 +1293,8 @@ export class Impact implements Bus16, Machine {
         }
       }
     }
+
+    if (this.soundDelay > 0) this.tickSoundDelay(cycles);
 
     this.upd.tick(cycles, CPU_CLOCK);
 
