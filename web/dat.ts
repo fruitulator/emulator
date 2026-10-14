@@ -1,7 +1,7 @@
 import type { DiscLamps } from './discreel';
 import { unzlibSync } from 'fflate';
 import { isAacsContainer, readAacsContainer } from './fml';
-import { isFmlLayout, parseFmlLayout, sidewaysCrop } from './fmllayout';
+import { flatTrim, isFmlLayout, parseFmlLayout, sidewaysCrop } from './fmllayout';
 import { shortcutKnown } from './shortcuts';
 import { str } from './i18n';
 
@@ -371,6 +371,7 @@ export interface Cabinet<A = ImageBitmap> {
   vfdReversed: boolean;
   content: Rect;
   column?: Rect;
+  trimmed?: Rect;
   featureReel: FeatureReel<A> | null;
   frameReels: FrameReel<A>[];
   vfdColours?: {
@@ -1800,7 +1801,8 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
   const column: Rect = colRight > colLeft
     ? { left: colLeft, top: parts.top, width: colRight - colLeft, height: parts.height }
     : parts;
-  return { width, height, background, backgroundRect, reels, ...(bandReels.length ? { bandReels } : {}), lamps, vfd, vfdIsDots, vfdFont, vfdGlyphWidth, vfdInk, vfdOffBrightness, vfdReversed, content, column, featureReel, frameReels, segDisplays };
+  const trimmed = flatTrim(content, column, background, backgroundRect.left, backgroundRect.top);
+  return { width, height, background, backgroundRect, reels, ...(bandReels.length ? { bandReels } : {}), lamps, vfd, vfdIsDots, vfdFont, vfdGlyphWidth, vfdInk, vfdOffBrightness, vfdReversed, content, column, trimmed, featureReel, frameReels, segDisplays };
 }
 
 const DELPHI_COLOURS: Record<string, number> = {

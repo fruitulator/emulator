@@ -236,6 +236,12 @@ export function setsFromFolderInput(list: Iterable<File>): FolderSet[] {
     .filter((e) => !isJunk(e.path));
 
   const { games, state } = gamDirs(picked.map((e) => e.path));
+  for (const d of [...state]) {
+    if (d !== '' && nearest(games, dirOf(d)) === undefined) {
+      state.delete(d);
+      games.add(d);
+    }
+  }
   const spare = [...state];
   const stateDirOf = (path: string): string | undefined =>
     spare.find((d) => under(d, dirOf(path)));

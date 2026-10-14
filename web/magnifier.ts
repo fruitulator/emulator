@@ -137,6 +137,7 @@ export interface LensSubject {
   readonly canvas: HTMLCanvasElement;
   readonly screen: HTMLCanvasElement;
   readonly content: { readonly left: number; readonly top: number } | null;
+  readonly stretch?: boolean;
 }
 
 export class Magnifier {
@@ -209,7 +210,7 @@ export class Magnifier {
   }
 
   present(): void {
-    const { canvas, screen, content } = this.subject;
+    const { canvas, screen, content, stretch } = this.subject;
     if (!this.on || !this.at || !content || this.stage.hidden) {
       this.hide();
       return;
@@ -221,7 +222,7 @@ export class Magnifier {
     }
     const R = LENS_RADIUS;
     const { sx, sy, size } = lensSource(
-      { rect, canvas: { width: canvas.width, height: canvas.height }, content },
+      { rect, canvas: { width: canvas.width, height: canvas.height }, content, stretch },
       this.at.x, this.at.y, R, magnification,
     );
 

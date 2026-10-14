@@ -6,7 +6,7 @@ import type { DiagEntry } from '../diaglog';
 import type { Game } from '../../src/machine/registry';
 import { card, menuRow } from '../ui/rows';
 import { MENU_ICONS } from '../ui/icons';
-import { cabinetSoundsRow, coinsPanel, reelBounceRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
+import { cabinetSoundsRow, coinsPanel, fillScreenRow, reelBandsRow, reelBounceRow, reelPeekRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
 import { downloadRow, uploadRow, type PanelDownload, type PanelUpload } from '../panelmenu';
 import { saveDiagLog, saveSnapshot } from '../downloads';
 import { UNBUILT_NOTE_TEXT, stopNoteParts } from '../stopnote';
@@ -29,6 +29,7 @@ export interface ActionSurface {
   namedSwitch(id: number, level: boolean): void;
   readonly effects: CabinetEffects;
   redraw(): void;
+  refit?(): void;
   optionRows?(m: MenuMachine): Node[];
   fillKeys(root: HTMLElement): void;
   openSystem(): void;
@@ -122,6 +123,12 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
         for (const r of s.optionRows?.(m) ?? []) opts.append(r);
         opts.append(cabinetSoundsRow(s.effects));
         opts.append(reelBounceRow(() => s.redraw()));
+        opts.append(reelPeekRow());
+        if (s.refit) {
+          const refit = s.refit.bind(s);
+          opts.append(reelBandsRow(refit));
+          opts.append(fillScreenRow(refit));
+        }
         nav('options', opts);
         break;
       }

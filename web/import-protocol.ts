@@ -25,16 +25,6 @@ export type ImportRequest =
     }
   | {
       id: number;
-      op: 'contentHash';
-      hash: string;
-    }
-  | {
-      id: number;
-      op: 'refreshThumb';
-      hash: string;
-    }
-  | {
-      id: number;
       op: 'importPunnet';
       bytes: Uint8Array;
       fallbackName?: string;
@@ -57,5 +47,4 @@ export type ImportResponse =
   | { id: number; kind: 'cabinet'; geo: CabGeometry | null; bitmaps: [number, ImageBitmap][] }
   | { id: number; kind: 'cached'; hash: string; meta: GameMeta }
   | { id: number; kind: 'done'; meta: GameMeta }
-  | { id: number; kind: 'stamped'; meta: GameMeta }
   | { id: number; kind: 'error'; phase: string; code?: ImportErrorCode; message: string };

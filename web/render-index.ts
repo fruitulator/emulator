@@ -6,6 +6,7 @@ import {
   type BandStrip, type Cabinet, type CabLamp, type FlipStrip, type RgbLed,
 } from './dat';
 import { discAngleDeg } from './discreel';
+import { peekable } from './play/peek';
 
 export interface Sized {
   width: number;
@@ -204,11 +205,13 @@ function bounceKey(r: { bounce?: number }): number {
 export function buildRenderIndex(
   cab: Cabinet<Sized>, clusters: LightClusterGeom[],
   heldInput: (input: number) => boolean = () => false,
+  reelPeek: () => number = () => 0,
 ): IndexedElement[] {
   const els: IndexedElement[] = [];
 
   cab.reels.forEach((reel) => {
     const zoneLamps = (reel.lampTray ?? reel.lampNums).filter((n) => n >= 0);
+    const moves = peekable(reel);
     els.push({
       extent: turned(rect(reel.left, reel.top, reel.width, reel.height), reel),
       key: (m, c) => {
@@ -216,6 +219,7 @@ export function buildRenderIndex(
         const r = m.reels[i];
         if (!r) return 0;
         let h = reelKey(r, c.stillFrames[i]);
+        if (moves) h = mix(h, Math.round(reelPeek() * 1000) | 0);
         for (const n of zoneLamps) h = mix(h, lampBit(m, n));
         return h;
       },

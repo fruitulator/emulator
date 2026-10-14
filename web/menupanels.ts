@@ -7,6 +7,9 @@ import { namedCoinLabel } from './coinask';
 import { MENU_ICONS } from './ui/icons';
 import { hasOperatedSwitches, layoutNamedInputs, namedInputId, testLabelsForPanel, testRowsForPanel } from './switchids';
 import { reelBounceOn, setReelBounceOn } from './bouncepref';
+import { reelPeekOn, setReelPeekOn } from './peekpref';
+import { reelBandsOn, setReelBandsOn } from './bandspref';
+import { fillScreenOn, setFillScreenOn } from './fillpref';
 import { str } from './i18n';
 import { PANEL_SHOW } from './ui/drawer';
 
@@ -188,5 +191,32 @@ export function reelBounceRow(redraw: () => void): HTMLLabelElement {
   });
   box.checked = reelBounceOn();
   row.title = str('menupanels.the_small_settle_a_reel');
+  return row;
+}
+
+export function fillScreenRow(refit: () => void): HTMLLabelElement {
+  const { row, box } = checkRow(str('menupanels.fill_screen'), (on) => {
+    setFillScreenOn(on);
+    refit();
+  });
+  box.checked = fillScreenOn();
+  row.title = str('menupanels.stretch_the_machine_to_fill');
+  return row;
+}
+
+export function reelBandsRow(refit: () => void): HTMLLabelElement {
+  const { row, box } = checkRow(str('menupanels.reel_bands'), (on) => {
+    setReelBandsOn(on);
+    refit();
+  });
+  box.checked = reelBandsOn();
+  row.title = str('menupanels.each_reel_s_whole_band');
+  return row;
+}
+
+export function reelPeekRow(): HTMLLabelElement {
+  const { row, box } = checkRow(str('menupanels.reel_peek'), (on) => setReelPeekOn(on));
+  box.checked = reelPeekOn();
+  row.title = str('menupanels.drag_a_reel_to_see');
   return row;
 }

@@ -1,5 +1,5 @@
 import {
-  classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms, type GameFile,
+  classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms, storedFiles, type GameFile,
 } from '../src/machine/registry';
 import { damagedRoms } from '../src/machine/textcopy';
 import { CONFIG_FILE } from '../src/machine/setfiles';
@@ -104,15 +104,16 @@ export async function importPunnet(
   const contentHash = await contentHashOf(files);
   const mismatch = record !== undefined && record.hash !== hash;
 
-  const hasGam = files.some((f) => CONFIG_FILE.test(f.name));
-  const game = classifyGame(
-    files,
-    hasGam ? undefined : record?.sourceName ?? stored?.name ?? fallbackName,
-    record?.variant ?? stored?.variant,
-  );
   const prev = await getMeta(hash);
   const spares: GameFile[] = pak.has('SPAR') ? decodeSrcs(pak.chunk('SPAR'))
     : prev?.batteries?.some(inSpareDir) ? await storedSpares(hash) : [];
+
+  const hasGam = files.some((f) => CONFIG_FILE.test(f.name));
+  const game = classifyGame(
+    spares.length ? [...files, ...spares] : files,
+    hasGam ? undefined : record?.sourceName ?? stored?.name ?? fallbackName,
+    record?.variant ?? stored?.variant,
+  );
 
   onStage?.('caching');
   const meta: PakMeta = {
@@ -121,7 +122,7 @@ export async function importPunnet(
       system: game.system,
       created: Date.now(),
       decodeStatus: 'fallback' as const,
-      files: game.files.map((f) => ({ name: f.name, size: f.bytes.length })),
+      files: storedFiles(game).map((f) => ({ name: f.name, size: f.bytes.length })),
       variant: game.variant,
     }),
     contentHash,

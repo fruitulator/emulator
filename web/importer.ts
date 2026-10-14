@@ -96,7 +96,6 @@ function dispatch(msg: ImportResponse): void {
       break;
     case 'cached':
     case 'done':
-    case 'stamped':
       settle(p, msg.id);
       p.resolve(msg.meta);
       break;
@@ -188,12 +187,4 @@ export function importPunnet(
 ): Promise<GameMeta> {
   const transfer = bytes.buffer instanceof ArrayBuffer ? [bytes.buffer] : [];
   return request({ id: nextId++, op: 'importPunnet', bytes, fallbackName }, events, transfer);
-}
-
-export function backfillContentHash(hash: string): Promise<GameMeta> {
-  return request({ id: nextId++, op: 'contentHash', hash }, {}, [], true);
-}
-
-export function refreshThumb(hash: string): Promise<GameMeta> {
-  return request({ id: nextId++, op: 'refreshThumb', hash }, {}, [], true);
 }

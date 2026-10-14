@@ -1,5 +1,5 @@
 import {
-  classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms, spareRams,
+  linkedInstances, missingProgramRoms, missingSoundRoms, spareRams, storedFiles,
   type Game, type GameFile, type LayoutProps,
 } from '../src/machine/registry';
 import { damagedRoms } from '../src/machine/textcopy';
@@ -11,7 +11,7 @@ import {
   type PakChunkIn, type PakMeta,
 } from './gamepak';
 import {
-  CONTENT_RULE, MISSING_ROM_RULE, SCHEMA_VERSION, contentHashOf, deleteGame, getMeta, getPak, inSpareDir,
+  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, deleteGame, getMeta, getPak, inSpareDir,
   playCountOf, putMeta, putPak, putThumb, type GameMeta,
 } from './store';
 
@@ -20,6 +20,16 @@ export function batteriesOf(files: GameFile[], spares: GameFile[]): string[] {
     ...spares.filter((f) => /\.ram$/i.test(f.name)).map((f) => f.name),
     ...spareRams(files).map((f) => f.name),
   ];
+}
+
+export function setFilesOf(pak: ReturnType<typeof decodePak>): GameFile[] {
+  const files = decodeSrcs(pak.chunk('SRCS'));
+  try {
+    return pak.has('SPAR') ? [...files, ...decodeSrcs(pak.chunk('SPAR'))] : files;
+  } catch (e) {
+    console.warn('[library] spare state unreadable', e);
+    return files;
+  }
 }
 
 export async function storedSpares(hash: string): Promise<GameFile[]> {
@@ -55,7 +65,7 @@ export function pakMetaOf(
     created: Date.now(),
     decodeStatus: decodeStatusOf(cab),
     ...(cab?.decode ? { decode: cab.decode } : {}),
-    files: game.files.map((f) => ({ name: f.name, size: f.bytes.length })),
+    files: storedFiles(game).map((f) => ({ name: f.name, size: f.bytes.length })),
     variant: game.variant,
     ...(cab && artwork === 'full' && game.layoutName ? { layout: game.layoutName.toLowerCase() } : {}),
     contentHash,
@@ -130,10 +140,11 @@ async function writeGame(
   const prev = await getMeta(hash);
   const spare = spares?.length ? spares
     : prev?.batteries?.some(inSpareDir) ? await storedSpares(hash) : [];
-  const contentHash = await contentHashOf(game.files);
+  const own = storedFiles(game);
+  const contentHash = await contentHashOf(own);
   const chunks: PakChunkIn[] = [
     { type: 'META', bytes: encodeMeta(pakMetaOf(game, cab, contentHash, artwork)), deflate: true },
-    { type: 'SRCS', bytes: encodeSrcs(game.files) },
+    { type: 'SRCS', bytes: encodeSrcs(own) },
   ];
   if (spare.length) chunks.push({ type: 'SPAR', bytes: encodeSrcs(spare), deflate: true });
   let thumb: Uint8Array | null = null;
@@ -186,8 +197,8 @@ async function writeGame(
     layoutProps: layoutProps ?? prev?.layoutProps,
     contentHash,
     contentRule: CONTENT_RULE,
-    ...listOrDrop('batteries', batteriesOf(game.files, spare)),
-    ...makerFields(game.files, game.system, sourceName ?? prev?.sourceName),
+    ...listOrDrop('batteries', batteriesOf(own, spare)),
+    ...makerFields(own, game.system, sourceName ?? prev?.sourceName),
   };
   try {
     if (thumb && !prev?.thumbFromPlay) await putThumb(hash, thumb);
@@ -199,29 +210,4 @@ async function writeGame(
     throw e;
   }
   return meta;
-}
-
-export async function backfillContentHash(hash: string): Promise<GameMeta | null> {
-  const meta = await getMeta(hash);
-  if (!meta) return null;
-  const hashCurrent = meta.contentHash !== undefined && meta.contentRule === CONTENT_RULE;
-  const missingCurrent = !meta.missingRoms?.length || meta.missingRule === MISSING_ROM_RULE;
-  if (hashCurrent && meta.makerRule === MAKER_RULE && missingCurrent) return meta;
-  const bytes = await getPak(hash);
-  if (!bytes) return meta;
-  const files = decodeSrcs(decodePak(bytes).chunk('SRCS'));
-  const missing = missingCurrent ? null
-    : missingProgramRoms(classifyGame(files, meta.name, meta.variant));
-  const stamped: GameMeta = {
-    ...meta,
-    schema: SCHEMA_VERSION,
-    ...carriedHistory(meta),
-    contentHash: hashCurrent ? meta.contentHash : await contentHashOf(files),
-    contentRule: CONTENT_RULE,
-    ...makerFields(files, meta.system, meta.sourceName),
-    ...(missing ? { missingRoms: missing.length ? missing : undefined } : {}),
-    ...(meta.missingRoms?.length ? { missingRule: MISSING_ROM_RULE } : {}),
-  };
-  await putMeta(stamped);
-  return stamped;
 }

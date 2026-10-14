@@ -1,4 +1,5 @@
 import { platformFor } from '../src/machine/registry';
+import { parseGam } from '../src/machine/gam';
 import { DECODE_VERSION } from './gamepak';
 import { importPunnet, importUpload, type ImportEvents } from './importer';
 import type { ImportStage } from './import-protocol';
@@ -69,11 +70,44 @@ export async function listArchives(
       console.warn(`[library] could not list ${archives[i].name}`, e);
     }
   }
-  return sets.flatMap((set) => {
+  const split = sets.flatMap((set) => {
     const parts = splitZipSet(set);
     if (parts.length > 1) o.trace?.(`${set.name} holds ${parts.length} games`);
     return parts;
   });
+  return borrowSplitSets(split, o.trace);
+}
+
+const STATE_ONLY = /\.(gam|ram|eep|e2p|rtc|wsp)$/i;
+
+async function borrowSplitSets(sets: FolderSet[], trace?: (line: string) => void): Promise<FolderSet[]> {
+  const loose = sets.filter((s) => !s.zip && !s.punnet);
+  const lower = (n: string): string => n.slice(Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\')) + 1).toLowerCase();
+  const consumed = new Set<FolderSet>();
+  for (const set of loose) {
+    if (!set.entries.length || !set.entries.every((f) => STATE_ONLY.test(f.name))) continue;
+    const gams = set.entries.filter((f) => /\.gam$/i.test(f.name));
+    if (!gams.length) continue;
+    const named = new Set<string>();
+    for (const g of gams) {
+      const gam = parseGam(new TextDecoder('latin1').decode(await g.arrayBuffer()));
+      for (const n of [gam.layout ?? '', ...gam.roms, ...gam.vidRoms, ...gam.sound]) if (n) named.add(lower(n));
+    }
+    const have = new Set(set.entries.map((f) => f.name.toLowerCase()));
+    const missing = [...named].filter((n) => !have.has(n));
+    if (!missing.length) continue;
+    const donors = loose.filter((d) => d !== set && missing.every((n) => d.entries.some((f) => f.name.toLowerCase() === n)));
+    if (donors.length !== 1) {
+      trace?.(`${set.name}: ${donors.length ? `${donors.length} folders hold` : 'no folder holds'} the files its .gam names; left as it is`);
+      continue;
+    }
+    const donor = donors[0];
+    const taken = missing.map((n) => donor.entries.find((f) => f.name.toLowerCase() === n)!);
+    set.entries = [...set.entries, ...taken];
+    trace?.(`${set.name}: took ${taken.length} file(s) from ${donor.dir}`);
+    if (!donor.entries.some((f) => /\.gam$/i.test(f.name))) consumed.add(donor);
+  }
+  return sets.filter((s) => !consumed.has(s));
 }
 
 export interface SetImportContext {

@@ -6,7 +6,7 @@ import { gamCcTalkKeys } from './cctalkkeys';
 import {
   ReelBounce, bounceProfileFor, kindCanBounce, type BounceWiring,
 } from '../hw/reelbounce';
-import { CONFIG_FILE, NO_GAME_FILE, NO_MANIFEST, hasGameFile } from './setfiles';
+import { CONFIG_FILE, NO_GAME_FILE, NO_MANIFEST, STATE_ONLY, hasGameFile } from './setfiles';
 import { isEffectSample } from './effects';
 import { Sc4 } from './sc4';
 import { Sc2 } from './sc2';
@@ -115,6 +115,7 @@ export interface Game {
   name: string;
   system: string;
   files: GameFile[];
+  setFiles?: GameFile[];
   gam: Gam | null;
   layout?: Uint8Array;
   layoutName?: string;
@@ -633,7 +634,7 @@ const scorpion4: Platform = {
 
     const sc4Eeps = byExt(game, /\.eep$/i);
     const sc4Manifests = [game.variant, ...game.files.filter((f) => CONFIG_FILE.test(f.name)).map((f) => f.name)]
-      .map((n) => stem(n).toLowerCase());
+      .map((n) => stem(baseName(n)).toLowerCase());
     const sc4Eep = sc4Manifests.map((s) => sc4Eeps.find((f) => stem(f.name).toLowerCase() === s)).find(Boolean) ?? sc4Eeps[0];
     if (sc4Eep) m.mbus.loadStore(sc4Eep.bytes);
 
@@ -2124,7 +2125,7 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
 
     const eeps = byExt(game, /\.eep$/i);
     const manifests = [game.variant, ...game.files.filter((f) => CONFIG_FILE.test(f.name)).map((f) => f.name)]
-      .map((n) => stem(n).toLowerCase());
+      .map((n) => stem(baseName(n)).toLowerCase());
     const eep = manifests.map((s) => eeps.find((f) => stem(f.name).toLowerCase() === s)).find(Boolean) ?? eeps[0];
     if (eep) m.loadEeprom(eep.bytes);
 
@@ -3293,7 +3294,48 @@ function alternativeRoms(files: GameFile[], gam: Gam): RomSwap[] {
   return out;
 }
 
+const dirOf = (name: string): string => {
+  const slash = name.lastIndexOf('/');
+  return slash < 0 ? '' : name.slice(0, slash);
+};
+const baseName = (name: string): string => name.slice(name.lastIndexOf('/') + 1);
+
+const ownFile = (f: GameFile): boolean => !f.name.includes('/');
+
+const ownFiles = (files: GameFile[]): GameFile[] => (files.every(ownFile) ? files : files.filter(ownFile));
+
+export function storedFiles(game: Game): GameFile[] {
+  return game.setFiles ? ownFiles(game.setFiles) : game.files;
+}
+
 function builds(files: GameFile[]): Build[] {
+  const own = ownFiles(files);
+  const list = ownBuilds(own);
+  const dirs = [...new Set(files.filter((f) => !ownFile(f) && CONFIG_FILE.test(f.name)).map((f) => dirOf(f.name)))];
+  for (const dir of dirs) {
+    const inDir = files.filter((f) => dirOf(f.name) === dir && CONFIG_FILE.test(f.name));
+    const sub = inDir.length > 1 ? ownBuilds(inDir.map((f) => ({ name: baseName(f.name), bytes: f.bytes }))) : [];
+    inDir.forEach((g, i) => list.push({
+      variant: { id: g.name, label: sub.length ? `${dir} · ${sub[i].variant.label}` : dir },
+      gamFile: g,
+      gam: parseGam(latin1(g.bytes)),
+    }));
+  }
+  return list;
+}
+
+function buildView(files: GameFile[], chosen: Build): GameFile[] {
+  const own = ownFiles(files);
+  const path = chosen.gamFile?.name;
+  if (!path || ownFile(chosen.gamFile!)) return own;
+  const dir = dirOf(path);
+  return [
+    ...own.filter((f) => !STATE_ONLY.test(f.name)),
+    ...files.filter((f) => dirOf(f.name) === dir).map((f) => ({ name: baseName(f.name), bytes: f.bytes })),
+  ];
+}
+
+function ownBuilds(files: GameFile[]): Build[] {
   const gams = files.filter((f) => CONFIG_FILE.test(f.name));
 
   if (gams.length > 1) {
@@ -3335,7 +3377,7 @@ export function gameVariants(files: GameFile[]): GameVariant[] {
 }
 
 function gameName(list: Build[]): string | undefined {
-  const stems = [...new Set(list.map((b) => b.gamFile?.name).filter((n): n is string => !!n))]
+  const stems = [...new Set(list.map((b) => b.gamFile?.name).filter((n): n is string => !!n && !n.includes('/')))]
     .map(stem);
   if (!stems.length) return undefined;
   if (stems.length === 1) return stems[0];
@@ -3348,13 +3390,14 @@ function nvramFor(files: GameFile[], chosen: Build): Uint8Array | undefined {
 
 function nvramFileFor(files: GameFile[], chosen: Build): GameFile | undefined {
   const rams = files.filter((f) => /\.ram$/i.test(f.name));
-  const want = chosen.gamFile ? `${stem(chosen.gamFile.name).toLowerCase()}.ram` : '';
+  const want = chosen.gamFile ? `${stem(baseName(chosen.gamFile.name)).toLowerCase()}.ram` : '';
   return rams.find((f) => f.name.toLowerCase() === want) ?? rams[0];
 }
 
 export function spareRams(files: GameFile[]): GameFile[] {
-  const taken = new Set(builds(files).map((b) => nvramFileFor(files, b)));
-  return files.filter((f) => /\.ram$/i.test(f.name) && !taken.has(f));
+  const own = ownFiles(files);
+  const taken = new Set(ownBuilds(own).map((b) => nvramFileFor(own, b)));
+  return own.filter((f) => /\.ram$/i.test(f.name) && !taken.has(f));
 }
 
 function codepageMangledMatch(a: string, b: string): boolean {
@@ -3380,9 +3423,10 @@ function underscoreSubstitutedMatch(a: string, b: string): boolean {
 }
 
 export function classifyGame(allFiles: GameFile[], name?: string, variant?: string): Game {
-  const { files, effectFiles } = splitEffectFiles(allFiles);
-  const list = builds(files);
+  const { files: setFiles, effectFiles } = splitEffectFiles(allFiles);
+  const list = builds(setFiles);
   const chosen = list.find((b) => b.variant.id === variant) ?? list[0];
+  const files = buildView(setFiles, chosen);
 
   let gam = chosen.gam;
   if (gam && chosen.swap) {
@@ -3397,6 +3441,7 @@ export function classifyGame(allFiles: GameFile[], name?: string, variant?: stri
     name: name ?? gameName(list) ?? 'game',
     system: gam?.system || 'SCORPION4',
     files,
+    setFiles,
     gam,
     layout: layoutFile?.bytes,
     layoutName: layoutFile?.name,
@@ -3442,14 +3487,17 @@ export function gameFromConfig(allFiles: GameFile[], config: GameConfig, name?: 
       `configuration v${String(config.version)} is newer than this build reads (v${CONFIG_VERSION})`,
     );
   }
-  const { files, effectFiles } = splitEffectFiles(allFiles);
+  const { files: setFiles, effectFiles } = splitEffectFiles(allFiles);
   const gam = gamFromJson(config.gam);
+  const list = builds(setFiles);
+  const source = list.find((b) => b.variant.id === config.source);
+  const files = source ? buildView(setFiles, source) : ownFiles(setFiles);
   const layoutFile = resolveLayout(files, gam.layout);
-  const list = builds(files);
   return {
     name: name ?? gameName(list) ?? 'game',
     system: gam.system || config.system || 'SCORPION4',
     files,
+    setFiles,
     gam,
     layout: layoutFile?.bytes,
     layoutName: layoutFile?.name,

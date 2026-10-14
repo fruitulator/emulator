@@ -54,6 +54,7 @@ function titleCaseWord(w: string): string {
 
 export function parseTitle(source: string): CardTitle {
   source = repairC1(source);
+  source = source.replace(/([A-Za-z])_([sS])(?=[\s_.]|$)/g, "$1'$2");
   const raw = source;
 
   let rest = source.replace(ARCHIVE_EXT, '');

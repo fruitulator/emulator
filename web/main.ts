@@ -22,8 +22,6 @@ import {
 } from './ingest';
 import { readZipDirectory } from './zipdir';
 import { collectionEntries } from './punnetpack';
-import { refreshStaleThumbs } from './rethumb';
-import { backfillContentHashes } from './backfill';
 import {
   CLOUD_HINT, importFolderSet, landedFlaws, listArchives, stageText, unplayableReason,
 } from './libimport';
@@ -68,13 +66,13 @@ import {
 import { localStateStore, type StateStore } from './statestore';
 import { currentLayoutProps, isPakBytes } from './gamepak';
 import {
-  cancelPendingDelete, closeSheet, commitPendingDeletes, displayTitle, openAddSheet, refreshArtwork,
+  cancelPendingDelete, closeSheet, commitPendingDeletes, displayTitle, openAddSheet,
   renderLibrary, showNotice, wireLibraryControls, type LibraryHandlers,
   SCREEN_FADE_MS, afterFrames, prefersReducedMotion, settleArtwork,
 } from './library';
 import { deflateSync, strToU8 } from 'fflate';
 import { parseTitle } from './title';
-import { layoutPoint, pickControl } from './cabhit';
+import { layoutPoint, pickControl, type CanvasFit } from './cabhit';
 import { viewFor, acceptorResolve, plainCoinDrop, stampCoinInputs, type PlatformView } from './platform';
 import { virtualDisplayReversed } from '../src/machine/layoutdisplay';
 import {
@@ -82,10 +80,15 @@ import {
   reelWinLineRow,
   usableCabinet,
   type CabLamp,
-  type Cabinet,
+  type Cabinet, type Rect,
 } from './dat';
 import { StoreConfirm, reelDriftFault } from './reeldrift';
 import { createCabinetPainter, DOT_OFF, DOT_ON } from './cabdraw';
+import { ReelPeek, reelAt } from './play/peek';
+import { reelPeekOn } from './peekpref';
+import { fillScreenOn } from './fillpref';
+import { reelBandsOn } from './bandspref';
+import { bandsLayout, createReelBands } from './play/bands';
 import { chordCaps, primaryModifier } from './shortcuts';
 import { capsAreSwitches } from './cappulse';
 import {
@@ -122,12 +125,17 @@ let screenDirty = true;
 const smoothFit = bootValue('smooth');
 const stage = document.getElementById('stage') as HTMLElement;
 const ctx = canvas.getContext('2d')!;
+const reelPeek = new ReelPeek();
+let peekPointer: number | null = null;
 const painter = createCabinetPainter(canvas, {
   inputHeld: (input) => held.holding(input),
   virtualDisplay: (m) => setVfdStrip(m),
   dirtyDisabled: !liveValue('dirty'),
   lampGate: (m, lp) => updateGate(m, lp),
+  reelPeek: () => reelPeek.value(),
+  onReelRow: (reel, row) => reelBands.row(reel, row),
 });
+const reelBands = createReelBands(stage);
 const picker = document.getElementById('folder') as HTMLInputElement;
 const zipPicker = document.getElementById('zipfile') as HTMLInputElement;
 const status = document.getElementById('status') as HTMLElement;
@@ -329,6 +337,7 @@ const magnifier = new Magnifier(stage, {
   canvas,
   screen: screenEl,
   get content() { return cabinet ? cabinet.content : null; },
+  get stretch() { return fillScreenOn(); },
 }, prefersReducedMotion);
 
 const VFD_REVERSE_STORE = 'fruitulator.vfdReverse';
@@ -481,6 +490,7 @@ function startGame(
       }
       const cabView = viewFor(game.system);
       capsAreSwitches(cab.lamps, cabView.nonSwitchInputs);
+      cab.content = playView(cab);
       cabinet = cab;
       stampCabinetCoins();
       refreshKeys?.();
@@ -1882,6 +1892,7 @@ const appActions: ActionSurface = {
   },
   namedSwitch: (id, level) => emu.input(id, level),
   get effects() { return effects; },
+  refit: () => { if (!stage.hidden) resetView(); },
   redraw: () => forceRedraw(),
   optionRows: (m) => appOptionRows(m.info),
   fillKeys: (root) => {
@@ -2429,6 +2440,7 @@ function draw(m: FrameView): void {
   numberReelDiagnostic(m, cab);
   mainReelDriftWatch(m, cab);
   if (painter.paint(m, cab)) screenDirty = true;
+  if (reelBandsOn()) reelBands.paint();
 }
 
 function numberReelDiagnostic(m: FrameView, cab: Cabinet): void {
@@ -2549,16 +2561,26 @@ function releaseInput(pointerId: number): void {
   held.release(pointerId);
 }
 
-const FIT_MARGIN = 0.98;
-
 function cabinetHit(clientX: number, clientY: number): CabLamp | null {
   if (!cabinet) return null;
-  const { x, y, scale } = layoutPoint({
+  const { x, y, scale } = layoutPoint(screenFit(cabinet), clientX, clientY);
+  return pickControl(cabinet.lamps, x, y, scale, clickable);
+}
+
+function screenFit(cab: Cabinet): CanvasFit {
+  return {
     rect: screenEl.getBoundingClientRect(),
     canvas: { width: canvas.width, height: canvas.height },
-    content: cabinet.content,
-  }, clientX, clientY);
-  return pickControl(cabinet.lamps, x, y, scale, clickable);
+    content: cab.content,
+    stretch: fillScreenOn(),
+  };
+}
+
+function reelWindowHit(clientX: number, clientY: number): { reel: { angle?: number }; pitch: number } | null {
+  if (!cabinet || !reelPeekOn()) return null;
+  const { x, y, sy } = layoutPoint(screenFit(cabinet), clientX, clientY);
+  const hit = reelAt(cabinet.reels, x, y);
+  return hit && { reel: hit.reel, pitch: hit.pitch * sy };
 }
 
 const gatedOff = new Set<CabLamp>();
@@ -2604,7 +2626,10 @@ function applyView(): void {
     : `translate(${panX.toFixed(2)}px, ${panY.toFixed(2)}px) scale(${zoom.toFixed(4)})`;
 }
 
-let screenCss = { w: 0, h: 0, lw: 0, lh: 0, sw: 0, sh: 0 };
+let screenCss = {
+  w: 0, h: 0, lw: 0, lh: 0, sw: 0, sh: 0, fill: false,
+  bands: 0, cab: null as Cabinet | null,
+};
 
 function fitScreen(): void {
   const sw = stage.clientWidth;
@@ -2612,12 +2637,35 @@ function fitScreen(): void {
   const lw = canvas.width;
   const lh = canvas.height;
   if (sw <= 0 || sh <= 0 || lw <= 0 || lh <= 0) return;
+  const fill = fillScreenOn();
+  const cab = reelBandsOn() ? cabinet : null;
+  reelBands.sync(cab);
+  const bands = cab ? reelBands.count : 0;
   const c = screenCss;
-  if (c.sw === sw && c.sh === sh && c.lw === lw && c.lh === lh) return;
-  const k = Math.min(1, sw / lw, sh / lh);
-  screenCss = { w: lw * k, h: lh * k, lw, lh, sw, sh };
+  if (c.sw === sw && c.sh === sh && c.lw === lw && c.lh === lh && c.fill === fill
+    && c.bands === bands && c.cab === cab) return;
+  if (bands > 0) {
+    const l = bandsLayout({ width: sw, height: sh }, { width: lw, height: lh }, bands, TOUCH_DEVICE, fill);
+    screenCss = { w: l.screen.width, h: l.screen.height, lw, lh, sw, sh, fill, bands, cab };
+    screenEl.style.inset = 'auto';
+    screenEl.style.margin = '0';
+    screenEl.style.left = `${l.screen.left}px`;
+    screenEl.style.top = `${l.screen.top}px`;
+    reelBands.place(l);
+  } else {
+    const k = Math.min(1, sw / lw, sh / lh);
+    screenCss = fill
+      ? { w: sw, h: sh, lw, lh, sw, sh, fill, bands, cab }
+      : { w: lw * k, h: lh * k, lw, lh, sw, sh, fill, bands, cab };
+    screenEl.style.inset = '';
+    screenEl.style.margin = '';
+    screenEl.style.left = '';
+    screenEl.style.top = '';
+    reelBands.place(null);
+  }
   screenEl.style.width = `${screenCss.w}px`;
   screenEl.style.height = `${screenCss.h}px`;
+  screenEl.style.objectFit = fill ? 'fill' : '';
 }
 
 function presentScreen(): void {
@@ -2693,21 +2741,6 @@ function smoothBlit(
   dst.drawImage(src, 0, 0, sw, sh, 0, 0, dw, dh);
 }
 
-let fitZoom = 1;
-
-function measureFit(): void {
-  const box = screenEl.getBoundingClientRect();
-  const stage = document.getElementById('stage')?.getBoundingClientRect();
-  if (box.height <= 0 || box.width <= 0 || !stage) { fitZoom = 1; return; }
-  if (stage.height <= 0 || stage.width <= 0) { fitZoom = 1; return; }
-  const parts = fitToColumn() ? componentBox() : null;
-  const scale = box.width / canvas.width;
-  const wantW = parts ? parts.w * scale : box.width;
-  const wantH = parts ? parts.h * scale : box.height;
-  const exact = Math.min(stage.width / wantW, stage.height / wantH);
-  fitZoom = Math.min(MAX_ZOOM, Math.max(1, exact * FIT_MARGIN));
-}
-
 function componentBox(): { x: number; y: number; w: number; h: number } | null {
   const cab = cabinet;
   if (!cab || canvas.width <= 0 || canvas.height <= 0) return null;
@@ -2716,35 +2749,33 @@ function componentBox(): { x: number; y: number; w: number; h: number } | null {
   return { x: b.left - cab.content.left, y: b.top - cab.content.top, w: b.width, h: b.height };
 }
 
-function fitToColumn(): boolean {
-  const s = stage.getBoundingClientRect();
-  return s.height > s.width;
-}
-
-function componentPan(z: number): { x: number; y: number } {
-  if (!fitToColumn()) return { x: 0, y: 0 };
-  const c = componentBox();
-  if (!c) return { x: 0, y: 0 };
-  const box = screenEl.getBoundingClientRect();
-  const fx = (c.x + c.w / 2) / canvas.width;
-  const fy = (c.y + c.h / 2) / canvas.height;
-  return {
-    x: -(fx - 0.5) * box.width * z,
-    y: -(fy - 0.5) * box.height * z,
-  };
-}
-
 function resetView(): void {
   zoom = 1;
   panX = 0;
   panY = 0;
   applyView();
-  measureFit();
-  zoom = fitZoom;
-  const centred = componentPan(zoom);
-  panX = centred.x;
-  panY = centred.y;
-  applyView();
+  fitScreen();
+}
+
+const TOUCH_DEVICE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
+function playView(cab: Cabinet): Rect {
+  const box = cab.content;
+  if (TOUCH_DEVICE) return { ...(cab.column ?? box) };
+  const base = cab.trimmed ?? box;
+  let l = base.left;
+  let t = base.top;
+  let r = base.left + base.width;
+  let b = base.top + base.height;
+  for (const lp of cab.lamps) {
+    if (lp.button === undefined && !lp.acceptor) continue;
+    if (!(lp.width > 0 && lp.height > 0)) continue;
+    l = Math.min(l, Math.max(box.left, lp.left));
+    t = Math.min(t, Math.max(box.top, lp.top));
+    r = Math.max(r, Math.min(box.left + box.width, lp.left + lp.width));
+    b = Math.max(b, Math.min(box.top + box.height, lp.top + lp.height));
+  }
+  return r > l && b > t ? { left: l, top: t, width: r - l, height: b - t } : { ...box };
 }
 
 function freePointers(): number[] {
@@ -2812,7 +2843,15 @@ pointerHost.addEventListener('pointerdown', (ev) => {
     const free = freePointers();
     if (free.length === 2) {
       ev.preventDefault();
+      if (peekPointer !== null) { reelPeek.release(); peekPointer = null; }
       beginPinch(free[0], free[1]);
+      return;
+    }
+    const peekAt = reelWindowHit(ev.clientX, ev.clientY);
+    if (peekAt && peekPointer === null) {
+      peekPointer = ev.pointerId;
+      reelPeek.begin(ev.clientX, ev.clientY, peekAt.pitch, peekAt.reel.angle ?? 0);
+      pointerHost.setPointerCapture(ev.pointerId);
       return;
     }
     drag = { x: ev.clientX, y: ev.clientY, panX, panY, moved: false };
@@ -2829,6 +2868,10 @@ pointerHost.addEventListener('pointermove', (ev) => {
     updatePinch();
     return;
   }
+  if (ev.pointerId === peekPointer) {
+    if (reelPeek.drag(ev.clientX, ev.clientY)) ev.preventDefault();
+    return;
+  }
   if (drag && !held.has(ev.pointerId)) {
     const dx = ev.clientX - drag.x;
     const dy = ev.clientY - drag.y;
@@ -2841,7 +2884,14 @@ pointerHost.addEventListener('pointermove', (ev) => {
   }
 }, { passive: false });
 
+function endPeek(ev: PointerEvent): void {
+  if (ev.pointerId !== peekPointer) return;
+  peekPointer = null;
+  reelPeek.release();
+}
+
 function endTouch(ev: PointerEvent): void {
+  endPeek(ev);
   capPointer.up(ev);
   touches.delete(ev.pointerId);
   if (pinch && (ev.pointerId === pinch.a || ev.pointerId === pinch.b)) pinch = null;
@@ -2853,7 +2903,7 @@ pointerHost.addEventListener('pointercancel', (ev) => {
   touchStolenAt = performance.now();
   endTouch(ev);
 });
-pointerHost.addEventListener('lostpointercapture', (ev) => capPointer.up(ev));
+pointerHost.addEventListener('lostpointercapture', (ev) => { endPeek(ev); capPointer.up(ev); });
 let wheelTravel = 0;
 pointerHost.addEventListener('wheel', (ev) => {
   if (!magnifier.active && !hasHoverPointer()) return;
@@ -2873,10 +2923,12 @@ pointerHost.addEventListener('wheel', (ev) => {
 function releaseAllInputs(): void {
   held.releaseAll();
 }
-function standDown(): void {
+function standDown(
+  save = true,
+): void {
   stoodDown = true;
   releaseAllInputs();
-  autosave.moment('hidden');
+  if (save) autosave.moment('hidden');
   if (running) emu.pause();
   audio.machinePaused();
 }
@@ -2898,6 +2950,23 @@ document.addEventListener('visibilitychange', () => {
   else standTo();
 });
 window.addEventListener('focus', standTo);
+
+const RESIZE_SETTLE_MS = 250;
+let resizeTimer = 0;
+let resizeStoodDown = false;
+window.addEventListener('resize', () => {
+  if (stage.hidden) return;
+  if (!stoodDown) {
+    standDown(false);
+    resizeStoodDown = true;
+  }
+  window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    if (!resizeStoodDown) return;
+    resizeStoodDown = false;
+    if (!document.hidden && document.hasFocus()) standTo();
+  }, RESIZE_SETTLE_MS);
+});
 
 function downloadSnapshot(): Promise<boolean> {
   return saveState(appActions);
@@ -3090,11 +3159,7 @@ const playKeys = new PlayKeys({
         coinPort: emu.info?.coinPort, capNames: emu.info?.capNames,
       },
     },
-    place: canvasPlace({
-      rect: screenEl.getBoundingClientRect(),
-      canvas: { width: canvas.width, height: canvas.height },
-      content: cabinet.content,
-    }),
+    place: canvasPlace(screenFit(cabinet)),
   } : null),
 }, new KeyHintLayer(stage));
 window.addEventListener('keyup', (ev) => playKeys.keyUp(ev));
@@ -3233,8 +3298,11 @@ document.body.appendChild(snapPicker);
 pointerHost.addEventListener('pointermove', (ev) => {
   if (ev.pointerType !== 'mouse') return;
   magnifier.moveTo(ev.clientX, ev.clientY);
-  if (!held.has(ev.pointerId)) {
-    pointerHost.style.cursor = cabinetHit(ev.clientX, ev.clientY) ? 'pointer' : 'default';
+  if (ev.pointerId === peekPointer) {
+    pointerHost.style.cursor = 'grabbing';
+  } else if (!held.has(ev.pointerId)) {
+    pointerHost.style.cursor = cabinetHit(ev.clientX, ev.clientY) ? 'pointer'
+      : reelWindowHit(ev.clientX, ev.clientY) ? 'grab' : 'default';
   }
 });
 pointerHost.addEventListener('pointerleave', () => magnifier.hide());
@@ -3488,16 +3556,6 @@ Object.assign(window, {
 });
 
 wireLibraryControls(libraryHandlers);
-
-refreshStaleThumbs((hash) => {
-  if (librarySection.hidden || batchRunning) return;
-  refreshArtwork(hash);
-});
-backfillContentHashes(() => {
-  if (librarySection.hidden || batchRunning) return;
-  void renderLibrary(libraryHandlers)
-    .catch((e) => console.warn('[library] refresh after re-check failed', e));
-});
 
 window.addEventListener('pagehide', () => commitPendingDeletes(libraryHandlers));
 

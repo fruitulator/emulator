@@ -7,7 +7,7 @@ import { CONFIG_FILE } from '../src/machine/setfiles';
 import { reelGeometryFromPayload } from '../src/machine/layoutreels';
 import { layoutSwitchesFromPayload } from '../src/machine/layoutswitches';
 import { fittedPeripherals, hasGameConfig } from '../src/layout/fmlconfig';
-import { THUMB_RULE, assembleCabinet, dehydrateCabinet, makeThumb, type CabGeometry } from './cabjson';
+import { assembleCabinet, dehydrateCabinet, type CabGeometry } from './cabjson';
 import { extractCabinetFromPayload, readLayout, usableCabinet, type Cabinet } from './dat';
 import { strFromU8 } from 'fflate';
 import {
@@ -15,11 +15,11 @@ import {
 } from './gamepak';
 import type { ImportErrorCode, ImportRequest, ImportResponse } from './import-protocol';
 import { gameFromZip } from './ingest';
-import { backfillContentHash, batteriesOf, isQuotaError, persistGame } from './persist';
+import { batteriesOf, isQuotaError, persistGame } from './persist';
 import { importPunnet } from './portable';
 import {
   CONTENT_RULE, SCHEMA_VERSION, contentHashOf, getMeta, getPak, hashGameFiles, playCountOf,
-  putMeta, putThumb, type GameMeta,
+  putMeta, type GameMeta,
 } from './store';
 
 class CodedError extends Error {
@@ -95,11 +95,12 @@ async function importUpload(
     post({ id, kind: 'progress', stage: 'unpacking' });
     ({ files, spares } = await gameFromZip(req.zip ?? new Uint8Array()));
   }
-  if (!req.background) post({ id, kind: 'files', files });
+  const setFiles = spares?.length ? [...files, ...spares] : files;
+  if (!req.background) post({ id, kind: 'files', files: setFiles });
 
   setPhase('classify');
   const hasGam = files.some((f) => CONFIG_FILE.test(f.name));
-  const game = classifyGame(files, hasGam ? undefined : req.fallbackName);
+  const game = classifyGame(setFiles, hasGam ? undefined : req.fallbackName);
 
   setPhase('hashing');
   post({ id, kind: 'progress', stage: 'hashing' });
@@ -156,11 +157,12 @@ async function openPak(
   }
   const storedMeta = (await getMeta(hash)) ?? undefined;
   const variant = req.variant ?? storedMeta?.variant;
-  post({ id, kind: 'files', files, storedMeta, variant });
+  const setFiles = spares.length ? [...files, ...spares] : files;
+  post({ id, kind: 'files', files: setFiles, storedMeta, variant });
 
   setPhase('classify');
   const hasGam = files.some((f) => CONFIG_FILE.test(f.name));
-  const game = classifyGame(files, hasGam ? undefined : storedMeta?.name, variant);
+  const game = classifyGame(setFiles, hasGam ? undefined : storedMeta?.name, variant);
 
   let cached: { geo: CabGeometry; imgs: Map<number, Uint8Array> } | null = null;
   if (pak.decodeVersion === DECODE_VERSION && pak.has('CABJ')) {
@@ -247,52 +249,6 @@ async function openPak(
     : `[library] refreshed ${game.name} to decode v${DECODE_VERSION}`);
 }
 
-async function refreshThumb(hash: string): Promise<GameMeta | null> {
-  const meta = await getMeta(hash);
-  if (!meta || meta.thumbRule === THUMB_RULE) return meta;
-  const bytes = await getPak(hash);
-  if (!bytes) return meta;
-  const pak = decodePak(bytes);
-  let cab: Cabinet<ImageData> | Cabinet<ImageBitmap> | null = null;
-  const bitmaps: ImageBitmap[] = [];
-  if (pak.decodeVersion === DECODE_VERSION && pak.has('CABJ')) {
-    try {
-      const geo = JSON.parse(strFromU8(pak.chunk('CABJ'))) as CabGeometry;
-      const imgs = new Map<number, ImageBitmap>();
-      for (const [assetId, png] of decodeImgs(pak.chunk('IMGS'))) {
-        const b = await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' }));
-        bitmaps.push(b);
-        imgs.set(assetId, b);
-      }
-      cab = assembleCabinet(geo, imgs);
-    } catch (e) {
-      console.warn('[library] cached cabinet unreadable for its tile, re-decoding', e);
-      cab = null;
-    }
-  }
-  if (!cab) {
-    const game = classifyGame(decodeSrcs(pak.chunk('SRCS')), meta.name, meta.variant);
-    cab = (await decodeLayout(game)).cab;
-  }
-  let thumb: Uint8Array | null = null;
-  try {
-    thumb = cab ? await makeThumb(cab) : null;
-  } finally {
-    for (const b of bitmaps) b.close();
-  }
-  const now = await getMeta(hash);
-  if (!now || now.thumbRule === THUMB_RULE) return now;
-  if (thumb) await putThumb(hash, thumb);
-  const next: GameMeta = {
-    ...now,
-    hasThumb: now.hasThumb || !!thumb,
-    thumbFromPlay: thumb ? false : now.thumbFromPlay,
-    thumbRule: THUMB_RULE,
-  };
-  await putMeta(next);
-  return next;
-}
-
 function errorCode(e: unknown): ImportErrorCode | undefined {
   if (e instanceof CodedError) return e.code;
   if (isQuotaError(e)) return 'quota';
@@ -308,16 +264,6 @@ async function handle(req: ImportRequest): Promise<void> {
       await importUpload(req, setPhase);
     } else if (req.op === 'openPak') {
       await openPak(req, setPhase);
-    } else if (req.op === 'contentHash') {
-      setPhase('stamp');
-      const meta = await backfillContentHash(req.hash);
-      if (!meta) throw new CodedError('game missing from library', 'missing-pak');
-      post({ id: req.id, kind: 'stamped', meta });
-    } else if (req.op === 'refreshThumb') {
-      setPhase('thumb');
-      const meta = await refreshThumb(req.hash);
-      if (!meta) throw new CodedError('game missing from library', 'missing-pak');
-      post({ id: req.id, kind: 'stamped', meta });
     } else if (req.op === 'importPunnet') {
       setPhase('read');
       let meta: GameMeta;

@@ -1,12 +1,12 @@
 import { renderOrbit, type OrbitDeps } from './orbit';
 import {
-  batteryLabel, everPlayed, lastPlayed, listGames, playCountOf,
+  everPlayed, lastPlayed, listGames, playCountOf,
   type GameMeta,
 } from './store';
 import { localStateStore } from './statestore';
 import { parseTitle } from './title';
 import { enhanceSelect } from './ui/dropdown';
-import { clearArtwork, fillArtwork, hasArtwork, releaseArtwork, showTile } from './ui/art';
+import { clearArtwork, fillArtwork, releaseArtwork } from './ui/art';
 import { chip } from './ui/list';
 import {
   activity, displayTitle, gridArrowNav, mountGameList, systemLabel,
@@ -258,18 +258,6 @@ export async function settleArtwork(capMs = 2000): Promise<void> {
   ]);
 }
 
-export function refreshArtwork(hash: string): void {
-  const frames = document.querySelectorAll<HTMLElement>(
-    `#tiles .art[data-hash="${hash}"], #orbit-wrap .art[data-hash="${hash}"]`,
-  );
-  for (const frame of frames) {
-    if (frame.querySelector('.art-placeholder')) { void showTile(frame); continue; }
-    if (!hasArtwork(frame)) continue;
-    clearArtwork(frame);
-    void fillArtwork(frame);
-  }
-}
-
 function openSheet(
   g: GameMeta, hasState: boolean, h: LibraryHandlers, returnTo: HTMLElement,
 ): void {
@@ -300,19 +288,12 @@ function openSheet(
   );
   exportRow.addEventListener('click', () => { closeSheet(); void h.onExport(g.hash); });
 
-  const spares = [...new Set(g.batteries?.map(batteryLabel) ?? [])];
-  const spareRow = spares.length
-    ? sheetRow(spares.length === 1 ? str('library.spare_battery') : str('library.spare_batteries'),
-      str('library.n_kept_with_the_game', { 0: spares.join(', ') }))
-    : null;
-  spareRow?.classList.add('inert');
-
   const delRow = sheetRow(str('library.remove_from_cache'), hasState ? str('library.discards_the_saved_state_too') : '');
   delRow.classList.add('destructive');
   delRow.addEventListener('click', () => { closeSheet(); deferDelete(g, h); });
 
   showSheet(displayTitle(g), [
-    renameRow, autoRow, freshRow, exportRow, ...(spareRow ? [spareRow] : []), delRow,
+    renameRow, autoRow, freshRow, exportRow, delRow,
   ], returnTo);
 }
 

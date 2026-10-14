@@ -16,7 +16,7 @@ export type HintPlace = (h: KeyHint) => { x: number; y: number } | null;
 
 export function canvasPlace(fit: CanvasFit): HintPlace {
   const o = layoutPoint(fit, 0, 0);
-  return (h) => (h.at ? { x: (h.at.x - o.x) * o.scale, y: (h.at.y - o.y) * o.scale } : null);
+  return (h) => (h.at ? { x: (h.at.x - o.x) * o.sx, y: (h.at.y - o.y) * o.sy } : null);
 }
 
 function onCabinet(lp: Rect, content: Rect): boolean {

@@ -57,6 +57,7 @@ import { fancyReelPool, type FancyPool } from './reellight';
 import { PROCONN_LCD_FONT } from './proconnfont';
 import { EPOCH_DOT_FONT } from './epochdotfont';
 import { prismBothLitPlan } from './prismplan';
+import { peekable } from './play/peek';
 
 const EPOCH_ALPHA_PANEL_BYTES = 32;
 
@@ -156,6 +157,8 @@ export interface CabinetPainterOptions {
   virtualDisplay?: (m: FrameView | null) => void;
   dirtyDisabled?: boolean;
   lampGate?: (m: FrameView, lp: CabLamp) => void;
+  reelPeek?: () => number;
+  onReelRow?: (reel: object, row: number) => void;
 }
 
 export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPainterOptions = {}) {
@@ -164,6 +167,8 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   const virtualDisplay = opts.virtualDisplay ?? ((): void => undefined);
   const dirtyDisabled = opts.dirtyDisabled ?? false;
   const lampGate = opts.lampGate ?? ((): void => undefined);
+  const reelPeek = opts.reelPeek ?? ((): number => 0);
+  const onReelRow = opts.onReelRow ?? ((): void => undefined);
 
   let vfdAtlas: HTMLCanvasElement | null = null;
 
@@ -210,6 +215,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
           cab,
           lightClusters.clusters.map((c) => ({ bbox: c.bbox, lamps: c.sites.map((s) => s.lamp) })),
           (input) => inputHeld(input),
+          () => reelPeek(),
         ),
         lastKeys: null,
         canvasW: 0,
@@ -310,6 +316,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         const snapped = parked && Math.abs(detentRow - whole) < 1 / 3;
         sym = snapped ? whole + (continuous - detentRow) : continuous;
         detentSym = snapped ? whole : detentRow;
+        onReelRow(reel, sym);
       }
       const lit = reel.lampNums.map((n) => (n < 0 ? LAMP_FULL : m.layoutLampLevel(n)));
       const stops = reel.stops || 16;
@@ -366,6 +373,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const continuous = drawnBandIndex(m.layout.system, fr, r.stepsPerRevolution, r.position)
         * fr.stops / 96;
       const sym = frStill[i] >= 2 ? Math.round(continuous) : continuous;
+      onReelRow(fr, sym);
       const payline = ((sym % fr.stops) + fr.stops) % fr.stops;
       const base = Math.floor(payline);
       const frac = payline - base;
@@ -1439,7 +1447,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         ?? reelEffectivePosition(sym, reversed, platformOffsetSteps + lineShift96);
       const detentEffective = detentIndex ?? (detentSym === sym
         ? effective : reelEffectivePosition(detentSym, reversed, platformOffsetSteps + lineShift96));
-      const centreRow = reelCentreRow(effective, stops, parked, detentEffective - lineShift96, reel.artCells);
+      const restRow = reelCentreRow(effective, stops, parked, detentEffective - lineShift96, reel.artCells);
+      onReelRow(reel, restRow - 0.5);
+      const centreRow = restRow - (peekable(reel) ? reelPeek() : 0);
 
       const horiz = !!reel.horizontal;
       const along = horiz ? stops * nativeSymW : band.height;
@@ -1524,6 +1534,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     } else {
       signed = sym;
     }
+    if (peekable(reel)) signed -= reelPeek();
     const payline = ((signed % stops) + stops) % stops;
 
     ctx.save();

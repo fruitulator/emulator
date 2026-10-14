@@ -61,6 +61,51 @@ export function bandIsFlat(bg: ImageData, x0: number, x1: number): boolean {
   return sorted[sorted.length >> 1] <= bg.height * FLAT_SHARE;
 }
 
+export function bandIsEmpty(
+  bg: ImageData, x0: number, x1: number,
+  rows = bg.height,
+): boolean {
+  const { data, width: w } = bg;
+  const h = Math.max(0, Math.min(bg.height, rows));
+  const lo = Math.max(0, Math.floor(x0));
+  const hi = Math.min(w, Math.ceil(x1));
+  if (hi <= lo) return true;
+  const i0 = lo * 4;
+  const r0 = data[i0], g0 = data[i0 + 1], b0 = data[i0 + 2];
+  let n = 0;
+  let off = 0;
+  for (let y = 0; y < h; y += 2) {
+    for (let x = lo; x < hi; x += 2) {
+      const i = (y * w + x) * 4;
+      n++;
+      if (Math.abs(data[i] - r0) > EMPTY_STEP || Math.abs(data[i + 1] - g0) > EMPTY_STEP
+        || Math.abs(data[i + 2] - b0) > EMPTY_STEP) off++;
+    }
+  }
+  return off <= n * EMPTY_SHARE;
+}
+const EMPTY_STEP = 12;
+const EMPTY_SHARE = 0.005;
+
+export function flatTrim(
+  content: Rect, column: Rect, background?: ImageData | null,
+  bgLeft = 0,
+  bgTop = 0,
+): Rect {
+  if (!background) return { ...content };
+  const flat = (a: number, b: number): boolean => {
+    if (b <= a) return true;
+    const pa = Math.max(0, a - bgLeft);
+    const pb = Math.min(background.width, b - bgLeft);
+    return pb <= pa || bandIsEmpty(background, pa, pb, content.top + content.height - bgTop);
+  };
+  const colRight = column.left + column.width;
+  const boxRight = content.left + content.width;
+  const left = flat(content.left, column.left) ? Math.max(content.left, column.left) : content.left;
+  const right = flat(colRight, boxRight) ? Math.min(boxRight, colRight) : boxRight;
+  return right > left ? { left, top: content.top, width: right - left, height: content.height } : { ...content };
+}
+
 export interface CropPart { x: number; y: number; width: number; height: number; reel?: boolean }
 
 export function sidewaysCrop(
@@ -1610,13 +1655,18 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
 
   const dotAlphaReversed = !!dots && dots.type === Type.DotAlpha;
 
+  const panel = bg && bg.width > 0 && bg.height > 0 ? bg : null;
   const artWidth = (background ? background.width + backgroundOffset.x : 0)
     || backgroundRect.width || 0;
-  const width = videoScreen
-    ? Math.max(artWidth, Math.min(videoScreen.left + videoScreen.width, backgroundRect.width || Infinity))
-    : artWidth;
-  const height = (background ? background.height + backgroundOffset.y : 0)
-    || backgroundRect.height || 0;
+  const width = panel
+    ? panel.x + panel.width
+    : videoScreen
+      ? Math.max(artWidth, Math.min(videoScreen.left + videoScreen.width, backgroundRect.width || Infinity))
+      : artWidth;
+  const height = panel
+    ? panel.y + panel.height
+    : (background ? background.height + backgroundOffset.y : 0)
+      || backgroundRect.height || 0;
   if (!background && !reels.length && !lamps.length && !vfd) return null;
 
   const rgbLeds: RgbLed[] = comps
@@ -1686,6 +1736,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
   ], background, backgroundOffset.x);
+  const trimmed = flatTrim(content, column, background, backgroundOffset.x, backgroundOffset.y);
 
   return {
     width, height, background, backgroundRect, backgroundOffset, backgroundColour,
@@ -1694,7 +1745,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     vfdInk,
     vfdOffBrightness: vfdOffLevel ?? 80,
     ...(vfdStripColumns ? { vfdStripColumns } : {}),
-    content, column, featureReel: null, frameReels: [], vfdColours,
+    content, column, trimmed, featureReel: null, frameReels: [], vfdColours,
     vfdReversed: !!vfdColours?.reversed || dotAlphaReversed, segDisplays, dotMatrix,
     proconnMatrix,
     epochDotAlpha,

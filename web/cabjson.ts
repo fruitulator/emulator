@@ -39,6 +39,7 @@ export interface CabGeometry {
   vfdReversed: boolean;
   content: Cabinet['content'];
   column?: Cabinet['column'];
+  trimmed?: Cabinet['trimmed'];
   featureReel:
     | (Omit<NonNullable<Cabinet['featureReel']>, 'frames' | 'mask'> & { frames: number[]; mask?: number })
     | null;
@@ -192,6 +193,7 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     vfdReversed: cab.vfdReversed,
     content: { ...cab.content },
     column: cab.column ? { ...cab.column } : undefined,
+    trimmed: cab.trimmed ? { ...cab.trimmed } : undefined,
     featureReel: cab.featureReel
       ? {
           ...cab.featureReel, frames: cab.featureReel.frames.map(idFor),
@@ -301,6 +303,7 @@ export function assembleCabinet<A>(
     vfdReversed: geo.vfdReversed ?? !!geo.vfdColours?.reversed,
     content: geo.content,
     column: geo.column,
+    trimmed: geo.trimmed,
     featureReel: geo.featureReel
       ? {
           ...geo.featureReel, frames: geo.featureReel.frames.map(get),
@@ -497,7 +500,7 @@ export async function makeThumb(
   return encodeThumb(downscaleOffscreen(full, maxW));
 }
 
-export const THUMB_RULE = 5;
+export const THUMB_RULE = 6;
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 type AnyImage = ImageData | ImageBitmap;

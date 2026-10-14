@@ -75,9 +75,24 @@ export interface CanvasFit {
   readonly rect: { readonly left: number; readonly top: number; readonly width: number; readonly height: number };
   readonly canvas: { readonly width: number; readonly height: number };
   readonly content: { readonly left: number; readonly top: number };
+  readonly stretch?: boolean;
 }
 
-export function layoutPoint(fit: CanvasFit, clientX: number, clientY: number): { x: number; y: number; scale: number } {
+export function layoutPoint(fit: CanvasFit, clientX: number, clientY: number): {
+  x: number; y: number; scale: number;
+  sx: number; sy: number;
+} {
+  if (fit.stretch) {
+    const sx = fit.rect.width / fit.canvas.width;
+    const sy = fit.rect.height / fit.canvas.height;
+    return {
+      x: (clientX - fit.rect.left) / sx + fit.content.left,
+      y: (clientY - fit.rect.top) / sy + fit.content.top,
+      scale: Math.min(sx, sy),
+      sx,
+      sy,
+    };
+  }
   const scale = Math.min(fit.rect.width / fit.canvas.width, fit.rect.height / fit.canvas.height);
   const offX = fit.rect.left + (fit.rect.width - fit.canvas.width * scale) / 2;
   const offY = fit.rect.top + (fit.rect.height - fit.canvas.height * scale) / 2;
@@ -85,5 +100,7 @@ export function layoutPoint(fit: CanvasFit, clientX: number, clientY: number): {
     x: (clientX - offX) / scale + fit.content.left,
     y: (clientY - offY) / scale + fit.content.top,
     scale,
+    sx: scale,
+    sy: scale,
   };
 }
