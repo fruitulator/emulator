@@ -117,7 +117,7 @@ export function inhibitLampWord(enabled: boolean, mask: number): number {
 }
 
 export class Sr5iMech implements CcTalkDevice {
-  static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'bnvKey', 'currency'];
+  static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'bnvKey', 'currency', 'pollTimeout'];
 
   bnvKey: BnvKey = [...JcmEba.DEFAULT_KEY];
 
@@ -140,6 +140,7 @@ export class Sr5iMech implements CcTalkDevice {
   reset(): void {
     this.events = 0;
     this.reported = 0;
+    this.lastPoll = -1;
     this.buffer = [];
     this.enciphered = false;
     this.secure = false;
@@ -161,6 +162,20 @@ export class Sr5iMech implements CcTalkDevice {
     return this.master !== 0;
   }
 
+  pollClock: (() => number) | null = null;
+  pollTimeout = 0;
+  private lastPoll = -1;
+
+  private get hostPolling(): boolean {
+    if (!this.pollClock) return true;
+    if (this.lastPoll < 0) return false;
+    return ((this.pollClock() - this.lastPoll) >>> 0) <= this.pollTimeout;
+  }
+
+  private polled(): void {
+    if (this.pollClock) this.lastPoll = this.pollClock();
+  }
+
   get lampWord(): number {
     return inhibitLampWord(this.enabled, this.inhibit);
   }
@@ -168,6 +183,7 @@ export class Sr5iMech implements CcTalkDevice {
   insert(channel: number): boolean {
     const ch = channel & 0xff;
     const bit = 1 << ((ch - 1) & 31);
+    if (!this.hostPolling) return false;
     if (!this.enabled) { this.push(0, 2); return false; }
     if ((this.inhibit & bit) === 0) { this.push(0, (ch + 0x7f) & 0xff); return false; }
     const slot = Math.min(ch, 16) * 4;
@@ -176,7 +192,7 @@ export class Sr5iMech implements CcTalkDevice {
   }
 
   refuses(channel: number): boolean {
-    return !this.enabled || (this.inhibit & (1 << ((channel - 1) & 31))) === 0;
+    return !this.hostPolling || !this.enabled || (this.inhibit & (1 << ((channel - 1) & 31))) === 0;
   }
 
   onCredit?: (channel: number) => void;
@@ -297,6 +313,7 @@ export class Sr5iMech implements CcTalkDevice {
           events.push(this.buffer[i]?.[0] ?? 0, this.buffer[i]?.[1] ?? 0);
         }
         const reply = [this.events, ...events];
+        this.polled();
         this.deliver();
         if (this.events === 0) this.push(0, 2);
         return reply;
@@ -315,6 +332,7 @@ export class Sr5iMech implements CcTalkDevice {
         return this.monetaryId(data[0] ?? 0, data[1] ?? 0);
       case CC.READ_ENCRYPTED_MECH_EVENTS: {
         const sealed = this.encryptedEvents(data[0] ?? 0);
+        this.polled();
         if (sealed) this.deliver();
         return sealed;
       }

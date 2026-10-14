@@ -87,7 +87,7 @@ export class OkiCardLines {
     const stChanged = (changed & 1) !== 0;
     const ch2Changed = (changed & 2) !== 0;
     if (ch2 && !ch2Changed && stChanged && !st) {
-      if (this.data === 0) oki.stop();
+      if (this.data === 0) oki.startNow(0, 0);
       else oki.play(this.data);
     }
     if (!ch2 && ch2Changed) this.ch2Rises = 0;
@@ -104,7 +104,7 @@ export class OkiCardLines {
       const a = this.ch2Atten;
       const att = a === 1 ? 0x32 : a === 2 ? 100 : a;
       if (n === 0) {
-        oki.stop();
+        oki.startNow(0, 1);
         this.ch2Phrase = -1;
       } else {
         if (!oki.voicePlaying(1)) this.ch2Phrase = -1;
@@ -565,9 +565,7 @@ export class Mpu4 implements Bus, Machine {
       },
       writeB: (v) => this.okiPortB(v),
       writeCA2: (level) => this.okiResetLine(level),
-      readB: () => (this.packSamples.length > 1
-        ? (this.packNar ? 0x80 : 0) | (this.packIdle ? 0x40 : 0)
-        : (this.oki.nar ? 0x80 : 0) | (this.oki.busy ? 0 : 0x40)),
+      readB: () => (this.cardNar ? 0x80 : 0) | (this.cardIdle ? 0x40 : 0),
     });
     this.ptmSound = new Ptm6840({ irqChanged });
 
@@ -760,13 +758,13 @@ export class Mpu4 implements Bus, Machine {
   private okiVolume = 0;
   private okiInReset = false;
 
-  private packNar = true;
-  private packIdle = true;
-  private packNarTimer = 0;
-  private readonly packActive = [false, false];
-  private readonly packStaged = [-1, -1];
-  private packStagedAtten = 0;
-  private packPoll = 0;
+  private cardNar = true;
+  private cardIdle = true;
+  private cardNarTimer = 0;
+  private readonly cardActive = [false, false];
+  private readonly cardStaged = [-1, -1];
+  private cardStagedAtten = 0;
+  private cardPoll = 0;
 
   okiVolumeManual = false;
   volumeApplies = true;
@@ -789,12 +787,7 @@ export class Mpu4 implements Bus, Machine {
     const ch2 = (lines & 2) !== 0;
     const stChanged = (changed & 1) !== 0;
     const ch2Changed = (changed & 2) !== 0;
-    if (this.packSamples.length > 1) {
-      this.packCardStrobe(st, ch2, stChanged, ch2Changed);
-      return;
-    }
-
-    this.okiCard.drive(changed, this.oki);
+    this.cardStrobe(st, ch2, stChanged, ch2Changed);
   }
 
   private volumeLevel = 0xff;
@@ -807,27 +800,32 @@ export class Mpu4 implements Bus, Machine {
   private okiResetLine(level: boolean): void {
     if (level && this.okiInReset) {
       this.okiCard.reset();
-      this.packNar = true;
-      this.packIdle = true;
-      this.packNarTimer = 0;
-      this.packActive[0] = this.packActive[1] = false;
-      this.packStaged[0] = this.packStaged[1] = -1;
+      this.cardNar = true;
+      this.cardIdle = true;
+      this.cardNarTimer = 0;
+      this.cardActive[0] = this.cardActive[1] = false;
+      this.cardStaged[0] = this.cardStaged[1] = -1;
     }
     this.okiInReset = !level;
   }
 
-  private packCardStrobe(st: boolean, ch2: boolean, stChanged: boolean, ch2Changed: boolean): void {
-    if (ch2 && !ch2Changed && stChanged && !st && (this.packNar || this.okiCard.data === 0)) {
+  private cardStrobe(st: boolean, ch2: boolean, stChanged: boolean, ch2Changed: boolean): void {
+    if (ch2 && !ch2Changed && stChanged && !st && (this.cardNar || this.okiCard.data === 0)) {
       const id = this.okiCard.data;
-      if (this.packSamples[id]) {
-        this.packNar = false;
-        if (!this.packActive[0]) {
-          this.packStaged[0] = -1;
-          this.packNarTimer = 500;
-          this.packCardStart(id, 0, 1);
+      if (this.cardHas(id)) {
+        this.cardNar = false;
+        if (!this.cardActive[0] || id === 0) {
+          if (id === 0) {
+            this.cardStaged[1] = -1;
+            this.cardNarTimer = 500;
+          } else if (id % 0x78 < 0x70) {
+            this.cardNarTimer = 500;
+          }
+          this.cardStaged[0] = -1;
+          this.cardStart(id, 0, 1);
         } else {
-          this.packStaged[0] = id;
-          this.packNarTimer = 0;
+          this.cardStaged[0] = id;
+          this.cardNarTimer = 0;
         }
       }
     }
@@ -842,68 +840,79 @@ export class Mpu4 implements Bus, Machine {
     }
     if (ch2 && ch2Changed && this.okiCard.ch2Phrase >= 0) {
       const id = this.okiCard.ch2Phrase;
-      if (this.packSamples[id]) {
-        if (!this.packActive[1]) {
+      if (this.cardHas(id)) {
+        if (!this.cardActive[1] || id === 0) {
           this.okiCard.ch2Phrase = -1;
-          this.packCardStart(id, 1, Mpu4.packAttenGain(this.okiCard.ch2Atten));
+          this.cardStart(id, 1, Mpu4.cardAttenGain(this.okiCard.ch2Atten));
         } else {
-          this.packStaged[1] = id;
-          this.packStagedAtten = this.okiCard.ch2Atten;
+          this.cardStaged[1] = id;
+          this.cardStagedAtten = this.okiCard.ch2Atten;
         }
       }
     }
   }
 
-  private static packAttenGain(a: number): number {
+  private static cardAttenGain(a: number): number {
     const att = a === 1 ? 0x32 : a === 2 ? 100 : a;
     return (0xff - att) / 0xff;
   }
 
-  private packCardStart(id: number, ch: 0 | 1, gain: number): void {
-    this.packIdle = false;
-    this.packActive[ch] = true;
-    this.samplePlayer.start(this.packSamples[id], ch, gain);
+  private cardHas(id: number): boolean {
+    if (this.packSamples.length > 1) return this.packSamples[id] !== undefined;
+    if (id === 0) return this.oki.phraseCount > 0;
+    return id > 0 && this.oki.phrase(id) !== undefined;
   }
 
-  private packCardTick(cycles: number): void {
-    if (this.packNarTimer > 0) {
-      this.packNarTimer -= cycles;
-      if (this.packNarTimer <= 0) {
-        this.packNarTimer = 0;
-        this.packNar = true;
+  private cardStart(id: number, ch: 0 | 1, gain: number): void {
+    this.cardIdle = false;
+    this.cardActive[ch] = true;
+    if (this.packSamples.length > 1) this.samplePlayer.start(this.packSamples[id], ch, gain);
+    else this.oki.startNow(id, ch, gain);
+  }
+
+  private cardVoicePlaying(ch: number): boolean {
+    return this.packSamples.length > 1 ? this.samplePlayer.voicePlaying(ch) : this.oki.voicePlaying(ch);
+  }
+
+  private cardTick(cycles: number): void {
+    if (this.cardNarTimer > 0) {
+      this.cardNarTimer -= cycles;
+      if (this.cardNarTimer <= 0) {
+        this.cardNarTimer = 0;
+        this.cardNar = true;
         if ((this.okiCard.lines & 1) === 0) {
-          this.packStaged[0] = this.okiCard.data;
-          this.packNar = false;
+          this.cardStaged[0] = this.okiCard.data;
+          this.cardNar = false;
         }
       }
     }
-    this.packPoll -= cycles;
-    if (this.packPoll > 0) return;
-    this.packPoll += 0xfa;
-    if (!this.packActive[0] && !this.packActive[1]) { this.packIdle = true; return; }
+    this.cardPoll -= cycles;
+    if (this.cardPoll > 0) return;
+    this.cardPoll += 0xfa;
+    if (!this.cardActive[0] && !this.cardActive[1]) { this.cardIdle = true; return; }
     const ended = [false, false];
     for (let ch = 0; ch < 2; ch++) {
-      if (this.packActive[ch] && !this.samplePlayer.voicePlaying(ch)) {
-        this.packActive[ch] = false;
+      if (this.cardActive[ch] && !this.cardVoicePlaying(ch)) {
+        this.cardActive[ch] = false;
         ended[ch] = true;
       }
     }
-    if (!this.packActive[0] && !this.packActive[1]) this.packIdle = true;
+    if (!this.cardActive[0] && !this.cardActive[1]) this.cardIdle = true;
     if (ended[0]) {
-      const id = this.packStaged[0];
-      if (id > 0 && this.packSamples[id]) {
-        if (this.okiCard.lines & 1) this.packStaged[0] = -1;
-        this.packNarTimer = 500;
-        this.packCardStart(id, 0, 1);
+      const id = this.cardStaged[0];
+      if (id > 0 && this.cardHas(id)) {
+        if (this.okiCard.lines & 1) this.cardStaged[0] = -1;
+        this.cardNarTimer = 500;
+        this.cardStart(id, 0, 1);
       } else {
-        this.packNar = true;
-        this.packNarTimer = 0;
+        this.cardNar = true;
+        this.cardNarTimer = 0;
       }
     }
-    if (ended[1] && this.packStaged[1] > 0 && this.packSamples[this.packStaged[1]]) {
-      const id = this.packStaged[1];
-      this.packStaged[1] = -1;
-      this.packCardStart(id, 1, Mpu4.packAttenGain(this.packStagedAtten));
+    if (ended[1] && this.cardStaged[1] > 0 && this.cardHas(this.cardStaged[1])) {
+      const id = this.cardStaged[1];
+      this.cardStaged[1] = -1;
+      this.cardStart(id, 1, Mpu4.cardAttenGain(this.cardStagedAtten));
     }
   }
 
@@ -2463,7 +2472,7 @@ export class Mpu4 implements Bus, Machine {
     this.ay.tick(cycles, E_CLOCK);
     this.oki.tick(cycles, E_CLOCK);
     this.samplePlayer.tick(cycles, E_CLOCK);
-    if (this.packSamples.length > 1) this.packCardTick(cycles);
+    this.cardTick(cycles);
     this.opll?.tick(cycles, E_CLOCK);
     this.alarm.tick(cycles);
     if (this.video) {

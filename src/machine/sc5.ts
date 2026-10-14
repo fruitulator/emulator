@@ -437,6 +437,8 @@ export class Sc5 implements Bus16, Machine {
     const mech = this.bus.get(CC_MECH);
     if (mech instanceof Sr5iMech) {
       mech.onLampWord = (word) => { this.mechLamps.write(word); this.packVendLamps(); };
+      mech.pollClock = () => this.busNow;
+      mech.pollTimeout = MASTER_CLOCK;
     }
     this.sec.onCount = (meter, delta) => this.secCount(meter, delta);
     this.dataPak.onCashOut = (pence) => {
