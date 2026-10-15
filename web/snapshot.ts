@@ -57,6 +57,7 @@ export const DENY = new Set([
   'romTop', 'romHigh', 'romPages', 'romLength', 'bankCount', 'commandAddr', 'phrases',
   'phraseRates',
   'driftBase',
+  'tokenMech', 'reelWires',
   'r.steps', 'r.winStart', 'r.winEnd', 'r.inverted', 'r.present',
   'sreels.steps', 'sreels.present', 'sreels.optoStart', 'sreels.optoWidth',
   'sreels.inverted', 'sreels.band', 'sreels.flip',

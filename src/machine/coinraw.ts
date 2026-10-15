@@ -6,3 +6,13 @@ export const COIN_RAW = [
   0x40, 0x20, 0x04, 0x11711f, 0x81, 0x02, 0x04, 0x01, 0x104100, 0x109108, 0x123122, 0xcc, 0xcd, 0xce, 0x106105, 0x11c113,
   0x105104, 0x11a127, 0x106102, 0x11911a, 0x34, 0x11b12e, 0x00,
 ];
+
+export function coinMatrixSteps(raw: number): { strobe: number; bit: number }[] | null {
+  const out: { strobe: number; bit: number }[] = [];
+  for (let v = raw >>> 0; v !== 0; v >>>= 12) {
+    const step = v & 0xfff;
+    if (!(step & 0x100)) return null;
+    out.push({ strobe: (step & 0x78) >> 3, bit: step & 7 });
+  }
+  return out.length ? out : null;
+}

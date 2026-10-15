@@ -17,6 +17,7 @@ import { StatedLines } from './statedlines';
 import type { BoardPart } from './parts';
 import { fitReelBank, type ReelFit } from './reelfit';
 import { noteRomCut } from './boarddefaults';
+import { COIN_RAW, coinMatrixSteps } from './coinraw';
 import { StrayCounter } from './strayaccess';
 import type { DigitKind, CoinWiringStatus } from './machine';
 import { calibratorState, changeOf, linesOf, MeterStepCalibrator, wiringKey, wiringStateFor, type CalibratorState, type CoinLineTable, type CoinWiring, type SlotCoin, type WatchedCoin } from './coinwiring';
@@ -207,7 +208,8 @@ export class Mps2 implements Machine {
 
   private coinSlots: { line: number; token: boolean }[] = [];
 
-  setLayoutCoins(list: readonly { button: number | null; pence: number | null; token: boolean }[]): void {
+  setLayoutCoins(list: readonly { button: number | null; pence: number | null; token: boolean; note?: number | null }[]): void {
+    this.tokenMech = list.some((c) => c.note === Mps2.TOK_MPS2) ? Mps2.TOKEN_MECH : null;
     const out = new Map<number, boolean>();
     for (const c of list) {
       if (c.button === null || c.button < 19 || c.button > 23 || c.pence !== null) continue;
@@ -497,6 +499,10 @@ export class Mps2 implements Machine {
     for (const g of [0, 1, 2, 3, 4, 5]) this.jpmReels.reels[g].present = this.fitted[g];
     this.coinTimer = 0;
     this.coinInput = -1;
+    this.mechQueue = [];
+    this.mechHeld = -1;
+    this.mechTimer = 0;
+    this.mechSettling = false;
     this.lampData = 0;
     this.lampAge = 0;
     this.hopper.reset();
@@ -688,6 +694,7 @@ export class Mps2 implements Machine {
       this.nmiRaised = 1;
       this.cpu.nmi();
     }
+    if (this.mechTimer > 0) this.tickMech(c);
     if (this.coinTimer > 0) {
       const was = this.coinTimer;
       this.coinTimer -= c;
@@ -778,15 +785,53 @@ export class Mps2 implements Machine {
   }
 
   insertCoin(bit: number): void {
-    if (this.coinTimer > 0 || bit < 0 || bit > 31) return;
+    if (this.coinTimer > 0 || this.mechTimer > 0 || bit < 0 || bit > 31) return;
     if (this.wiring) {
       this.wiring.cal.coin(this.wiredValue(bit), this.now);
       this.wiringState.windowLines.push(bit);
+    }
+    if (this.tokenMech && bit === this.tokenMech[0]) {
+      this.mechQueue = this.tokenMech.slice(1);
+      this.pressMech(this.tokenMech[0]!);
+      return;
     }
     this.coinInput = bit;
     this.layoutInput(bit, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;
   }
 
-  get coinBusy(): boolean { return this.coinTimer > 0; }
+  get coinBusy(): boolean { return this.coinTimer > 0 || this.mechTimer > 0; }
+
+  private static readonly TOK_MPS2 = 0x3f;
+  private static readonly TOKEN_MECH: readonly number[] =
+    (coinMatrixSteps(COIN_RAW[Mps2.TOK_MPS2]!) ?? []).map((s) => s.strobe * 8 + s.bit);
+  private static readonly MECH_HELD = Math.round(0.05 * CLOCK);
+  private static readonly MECH_TAIL = Math.round(0.02 * CLOCK);
+  private static readonly MECH_SETTLE = Math.round(0.08 * CLOCK);
+  private tokenMech: readonly number[] | null = null;
+  private mechQueue: number[] = [];
+  private mechHeld = -1;
+  private mechTimer = 0;
+  private mechSettling = false;
+
+  private pressMech(id: number): void {
+    this.mechHeld = id;
+    this.layoutInput(id, true);
+    this.mechTimer = Mps2.MECH_HELD + Mps2.MECH_TAIL;
+    this.mechSettling = false;
+  }
+
+  private tickMech(c: number): void {
+    this.mechTimer -= c;
+    if (this.mechHeld >= 0 && this.mechTimer <= Mps2.MECH_TAIL) {
+      this.layoutInput(this.mechHeld, false);
+      this.mechHeld = -1;
+    }
+    if (this.mechTimer > 0) return;
+    const next = this.mechQueue.shift();
+    if (next !== undefined) { this.pressMech(next); return; }
+    if (!this.mechSettling) { this.mechSettling = true; this.mechTimer = Mps2.MECH_SETTLE; return; }
+    this.mechSettling = false;
+    this.mechTimer = 0;
+  }
 }

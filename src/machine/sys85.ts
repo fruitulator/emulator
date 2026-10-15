@@ -20,6 +20,7 @@ import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { detectCoins, linesOf, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import { COIN_RAW, coinMatrixSteps } from './coinraw';
 import { CoinLockJudge, sc1CoinSwitches, sc1CoinTable, sc1LockedLines, sc1PlainCoinMask, type Sc1CoinSwitch, type Sc1Mem } from './sc1coins';
 import { locateSys85CoinTables, type Sys85CoinTables } from './sys85coins';
 
@@ -350,7 +351,8 @@ export class Sys85 implements Bus, Machine {
     if (this.coinCycles > 0) return;
     if (!Number.isInteger(line) || line < 0 || line >= Sys85.COIN_LINES) { this.coinsRefused++; return; }
     const taken = this.programCoinOn(line);
-    const [sw, ...next] = sc1CoinSwitches(this.coinTables(), this.rom, this.programMem, line);
+    const [sw, ...next] = sc1CoinSwitches(this.coinTables(), this.rom, this.programMem, line,
+      line === Sys85.TOKEN_LINE ? this.tokenMech : null);
     this.coinNext = next;
     this.pulseCoinSwitch(sw!);
     const t = this.coinTables();
@@ -393,6 +395,10 @@ export class Sys85 implements Bus, Machine {
         text: 'the program\'s coin table was not read - a coin books the board\'s price for its line',
         ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
       });
+      if (line === Sys85.TOKEN_LINE && this.tokenOr2p) {
+        this.cashLedger.unpricedIn = (this.cashLedger.unpricedIn ?? 0) + 1;
+        return;
+      }
       const pence = Sys85.COIN_PENCE[line];
       if (pence === undefined) return;
       if (line === Sys85.TOKEN_LINE) this.cashLedger.tokenInPence += pence;
@@ -491,7 +497,17 @@ export class Sys85 implements Bus, Machine {
 
   private coinSlots: number[] = [];
 
+  private tokenMech: { strobe: number; bit: number }[] | null = null;
+  private tokenOr2p = false;
+
   setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    this.tokenMech = null;
+    this.tokenOr2p = false;
+    for (const c of list) {
+      if (!c.token || c.note === null || c.note === 0x47) continue;
+      const steps = coinMatrixSteps(COIN_RAW[c.note] ?? 0);
+      if (steps) { this.tokenMech = steps; this.tokenOr2p = c.note === Sys85.TOK_2P_NOTE; break; }
+    }
     const slots = new Set<number>();
     for (const c of list) {
       if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
@@ -509,6 +525,8 @@ export class Sys85 implements Bus, Machine {
     }
     this.coinSlots = [...slots].sort((a, b) => a - b);
   }
+
+  private static readonly TOK_2P_NOTE = 65;
 
   private static readonly DEFAULT_LINE = 3;
 

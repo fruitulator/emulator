@@ -294,8 +294,11 @@ export function sc1CoinTable(t: Sc1CoinTables, rom: Uint8Array, mem: Sc1Mem, boa
   };
 }
 
-export function sc1CoinSwitches(t: Sc1CoinTables | Refusal, rom: Uint8Array, mem: Sc1Mem, line: number): Sc1CoinSwitch[] {
-  const plain = [{ strobe: 0, bit: line & 7 }];
+export function sc1CoinSwitches(
+  t: Sc1CoinTables | Refusal, rom: Uint8Array, mem: Sc1Mem, line: number,
+  fallback?: readonly Sc1CoinSwitch[] | null,
+): Sc1CoinSwitch[] {
+  const plain = fallback?.length ? [...fallback] : [{ strobe: 0, bit: line & 7 }];
   if ('refused' in t) return plain;
   const coins = sc1LineCoins(t, rom, mem);
   if (!Array.isArray(coins)) return plain;

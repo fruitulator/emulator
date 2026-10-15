@@ -21,7 +21,8 @@ import { fitReelBank, type ReelFit } from './reelfit';
 import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { detectCoins, linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
-import { CoinLockJudge, locateSc1CoinTables, sc1CoinSwitches, sc1CoinTable, sc1LockedLines, sc1PlainCoinMask, SC1_COIN_LINES, type Sc1CoinSwitch, type Sc1CoinTables, type Sc1Mem } from './sc1coins';
+import { COIN_RAW, coinMatrixSteps } from './coinraw';
+import { CoinLockJudge, locateSc1CoinTables, sc1CoinSwitches, sc1CoinTable, sc1LineCoins, sc1LockedLines, sc1PlainCoinMask, SC1_COIN_LINES, type Sc1CoinSwitch, type Sc1CoinTables, type Sc1Mem } from './sc1coins';
 import type { Refusal } from './coinwiring';
 import { StrayCounter } from './strayaccess';
 import { mpu4RomImage } from './mpu4';
@@ -446,8 +447,10 @@ export class Sc1 implements Bus, Machine {
     if (this.coinCycles > 0) return;
     const line = bit;
     if (!Number.isInteger(line) || line < 0 || line >= SC1_COIN_LINES) { this.coinsRefused++; return; }
+    if (this.coinLinesShut & (1 << line)) { this.coinsRefused++; return; }
     const taken = this.programCoinOn(line);
-    const [sw, ...next] = sc1CoinSwitches(this.coinTables(), this.rom, this.programMem, line);
+    const [sw, ...next] = sc1CoinSwitches(this.coinTables(), this.rom, this.programMem, line,
+      line === Sc1.TOKEN_LINE ? this.tokenMech : null);
     this.coinNext = next;
     this.pulseCoinSwitch(sw!);
     const t = this.coinTables();
@@ -527,7 +530,7 @@ export class Sc1 implements Bus, Machine {
   get coinRefusing(): number {
     const t = this.readCoinTable();
     if ('refused' in t) return 0;
-    let m = 0;
+    let m = this.coinLinesShut;
     for (let n = 0; n < SC1_COIN_LINES; n++) if (this.programCoinOn(n) === 'refused') m |= 1 << n;
     return m;
   }
@@ -543,6 +546,23 @@ export class Sc1 implements Bus, Machine {
   }
 
   coinsRefused = 0;
+
+  private coinInhibit = 0;
+  private coinMechOpened = false;
+
+  get coinLinesShut(): number {
+    const t = this.coinTables();
+    if ('refused' in t) return 0;
+    if (this.coinMechOpened) return 0;
+    const coins = sc1LineCoins(t, this.rom, this.programMem);
+    if (!Array.isArray(coins)) return 0;
+    let m = 0;
+    for (const c of coins) {
+      const bit = c.mask & 0x1f;
+      if (bit && !(this.coinInhibit & bit)) m |= 1 << c.line;
+    }
+    return m;
+  }
 
   private wiring: { coins: Map<number, SlotCoin>; conflicts: number[]; state: StepState } | null = null;
 
@@ -583,7 +603,15 @@ export class Sc1 implements Bus, Machine {
 
   private coinSlots: number[] = [];
 
+  private tokenMech: { strobe: number; bit: number }[] | null = null;
+
   setLayoutCoins(list: readonly DeclaredCoin[]): void {
+    this.tokenMech = null;
+    for (const c of list) {
+      if (!c.token || c.note === null || c.note === 0x47) continue;
+      const steps = coinMatrixSteps(COIN_RAW[c.note] ?? 0);
+      if (steps) { this.tokenMech = steps; break; }
+    }
     const slots = new Set<number>();
     for (const c of list) {
       if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) continue;
@@ -704,6 +732,8 @@ export class Sc1 implements Bus, Machine {
 
   private warmReset(): void {
     this.bank = 3;
+    this.coinInhibit = 0;
+    this.coinMechOpened = false;
     this.vfd.reset();
     this.vfdShift = 0;
     this.vfdBits = 0;
@@ -827,6 +857,8 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a >= 0x2400 && a < 0x2600) {
+      this.coinInhibit = v & 0x1f;
+      if (this.coinInhibit) this.coinMechOpened = true;
       if (this.dm01) {
         if ((this.dmLines ^ v) & 0xe0) this.dotMatrixSerial(v);
         this.dmLines = v;

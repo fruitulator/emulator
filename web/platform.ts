@@ -18,6 +18,7 @@ export interface PlatformView {
     lineOfBit: Readonly<Record<number, readonly (number | null)[]>>;
     tokenNote: number;
     tokenLine: number;
+    moreTokens?: Readonly<Record<number, number>>;
     directRows?: readonly number[];
     directIds?: boolean;
     plainControlDrops?: boolean;
@@ -74,7 +75,7 @@ const mpu4: PlatformView = {
   matrix: { strobes: 8, bits: 8 },
   coinBit: 3,
   tokenBit: 3,
-  coinRegister: { maskRow: 5, lineOfBit: { 5: [-1, -1, 5, 4, 0, 1, 2, 3] }, tokenNote: 0x39, tokenLine: 4 },
+  coinRegister: { maskRow: 5, lineOfBit: { 5: [-1, -1, 5, 4, 0, 1, 2, 3] }, tokenNote: 0x39, tokenLine: 6, moreTokens: { 0x3e: 7 } },
   acceptorCoinPort: { row: 5 },
   nonSwitchInputs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 44, 45, 46, 47],
   inputNames: {
@@ -309,8 +310,9 @@ const scorpion1: PlatformView = {
   coinRegister: {
     maskRow: 0,
     lineOfBit: { 0: [0, 1, 2, 3, 4, -1, -1, -1], 8: [8, 9, 10, 11, 12, 13, 14, 15] },
-    tokenNote: -1,
-    tokenLine: -1,
+    tokenNote: 0x3a,
+    tokenLine: 4,
+    moreTokens: { 0x45: 4 },
     directRows: [8],
     plainControlDrops: true,
   },
@@ -348,7 +350,7 @@ const sys85: PlatformView = {
   matrix: { strobes: 8, bits: 8 },
   coinBit: 3,
   tokenBit: 4,
-  coinRegister: { maskRow: 0, lineOfBit: { 0: [0, 1, 2, 3, 4, -1, -1, -1] }, tokenNote: -1, tokenLine: -1 },
+  coinRegister: { maskRow: 0, lineOfBit: { 0: [0, 1, 2, 3, 4, -1, -1, -1] }, tokenNote: 0x41, tokenLine: 4 },
 };
 
 const mps2: PlatformView = {
@@ -379,7 +381,7 @@ const mps2: PlatformView = {
   coinBit: 20,
   tokenBit: 19,
   acceptorLineIsButton: true,
-  coinRegister: { maskRow: 2, lineOfBit: { 2: [-1, null, null, 19, 20, 21, 22, 23] }, tokenNote: -1, tokenLine: -1 },
+  coinRegister: { maskRow: 2, lineOfBit: { 2: [-1, null, null, 19, 20, 21, 22, 23] }, tokenNote: 0x3f, tokenLine: 19 },
   nonSwitchInputs: [0, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
   inputNames: {
     0: 'BACKDOOR', 3: 'START/TAKE', 4: 'HOLD 1', 5: 'HOLD 2', 6: 'HOLD 3',
@@ -507,7 +509,7 @@ const sys1: PlatformView = {
       4: [32, 33, 34, 35, 36, 37, 38, 39], 5: [40, 41, 42, 43, 44, 45, 46, 47],
       6: [48, 49, 50, 51, 52, 53, 54, 55],
     },
-    tokenNote: -1, tokenLine: -1,
+    tokenNote: 0x42, tokenLine: 2,
   },
   nonSwitchInputs: [0, 1, 2, 3, 4, 5],
   inputNames: {
@@ -795,6 +797,8 @@ export function acceptorResolve(
     if (a.note !== 0x47) return { line: a.note, fromCabinet: true };
     if (btn >= 0) return { line: 0x100 | (btn & 0x7f), fromCabinet: true };
   }
+  const tokenAt = tokenMechLine(view, a.note);
+  if (tokenAt !== undefined) return { line: tokenAt, fromCabinet: true };
   if (view.acceptorLineIsButton && btn >= 0) return { line: btn, fromCabinet: true };
   const reg = view.coinRegister;
   if (reg && a.note !== undefined) {
@@ -835,6 +839,13 @@ export function acceptorResolve(
     if (hit) return { line: hit.bit, fromCabinet: true };
   }
   return { line: a.token ? view.tokenBit : view.coinBit, fromCabinet: false };
+}
+
+function tokenMechLine(view: AcceptorView, note: number | undefined): number | undefined {
+  const reg = view.coinRegister;
+  if (!reg || note === undefined) return undefined;
+  if (note === reg.tokenNote && reg.tokenLine >= 0) return reg.tokenLine;
+  return reg.moreTokens?.[note];
 }
 
 export function acceptorTakesToken(

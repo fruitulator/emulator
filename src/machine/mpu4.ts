@@ -31,6 +31,7 @@ import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, ty
 import { readMpu4CoinTable, readMpu4CoinTakes } from './mpu4coins';
 import { readMpu4VideoCoinTable, readMpu4VideoCoinTakes } from './mpu4vidcoins';
 import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
+import { COIN_RAW } from './coinraw';
 import type { Mpu4VideoCard } from './mpu4video';
 import type { Mpu4PlasmaCard } from './mpu4plasma';
 
@@ -1128,7 +1129,7 @@ export class Mpu4 implements Bus, Machine {
     for (const s of slots) {
       const line = s.token
         ? Mpu4.TOKEN_COIN_LINE
-        : this.coinLinePence.findIndex((p, i) => i !== Mpu4.TOKEN_COIN_LINE && p === s.pence);
+        : this.coinLinePence.findIndex((p, i) => i !== Mpu4.TOKEN_COIN_LINE && !Mpu4.isMechLine(i) && p === s.pence);
       if (line < 0 || line >= this.coinLinePattern.length) continue;
       this.coinLinePattern[line] = s.mask & 0xff;
       this.coinLineStated[line] = true;
@@ -1136,6 +1137,24 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private static readonly TOKEN_COIN_LINE = 4;
+
+  private static readonly TOKEN_MECH_LINE = 6;
+  private static readonly TOKEN_MECH2_LINE = 7;
+  private static readonly MECH_RAW: Readonly<Record<number, number>> = {
+    [Mpu4.TOKEN_MECH_LINE]: COIN_RAW[0x39]!,
+    [Mpu4.TOKEN_MECH2_LINE]: COIN_RAW[0x3e]!,
+  };
+  private static isMechLine(line: number): boolean {
+    return line === Mpu4.TOKEN_MECH_LINE || line === Mpu4.TOKEN_MECH2_LINE;
+  }
+  private static readonly MECH_HELD = Math.round(E_CLOCK * 0.07);
+  private mechTail(): number { return Math.round(E_CLOCK * (this.plasma ? 0.005 : 0.02)); }
+  private mechSettle(): number { return this.plasma ? 0 : Math.round(E_CLOCK * 0.15); }
+  private mechRaw = 0;
+  private mechLine = -1;
+  private mechOwned = false;
+  private mechStepLeft = 0;
+  private mechsDeclared: number[] = [];
 
   get coinLineRead(): boolean {
     return this.coinLineStated.some(Boolean);
@@ -1195,7 +1214,7 @@ export class Mpu4 implements Bus, Machine {
   coinsRefused = 0;
   coinRefusedReason: 'locked' | 'no-line' | 'still-passing' | 'not-taken' | null = null;
 
-  private static readonly COIN_PENCE = [10, 20, 50, 100, 20, 5];
+  private static readonly COIN_PENCE = [10, 20, 50, 100, 20, 5, 20, 20];
 
   private coinLinePence: (number | null)[] = [...Mpu4.COIN_PENCE];
 
@@ -1210,6 +1229,15 @@ export class Mpu4 implements Bus, Machine {
 
   insertCoin(line: number): void {
     if (this.coinCycles > 0) { this.coinsRefused++; this.coinRefusedReason = 'still-passing'; return; }
+    if (Mpu4.isMechLine(line)) {
+      this.coinMask = 0;
+      this.coinLine = line;
+      this.mechRaw = Mpu4.MECH_RAW[line]!;
+      this.mechStep();
+      this.coinCycles = this.mechStepLeft;
+      this.pendCoin(line);
+      return;
+    }
     if (line < 0 || line >= Mpu4.COIN_LINE_BIT.length) return;
     const lock = Mpu4.lockoutFor(line, this.ic5.ddrB());
     if (this.coinLockStated) {
@@ -1229,7 +1257,7 @@ export class Mpu4 implements Bus, Machine {
     if (this.wiring) { this.bookWiredCoin(line); return; }
     const pence = this.coinLinePence[line];
     if (pence === null || pence === undefined) return;
-    if (line === 4) this.cashLedger.tokenInPence += pence;
+    if (line === Mpu4.TOKEN_COIN_LINE || Mpu4.isMechLine(line)) this.cashLedger.tokenInPence += pence;
     else this.cashLedger.inPence += pence;
   }
 
@@ -1357,7 +1385,7 @@ export class Mpu4 implements Bus, Machine {
       const pence = this.coinLinePence[line];
       w.check.coin(pence ?? undefined, this.wiringState.now);
       if (pence === null || pence === undefined) return;
-      if (line === Mpu4.TOKEN_COIN_LINE) this.cashLedger.tokenInPence += pence;
+      if (line === Mpu4.TOKEN_COIN_LINE || Mpu4.isMechLine(line)) this.cashLedger.tokenInPence += pence;
       else this.cashLedger.inPence += pence;
       return;
     }
@@ -1384,12 +1412,16 @@ export class Mpu4 implements Bus, Machine {
 
   setLayoutCoins(list: readonly DeclaredCoin[]): void {
     const out = new Set<number>();
+    this.mechsDeclared = [];
+    if (list.some((c) => c.note === Mpu4.TOK_MPU4_NOTE)) this.mechsDeclared.push(Mpu4.TOKEN_MECH_LINE);
+    if (list.some((c) => c.note === Mpu4.TOK_MPU4_2_NOTE)) this.mechsDeclared.push(Mpu4.TOKEN_MECH2_LINE);
     for (const c of list) {
       if (c.pence !== null) continue;
       if (c.named?.name.startsWith('ccTalk')) continue;
       let line = -1;
       if (c.line !== null && c.note === null) line = c.line;
-      else if (c.note === Mpu4.TOK_MPU4_NOTE) line = Mpu4.TOKEN_COIN_LINE;
+      else if (c.note === Mpu4.TOK_MPU4_NOTE) line = Mpu4.TOKEN_MECH_LINE;
+      else if (c.note === Mpu4.TOK_MPU4_2_NOTE) line = Mpu4.TOKEN_MECH2_LINE;
       else {
         const mask = coinRowPattern(c, Mpu4.AUX2_COIN_ROW);
         if (mask !== undefined && mask !== 0 && (mask & (mask - 1)) === 0) line = Mpu4.COIN_LINE_BIT.indexOf(31 - Math.clz32(mask));
@@ -1401,6 +1433,7 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private static readonly TOK_MPU4_NOTE = 0x39;
+  private static readonly TOK_MPU4_2_NOTE = 0x3e;
   private static readonly AUX2_COIN_ROW = 5;
 
   get unnamedCoinLines(): readonly number[] {
@@ -1447,7 +1480,8 @@ export class Mpu4 implements Bus, Machine {
     const ddr = this.ic5.ddrB();
     return [
       { label: '£1', bit: 3 }, { label: '50p', bit: 2 }, { label: '20p', bit: 1 }, { label: '10p', bit: 0 },
-      ...(Mpu4.lockoutFor(4, ddr) !== null ? [{ label: '20p token', bit: 4 }] : []),
+      ...(this.mechsDeclared.length ? this.mechsDeclared.map((bit) => ({ label: '20p token', bit }))
+        : Mpu4.lockoutFor(4, ddr) !== null ? [{ label: '20p token', bit: 4 }] : []),
       ...(Mpu4.lockoutFor(5, ddr) !== null ? [{ label: '5p', bit: 5 }] : []),
     ];
   }
@@ -1458,11 +1492,50 @@ export class Mpu4 implements Bus, Machine {
 
   private tickCoin(cycles: number): void {
     if (this.coinCycles <= 0) return;
+    if (this.mechStepLeft > 0) { this.tickMech(cycles); return; }
     this.coinCycles -= cycles;
     if (this.coinCycles <= 0) {
       this.inputs.aux2 &= ~this.coinMask & 0xff;
       this.coinCycles = 0;
     }
+  }
+
+  private mechRowValue(row: number): number {
+    return row < 4 ? this.inputs.switches[row]! : row === 4 ? this.inputs.aux1 : this.inputs.aux2;
+  }
+
+  private setMechRow(row: number, v: number): void {
+    if (row < 4) this.inputs.switches[row] = v & 0xff;
+    else if (row === 4) this.inputs.aux1 = v & 0xff;
+    else this.inputs.aux2 = v & 0xff;
+  }
+
+  private mechStep(): void {
+    const v = this.mechRaw & 0xfff;
+    this.mechRaw >>>= 12;
+    this.mechStepLeft = Mpu4.MECH_HELD + this.mechTail();
+    if (!(v & 0x100)) { this.mechLine = -1; return; }
+    const row = (v & 0x78) >> 3;
+    if (row > 5) { this.mechLine = -1; return; }
+    const mask = 1 << (v & 7);
+    const was = this.mechRowValue(row);
+    this.mechOwned = (was & mask) === 0;
+    this.setMechRow(row, was | mask);
+    this.mechLine = row * 8 + (v & 7);
+  }
+
+  private tickMech(cycles: number): void {
+    this.mechStepLeft -= cycles;
+    if (this.mechLine >= 0 && this.mechStepLeft <= this.mechTail()) {
+      const row = this.mechLine >> 3;
+      if (this.mechOwned) this.setMechRow(row, this.mechRowValue(row) & ~(1 << (this.mechLine & 7)));
+      this.mechLine = -1;
+      this.mechOwned = false;
+    }
+    if (this.mechStepLeft > 0) { this.coinCycles = this.mechStepLeft; return; }
+    if (this.mechRaw !== 0) { this.mechStep(); this.coinCycles = this.mechStepLeft; return; }
+    this.mechStepLeft = 0;
+    this.coinCycles = Math.max(1, this.mechSettle());
   }
 
   private triacSlides: SlideEffect[] =

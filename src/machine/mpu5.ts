@@ -1149,6 +1149,8 @@ export class Mpu5 implements Bus16, Machine {
 
   private mirrorWires: number[] = [];
 
+  private reelWires: number[] = [];
+
   private mirrorReels(): void {
     const configured = [
       ...this.barbus.reel5.configuredSlots(),
@@ -1156,7 +1158,8 @@ export class Mpu5 implements Bus16, Machine {
     ];
     if (configured.length && configured.length >= this.mirrorWires.length) this.mirrorWires = configured;
     for (let i = 0; i < this.reels.length; i++) {
-      const at = this.mirrorWires[i];
+      const at = this.reelWires.length ? this.reelWires[i] : this.mirrorWires[i];
+      if (at === -1) continue;
       const board = at !== undefined && at >= 5 ? this.barbus.reel5b : this.barbus.reel5;
       const wire = at !== undefined ? at % 5 : i + 1;
       const r = this.reels[i];
@@ -1300,6 +1303,7 @@ export class Mpu5 implements Bus16, Machine {
     geometry.slice(0, 10).forEach((g, i) => {
       this.reels[i] = new Reel({ stepsPerRevolution: g.halfSteps, symbols: g.stops });
     });
+    this.reelWires = geometry.slice(0, 10).map((g) => (g.number >= 0 && g.number < 10 ? g.number : -1));
     for (const g of geometry) {
       if (g.number < 0 || g.number >= 10) continue;
       (g.number < 5 ? this.barbus.reel5 : this.barbus.reel5b).setRevolution(g.number % 5, g.halfSteps);
