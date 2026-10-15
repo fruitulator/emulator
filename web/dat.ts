@@ -10,6 +10,7 @@ export interface Rect {
   top: number;
   width: number;
   height: number;
+  z?: number;
   angle?: number;
 }
 
@@ -291,6 +292,7 @@ export interface CabLamp<A = ImageBitmap> {
   top: number;
   width: number;
   height: number;
+  z?: number;
   angle?: number;
   states: { n: number; canvas: A; down?: A }[];
   button?: number;
@@ -307,8 +309,6 @@ export interface CabLamp<A = ImageBitmap> {
   cap?: boolean;
   blend?: boolean;
   multi?: boolean;
-  underReel?: boolean;
-  underVfd?: boolean;
   led?: boolean;
   rgb?: { bits: number[]; faces: (A | null)[] };
   offUnder?: boolean;
@@ -401,11 +401,7 @@ export interface CabBitmap<A = ImageBitmap> extends Rect {
   image: A | null;
   overlay: A | null;
   stretch: number;
-  pass: BitmapPass;
-  ledsBelow?: number[];
 }
-
-export type BitmapPass = 'back' | 'reels' | 'lamps' | 'digits' | 'top';
 
 export interface PrismLamp<A = ImageBitmap> extends Rect {
   lamp1: number;

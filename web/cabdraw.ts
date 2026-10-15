@@ -4,6 +4,7 @@ import { LAMP_FULL, type FrameView } from '../src/machine/framestate';
 import { glassText } from '../src/machine/layoutdisplay';
 import { MATRIX_COLS, MATRIX_MAP, MATRIX_PLANE, MATRIX_ROWS } from '../src/hw/epochmatrix';
 import { drawBackdrop } from './cabjson';
+import { drawOrder, type PanelKind } from './draworder';
 import {
   flipLight, flipReelFace,
   mfmeBoardReelPosition,
@@ -19,7 +20,9 @@ import {
   SEG_METRICS,
   treelWinLinePitch,
   type BandStrip,
-  type BitmapPass,
+  type CabBitmap,
+  type FeatureReel,
+  type FrameReel,
   type CabLamp,
   type Cabinet,
   type PrismLamp,
@@ -284,14 +287,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.drawImage(cab.background, off?.x ?? 0, off?.y ?? 0);
     }
 
-    drawBitmaps(m, cab, 'back');
-
-    for (const lp of cab.lamps) if (lp.underReel) drawLamp(lp);
-
-    cab.reels.forEach((reel, idx) => withAngle(ctx, reel, reel.angle, () => {
+    function drawReel(reel: ReelBand): void { withAngle(ctx, reel, reel.angle, () => {
       const i = reelIndex(m, reel);
       const r = m.reels[i];
-      void idx;
       if (!r) return;
       if (reel.disc) {
         drawDiscReel(reel, r.position + drawnBounce(r), r.stepsPerRevolution || 96, m);
@@ -339,11 +337,11 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         platformReversed, mfmeIndex, (n) => m.layoutLampLevel(n),
         detentSym, detentIndex,
       );
-    }));
+    }); }
 
-    for (const strip of cab.bandReels ?? []) {
+    function drawBand(strip: BandStrip): void {
       const r = m.reels[reelIndex(m, strip)];
-      if (!r) continue;
+      if (!r) return;
       const perRev = r.stepsPerRevolution || strip.halfSteps;
       const raw = perRev === strip.halfSteps
         ? r.position : (r.position * strip.halfSteps) / perRev;
@@ -356,7 +354,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
           (n) => Math.max(0, Math.min(LAMP_FULL, m.layoutLampLevel(n))) / LAMP_FULL));
     }
 
-    for (const f of cab.flipReels ?? []) {
+    function drawFlip(f: FlipStrip): void {
       const r = m.reels[reelIndex(m, f)];
       const perRev = r?.stepsPerRevolution || f.halfSteps;
       const raw = !r ? 0 : perRev === f.halfSteps ? r.position : (r.position * f.halfSteps) / perRev;
@@ -366,7 +364,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         paintFlip(ctx, f, f.canvas, f.canvas.width, f.canvas.height, flipReelFace(f, pos), f.overlay, light));
     }
 
-    cab.frameReels.forEach((fr) => {
+    function drawFrameReel(fr: FrameReel): void {
       const i = reelIndex(m, fr);
       const r = m.reels[i];
       if (!r) return;
@@ -385,12 +383,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       drawFrameStrip(fr, base + frac);
       drawWinLines(fr, treelWinLinePitch(fr.rheight));
       ctx.restore();
-    });
+    }
 
-    if (cab.featureReel && m.reels[reelIndex(m, cab.featureReel)]) {
-      const fr = cab.featureReel;
+    function drawFeatureReel(fr: FeatureReel): void {
       const ri = reelIndex(m, fr);
       const rN = m.reels[ri];
+      if (!rN) return;
       const continuous = featureReelContinuous(
         m.layout.system, fr, rN.stepsPerRevolution, rN.position,
       );
@@ -408,19 +406,10 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.restore();
     }
 
-    applyReelLight(m, cab);
-    drawBitmaps(m, cab, 'reels');
-
-    for (const lp of cab.lamps) if (lp.underVfd && !lp.underReel) drawLamp(lp);
-    const vfd = cab.vfd;
-    if (vfd && cab.vfdIsDots) {
-      withAngle(ctx, vfd, vfd.angle, () => drawDotMatrix(m, vfd, vfdSegColours ?? null, vfdDots));
+    function drawVfdItem(vfd: Rect): void {
+      if (cab.vfdIsDots) withAngle(ctx, vfd, vfd.angle, () => drawDotMatrix(m, vfd, vfdSegColours ?? null, vfdDots));
+      else withAngle(ctx, vfd, vfd.angle, () => drawVfd(m, vfd, cab.vfdGlyphWidth));
       virtualDisplay(null);
-    } else if (vfd) {
-      withAngle(ctx, vfd, vfd.angle, () => drawVfd(m, vfd, cab.vfdGlyphWidth));
-      virtualDisplay(null);
-    } else {
-      virtualDisplay(m);
     }
 
     function drawLamp(lp: CabLamp): void {
@@ -494,56 +483,60 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         }
       }
     }
-    for (const lp of cab.lamps) if (!lp.underReel && !lp.underVfd) drawLamp(lp);
-    drawBitmaps(m, cab, 'lamps');
-    if (cab.segDisplays?.length) drawSegDisplays(m, cab.segDisplays);
-    drawBitmaps(m, cab, 'digits');
-    if (cab.rgbLeds?.length) {
-      const drawn = new Set((cab.bitmaps ?? []).flatMap((b) => b.ledsBelow ?? []));
-      drawRgbLeds(m, cab.rgbLeds, (i) => !drawn.has(i));
+    function drawPanel(which: PanelKind): void {
+      const dm = cab.dotMatrix, pm = cab.proconnMatrix, eda = cab.epochDotAlpha;
+      const mm = cab.maygayMatrix, em = cab.epochMatrix, pp = cab.plasmaPanel;
+      switch (which) {
+        case 'dotMatrix': if (dm) withAngle(ctx, dm, dm.angle, () => drawDotPanel(m, dm)); break;
+        case 'proconnMatrix': if (pm) withAngle(ctx, pm, pm.angle, () => drawProconnMatrix(m, pm)); break;
+        case 'epochDotAlpha': if (eda) withAngle(ctx, eda, eda.angle, () => drawEpochDotAlpha(m, eda)); break;
+        case 'maygayMatrix': if (mm) withAngle(ctx, mm, mm.angle, () => drawMaygayMatrix(m, mm)); break;
+        case 'epochMatrix': if (em) withAngle(ctx, em, em.angle, () => drawEpochMatrix(m, em)); break;
+        case 'plasmaPanel': if (pp) withAngle(ctx, pp, pp.angle, () => drawPlasmaPanel(m, pp)); break;
+      }
     }
-    if (cab.prismLamps?.length) drawPrismLamps(m, cab.prismLamps);
-    const dm = cab.dotMatrix, pm = cab.proconnMatrix, eda = cab.epochDotAlpha;
-    const mm = cab.maygayMatrix, em = cab.epochMatrix, vs = cab.videoScreen;
-    if (dm) withAngle(ctx, dm, dm.angle, () => drawDotPanel(m, dm));
-    if (pm) withAngle(ctx, pm, pm.angle, () => drawProconnMatrix(m, pm));
-    if (eda) withAngle(ctx, eda, eda.angle, () => drawEpochDotAlpha(m, eda));
-    if (mm) withAngle(ctx, mm, mm.angle, () => drawMaygayMatrix(m, mm));
-    if (em) withAngle(ctx, em, em.angle, () => drawEpochMatrix(m, em));
-    const pp = cab.plasmaPanel;
-    if (pp) withAngle(ctx, pp, pp.angle, () => drawPlasmaPanel(m, pp));
-    for (const bl of cab.bfmLeds ?? []) withAngle(ctx, bl, bl.angle, () => drawBfmLed(m, bl));
-    if (vs) withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs));
-    drawBitmaps(m, cab, 'top');
+
+    for (const it of drawOrder(cab)) {
+      switch (it.kind) {
+        case 'lamp': drawLamp(it.lamp); break;
+        case 'reel': drawReel(it.reel); break;
+        case 'band': drawBand(it.strip); break;
+        case 'flip': drawFlip(it.flip); break;
+        case 'frame': drawFrameReel(it.frame); break;
+        case 'feature': drawFeatureReel(it.feature); break;
+        case 'reelLight': applyReelLight(m, cab); break;
+        case 'vfd': drawVfdItem(it.vfd); break;
+        case 'bitmap': drawBitmap(it.bitmap); break;
+        case 'seg': { const sg = it.seg; withAngle(ctx, sg, sg.angle, () => drawSegDisplay(m, sg)); break; }
+        case 'rgbLed': { const led = it.led; withAngle(ctx, led, led.angle, () => drawRgbLed(m, led)); break; }
+        case 'prism': { const pr = it.prism; withAngle(ctx, pr, pr.angle, () => drawPrismLamp(m, pr)); break; }
+        case 'panel': drawPanel(it.which); break;
+        case 'bfmLed': { const bl = it.panel; withAngle(ctx, bl, bl.angle, () => drawBfmLed(m, bl)); break; }
+        case 'video': { const vs = it.screen; withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs)); break; }
+      }
+    }
+    if (!cab.vfd) virtualDisplay(m);
     drawUnserved(m);
     ctx.restore();
   }
 
-  function drawBitmaps(m: FrameView, cab: Cabinet, pass: BitmapPass): void {
-    if (!cab.bitmaps?.length) return;
-    for (const b of cab.bitmaps) {
-      if (b.pass !== pass) continue;
-      if (b.ledsBelow?.length && cab.rgbLeds?.length) {
-        const below = b.ledsBelow;
-        drawRgbLeds(m, cab.rgbLeds, (i) => below.includes(i));
+  function drawBitmap(b: CabBitmap): void {
+    withAngle(ctx, b, b.angle, () => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(b.left, b.top, b.width, b.height);
+      ctx.clip();
+      if (b.image) {
+        ctx.imageSmoothingEnabled = b.stretch !== 0;
+        ctx.imageSmoothingQuality = b.stretch >= 4 ? 'high' : 'low';
+        ctx.drawImage(b.image, b.left, b.top, b.width, b.height);
       }
-      withAngle(ctx, b, b.angle, () => {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(b.left, b.top, b.width, b.height);
-        ctx.clip();
-        if (b.image) {
-          ctx.imageSmoothingEnabled = b.stretch !== 0;
-          ctx.imageSmoothingQuality = b.stretch >= 4 ? 'high' : 'low';
-          ctx.drawImage(b.image, b.left, b.top, b.width, b.height);
-        }
-        if (b.overlay) {
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(b.overlay, b.left, b.top);
-        }
-        ctx.restore();
-      });
-    }
+      if (b.overlay) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(b.overlay, b.left, b.top);
+      }
+      ctx.restore();
+    });
   }
 
   function drawUnserved(m: FrameView): void {
@@ -876,12 +869,6 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     ctx.restore();
   }
 
-  function drawRgbLeds(m: FrameView, leds: RgbLed[], only: (i: number) => boolean = () => true): void {
-    for (const [i, led] of leds.entries()) {
-      if (only(i)) withAngle(ctx, led, led.angle, () => drawRgbLed(m, led));
-    }
-  }
-
   function drawRgbLed(m: FrameView, led: RgbLed): void {
     {
       const colour = argbToCss(rgbLedFrameColour(m, led));
@@ -987,10 +974,6 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     return f;
   }
 
-  function drawPrismLamps(m: FrameView, lamps: PrismLamp[]): void {
-    for (const p of lamps) withAngle(ctx, p, p.angle, () => drawPrismLamp(m, p));
-  }
-
   function drawPrismLamp(m: FrameView, p: PrismLamp): void {
     {
       const f = prismFramesFor(p);
@@ -1041,10 +1024,6 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         if (s.mask && mask) shade(() => half(mask, s.near));
       }
     }
-  }
-
-  function drawSegDisplays(m: FrameView, segs: SegDisplay[]): void {
-    for (const s of segs) withAngle(ctx, s, s.angle, () => drawSegDisplay(m, s));
   }
 
   function drawSegDisplay(m: FrameView, s: SegDisplay): void {

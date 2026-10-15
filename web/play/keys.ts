@@ -13,6 +13,7 @@ export interface HintMachine {
   content: Rect;
   view: PlatformView;
   opts: Parameters<typeof keyHints>[3];
+  vfd?: Rect | null;
 }
 
 export interface KeySurface {
@@ -138,7 +139,7 @@ export class PlayKeys {
     const at = this.surface.hints();
     if (!at) return;
     const m = at.machine;
-    this.layer.show(keyHints(m.lamps, m.content, m.view, m.opts), at.place);
+    this.layer.show(keyHints(m.lamps, m.content, m.view, m.opts, m.vfd), at.place);
   }
 
   hideHints(): void {

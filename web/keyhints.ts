@@ -29,12 +29,20 @@ function drawsArt(lp: CabLamp<unknown>): boolean {
   return lp.states.length > 0 || !!lp.offState;
 }
 
-function placement(lamps: readonly CabLamp<unknown>[], content: Rect): CabLamp<unknown> | null {
+function underDisplay(lp: CabLamp<unknown>, vfd: Rect | null | undefined): boolean {
+  if (!vfd || lp.z === undefined || vfd.z === undefined || lp.z >= vfd.z) return false;
+  return lp.left < vfd.left + vfd.width && vfd.left < lp.left + lp.width
+    && lp.top < vfd.top + vfd.height && vfd.top < lp.top + lp.height;
+}
+
+function placement(
+  lamps: readonly CabLamp<unknown>[], content: Rect, vfd: Rect | null | undefined,
+): CabLamp<unknown> | null {
   let best: CabLamp<unknown> | null = null;
   for (const lp of lamps) {
     if (!onCabinet(lp, content)) continue;
     if (!best) { best = lp; continue; }
-    const hid = !!lp.underVfd, bestHid = !!best.underVfd;
+    const hid = underDisplay(lp, vfd), bestHid = underDisplay(best, vfd);
     if (hid !== bestHid) { if (!hid) best = lp; continue; }
     const a = drawsArt(lp), b = drawsArt(best);
     if (a !== b) { if (a) best = lp; continue; }
@@ -49,6 +57,7 @@ export function keyHints(
   content: Rect,
   view: PlatformView,
   o: Parameters<typeof machineControls>[2] = {},
+  vfd: Rect | null = null,
 ): KeyHint[] {
   const { rows, winner } = machineControls(lamps, view, o);
   const all = new Map<string, CabLamp<unknown>[]>();
@@ -60,7 +69,7 @@ export function keyHints(
   for (const c of rows) {
     const keys = c.keys.filter((k) => winner.get(k) === c.id);
     if (!keys.length) continue;
-    const best = placement(all.get(c.id) ?? c.lamps, content);
+    const best = placement(all.get(c.id) ?? c.lamps, content, vfd);
     out.push({
       id: c.id,
       keys,

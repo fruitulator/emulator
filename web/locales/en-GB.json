@@ -285,6 +285,7 @@
   "arcade.live.the_machine_is_free": "The machine is free.",
   "arcade.live.the_player_has_paused": "The player has paused.",
   "arcade.live.this_coin_slot_is_not": "This coin slot hasn't been set up yet. The host needs to specify which coins it accepts.",
+  "arcade.live.this_machine_does_not_count": "This machine does not count tokens, so it is not taking any more.",
   "arcade.live.this_machine_has_been_updated": "This machine has been updated and needs to restart",
   "arcade.live.this_machine_has_stopped_recording": "This machine has stopped recording money - the host needs to check its coins.",
   "arcade.live.walk_away": "Walk away",

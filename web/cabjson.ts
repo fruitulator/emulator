@@ -5,6 +5,7 @@ import {
 import { argbToCss } from './vfd';
 import { angledExtent, withAngle } from '../src/layout/compangle';
 import { SIDE_MARGIN } from './fmllayout';
+import { drawOrder } from './draworder';
 
 export interface CabGeometry {
   width: number;
@@ -648,32 +649,74 @@ export function drawCabinetStill(
     fx.drawImage(drawable(cab.background),
       cab.backgroundOffset?.x ?? 0, cab.backgroundOffset?.y ?? 0);
   }
-  for (const lp of cab.lamps) if (lp.underReel) withAngle(fx, lp, lp.angle, () => stillLamp(fx, lp));
-  for (const reel of cab.reels) withAngle(fx, reel, reel.angle, () => stillReel(fx, reel));
-  for (const strip of cab.bandReels ?? []) withAngle(fx, strip, strip.angle, () => stillBand(fx, strip));
-  for (const f of cab.flipReels ?? []) withAngle(fx, f, f.angle, () => stillFlip(fx, f));
-  for (const fr of cab.frameReels) stillFrames(fx, fr);
-  if (cab.featureReel) stillFrames(fx, cab.featureReel);
-  for (const lp of cab.lamps) if (!lp.underReel) withAngle(fx, lp, lp.angle, () => stillLamp(fx, lp));
-  stillDisplays(fx, cab);
+  for (const it of drawOrder(cab as Cabinet<AnyImage>)) {
+    switch (it.kind) {
+      case 'lamp': { const lp = it.lamp; withAngle(fx, lp, lp.angle, () => stillLamp(fx, lp)); break; }
+      case 'reel': { const r = it.reel; withAngle(fx, r, r.angle, () => stillReel(fx, r)); break; }
+      case 'band': { const b = it.strip; withAngle(fx, b, b.angle, () => stillBand(fx, b)); break; }
+      case 'flip': { const f = it.flip; withAngle(fx, f, f.angle, () => stillFlip(fx, f)); break; }
+      case 'frame': stillFrames(fx, it.frame); break;
+      case 'feature': stillFrames(fx, it.feature); break;
+      case 'bitmap': stillBitmap(fx, it.bitmap); break;
+      case 'vfd':
+        stillFace(fx, it.vfd, cab.vfdColours?.bg, '#050505'); break;
+      case 'seg': stillFace(fx, it.seg, it.seg.bg); break;
+      case 'panel': stillFace(fx, it.panel, (it.panel as { bg?: number | null }).bg); break;
+      case 'bfmLed': stillFace(fx, it.panel, it.panel.bg); break;
+      case 'video': stillFace(fx, it.screen, null); break;
+      case 'rgbLed': case 'prism': case 'reelLight': break;
+    }
+  }
 }
 
-function stillDisplays(fx: Ctx, cab: Cabinet<ImageData> | Cabinet<ImageBitmap>): void {
-  const face = (r: Rect, bg: number | null | undefined, fallback = '#000'): void => {
-    if (!(r.width > 0) || !(r.height > 0)) return;
-    withAngle(fx, r, r.angle, () => {
-      fx.fillStyle = bg != null ? argbToCss(bg) : fallback;
-      fx.fillRect(r.left, r.top, r.width, r.height);
-    });
-  };
-  for (const d of cab.segDisplays ?? []) face(d, d.bg);
-  if (cab.dotMatrix) face(cab.dotMatrix, cab.dotMatrix.bg);
-  if (cab.proconnMatrix) face(cab.proconnMatrix, cab.proconnMatrix.bg);
-  if (cab.epochDotAlpha) face(cab.epochDotAlpha, cab.epochDotAlpha.bg);
-  if (cab.maygayMatrix) face(cab.maygayMatrix, cab.maygayMatrix.bg);
-  if (cab.plasmaPanel) face(cab.plasmaPanel, cab.plasmaPanel.bg);
-  for (const d of cab.bfmLeds ?? []) face(d, d.bg);
-  if (cab.epochMatrix) face(cab.epochMatrix, cab.epochMatrix.bg);
-  if (cab.vfd) face(cab.vfd, cab.vfdColours?.bg, '#050505');
-  if (cab.videoScreen) face(cab.videoScreen, null);
+function stillBitmap(fx: Ctx, b: CabBitmap<AnyImage>): void {
+  if (!(b.width > 0) || !(b.height > 0) || (!b.image && !b.overlay)) return;
+  withAngle(fx, b, b.angle, () => {
+    fx.save();
+    fx.beginPath();
+    fx.rect(b.left, b.top, b.width, b.height);
+    fx.clip();
+    if (b.image) {
+      fx.imageSmoothingEnabled = b.stretch !== 0;
+      fx.drawImage(drawable(b.image), b.left, b.top, b.width, b.height);
+    }
+    if (b.overlay) {
+      fx.imageSmoothingEnabled = false;
+      fx.drawImage(drawable(b.overlay), b.left, b.top);
+    }
+    fx.restore();
+  });
+}
+
+export function artImage(
+  cab: Cabinet<ImageBitmap>,
+): { image: CanvasImageSource & { width: number; height: number }; x: number; y: number } | null {
+  if (cab.background) {
+    return { image: cab.background, x: cab.backgroundOffset?.x ?? 0, y: cab.backgroundOffset?.y ?? 0 };
+  }
+  const hit = artCache.get(cab);
+  if (hit !== undefined) return hit;
+  let out: ReturnType<typeof artImage> = null;
+  const statics = cab.lamps.filter((l) => !l.states.length && l.offState && !l.offState.nums.length);
+  if (statics.length && cab.width > 0 && cab.height > 0) {
+    const cv = new OffscreenCanvas(cab.width, cab.height);
+    const fx = cv.getContext('2d')!;
+    for (const it of drawOrder(cab)) {
+      if (it.kind !== 'lamp' || !statics.includes(it.lamp)) continue;
+      const lp = it.lamp;
+      withAngle(fx, lp, lp.angle, () => stillLamp(fx, lp));
+    }
+    out = { image: cv, x: 0, y: 0 };
+  }
+  artCache.set(cab, out);
+  return out;
+}
+const artCache = new WeakMap<object, ReturnType<typeof artImage>>();
+
+function stillFace(fx: Ctx, r: Rect, bg: number | null | undefined, fallback = '#000'): void {
+  if (!(r.width > 0) || !(r.height > 0)) return;
+  withAngle(fx, r, r.angle, () => {
+    fx.fillStyle = bg != null ? argbToCss(bg) : fallback;
+    fx.fillRect(r.left, r.top, r.width, r.height);
+  });
 }

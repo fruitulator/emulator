@@ -1,7 +1,7 @@
 import { discLampSlotCount, type DiscLamps } from './discreel';
 import {
   bmpToImageData, cssArgb, newImageData,
-  type BandStrip, type FlipStrip, type BitmapPass, type Cabinet, type CabBitmap, type CabLamp, type DotMatrix, type PrismLamp,
+  type BandStrip, type FlipStrip, type Cabinet, type CabBitmap, type CabLamp, type DotMatrix, type PrismLamp,
   type ReelBand, type ReelBorder, type Rect,
   type RgbLed,
   SEG_METRICS,
@@ -11,6 +11,7 @@ import { applyOpaqueBand, reelLightFloor } from './reellight';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
 import { drawnAngle } from '../src/layout/compangle';
+import { zOf as zAt } from './draworder';
 import { bandArtCells } from '../src/layout/bandcells';
 import { acceptorIds, isAcceptor } from '../src/machine/coinid';
 import { shortcutKnown } from './shortcuts';
@@ -169,9 +170,21 @@ export function sidewaysCrop(
   return { left, top: 0, width: right - left, height };
 }
 
-function turn(c: ParsedComponent): { angle?: number } {
+const listIndex = new WeakMap<ParsedComponent, number>();
+function indexComps(comps: readonly ParsedComponent[]): void {
+  comps.forEach((c, i) => listIndex.set(c, i));
+}
+function zOf(c: ParsedComponent, slot: 0 | 1 | 2 = 0): number {
+  return zAt(listIndex.get(c)!, slot);
+}
+
+function turn(c: ParsedComponent): { angle?: number; z?: number } {
   const angle = drawnAngle(c.type, c.angle);
-  return angle === undefined ? {} : { angle };
+  const i = listIndex.get(c);
+  return {
+    ...(angle === undefined ? {} : { angle }),
+    ...(i === undefined ? {} : { z: zAt(i, 0) }),
+  };
 }
 
 function fmlReelBorder(c: ParsedComponent): { border?: ReelBorder } {
@@ -622,55 +635,22 @@ function firstImage(c: ParsedComponent, chroma: boolean | LampKey = false): Imag
 
 const i32b = (d: Uint8Array, o: number): number => u32(d, o) | 0;
 
-function passRankOfType(type: number): number {
-  switch (type) {
-    case Type.Reel: case Type.Disc: case Type.Anim: case 0x2d: return 1;
-    case Type.Lamp: case Type.Button: case Type.Led: case 0x09: case 0x0a: case 0x14: return 2;
-    case Type.SevenSeg: return 3;
-    case 0x07: case 0x0c: case 0x0d: case 0x10: case 0x11: case 0x13: case 0x16: case 0x19:
-    case 0x0f: case 0x1a: case 0x1f: case 0x22: case 0x29: case 0x2e: return 4;
-    default: return -1;
-  }
-}
-const BITMAP_PASSES: BitmapPass[] = ['back', 'reels', 'lamps', 'digits', 'top'];
-
 export function buildBitmaps(
   comps: ParsedComponent[], backdrop: ParsedComponent | null,
 ): CabBitmap<ImageData>[] {
-  const ledIndex = new Map<ParsedComponent, number>();
-  comps.filter((c) => c.type === Type.RgbLed && c.width > 0 && c.height > 0)
-    .forEach((c, k) => ledIndex.set(c, k));
-  const overlaps = (a: ParsedComponent, b: ParsedComponent): boolean =>
-    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
-  const claimed = new Set<number>();
-  const rankOf = new Map<ParsedComponent, number>();
+  indexComps(comps);
   const out: CabBitmap<ImageData>[] = [];
-  comps.forEach((c, i) => {
-    if (c.type !== TypeBitmap || c === backdrop || c.width <= 0 || c.height <= 0) return;
+  for (const c of comps) {
+    if (c.type !== TypeBitmap || c === backdrop || c.width <= 0 || c.height <= 0) continue;
     const transparent = (val(c, 'Transparent') ?? 0) !== 0;
     const img = image(c, 'Image', false, transparent);
     const overlay = image(c, 'Overlay', false, true);
-    if (!img && !overlay) return;
-    let rank = 0;
-    const leds: number[] = [];
-    for (let j = 0; j < i; j++) {
-      const o = comps[j];
-      if (o.width <= 0 || o.height <= 0 || !overlaps(c, o)) continue;
-      const k = ledIndex.get(o);
-      if (k !== undefined) { if (!claimed.has(k)) leds.push(k); continue; }
-      if (o.type === TypeBitmap) { rank = Math.max(rank, rankOf.get(o) ?? 0); continue; }
-      rank = Math.max(rank, passRankOfType(o.type));
-    }
-    if (leds.length && rank > 0) { rank = BITMAP_PASSES.length - 1; leds.length = 0; }
-    for (const k of leds) claimed.add(k);
-    rankOf.set(c, rank);
+    if (!img && !overlay) continue;
     out.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       image: img, overlay, stretch: val(c, 'StretchMode') ?? 2,
-      pass: BITMAP_PASSES[rank],
-      ...(leds.length ? { ledsBelow: leds } : {}),
     });
-  });
+  }
   return out;
 }
 
@@ -869,6 +849,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   const comps = parseLayout(payload);
   if (!comps.length) return null;
   dropShapeLampPictures(comps);
+  indexComps(comps);
   const literalOffsetSign = (mfmeMajor(payload) ?? Infinity) < 6;
 
   let background: ImageData | null = null;
@@ -926,6 +907,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const colour = c.values.get('FontColour') ?? 0xff000000;
     legends.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      z: zOf(c, 2),
       states: [],
       legend: {
         off: off || undefined,
@@ -945,12 +927,9 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   }
 
   const photographed = !!background;
-  if (!background) {
-    const composed = composeShapes(
-      comps, backgroundRect.width, backgroundRect.height, backgroundRect.left, backgroundRect.top,
-    );
-    if (composed) background = composed;
-  }
+  const measured = background ?? composeShapes(
+    comps, backgroundRect.width, backgroundRect.height, backgroundRect.left, backgroundRect.top,
+  );
 
   const reels: ReelBand<ImageData>[] = [];
   const reelIndex = reelIndexMap(comps);
@@ -1079,32 +1058,11 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       }
     }
   }
-  const reelWindows = comps.map((c, i) => ({ c, i }))
-    .filter(({ c }) => c.type === Type.Reel || c.type === Type.Disc || c.type === Type.Anim);
-  const streamIndex = new Map(comps.map((c, i) => [c, i] as const));
-  const behindAReel = (c: ParsedComponent): boolean => {
-    const ci = streamIndex.get(c) ?? -1;
-    return reelWindows.some(({ c: r, i }) => ci < i
-      && c.x < r.x + r.width && r.x < c.x + c.width && c.y < r.y + r.height && r.y < c.y + c.height);
-  };
   const alphaish = comps.filter((c) =>
     c.type === Type.AlphaNew || c.type === Type.Alpha || c.type === Type.BFMAlpha
     || c.type === Type.AlphaStrip);
   const disp = alphaish.find((c) => c.type === Type.AlphaNew) ?? alphaish[0];
   const dots = comps.find((c) => c.type === Type.DotAlpha);
-  const vfdComp = disp ?? dots;
-  const vfdIndex = vfdComp ? streamIndex.get(vfdComp) ?? -1 : -1;
-  const behindAVfd = (c: ParsedComponent): boolean => {
-    if (!vfdComp) return false;
-    const ci = streamIndex.get(c) ?? -1;
-    const r = vfdComp;
-    return ci >= 0 && ci < vfdIndex
-      && c.x < r.x + r.width && r.x < c.x + c.width && c.y < r.y + r.height && r.y < c.y + c.height;
-  };
-  const zFlags = (c: ParsedComponent) => ({
-    ...(behindAReel(c) ? { underReel: true } : {}),
-    ...(behindAVfd(c) ? { underVfd: true } : {}),
-  });
   for (const c of comps) {
     if (c.type !== Type.Lamp) continue;
     if (!sublampSlots(c).length && !isAcceptor(c.values) && !isUnwiredBox(c)) continue;
@@ -1189,7 +1147,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         : colourStates,
       ...(btn !== undefined ? { button: btn } : {}),
       ...(acceptor ? { acceptor } : {}),
-      ...zFlags(c),
+      z: zOf(c, 1),
       offState: off ? { nums, canvas: off, ...(offDown ? { down: offDown } : {}) }
         : brightOff
           ? { nums, canvas: brightOff, ...(brightOffDown ? { down: brightOffDown } : {}) }
@@ -1225,11 +1183,21 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       states: [],
       offState: { nums: [], canvas: art },
-      ...zFlags(c),
     });
   }
 
-  const zOrder = backdropShapes(comps);
+  if (!photographed) {
+    for (const c of backdropShapes(comps)) {
+      const face = newImageData(c.width, c.height);
+      fillShape(face, 0, 0, c.width, c.height, boxFill(c)!, val(c, 'ShapeIndex') ?? 0,
+        hasLegend(c) ? 0xff000000 : c.type === Type.Lamp ? shapeOutline(c) : undefined, 0,
+        shapeParams(c));
+      lamps.push({
+        left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+        states: [], offState: { nums: [], canvas: face },
+      });
+    }
+  }
   for (const c of comps) {
     if (c.type !== Type.Lamp || hasPicture(c)) continue;
     if (!hasLegend(c) && !isMaskShape(c)) continue;
@@ -1239,9 +1207,6 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const cookie = (slot: number): ImageData | null =>
       fitToRect(image(c, `SublampMask${slot}`) ?? image(c, 'SublampMask1'),
         c.width, c.height, false);
-    const zi = zOrder.indexOf(c);
-    const over = zi < 0 ? [] : zOrder.slice(zi + 1).filter((o) =>
-      o.x < c.x + c.width && c.x < o.x + o.width && o.y < c.y + c.height && c.y < o.y + o.height);
     const litOutline = (val(c, 'NoOutline') ?? 1) === 0
       ? undefined : val(c, 'OutlineColour') ?? 0xff000000;
     const fills = new Map<string, ImageData>();
@@ -1256,21 +1221,6 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         lit = newImageData(c.width, c.height);
         fillShape(lit, 0, 0, c.width, c.height, litColour, shape, litOutline, 0, shapeParams(c));
         if (mask) multiplyBy(lit, mask);
-        for (const o of over) {
-          const ca = turn(c).angle ?? 0;
-          let ox = o.x - c.x, oy = o.y - c.y;
-          if (ca) {
-            const r = (ca * Math.PI) / 180, cs = Math.cos(r), sn = Math.sin(r);
-            const dx = o.x + o.width / 2 - (c.x + c.width / 2);
-            const dy = o.y + o.height / 2 - (c.y + c.height / 2);
-            ox = c.width / 2 + dx * cs + dy * sn - o.width / 2;
-            oy = c.height / 2 - dx * sn + dy * cs - o.height / 2;
-          }
-          fillShape(lit, ox, oy, o.width, o.height, boxFill(o)!,
-            val(o, 'ShapeIndex') ?? 0,
-            hasLegend(o) ? val(o, 'OutlineColour') ?? 0xff000000 : undefined, o.angle - ca,
-            shapeParams(o));
-        }
         fills.set(key, lit);
       }
       states.push({ n, canvas: lit });
@@ -1279,7 +1229,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       states,
-      ...zFlags(c),
+      z: zOf(c, 1),
     });
   }
 
@@ -1318,7 +1268,6 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const resting = frames[0];
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
-      ...(behindAVfd(c) ? { underVfd: true } : {}),
       states,
       offState: resting ? { nums: states.map((s) => s.n), canvas: resting } : undefined,
     });
@@ -1376,7 +1325,6 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     }
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
-      ...(behindAVfd(c) ? { underVfd: true } : {}),
       states: [
         ...(on ? [{ n: onLamp, canvas: on }] : []),
         ...(lamp2 ? [{ n: c.subs![1], canvas: lamp2 }] : []),
@@ -1416,14 +1364,12 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     if (seg < 0 && lampNo < 0) {
       lamps.push({
         left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
-        ...(behindAVfd(c) ? { underVfd: true } : {}),
-        states: [], offState: { nums: [], canvas: ledFace(c.width, c.height, offColour, style) },
+          states: [], offState: { nums: [], canvas: ledFace(c.width, c.height, offColour, style) },
       });
       continue;
     }
     lamps.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
-      ...(behindAVfd(c) ? { underVfd: true } : {}),
       states: [{ n, canvas: ledFace(c.width, c.height, onColour, style) }],
       offState: { nums: [n], canvas: ledFace(c.width, c.height, offColour, style) },
       offUnder: true,
@@ -1718,7 +1664,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   if (bfmv && screenOverlay) {
     bitmaps.push({
       left: bfmv.x, top: bfmv.y, width: bfmv.width, height: bfmv.height, ...turn(bfmv),
-      image: null, overlay: screenOverlay, stretch: 0, pass: 'top',
+      z: zOf(bfmv, 2), image: null, overlay: screenOverlay, stretch: 0,
     });
   }
 
@@ -1736,8 +1682,8 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...bfmLeds,
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
-  ], background, backgroundOffset.x);
-  const trimmed = flatTrim(content, column, background, backgroundOffset.x, backgroundOffset.y);
+  ], measured, backgroundOffset.x);
+  const trimmed = flatTrim(content, column, measured, backgroundOffset.x, backgroundOffset.y);
 
   return {
     width, height, background, backgroundRect, backgroundOffset, backgroundColour,

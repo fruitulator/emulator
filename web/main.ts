@@ -3154,6 +3154,7 @@ const playKeys = new PlayKeys({
   hints: () => (cabinet ? {
     machine: {
       lamps: cabinet.lamps, content: cabinet.content, view: viewFor(session.game?.system ?? ''),
+      vfd: cabinet.vfd,
       opts: {
         coins: emu.info?.coins, nameCoins: emu.info?.coins,
         coinPort: emu.info?.coinPort, capNames: emu.info?.capNames,

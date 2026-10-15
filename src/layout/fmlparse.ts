@@ -654,8 +654,8 @@ function isWireAngle(d: Uint8Array, o: number): boolean {
 
 function parseGeometry(d: Uint8Array, c: ParsedComponent, rewriteDelta: number, validDelta: number): number {
   if (d.length < 30) return d.length;
-  c.x = u32(d, 6);
-  c.y = u32(d, 11);
+  c.x = i32(d, 6);
+  c.y = i32(d, 11);
   c.height = u32(d, 16);
   c.width = u32(d, 21);
   c.number = i32(d, 26);
