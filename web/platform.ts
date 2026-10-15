@@ -312,6 +312,7 @@ const scorpion1: PlatformView = {
     tokenNote: -1,
     tokenLine: -1,
     directRows: [8],
+    plainControlDrops: true,
   },
 };
 
@@ -870,10 +871,13 @@ export function coinInputLine(
 
 export function plainCoinDrop(
   view: Pick<PlatformView, 'coinRegister'>,
-  lp: { acceptor?: unknown; coinInput?: number },
+  lp: { acceptor?: unknown; coinInput?: number; button?: number },
 ): number {
   if (lp.acceptor || lp.coinInput === undefined || lp.coinInput < 0) return -1;
-  return view.coinRegister?.plainControlDrops ? lp.coinInput : -1;
+  const reg = view.coinRegister;
+  if (!reg?.plainControlDrops) return -1;
+  if (lp.button !== undefined && reg.directRows?.includes((lp.button >> 3) & 15)) return -1;
+  return lp.coinInput;
 }
 
 export function stampCoinInputs(

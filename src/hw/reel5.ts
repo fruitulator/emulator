@@ -40,6 +40,7 @@ interface Program {
   head?: number;
   bufStart?: number;
   spent?: number;
+  lead?: number;
 }
 
 interface ReelState {
@@ -388,7 +389,7 @@ export class Reel5 {
       const p = r.queue[0];
       let removed = 0;
       if (p?.loop) {
-        let R = liveRepeat(p, p.steps === 0 ? r.acc : 0);
+        let R = liveRepeat(p, p.steps === 0 ? Math.max(0, r.acc - (p.lead ?? 0)) : 0);
         const span = 2 * words[0];
         if (span > 0) while (span < R) { R -= span; removed += span; }
         for (let i = 1; i < words.length; i++) {
@@ -402,7 +403,9 @@ export class Reel5 {
     } else if (isProgram) {
       const from = cmd === 0x9f ? 4 : 3;
       let at = from;
-      while (at < body.length && !isReverseHead(body[at]) && !FORWARD_HEADS.has(body[at])) at++;
+      while (at < body.length && !isReverseHead(body[at]) && !FORWARD_HEADS.has(body[at])) {
+        at += body[at] & 0x80 ? 1 : body[at] & 0x40 ? 2 : 1;
+      }
       const prog = decodeProgram(body.slice(at));
       if (prog) {
         const raw = body.slice(from);
@@ -410,6 +413,7 @@ export class Reel5 {
         prog.head = at - from;
         prog.bufStart = PROGRAM_BUFFER - raw.length;
         prog.spent = 0;
+        prog.lead = spanMs(body, from, at) * CYCLES_PER_MS;
         r.lastDir = prog.dir;
         r.queue.push(prog);
       }
@@ -487,7 +491,7 @@ export class Reel5 {
     let next = 1 << 30;
     for (const r of this.reels) {
       if (!busy(r)) continue;
-      const need = r.queue[0].cycles - r.acc;
+      const need = (r.queue[0].lead ?? 0) + r.queue[0].cycles - r.acc;
       if (need < next) next = need;
     }
     return next < 1 ? 1 : next;
@@ -500,6 +504,12 @@ export class Reel5 {
       r.acc += cycles;
       while (r.queue.length > 0) {
         const p = r.queue[0];
+        if (p.lead) {
+          if (r.acc < p.lead) break;
+          r.acc -= p.lead;
+          p.spent = (p.spent ?? 0) + p.lead;
+          p.lead = 0;
+        }
         if (p.steps === 0) {
           if (r.acc < p.cycles) break;
           r.acc -= p.cycles;

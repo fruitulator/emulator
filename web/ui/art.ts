@@ -8,10 +8,8 @@ export function artwork(
   const frame = document.createElement('div');
   frame.className = 'art';
   frame.addEventListener('click', onTap);
+  frame.append(placeholder(!!hash));
   if (!hash) {
-    const ph = document.createElement('div');
-    ph.className = 'art-placeholder';
-    frame.append(ph);
     if (awaiting) { frame.dataset.hash = awaiting; frame.dataset.alt = alt; }
     return frame;
   }
@@ -19,6 +17,12 @@ export function artwork(
   frame.dataset.alt = alt;
   artObserver?.observe(frame);
   return frame;
+}
+
+function placeholder(loading: boolean): HTMLElement {
+  const ph = document.createElement('div');
+  ph.className = loading ? 'art-placeholder art-loading' : 'art-placeholder';
+  return ph;
 }
 
 const frameUrls = new WeakMap<HTMLElement, string>();
@@ -35,6 +39,8 @@ export function fillArtwork(frame: HTMLElement): Promise<void> {
 async function fillArtworkNow(frame: HTMLElement): Promise<void> {
   const hash = frame.dataset.hash;
   if (!hash || frameUrls.has(frame)) return;
+  let ph = frame.querySelector<HTMLElement>(':scope > .art-placeholder');
+  if (!ph) { ph = placeholder(true); frame.prepend(ph); }
   const bytes = await getThumb(hash);
   if (!bytes || !frame.isConnected || frameUrls.has(frame)) return;
   const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: imageMime(bytes) }));
@@ -50,14 +56,15 @@ async function fillArtworkNow(frame: HTMLElement): Promise<void> {
   img.alt = frame.dataset.alt ?? '';
   back.draggable = false;
   img.draggable = false;
-  frame.prepend(back, img);
+  ph.after(back, img);
   await img.decode().catch(() => undefined);
   back.classList.add('in');
   img.classList.add('in');
+  setTimeout(() => { if (frameUrls.get(frame) === url) ph.remove(); }, 320);
 }
 
 export function showTile(frame: HTMLElement): Promise<void> {
-  frame.querySelector('.art-placeholder')?.remove();
+  frame.querySelector(':scope > .art-placeholder')?.classList.add('art-loading');
   clearArtwork(frame);
   artObserver?.observe(frame);
   return fillArtwork(frame);
@@ -68,6 +75,7 @@ export function clearArtwork(frame: HTMLElement): void {
   if (!url) return;
   frameUrls.delete(frame);
   for (const img of frame.querySelectorAll('.art-blur, .art-img')) img.remove();
+  if (!frame.querySelector(':scope > .art-placeholder')) frame.prepend(placeholder(true));
   URL.revokeObjectURL(url);
 }
 

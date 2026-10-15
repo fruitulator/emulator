@@ -141,6 +141,9 @@
   -webkit-mask: url(/icons/sack-trolley.svg) center / contain no-repeat;
   mask: url(/icons/sack-trolley.svg) center / contain no-repeat;
 }
+.art-loading::before {
+  content: none;
+}
 .card-panel {
   position: relative;
   z-index: 3;

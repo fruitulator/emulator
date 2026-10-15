@@ -1738,19 +1738,19 @@ function buildMenu(info: MachineInfo): void {
         inV.textContent = moneyInText(t);
         outV.textContent = moneyOutText(t);
         const tokParts: string[] = [];
-        if (l.tokenOutPence) tokParts.push(money(l.tokenOutPence));
-        if (l.unpricedTokenOut) {
-          tokParts.push(str('main.n_tokens', { n: l.unpricedTokenOut }));
+        if (t.tokenOutPence) tokParts.push(money(t.tokenOutPence));
+        if (t.unpricedTokenOut) {
+          tokParts.push(str('main.n_tokens', { n: t.unpricedTokenOut }));
         }
         tokOutV.textContent = tokParts.join(' + ');
         tokOutRowEl.hidden = tokParts.length === 0;
         const tokInParts: string[] = [];
-        if (l.tokenInPence) tokInParts.push(money(l.tokenInPence));
-        const tokInCount = l.unpricedTokenIn ?? 0;
+        if (t.tokenInPence) tokInParts.push(money(t.tokenInPence));
+        const tokInCount = t.unpricedTokenIn ?? 0;
         if (tokInCount) tokInParts.push(str('main.n_tokens', { n: tokInCount }));
         tokInV.textContent = tokInParts.join(' + ');
         tokInRowEl.hidden = tokInParts.length === 0;
-        const pct = ledgerPayoutPercent(l);
+        const pct = ledgerPayoutPercent(t);
         pctV.textContent = pct === null ? '-' : `${pct.toFixed(1)}%`;
       });
     };

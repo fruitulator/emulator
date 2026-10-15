@@ -1117,6 +1117,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const slots = sublampSlots(c);
     const nums = slots.map((s) => s.n);
     const pool = maskOnly && !lightMaskOnly
+      && [...c.images.keys()].some((k) => LIGHT_MASK_KEYS.includes(k))
       ? tintPool(firstImage(c, false),
         val(c, `Sublamp${slots[0]?.slot ?? 1}Colour`) ?? LIT_DEFAULT) : null;
     const onRaw = pool ? null
