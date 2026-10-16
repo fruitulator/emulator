@@ -418,11 +418,10 @@ const sys80: PlatformView = {
     tokenNote: -1, tokenLine: -1,
     plainControlDrops: true,
   },
-  nonSwitchInputs: [0, 1, 2, 3, 5, 16, 19, 20, 21, 22, 23, 24, 25],
+  nonSwitchInputs: [0, 1, 2, 3, 5, 16, 23, 24, 25],
   inputNames: {
     0: 'REEL 1 OPTO', 1: 'REEL 2 OPTO', 2: 'REEL 3 OPTO', 3: 'REEL 4 OPTO',
-    16: 'TEST', 19: '20P IN (RIGHT)', 20: '10P IN', 21: '20P IN', 22: '50P IN',
-    23: '10P LEVEL', 24: 'REFILL KEY', 25: 'BACK DOOR',
+    16: 'TEST', 23: '10P LEVEL', 24: 'REFILL KEY', 25: 'BACK DOOR',
   },
 };
 
@@ -680,7 +679,63 @@ const pluto5: PlatformView = {
   coinRegister: { maskRow: 3, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
 };
 
+const m1video: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 9, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: 5, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const pclmaxi: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 7, bits: 6 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: -1, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const mach2000e: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 5, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: 2, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const igts2000: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 16, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: -1, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
+const electro: PlatformView = {
+  coins: [],
+  namedInputs: [],
+  playButtons: [],
+  matrix: { strobes: 4, bits: 8 },
+  coinBit: -1,
+  tokenBit: -1,
+  acceptorLineIsNote: true,
+  coinRegister: { maskRow: -1, lineOfBit: {}, tokenNote: -1, tokenLine: -1, directIds: true },
+};
+
 const VIEWS: Record<string, PlatformView> = {
+  ELECTRO: electro,
   ELECTROCOIN: electrocoin,
   PHOENIX: phoenix,
   PHOENIX2: phoenix,
@@ -710,6 +765,10 @@ const VIEWS: Record<string, PlatformView> = {
   SYS83: sys83,
   ACEVIDEO: acevideo,
   PLUTO5: pluto5,
+  M1VIDEO: m1video,
+  PCLMAXI: pclmaxi,
+  MACH2000E: mach2000e,
+  IGTS2000: igts2000,
   MPU4VIDEO: mpu4video,
   MPU4PLASMA: mpu4plasma,
 };

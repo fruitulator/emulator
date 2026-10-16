@@ -58,9 +58,14 @@ export const BOARD_ALARM_FORMS: Readonly<Record<string, readonly string[]>> = {
   PROCONN: ['mars-strim-code', 'bacta-type-token', FLASH_FORM],
   MMM: [],
   MPU2: [],
+  ELECTRO: [],
   SYS83: [],
   ACEVIDEO: [],
   PLUTO5: [],
+  M1VIDEO: [],
+  PCLMAXI: [],
+  MACH2000E: [],
+  IGTS2000: [],
   MPU4PLASMA: [],
   MPU4VIDEO: [],
 };
@@ -81,11 +86,20 @@ const NO_FORMS_WHY: Readonly<Record<string, string>> = {
   SRU: 'this board has no fault display and shows no fault codes',
   MMM: 'no documentation of how this board shows a fault has been found, so a fault cannot be'
     + ' told apart from attract',
+  ELECTRO: 'this machine is electromechanical: it has no display and no fault codes, so a fault'
+    + ' cannot be told apart from attract',
   MPU2: 'this board has no display; no documentation of how it shows a fault has been found, so a'
     + ' fault cannot be told apart from attract',
   SYS83: 'this board flashes a fault as a number on its credit digits at the start of its test'
     + ' sequence, which cannot be told apart from a credit count',
   ACEVIDEO: 'this board shows its messages as a picture on its video screen, which is not read'
+    + ' as text here',
+  IGTS2000: 'this board shows its messages on a dot display, which is not read as text here',
+  MACH2000E: 'this board shows its messages as a picture on its dot display, which is not read'
+    + ' as text here',
+  PCLMAXI: 'this board has only two credit digits; no documentation of how it shows a fault has been'
+    + ' found, so a fault cannot be told apart from a credit count',
+  M1VIDEO: 'this board shows its messages as a picture on its video screen, which is not read'
     + ' as text here',
   PLUTO5: 'this board shows a fault as plain text alternating with a number, in words each game'
     + ' chooses, so a fault cannot be told apart from attract text',

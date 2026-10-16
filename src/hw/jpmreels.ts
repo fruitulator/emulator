@@ -207,6 +207,18 @@ export class JpmReels {
     return (r.stepsRemaining < 0 ? -1 : 1) * Math.min(1, Math.max(0, 1 - r.timer / period));
   }
 
+  stepBonus(n: number): void {
+    const r = this.reels[n];
+    if (!r) return;
+    r.reelpos = (r.reelpos + 1) % r.steps;
+    r.pos = (r.steps - r.reelpos) % r.steps;
+    const index = Math.floor(r.reelpos / 12);
+    const lit = (index & 1) === 1 && !(r.reelpos > 0x55 && r.reelpos < 0x5b);
+    this.optos = lit ? this.optos | (1 << n) : this.optos & ~(1 << n);
+    r.stepped += 1;
+    this.changed = true;
+  }
+
   tick(cycles: number): void {
     for (let n = 0; n < this.reels.length; n++) {
       const r = this.reels[n];

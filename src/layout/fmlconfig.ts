@@ -21,6 +21,8 @@ import MPU2 from './gameconfig/MPU2.json';
 import SYS83 from './gameconfig/SYS83.json';
 import ACEVIDEO from './gameconfig/ACEVIDEO.json';
 import PLUTO5 from './gameconfig/PLUTO5.json';
+import M1VIDEO from './gameconfig/M1VIDEO.json';
+import MACH2000E from './gameconfig/MACH2000E.json';
 import MPU4VIDEO from './gameconfig/MPU4VIDEO.json';
 import PROCONN from './gameconfig/PROCONN.json';
 import ELECTROCOIN from './gameconfig/ELECTROCOIN.json';
@@ -47,6 +49,8 @@ function stringTableSpan(
   }
   return pos - offset;
 }
+
+const WIN1252 = new TextDecoder('windows-1252');
 
 function u32(b: Uint8Array, at: number): number {
   return ((b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0);
@@ -200,6 +204,8 @@ const MAPS: Record<string, SystemMap> = {
   SYS83: SYS83 as unknown as SystemMap,
   ACEVIDEO: ACEVIDEO as unknown as SystemMap,
   PLUTO5: PLUTO5 as unknown as SystemMap,
+  M1VIDEO: M1VIDEO as unknown as SystemMap,
+  MACH2000E: MACH2000E as unknown as SystemMap,
   MPU4VIDEO: MPU4VIDEO as unknown as SystemMap,
   MPU4PLASMA: MPU4 as SystemMap,
 };
@@ -239,6 +245,14 @@ export function readSetting(
 
   if (spec.kind === 'checkbox') return null;
   const offset = spec.byteOffset ?? 0;
+  if (/^width-height-2xu32-le$/i.test(spec.encoding ?? '')) {
+    if (value.length < offset + 8) return null;
+    const w = u32(value, offset), h = u32(value, offset + 4);
+    for (const [name, v] of Object.entries(spec.values)) {
+      if (Array.isArray(v) && v.length === 2 && v[0] === w && v[1] === h) return name;
+    }
+    return null;
+  }
   if (value.length < offset + 4) return null;
   const chosen = u32(value, offset);
 
@@ -261,9 +275,10 @@ export function readSwitchNumber(
   const tag = Number(tagText);
   if (!Number.isFinite(tag)) return null;
 
+  const at = spec.byteOffset ?? 0;
   const value = fileLevelTags(payload).get(tag);
-  if (!value || value.length < 4) return null;
-  const n = u32(value, 0);
+  if (!value || value.length < at + 4) return null;
+  const n = u32(value, at);
   return n === 255 ? null : n;
 }
 
@@ -280,13 +295,17 @@ export function readOperatorSwitch(
   const tag = Number(tagText);
   if (!Number.isFinite(tag)) return null;
 
-  return readOperatorTag(payload, tag);
+  return readOperatorTag(payload, tag, spec.byteOffset ?? 0);
 }
 
-export function readOperatorTag(payload: Uint8Array, tag: number): { line: number; invert: boolean } | null {
+export function readOperatorTag(
+  payload: Uint8Array,
+  tag: number,
+  byteOffset = 0,
+): { line: number; invert: boolean } | null {
   const value = fileLevelTags(payload).get(tag);
-  if (!value || value.length < 4) return null;
-  const raw = u32(value, 0) | 0;
+  if (!value || value.length < byteOffset + 4) return null;
+  const raw = u32(value, byteOffset) | 0;
   if (raw < 0) return { line: -raw, invert: true };
   return raw === 255 ? null : { line: raw, invert: false };
 }
@@ -306,7 +325,10 @@ export function readNumber(
   const tag = Number(spec.tag ?? spec.tags?.[0]);
   if (!Number.isFinite(tag)) return null;
   const value = fileLevelTags(payload).get(tag);
-  return value && value.length >= 4 ? u32(value, 0) : null;
+  if (!value) return null;
+  const at = spec.byteOffset ?? 0;
+  if (/^(u8|byte|bytes)$/i.test(spec.encoding ?? '')) return at < value.length ? value[at] : null;
+  return value.length >= at + 4 ? u32(value, at) : null;
 }
 
 export const SWITCH_CONTROLS = ['Cash', 'Refill', 'Service', 'Test', 'Test 2', 'Top Up'] as const;
@@ -359,7 +381,12 @@ export function readTextSetting(
   if (!value) return null;
 
   const fixed = /^ascii-(\d+)$/.exec(spec.encoding ?? '');
-  const width = fixed ? Number(fixed[1]) : value.length;
+  if (!fixed) {
+    const end = value.indexOf(0);
+    const text = WIN1252.decode(value.subarray(0, end < 0 ? value.length : end));
+    return text.trim().length ? text : null;
+  }
+  const width = Number(fixed[1]);
   if (value.length < width) return null;
 
   let text = '';

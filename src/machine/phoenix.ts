@@ -2,9 +2,10 @@ import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, AudioSource, D
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
 import {
   coinReachesRow, locatePhoenixCoins, phoenixCoins, phxCoinOf, phxCoinTable, phxIdHits, phxReadLines, phxSlotId,
-  TOKEN_IN_METER, TOKEN_OUT_METER, type PhxCoin, type PhxCoinCode,
+  TOKEN_OUT_METER, type PhxCoin, type PhxCoinCode,
 } from './phoenixcoins';
 import { Z180 } from '../cpu/z180';
 import type { Z80Io } from '../cpu/z80';
@@ -90,7 +91,7 @@ class Ppi {
 }
 
 export class Phoenix implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -185,19 +186,18 @@ export class Phoenix implements Machine {
   }
 
   private readonly ledger = newCashLedger();
-  private meterInPence: number[] = [];
+  private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  private readonly slotCoins = new SlotCoins();
   private meterOutPence: number[] = [];
   get cashLedger(): CashLedger | undefined {
-    return this.meterInPence.length ? this.ledger : undefined;
+    return this.ledger;
   }
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
   }
 
-  private get tokenInMeter(): number { return this.coinCode() ? TOKEN_IN_METER : -1; }
   private get tokenOutMeter(): number { return this.coinCode() ? TOKEN_OUT_METER : -1; }
 
   setSwitches(sw: LayoutSwitch[]): void {
@@ -266,6 +266,7 @@ export class Phoenix implements Machine {
     this.coinMask = 0;
     this.coinNext = 0;
     this.coinHeld = false;
+    this.coinBook.reset();
     this.judgeId.fill(-1);
     this.judgeWait.fill(0);
     this.judging = false;
@@ -458,14 +459,9 @@ export class Phoenix implements Machine {
         this.gridTotals.in += this.meterInRaw[i] ?? 0;
         this.gridTotals.out += this.meterOutRaw[i] ?? 0;
         if (!this.booksMoney) continue;
-        if (!this.wiredIn) {
-          const p = this.meterInPence[i] ?? 0;
-          if (i === this.tokenInMeter) this.ledger.tokenInPence += p;
-          else this.ledger.inPence += p;
-        }
         const q = this.meterOutPence[i] ?? 0;
         if (i === this.tokenOutMeter) this.ledger.tokenOutPence += q;
-        else this.ledger.outPence += q;
+        else if (q) this.coinBook.cashOut(q);
       }
     }
   }
@@ -526,6 +522,7 @@ export class Phoenix implements Machine {
       }
     }
     if (this.judging) this.judgeCoinStep(c);
+    this.coinBook.elapse(c);
     return c;
   }
 
@@ -588,7 +585,18 @@ export class Phoenix implements Machine {
     }
     this.coinNext = raw >>> 12;
     this.pressCoin(raw & 0xfff);
-    if (this.wiring && coins) this.pend(id);
+    if (this.coinCode()) this.pend(id);
+    else this.bookDropped(id);
+  }
+
+  private bookDropped(id: number): void {
+    const w = this.wiring;
+    if (w) {
+      if (!this.booksMoney || w.conflicts.includes(id)) return;
+      const c = w.coins.get(id);
+      if (c !== undefined) { this.coinBook.coin(bookedOfSlotCoin(c)); return; }
+    }
+    this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
   }
 
   private pressCoin(code: number): void {
@@ -687,7 +695,7 @@ export class Phoenix implements Machine {
 
   private judgeCoinStep(cycles: number): void {
     const code = this.coinCode();
-    if (!code || !this.wiring) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; return; }
+    if (!code) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; return; }
     const pc = this.cpu.pc;
     if (pc === code.take || code.noCredit.includes(pc)) {
       const coins = this.coinsInForce();
@@ -746,15 +754,12 @@ export class Phoenix implements Machine {
     return !this.wiring || this.wiringState.state !== 'disagrees';
   }
 
-  private get wiredIn(): boolean {
-    return !!this.wiring && this.coinCode() !== null;
-  }
-
   private bookTaken(id: number, c: PhxCoin, code: PhxCoinCode): void {
-    const w = this.wiring!;
-    if (!this.booksMoney || (id >= 0 && w.conflicts.includes(id))) return;
     const pence = c.value * code.unit;
     const taken: SlotCoin = c.token ? { token: pence } : pence;
+    const w = this.wiring;
+    if (!w) { this.bookCoin(taken); return; }
+    if (!this.booksMoney || (id >= 0 && w.conflicts.includes(id))) return;
     const coins = this.coinsInForce() ?? [];
     const line = this.coinLineTable?.lines.find((l) => phxCoinOf(coins, l.line)?.line === c.line)?.line;
     const wired = (id >= 0 ? w.coins.get(id) : undefined) ?? (line === undefined ? undefined : w.coins.get(line));
@@ -767,9 +772,7 @@ export class Phoenix implements Machine {
   }
 
   private bookCoin(c: SlotCoin): void {
-    if (typeof c === 'number') this.ledger.inPence += c;
-    else if (c.token === null) this.ledger.unpricedTokenIn++;
-    else this.ledger.tokenInPence += c.token;
+    this.coinBook.coin(bookedOfSlotCoin(c));
   }
 
   private coinSlots: number[] = [];
@@ -786,6 +789,7 @@ export class Phoenix implements Machine {
     }
     this.coinSlots = [...slots].sort((a, b) => a - b);
     this.drawnCoins = [...drawn].sort((a, b) => a - b);
+    this.slotCoins.setLines(slotStatedCoins(list, (c) => (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV') ? null : phxSlotId(c))));
   }
 
   get unnamedCoinLines(): readonly number[] {

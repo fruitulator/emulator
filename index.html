@@ -206,6 +206,22 @@
       .reel-bands-none {
         border: 1px dashed var(--hairline);
       }
+      .reel-bands-card {
+        background: var(--surface);
+        border-radius: 8px;
+      }
+      .reel-bands-label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-family: var(--ui);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        overflow: hidden;
+      }
       .reel-bands-mark {
         width: 0;
         height: 0;
@@ -238,6 +254,7 @@
       }
     </style>
     <style>@import "/web/ui/dialog.css";</style>
+    <style>@import "/web/ui/fontpick.css";</style>
     <style>
       #vfd-strip {
         position: fixed;

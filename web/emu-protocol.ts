@@ -26,6 +26,7 @@ export function ledgerPayoutPercent(l: CashLedger): number | null {
 
 export interface MachineInfo {
   system: string;
+  quietIsWaiting?: boolean;
   clockHz: number;
   audioRate: number | null;
   optionKeys: { label: string; positions: string[]; position: number }[];
@@ -39,6 +40,7 @@ export interface MachineInfo {
   coins?: CoinChute[];
   coinPort?: { compare: number; lines: { bit: number; mask: number }[] };
   unnamedCoins?: number[];
+  uncountedCoins?: number[];
   namesCoins?: boolean;
   coinTable?: CoinLineTable;
   coinTableRefusal?: string;

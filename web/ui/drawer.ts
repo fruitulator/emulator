@@ -58,8 +58,8 @@ export class MenuDrawer {
     }, 300);
   }
 
-  openSubmenu(title: string, panel: HTMLElement): void {
-    const back = backRow(title, () => this.closeSubmenu());
+  openSubmenu(title: string, panel: HTMLElement, onBack: () => void = () => this.closeSubmenu()): void {
+    const back = backRow(title, onBack);
     const { menu, content, sub } = this.el;
     panel.dispatchEvent(new Event(PANEL_SHOW));
     sub.replaceChildren(back, panel);

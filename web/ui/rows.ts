@@ -15,7 +15,8 @@ export function menuRow(
   const l = document.createElement('span');
   l.className = 'row-label';
   l.textContent = label;
-  b.append(rowIcon(icon), l);
+  if (icon) b.append(rowIcon(icon));
+  b.append(l);
   if (chevron) b.append(rowIcon(MENU_ICONS.chevRight, 'row-chev', 16));
   b.addEventListener('click', onClick);
   return b;

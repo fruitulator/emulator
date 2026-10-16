@@ -62,3 +62,8 @@
   font-weight: 400;
   font-display: swap;
 }
+@font-face {
+  font-family: 'MFME';
+  src: url('/fonts/caption-symbols.woff2') format('woff2');
+  font-display: block;
+}

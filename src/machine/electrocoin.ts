@@ -2,6 +2,7 @@ import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, Coi
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins } from './coinbook';
 import { ecoinProgramCoins, locateEcoinCoins, type EcoinCoinCode } from './ecoincoins';
 import { Z80, type Z80Io } from '../cpu/z80';
 import { Sn76489 } from '../hw/sn76489';
@@ -217,7 +218,7 @@ class EcoinSound {
 }
 
 export class Electrocoin implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'wiring', 'meterInRaw', 'meterOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -329,16 +330,15 @@ export class Electrocoin implements Machine {
   }
 
   private readonly ledger = newCashLedger();
-  private meterInPence: number[] = [];
+  private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  private readonly slotCoins = new SlotCoins();
   private meterOutPence: number[] = [];
   get cashLedger(): CashLedger | undefined {
-    return this.meterInPence.length || this.slidePence.some((p) => p !== null)
-      ? this.ledger : undefined;
+    return this.ledger;
   }
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
   }
 
@@ -400,6 +400,7 @@ export class Electrocoin implements Machine {
     this.hoppers[0].reset();
     this.hoppers[1].reset();
     this.hopperBooked[0] = this.hopperBooked[1] = 0;
+    this.coinBook.reset();
     this.sound.reset();
     this.reelBank.reset();
     this.out.fill(0);
@@ -539,8 +540,8 @@ export class Electrocoin implements Machine {
     this.meters[i]++;
     this.gridTotals.in += this.meterInRaw[i] ?? 0;
     this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-    if (!this.wiredIn) this.ledger.inPence += this.meterInPence[i] ?? 0;
-    if (this.booksMoney) this.ledger.outPence += this.meterOutPence[i] ?? 0;
+    const outP = this.meterOutPence[i] ?? 0;
+    if (this.booksMoney && outP) this.coinBook.cashOut(outP);
   }
 
   pricesOut(): boolean {
@@ -555,7 +556,7 @@ export class Electrocoin implements Machine {
     if (this.pricesOut() || !this.booksMoney) return;
     if (p === 'token') this.ledger.unpricedTokenOut++;
     else if (p === 'unpriced') this.ledger.unpricedOut++;
-    else if (p !== null) this.ledger.outPence += p;
+    else if (p !== null) this.coinBook.cashOut(p);
   }
 
   private readonly hopperBooked = [0, 0];
@@ -569,7 +570,7 @@ export class Electrocoin implements Machine {
       this.hopperOutPence += fresh * (pence ?? 0);
       if (!this.pricesOut() && this.booksMoney) {
         if (pence === null) this.ledger.unpricedOut += fresh;
-        else this.ledger.outPence += pence * fresh;
+        else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(pence);
       }
       this.hopperBooked[h] = paid;
     }
@@ -628,6 +629,7 @@ export class Electrocoin implements Machine {
     this.cycles += c;
     this.tickAcc += c;
     if (this.judging) this.judgeCoinStep(c);
+    this.coinBook.elapse(c);
     this.hoppers[0].tick(c);
     this.hoppers[1].tick(c);
     if (this.hoppers[0].paid !== this.hopperBooked[0] || this.hoppers[1].paid !== this.hopperBooked[1]) this.bookHoppers();
@@ -764,11 +766,21 @@ export class Electrocoin implements Machine {
     this.coinMask = 1 << (line & 7);
     this.coinTimer = COIN_PRESS + COIN_GAP;
     this.matrix[this.coinRow] |= this.coinMask;
-    if (this.wiring && code) {
+    if (code) {
       this.judgeCount[line] = this.judgeCount[line]! + 1;
       this.judgeWait[line] = Electrocoin.JUDGE_WAIT;
       this.judging = true;
+    } else this.bookDropped(line);
+  }
+
+  private bookDropped(line: number): void {
+    const w = this.wiring;
+    if (w) {
+      if (!this.booksMoney || w.conflicts.includes(line)) return;
+      const c = w.coins.get(line);
+      if (c !== undefined) { this.coinBook.coin(bookedOfSlotCoin(c)); return; }
     }
+    this.coinBook.coin(this.slotCoins.coinOn(line));
   }
   private coinTimer = 0;
   private coinRow = 0;
@@ -839,7 +851,7 @@ export class Electrocoin implements Machine {
 
   private judgeCoinStep(cycles: number): void {
     const code = this.coinCode();
-    if (!code || !this.wiring) { this.judgeCount.fill(0); this.judgeWait.fill(0); this.judging = false; return; }
+    if (!code) { this.judgeCount.fill(0); this.judgeWait.fill(0); this.judging = false; return; }
     const pc = this.cpu.pc;
     const take = code.take;
     if (take.pcs.includes(pc)) {
@@ -891,17 +903,19 @@ export class Electrocoin implements Machine {
     return !this.wiring || this.wiringState.state !== 'disagrees';
   }
 
-  private get wiredIn(): boolean {
-    return !!this.wiring && (!this.booksMoney || this.coinCode() !== null);
-  }
-
   private bookTaken(line: number): void {
-    const w = this.wiring!;
-    if (!this.booksMoney || w.conflicts.includes(line)) return;
     const taken = this.programCoin(line);
+    const w = this.wiring;
+    if (!w) {
+      if (taken) this.coinBook.coin(bookedOfSlotCoin(taken));
+      else this.coinBook.coin(this.slotCoins.coinOn(line));
+      return;
+    }
+    if (!this.booksMoney || w.conflicts.includes(line)) return;
     const c = w.coins.get(line);
     if (c === undefined) {
-      if (taken) this.bookCoin(taken);
+      if (taken) this.coinBook.coin(bookedOfSlotCoin(taken));
+      else this.coinBook.coin(this.slotCoins.coinOn(line));
       return;
     }
     if (taken) {
@@ -915,9 +929,7 @@ export class Electrocoin implements Machine {
   }
 
   private bookCoin(c: SlotCoin): void {
-    if (typeof c === 'number') this.ledger.inPence += c;
-    else if (c.token === null) this.ledger.unpricedTokenIn++;
-    else this.ledger.tokenInPence += c.token;
+    this.coinBook.coin(bookedOfSlotCoin(c));
   }
 
   private coinSlots: number[] = [];
@@ -931,6 +943,11 @@ export class Electrocoin implements Machine {
       if (line >= 0 && line < 64) slots.add(line);
     }
     this.coinSlots = [...slots].sort((a, b) => a - b);
+    this.slotCoins.setLines(slotStatedCoins(list, (c) => {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) return null;
+      const line = ecoinSlotLine(c);
+      return line >= 0 && line < 64 ? line : null;
+    }));
   }
 
   get unnamedCoinLines(): readonly number[] {

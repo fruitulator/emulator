@@ -1,17 +1,18 @@
 import type {
-  BandStrip, Cabinet, CabBitmap, CabLamp, FeatureReel, FlipStrip, FrameReel, PrismLamp, Rect,
+  BandStrip, BonusReel, Cabinet, CabBitmap, CabLamp, FeatureReel, FlipStrip, FrameReel, PrismLamp, Rect,
   ReelBand, RgbLed, SegDisplay, VideoScreen,
 } from './dat';
 
 export type PanelKind =
   | 'dotMatrix' | 'proconnMatrix' | 'epochDotAlpha' | 'maygayMatrix' | 'epochMatrix'
-  | 'plasmaPanel';
+  | 'plasmaPanel' | 'astraLed' | 'bfmColourLed' | 'igtVfd';
 
 export type DrawItem<A> =
   | { kind: 'lamp'; z: number; lamp: CabLamp<A> }
   | { kind: 'reel'; z: number; reel: ReelBand<A> }
   | { kind: 'band'; z: number; strip: BandStrip<A> }
   | { kind: 'flip'; z: number; flip: FlipStrip<A> }
+  | { kind: 'bonus'; z: number; bonus: BonusReel<A> }
   | { kind: 'frame'; z: number; frame: FrameReel<A> }
   | { kind: 'feature'; z: number; feature: FeatureReel<A> }
   | { kind: 'reelLight'; z: number }
@@ -25,10 +26,10 @@ export type DrawItem<A> =
   | { kind: 'video'; z: number; screen: VideoScreen };
 
 export const PASS = {
-  reel: 2000, band: 2100, flip: 2200, frame: 2300, feature: 2400, reelLight: 2500,
+  reel: 2000, band: 2100, flip: 2200, bonus: 2250, frame: 2300, feature: 2400, reelLight: 2500,
   vfd: 2700, lamp: 3000, seg: 4000, rgbLed: 4100, prism: 4200,
   dotMatrix: 4300, proconnMatrix: 4310, epochDotAlpha: 4320, maygayMatrix: 4330,
-  epochMatrix: 4340, plasmaPanel: 4350, bfmLed: 4360, video: 4370,
+  epochMatrix: 4340, plasmaPanel: 4350, astraLed: 4355, bfmColourLed: 4357, igtVfd: 4358, bfmLed: 4360, video: 4370,
 } as const;
 
 export function zOf(index: number, slot: 0 | 1 | 2 = 0): number {
@@ -45,6 +46,7 @@ export function drawOrder<A>(cab: Cabinet<A>): DrawItem<A>[] {
   for (const reel of cab.reels) items.push({ kind: 'reel', z: at(reel, PASS.reel), reel });
   for (const strip of cab.bandReels ?? []) items.push({ kind: 'band', z: at(strip, PASS.band), strip });
   for (const flip of cab.flipReels ?? []) items.push({ kind: 'flip', z: at(flip, PASS.flip), flip });
+  for (const bonus of cab.bonusReels ?? []) items.push({ kind: 'bonus', z: at(bonus, PASS.bonus), bonus });
   for (const frame of cab.frameReels) items.push({ kind: 'frame', z: at(frame, PASS.frame), frame });
   if (cab.featureReel) items.push({ kind: 'feature', z: at(cab.featureReel, PASS.feature), feature: cab.featureReel });
   items.push({ kind: 'reelLight', z: PASS.reelLight });
@@ -58,6 +60,7 @@ export function drawOrder<A>(cab: Cabinet<A>): DrawItem<A>[] {
     ['dotMatrix', cab.dotMatrix], ['proconnMatrix', cab.proconnMatrix],
     ['epochDotAlpha', cab.epochDotAlpha], ['maygayMatrix', cab.maygayMatrix],
     ['epochMatrix', cab.epochMatrix], ['plasmaPanel', cab.plasmaPanel],
+    ['astraLed', cab.astraLed], ['bfmColourLed', cab.bfmColourLed], ['igtVfd', cab.igtVfd],
   ];
   for (const [which, panel] of panels) if (panel) items.push({ kind: 'panel', z: at(panel, PASS[which]), which, panel });
   for (const panel of cab.bfmLeds ?? []) items.push({ kind: 'bfmLed', z: at(panel, PASS.bfmLed), panel });

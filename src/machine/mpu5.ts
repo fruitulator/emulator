@@ -1663,10 +1663,10 @@ export class Mpu5 implements Bus16, Machine {
     if (this.noteLeft > 0) return 'busy';
     this.noteRow = value;
     this.noteLeft = Mpu5.NOTE_BUSY;
-    if (this.wiredIn && this.booksMoney) {
+    if ((this.wiredIn || this.mechBooksIn) && this.booksMoney) {
       const id = [...PARALLEL_NOTE_CHANNELS].find(([, c]) => c === channel)?.[0];
       const pence = id === undefined ? null : COIN_NOTES.get(id)?.pence ?? null;
-      if (pence) { this.cashLedger.inPence += pence; this.wiring!.check.coin(pence, this.wiringState.now); }
+      if (pence) { this.cashLedger.inPence += pence; if (this.wiredIn) this.wiring!.check.coin(pence, this.wiringState.now); }
     }
     return 'stacked';
   }
@@ -2061,7 +2061,7 @@ export class Mpu5 implements Bus16, Machine {
       this.coinCycles = Mpu5.COIN_DWELL;
     }
     if (this.wiredIn) this.bookWiredCoin(bit);
-    else if (this.coinsNotSterling) this.bookForeignCoin(bit);
+    else if (this.coinsNotSterling || this.mechBooksIn) this.bookMechCoin(bit);
   }
 
   private coinPattern(bit: number): number {
@@ -2137,14 +2137,18 @@ export class Mpu5 implements Bus16, Machine {
     return this.wiring !== null && !this.coinsNotSterling && this.fittedChannels() !== null;
   }
 
+  private get mechBooksIn(): boolean {
+    return !this.coinsNotSterling;
+  }
+
   private cashInCounted(n: number): void {
     if (this.wiredIn) { if (this.booksMoney) this.wiring!.check.count(n, this.wiringState.now); return; }
     if (!this.booksMoney) return;
-    if (this.coinsNotSterling) return;
+    if (this.coinsNotSterling || this.mechBooksIn) return;
     this.cashLedger.inPence += n * this.meterPencePerPulse;
   }
 
-  private bookForeignCoin(bit: number): void {
+  private bookMechCoin(bit: number): void {
     if (!this.booksMoney) return;
     const ch = this.fittedChannels()?.find((c) => c.bit === bit);
     const l = this.cashLedger;

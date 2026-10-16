@@ -717,6 +717,10 @@ export class AceSp implements Bus, Machine {
   }
   private readonly gridTotals = { in: 0, out: 0 };
 
+  get uncountedCoinLines(): readonly number[] {
+    return this.tokenInPriced ? [] : [MECH_LINES.indexOf(TOKEN_MECH_LINE)];
+  }
+
   get tokenInPriced(): boolean {
     return (this.meterInPence[ACE_METER_ROLES.indexOf('token-in')] ?? 0) > 0;
   }

@@ -10,7 +10,7 @@ import {
 import { batteriesOf, storedSpares } from './persist';
 import { readCoinAnswers } from './coinask';
 import {
-  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, getMeta, getPak, getThumb,
+  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, programHashOf, getMeta, getPak, getThumb,
   hashGameFiles, inSpareDir, playCountOf, putMeta, putPak, putThumb, type GameMeta,
 } from './store';
 import { localStateStore } from './statestore';
@@ -102,6 +102,7 @@ export async function importPunnet(
   onStage?.('hashing');
   const hash = await hashGameFiles(files);
   const contentHash = await contentHashOf(files);
+  const programHash = await programHashOf(files);
   const mismatch = record !== undefined && record.hash !== hash;
 
   const prev = await getMeta(hash);
@@ -186,6 +187,7 @@ export async function importPunnet(
       ? record.layoutProps : undefined) ?? prev?.layoutProps,
     contentHash,
     contentRule: CONTENT_RULE,
+    ...(programHash ? { programHash } : {}),
     ...listOrDrop('batteries', batteriesOf(files, spares)),
   };
   await putMeta(out);

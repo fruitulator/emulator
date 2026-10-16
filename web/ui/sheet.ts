@@ -103,10 +103,11 @@ function bindPull(sheet: HTMLElement, scrim: HTMLElement): void {
   }, true);
 }
 
-export function sheetRow(label: string, sub: string): HTMLButtonElement {
+export function sheetRow(label: string, sub: string, o: { disabled?: boolean } = {}): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'sheet-row';
+  b.disabled = !!o.disabled;
   const text = document.createElement('span');
   text.textContent = label;
   if (sub) {
@@ -127,7 +128,7 @@ export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HT
   sheet.hidden = false;
   scrim.hidden = false;
   requestAnimationFrame(() => sheet.classList.add('open'));
-  (rows.querySelector('button') as HTMLElement | null)?.focus();
+  (rows.querySelector('button:not(:disabled)') as HTMLElement | null)?.focus();
 }
 
 export function closeSheet(): void {

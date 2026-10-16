@@ -15,6 +15,7 @@ import type { ReelGeometry } from './layoutreels';
 import type { LayoutSwitch } from './layoutswitches';
 import { Msc1937 } from '../hw/msc1937';
 import { AstraDotAlpha } from '../hw/astradotalpha';
+import { AstraLedQueue } from '../hw/astraled';
 import { AstraSound } from '../hw/astrasound';
 import { Ymz280b, YMZ_SAMPLE_RATE } from '../hw/ymz280b';
 import { Mixer } from '../hw/mixer';
@@ -27,8 +28,9 @@ import { placeV20RomList } from './v20romlist';
 import { findAstraTokenPayout, astraTokenPence, type AstraTokenPayout } from '../hw/astratoken';
 import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState, wiringKey, wiringStateFor } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
 import {
-  locateAstraCoinCode, astraCoins, astraCodeOf, astraCodeLocked, astraCoinTable, astraBoardMeter,
+  locateAstraCoinCode, astraCoins, astraCodeOf, astraCodeLocked, astraCoinTable,
   type AstraCoinCode, type AstraCoins, type AstraCoin, type AstraMem,
 } from './astracoins';
 
@@ -76,7 +78,7 @@ const coinPattern = (raw: number): number =>
   ((raw & 1) << 2) | ((raw & 2) << 3) | ((raw & 4) << 1) | ((raw & 8) >> 2) | ((raw & 0x10) >> 4);
 
 export class Astra implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'wiring', 'programMem'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'slotCoins', 'wiring', 'programMem'];
 
   readonly digitKind: DigitKind = 'byte64';
   readonly cpu: M68000;
@@ -123,6 +125,8 @@ export class Astra implements Bus16, Machine {
   private readonly meterHold = new Uint8Array(5);
   private meterAcc = 0;
   readonly cashLedger = newCashLedger();
+  private readonly coinBook = new CoinBook(this.cashLedger, Math.round(1.5 * ASTRA_CLOCK));
+  private readonly slotCoins = new SlotCoins();
 
   private coinMask = 0;
   private coinRow = 2;
@@ -173,11 +177,12 @@ export class Astra implements Bus16, Machine {
     const outMult = this.secOutMult[meter] ?? 0;
     if (inMult) {
       this.secTotals.in += inMult * delta;
-      if (!this.meterInPence.some((p) => p > 0) && !this.wiring) this.cashLedger.inPence += Math.max(0, inMult) * delta * Astra.SEC_UNIT_PENCE;
     }
     if (outMult) {
       this.secTotals.out += outMult * delta;
-      if (this.booksMoney) this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Astra.SEC_UNIT_PENCE;
+      const q = (this.secLedgerMult[meter] ?? 0) * Astra.SEC_UNIT_PENCE;
+      if (this.booksMoney && q > 0) for (let k = 0; k < delta; k++) this.coinBook.cashOut(q);
+      else if (this.booksMoney) this.cashLedger.outPence += q * delta;
     }
   }
   private readonly paidBooked = [0, 0];
@@ -264,6 +269,8 @@ export class Astra implements Bus16, Machine {
 
   readonly vfd = new Msc1937();
   readonly dot = new AstraDotAlpha();
+  readonly led = new AstraLedQueue();
+  get ledFrame(): Uint8Array { return this.led.frame; }
   dotFitted = false;
   get display(): MachineDisplay { return this.dotFitted ? this.dot : this.vfd; }
   readonly snd = new AstraSound(YMZ_SAMPLE_RATE);
@@ -312,11 +319,9 @@ export class Astra implements Bus16, Machine {
     this.layoutInput(n, made);
   }
 
-  private meterInPence: number[] = [];
   private meterOutPence: number[] = [];
 
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
-    this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
     this.meterInMultRaw = [...inMult];
     this.meterOutMultRaw = [...outMult];
     this.relayLedgerMults();
@@ -380,6 +385,7 @@ export class Astra implements Bus16, Machine {
     const taken = this.programCoinOn(id);
     if (taken === 'refused') this.coinsRefused++;
     else if (this.wiring) this.bookWiredCoin(id, taken);
+    else this.coinBook.coin(taken ? (taken.token ? { token: taken.pence } : taken.pence) : slotOrNoteCoin(this.slotCoins, id));
     if (id >= 0x100 && id < 0x180) {
       this.coinRow = (id & 0x78) >> 3;
       this.coinMask = 1 << (id & 7);
@@ -478,23 +484,6 @@ export class Astra implements Bus16, Machine {
     return m >>> 0;
   }
 
-  private tokenMeters(): number[] {
-    const c = this.programCoins();
-    if ('refused' in c) return [];
-    const cashLogical = new Set<number>();
-    for (const x of c.coins.values()) if (!x.token) for (const l of x.meters) cashLogical.add(l);
-    const out = new Set<number>();
-    for (const x of c.coins.values()) {
-      if (!x.token) continue;
-      for (const l of x.meters) {
-        if (cashLogical.has(l)) continue;
-        const b = astraBoardMeter(c, this.rom, this.programMem, l);
-        if (b !== null) out.add(b);
-      }
-    }
-    return [...out];
-  }
-
   private coinSlots: number[] = [];
   private cabinetLines: number[] = [];
 
@@ -513,6 +502,13 @@ export class Astra implements Bus16, Machine {
     }
     this.cabinetLines = [...drawn].sort((a, b) => a - b);
     this.coinSlots = [...slots].sort((a, b) => a - b);
+    this.slotCoins.setLines(slotStatedCoins(list, (c) => {
+      if (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV')) return null;
+      if (c.line !== null) return c.line;
+      if (c.note !== null && c.note !== 0x47) return c.note;
+      if (c.note === 0x47 && c.button !== null && c.button >= 0) return 0x100 | (c.button & 0x7f);
+      return Astra.DEFAULT_COIN_ID;
+    }));
   }
 
   private static readonly DEFAULT_COIN_ID = 5;
@@ -547,9 +543,7 @@ export class Astra implements Bus16, Machine {
     if (!this.booksMoney || w.conflicts.includes(id)) return;
     const c = w.coins.get(id);
     if (c === undefined) {
-      if (taken === null) return;
-      if (taken.token) this.cashLedger.tokenInPence += taken.pence;
-      else this.cashLedger.inPence += taken.pence;
+      this.coinBook.coin(taken ? (taken.token ? { token: taken.pence } : taken.pence) : slotOrNoteCoin(this.slotCoins, id));
       return;
     }
     if (taken !== null) {
@@ -559,9 +553,7 @@ export class Astra implements Bus16, Machine {
       this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
       if (!agrees) return;
     }
-    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
-    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
-    this.cashLedger.tokenInPence += c.token;
+    this.coinBook.coin(bookedOfSlotCoin(c));
   }
 
   get meterTotals(): { in: number; out: number } {
@@ -590,6 +582,7 @@ export class Astra implements Bus16, Machine {
     this.xdr = 0xff;
     this.vfd.reset();
     this.dot.reset();
+    this.led.reset();
     this.xdrActive = true;
     this.xdrClock = false;
     this.xdrShift = this.xdrBits = 0;
@@ -601,6 +594,7 @@ export class Astra implements Bus16, Machine {
     this.coinMask = 0;
     this.coinRow = 2;
     this.coinTimer = 0;
+    this.coinBook.reset();
     this.matrix[2] = 0;
     for (const s of this.switches) if (s.closed && s.number >> 3 === 2) this.layoutInput(s.number, true);
     for (const d of this.doorSwitches) this.layoutInput(d.number, d.made);
@@ -641,6 +635,7 @@ export class Astra implements Bus16, Machine {
     this.snd.tick(cycles, ASTRA_CLOCK);
     this.ymz.tick(cycles, ASTRA_CLOCK);
     this.meterAcc += cycles;
+    this.coinBook.elapse(cycles);
     if (this.meterAcc >= METER_TICK_CYCLES) this.tickMeters();
     if (this.dataPakOut.length) this.tickDataPak(cycles);
     for (let h = 0; h < 2; h++) {
@@ -655,7 +650,7 @@ export class Astra implements Bus16, Machine {
           const pence = ASTRA_HOPPER_PENCE[h];
           if (token !== null) this.cashLedger.tokenOutPence += token * fresh;
           else if (pence === null) this.cashLedger.unpricedTokenOut += fresh;
-          else this.cashLedger.outPence += pence * fresh;
+          else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(pence);
         }
         this.paidBooked[h] = paid;
       }
@@ -737,12 +732,8 @@ export class Astra implements Bus16, Machine {
         this.gridTotals.in += this.meterInMultRaw[b] ?? 0;
         this.gridTotals.out += this.meterOutMultRaw[b] ?? 0;
         if (!this.booksMoney) continue;
-        const inP = this.meterInPence[b] ?? 0;
-        if (inP && !this.wiring) {
-          if (this.tokenMeters().includes(b)) this.cashLedger.tokenInPence += inP;
-          else this.cashLedger.inPence += inP;
-        }
-        this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
+        const outP = this.meterOutPence[b] ?? 0;
+        if (outP) this.coinBook.cashOut(outP);
       }
     }
   }
@@ -965,7 +956,8 @@ export class Astra implements Bus16, Machine {
         this.coinRoute[id - 0x28] = v & 3; return;
       case 0x2d: return;
       case 0x2e: return;
-      case 0x38: case 0x39: case 0x3a: case 0x3c: return;
+      case 0x38: case 0x39: case 0x3a: this.led.data(v); return;
+      case 0x3c: this.led.control(v); return;
       default: this.count(`fpga w8 ${off.toString(16)}`);
     }
   }

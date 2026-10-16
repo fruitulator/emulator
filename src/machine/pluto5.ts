@@ -20,6 +20,7 @@ import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { ROM_UNPLACED } from './pairplacer';
 import { COIN_RAW } from './coinraw';
+import { CoinBook, coinOfNote } from './coinbook';
 import { placeV20RomList } from './v20romlist';
 
 export const PLUTO5_CLOCK = 32_768 * 4 * 64 * 2;
@@ -103,6 +104,7 @@ export class Pluto5 implements Bus16, Machine {
   private static readonly DATAPAK_TURNAROUND = 50_000;
 
   readonly cashLedger = newCashLedger();
+  private readonly coinBook = new CoinBook(this.cashLedger, Math.round(1.5 * PLUTO5_CLOCK));
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
   private secLedgerMult: number[] = [];
@@ -178,13 +180,11 @@ export class Pluto5 implements Bus16, Machine {
   private secCount(meter: number, delta: number): void {
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
-    if (inMult) {
-      this.secTotals.in += inMult * delta;
-      this.cashLedger.inPence += Math.max(0, inMult) * delta * Pluto5.SEC_UNIT_PENCE;
-    }
+    if (inMult) this.secTotals.in += inMult * delta;
     if (outMult) {
       this.secTotals.out += outMult * delta;
-      this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Pluto5.SEC_UNIT_PENCE;
+      const q = (this.secLedgerMult[meter] ?? 0) * Pluto5.SEC_UNIT_PENCE;
+      if (q > 0) for (let k = 0; k < delta; k++) this.coinBook.cashOut(q);
     }
   }
 
@@ -275,6 +275,7 @@ export class Pluto5 implements Bus16, Machine {
     this.coinMask = mask;
     this.coinTimer = COIN_HOLD + COIN_TAIL;
     this.matrix[row] |= mask;
+    if (mask) this.coinBook.coin(coinOfNote(id));
   }
   private coinRowNow = COIN_ROW;
 
@@ -314,6 +315,7 @@ export class Pluto5 implements Bus16, Machine {
     }
     this.coinMask = 0;
     this.coinTimer = 0;
+    this.coinBook.reset();
     this.matrix[COIN_ROW] = 0;
     for (const s of this.switches) if (s.closed && s.number >> 3 === COIN_ROW) this.layoutInput(s.number, true);
     for (const d of this.doorSwitches) this.layoutInput(d.number, d.made);
@@ -326,6 +328,7 @@ export class Pluto5 implements Bus16, Machine {
   step(): number {
     const cycles = this.cpu.step();
     this.sim.tick(cycles);
+    this.coinBook.elapse(cycles);
     this.duartAcc += cycles * DUART_X1;
     if (this.duartAcc >= PLUTO5_CLOCK) {
       const t = Math.floor(this.duartAcc / PLUTO5_CLOCK);

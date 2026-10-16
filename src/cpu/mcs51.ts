@@ -10,7 +10,10 @@ export interface Mcs51Bus {
 
 export interface Mcs51Options {
   ramSize?: 128 | 256;
+  timer2?: boolean;
   cmos?: boolean;
+  dualDptr?: boolean;
+  v20Rx?: boolean;
 }
 
 const CYCLES = new Uint8Array([
@@ -49,6 +52,7 @@ const EA = 0x80;
 const LINE_INT0 = 0, LINE_INT1 = 1, LINE_T0 = 2, LINE_T1 = 3;
 
 const V_IE0 = 0x03, V_TF0 = 0x0b, V_IE1 = 0x13, V_TF1 = 0x1b;
+const TF2 = 0x80, EXF2 = 0x40, RCLK = 0x20, TCLK = 0x10, TR2 = 0x04, CT2 = 0x02, CPRL2 = 0x01;
 
 const FRAME_BITS = [10, 10, 11, 11];
 
@@ -62,6 +66,8 @@ export interface Mcs51State {
   txData: number; txBit8: number; txBits: number; smodDiv: number; txClk: number; rxClk: number;
   rxBits: number; rxQueue: number[]; rxBit8Queue: number[];
   cycles: number;
+  t2con?: number; tl2?: number; th2?: number; rcap2l?: number; rcap2h?: number;
+  dptrAlt?: number; dps?: number;
 }
 
 export class Mcs51 {
@@ -85,6 +91,11 @@ export class Mcs51 {
   th0 = 0;
   tl1 = 0;
   th1 = 0;
+  t2con = 0;
+  tl2 = 0;
+  th2 = 0;
+  rcap2l = 0;
+  rcap2h = 0;
   readonly iram = new Uint8Array(256);
 
   cycles = 0;
@@ -94,6 +105,7 @@ export class Mcs51 {
 
   private readonly ramMask: number;
   private readonly hasPd: boolean;
+  private readonly hasT2: boolean;
 
   private rwm = false;
   private lineState = 0;
@@ -120,6 +132,21 @@ export class Mcs51 {
   constructor(private readonly bus: Mcs51Bus, opts: Mcs51Options = {}) {
     this.ramMask = (opts.ramSize ?? 128) === 256 ? 0xff : 0x7f;
     this.hasPd = opts.cmos ?? false;
+    this.hasT2 = opts.timer2 ?? false;
+    this.hasDps = opts.dualDptr ?? false;
+    this.v20Rx = opts.v20Rx ?? false;
+  }
+
+  private readonly v20Rx: boolean;
+  private rxHeld = -1;
+  private rxHeldBit8 = 0;
+
+  private readonly hasDps: boolean;
+  private dptrAlt = 0;
+  private dps = 0;
+  private dptrN(n: number): number { return n === this.dps ? this.dptr : this.dptrAlt; }
+  private setDptrN(n: number, v: number): void {
+    if (n === this.dps) this.dptr = v & 0xffff; else this.dptrAlt = v & 0xffff;
   }
 
   get pc(): number {
@@ -142,6 +169,8 @@ export class Mcs51 {
     this.psw = 0;
     this.acc = 0;
     this.dptr = 0;
+    this.dptrAlt = 0;
+    this.dps = 0;
     this.b = 0;
     this.ip = 0;
     this.iph = 0;
@@ -154,6 +183,11 @@ export class Mcs51 {
     this.th0 = 0;
     this.tl1 = 0;
     this.tl0 = 0;
+    this.t2con = 0;
+    this.tl2 = 0;
+    this.th2 = 0;
+    this.rcap2l = 0;
+    this.rcap2h = 0;
     this.portWrite(3, 0xff);
     this.portWrite(2, 0xff);
     this.portWrite(1, 0xff);
@@ -166,6 +200,7 @@ export class Mcs51 {
     this.rxClk = 0;
     this.rxBits = 0;
     this.rxQueue = [];
+    this.rxHeld = -1;
     this.rxBit8Queue = [];
     this.updateIrqPrio();
   }
@@ -196,6 +231,11 @@ export class Mcs51 {
   }
 
   serialRx(v: number, bit8 = 1): void {
+    if (this.v20Rx) {
+      this.rxHeld = v & 0xff;
+      this.rxHeldBit8 = bit8 & 1;
+      return;
+    }
     this.rxQueue.push(v & 0xff);
     this.rxBit8Queue.push(bit8 & 1);
   }
@@ -237,6 +277,8 @@ export class Mcs51 {
       txData: this.txData, txBit8: this.txBit8, txBits: this.txBits, smodDiv: this.smodDiv, txClk: this.txClk, rxClk: this.rxClk,
       rxBits: this.rxBits, rxQueue: [...this.rxQueue], rxBit8Queue: [...this.rxBit8Queue],
       cycles: this.cycles,
+      t2con: this.t2con, tl2: this.tl2, th2: this.th2, rcap2l: this.rcap2l, rcap2h: this.rcap2h,
+      dptrAlt: this.dptrAlt, dps: this.dps,
     };
   }
 
@@ -253,6 +295,9 @@ export class Mcs51 {
     this.txClk = s.txClk; this.rxClk = s.rxClk;
     this.rxBits = s.rxBits; this.rxQueue = [...s.rxQueue]; this.rxBit8Queue = [...s.rxBit8Queue];
     this.cycles = s.cycles;
+    this.t2con = s.t2con ?? 0; this.tl2 = s.tl2 ?? 0; this.th2 = s.th2 ?? 0;
+    this.rcap2l = s.rcap2l ?? 0; this.rcap2h = s.rcap2h ?? 0;
+    this.dptrAlt = s.dptrAlt ?? 0; this.dps = s.dps ?? 0;
     this.updateIrqPrio();
   }
 
@@ -316,8 +361,11 @@ export class Mcs51 {
     switch (a) {
       case 0x80: return this.portRead(0);
       case 0x81: return this.sp;
-      case 0x82: return this.dptr & 0xff;
-      case 0x83: return this.dptr >> 8;
+      case 0x82: return this.dptrN(0) & 0xff;
+      case 0x83: return this.dptrN(0) >> 8;
+      case 0x84: return this.hasDps ? this.dptrN(1) & 0xff : 0;
+      case 0x85: return this.hasDps ? this.dptrN(1) >> 8 : 0;
+      case 0x86: return this.hasDps ? this.dps : 0;
       case 0x87: return this.pcon;
       case 0x88: return this.tcon;
       case 0x89: return this.tmod;
@@ -332,6 +380,11 @@ export class Mcs51 {
       case 0xa8: return this.ie;
       case 0xb0: return this.portRead(3);
       case 0xb8: return this.ip;
+      case 0xc8: return this.hasT2 ? this.t2con : 0;
+      case 0xca: return this.hasT2 ? this.rcap2l : 0;
+      case 0xcb: return this.hasT2 ? this.rcap2h : 0;
+      case 0xcc: return this.hasT2 ? this.tl2 : 0;
+      case 0xcd: return this.hasT2 ? this.th2 : 0;
       case 0xd0: return this.psw;
       case 0xe0: return this.acc;
       case 0xf0: return this.b;
@@ -343,8 +396,16 @@ export class Mcs51 {
     switch (a) {
       case 0x80: this.portWrite(0, v); break;
       case 0x81: this.sp = v; break;
-      case 0x82: this.dptr = (this.dptr & 0xff00) | v; break;
-      case 0x83: this.dptr = (this.dptr & 0x00ff) | (v << 8); break;
+      case 0x82: this.setDptrN(0, (this.dptrN(0) & 0xff00) | v); break;
+      case 0x83: this.setDptrN(0, (this.dptrN(0) & 0x00ff) | (v << 8)); break;
+      case 0x84: if (this.hasDps) this.setDptrN(1, (this.dptrN(1) & 0xff00) | v); break;
+      case 0x85: if (this.hasDps) this.setDptrN(1, (this.dptrN(1) & 0x00ff) | (v << 8)); break;
+      case 0x86:
+        if (this.hasDps && (v & 1) !== this.dps) {
+          const t = this.dptr; this.dptr = this.dptrAlt; this.dptrAlt = t;
+          this.dps = v & 1;
+        }
+        break;
       case 0x87: this.pcon = v; break;
       case 0x88: this.tcon = v; break;
       case 0x89: this.tmod = v; break;
@@ -359,6 +420,11 @@ export class Mcs51 {
       case 0xa8: this.ie = v; this.irqBlock = true; break;
       case 0xb0: this.portWrite(3, v); break;
       case 0xb8: this.ip = v; this.updateIrqPrio(); this.irqBlock = true; break;
+      case 0xc8: if (this.hasT2) this.t2con = v; break;
+      case 0xca: if (this.hasT2) this.rcap2l = v; break;
+      case 0xcb: if (this.hasT2) this.rcap2h = v; break;
+      case 0xcc: if (this.hasT2) this.tl2 = v; break;
+      case 0xcd: if (this.hasT2) this.th2 = v; break;
       case 0xd0: this.psw = (this.psw & 0x01) | (v & 0xfe); break;
       case 0xe0: this.accW(v); break;
       case 0xf0: this.b = v; break;
@@ -701,7 +767,8 @@ export class Mcs51 {
   private checkIrqs(): void {
     const tcon = this.tcon;
     let ints = ((tcon & IE0) ? 1 : 0) | ((tcon & TF0) ? 2 : 0) | ((tcon & IE1) ? 4 : 0) | ((tcon & TF1) ? 8 : 0)
-      | ((this.scon & (RI | TI)) ? 16 : 0);
+      | ((this.scon & (RI | TI)) ? 16 : 0)
+      | (this.hasT2 && (this.t2con & (TF2 | EXF2)) ? 32 : 0);
     ints &= (this.ie & EA) ? this.ie : 0;
     if (!ints) return;
 
@@ -713,7 +780,7 @@ export class Mcs51 {
 
     let vec = 0;
     let prio = -1;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < (this.hasT2 ? 6 : 5); i++) {
       if ((ints & (1 << i)) && this.irqPrio[i] > prio) {
         prio = this.irqPrio[i];
         vec = (i << 3) | 3;
@@ -844,9 +911,28 @@ export class Mcs51 {
     }
   }
 
-  private updateTimerT2(): void {}
+  private updateTimerT2(): void {
+    if (!this.hasT2) return;
+    const c = this.t2con;
+    if (!(c & TR2)) return;
+    const baud = (c & (RCLK | TCLK)) !== 0;
+    const delta = (c & CT2) ? 0 : (baud ? 6 : 1);
+    if (!delta) return;
+    let count = ((this.th2 << 8) | this.tl2) + delta;
+    if (count > 0xffff) {
+      if (baud) {
+        count += (this.rcap2h << 8) | this.rcap2l;
+        this.serialTick(2);
+      } else {
+        this.t2con |= TF2;
+        if (!(c & CPRL2)) count += (this.rcap2h << 8) | this.rcap2l;
+      }
+    }
+    this.th2 = (count >> 8) & 0xff;
+    this.tl2 = count & 0xff;
+  }
 
-  private serialTick(source: 0 | 1): void {
+  private serialTick(source: 0 | 1 | 2): void {
     const mode = this.scon >> 6;
     if (source === 1) this.smodDiv = (this.smodDiv + 1) & ((this.pcon & SMOD) ? 0 : 1);
 
@@ -855,7 +941,13 @@ export class Mcs51 {
         if (source === 0) { this.txClk += 16; this.rxClk += 16; }
         break;
       case 1: case 3:
-        if (source === 1 && this.smodDiv === 0) { this.txClk++; this.rxClk++; }
+        if (source === 1 && this.smodDiv === 0) {
+          if (!(this.t2con & TCLK)) this.txClk++;
+          if (!(this.t2con & RCLK)) this.rxClk++;
+        } else if (source === 2) {
+          if (this.t2con & TCLK) this.txClk++;
+          if (this.t2con & RCLK) this.rxClk++;
+        }
         break;
       case 2: {
         if (source === 0) { const k = (this.pcon & SMOD) ? 6 : 3; this.txClk += k; this.rxClk += k; }
@@ -879,6 +971,13 @@ export class Mcs51 {
     if (this.rxClk >= 16) {
       this.rxClk &= 0x0f;
       if (this.rxBits !== 0 && --this.rxBits === 0) this.rxComplete(mode);
+    }
+
+    if (this.rxHeld >= 0 && (this.scon & REN)) {
+      if (mode === 3) this.scon = this.rxHeldBit8 ? this.scon | RB8 : this.scon & ~RB8;
+      this.sbuf = this.rxHeld;
+      this.rxHeld = -1;
+      if (mode !== 3 || (this.rxHeldBit8 && (this.scon & SM2)) || !(this.scon & SM2)) this.scon |= RI;
     }
   }
 

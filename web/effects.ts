@@ -31,6 +31,8 @@ interface Baseline {
   hopperCoins: Uint32Array;
   triacLevels: number | null;
   meterLevels: number | null;
+  partRises: number[];
+  partLevels: boolean[];
 }
 
 export class CabinetEffects {
@@ -61,6 +63,7 @@ export class CabinetEffects {
   private hopperVoice: (AudioBufferSourceNode | null)[] = [null, null];
   private triacSlot: AudioBufferSourceNode[][] = [];
   private meterArmed = 0;
+  private partVoice: (AudioBufferSourceNode | null)[] = [];
   private base: Baseline | null = null;
   private lastSeq = -1;
 
@@ -165,7 +168,49 @@ export class CabinetEffects {
     this.meterPulses(e.meters, this.base.meters, this.meterRows, e.meterLevels ?? null,
       (this.mask & EFFECT_GROUP.meters) !== 0);
     this.hoppers(f);
+    this.partSounds(f);
     this.rebase(f);
+  }
+
+  private partSounds(f: FrameView): void {
+    const parts = f.partSounds ?? [];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const rises = Math.max(0, p.rises - (this.base!.partRises[i] ?? p.rises));
+      const was = this.base!.partLevels[i] ?? p.level;
+      const falls = rises + (was ? 1 : 0) - (p.level ? 1 : 0);
+      let level = was;
+      let risenHere = false;
+      const edges = Math.min(rises + Math.max(0, falls), 2 * MAX_PER_FRAME);
+      for (let e = 0; e < edges; e++) {
+        if (!level) {
+          this.stop(this.partVoice[i]);
+          this.partVoice[i] = null;
+          if (p.on >= 0) {
+            const v = this.play(p.on);
+            if (v && !EFFECT_SAMPLES[p.on].through) this.partVoice[i] = v;
+          }
+          risenHere = true;
+          level = true;
+        } else {
+          const v = this.partVoice[i];
+          if (v && (!risenHere || v.loop)) {
+            this.stop(v);
+            this.partVoice[i] = null;
+          }
+          if (p.off >= 0) this.play(p.off);
+          level = false;
+        }
+      }
+      if (p.level && p.on >= 0 && EFFECT_SAMPLES[p.on].loop) {
+        const v = this.partVoice[i];
+        if (!v || !this.voices.has(v)) this.partVoice[i] = this.play(p.on);
+      }
+      if (!p.level && this.partVoice[i]?.loop) {
+        this.stop(this.partVoice[i]);
+        this.partVoice[i] = null;
+      }
+    }
   }
 
   private reels(f: FrameView): void {
@@ -357,6 +402,8 @@ export class CabinetEffects {
     this.hopperVoice.forEach((v) => this.stop(v));
     this.triacSlot.forEach((slot) => slot.forEach((v) => this.stop(v)));
     this.triacSlot = [];
+    this.partVoice.forEach((v) => this.stop(v));
+    this.partVoice = [];
     this.reelVoice = [];
     this.hopperVoice = [null, null];
     this.reelStill = [];
@@ -370,6 +417,8 @@ export class CabinetEffects {
       hopperCoins: f.effects.hopperCoins.slice(),
       triacLevels: f.effects.triacLevels ?? null,
       meterLevels: f.effects.meterLevels ?? null,
+      partRises: (f.partSounds ?? []).map((p) => p.rises),
+      partLevels: (f.partSounds ?? []).map((p) => p.level),
     };
     if (!this.reelLast.length || f.reels.length !== this.reelLast.length) {
       this.reelLast = f.reels.map((r) => ({ travel: r.travel, position: r.position }));

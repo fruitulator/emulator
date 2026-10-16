@@ -1,12 +1,12 @@
 import { discLampSlotCount, type DiscLamps } from './discreel';
 import {
   bmpToImageData, cssArgb, newImageData,
-  type BandStrip, type FlipStrip, type Cabinet, type CabBitmap, type CabLamp, type DotMatrix, type PrismLamp,
+  type BandStrip, type BonusReel, type FlipStrip, type Cabinet, type CabBitmap, type CabLamp, type DotMatrix, type PrismLamp,
   type ReelBand, type ReelBorder, type Rect,
   type RgbLed,
   SEG_METRICS,
 } from './dat';
-import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, BfmLedPanel, VideoScreen } from './dat';
+import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, AstraLedPanel, BfmColourLedPanel, IgtVfdPanel, BfmLedPanel, VideoScreen } from './dat';
 import { applyOpaqueBand, reelLightFloor } from './reellight';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
@@ -225,6 +225,9 @@ const enum Type {
   EpochDotAlpha = 0x16,
   MaygayMatrix = 0x2e,
   PlasmaDisplay = 0x23,
+  AstraMatrix = 0x2c,
+  BfmColourLed = 0x24,
+  IgtVfd = 0x20,
   EpochMatrix = 0x22,
   BfmLed = 0x15,
   Disc = 0x06,
@@ -461,7 +464,7 @@ function composeShapes(
     const v19 = hasLegend(c);
     fillShape(out, c.x - originX, c.y - originY, c.width, c.height,
       boxFill(c)!, val(c, 'ShapeIndex') ?? 0,
-      v19 ? 0xff000000 : c.type === Type.Lamp ? shapeOutline(c) : undefined, c.angle, shapeParams(c));
+      c.type === Type.Lamp ? shapeOutline(c) : v19 ? 0xff000000 : undefined, c.angle, shapeParams(c));
   }
   return out;
 }
@@ -520,11 +523,72 @@ function pressedFace(img: ImageData | null, w: number, h: number): ImageData | n
   return out;
 }
 
+export function resampleLinear(img: ImageData, w: number, h: number): ImageData {
+  const sw = img.width, sh = img.height, s = img.data;
+  const out = newImageData(w, h), d = out.data;
+  if (w > sw && h > sh) {
+    for (let y = 0; y < h; y++) {
+      const fy = Math.min(sh - 1, Math.max(0, ((y + 0.5) * sh) / h - 0.5));
+      const y0 = Math.floor(fy), y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
+      for (let x = 0; x < w; x++) {
+        const fx = Math.min(sw - 1, Math.max(0, ((x + 0.5) * sw) / w - 0.5));
+        const x0 = Math.floor(fx), x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
+        const o = (y * w + x) * 4;
+        const a = (y0 * sw + x0) * 4, b = (y0 * sw + x1) * 4, c = (y1 * sw + x0) * 4, e = (y1 * sw + x1) * 4;
+        for (let k = 0; k < 4; k++) {
+          d[o + k] = Math.round((s[a + k] * (1 - tx) + s[b + k] * tx) * (1 - ty) + (s[c + k] * (1 - tx) + s[e + k] * tx) * ty);
+        }
+      }
+    }
+    return out;
+  }
+  const taps = (src: number, dst: number): { i: number[]; wt: number[] }[] => {
+    const scale = Math.max(1, src / dst);
+    return Array.from({ length: dst }, (_, j) => {
+      const centre = ((j + 0.5) * src) / dst - 0.5;
+      const i: number[] = [], wt: number[] = [];
+      let sum = 0;
+      for (let k = Math.floor(centre - scale); k <= Math.ceil(centre + scale); k++) {
+        const t = 1 - Math.abs(k - centre) / scale;
+        if (t <= 0) continue;
+        i.push(Math.min(src - 1, Math.max(0, k))); wt.push(t); sum += t;
+      }
+      return { i, wt: wt.map((v) => v / sum) };
+    });
+  };
+  const tx = taps(sw, w), ty = taps(sh, h);
+  const mid = new Float32Array(w * sh * 4);
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < w; x++) {
+      const { i, wt } = tx[x];
+      const o = (y * w + x) * 4;
+      for (let n = 0; n < i.length; n++) {
+        const si = (y * sw + i[n]) * 4, f = wt[n];
+        mid[o] += s[si] * f; mid[o + 1] += s[si + 1] * f; mid[o + 2] += s[si + 2] * f; mid[o + 3] += s[si + 3] * f;
+      }
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    const { i, wt } = ty[y];
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let n = 0; n < i.length; n++) {
+        const mi = (i[n] * w + x) * 4, f = wt[n];
+        r += mid[mi] * f; g += mid[mi + 1] * f; b += mid[mi + 2] * f; a += mid[mi + 3] * f;
+      }
+      d[o] = Math.round(r); d[o + 1] = Math.round(g); d[o + 2] = Math.round(b); d[o + 3] = Math.round(a);
+    }
+  }
+  return out;
+}
+
 function fitToRect(
-  img: ImageData | null, w: number, h: number, twoFrame = true,
+  img: ImageData | null, w: number, h: number, twoFrame = true, filter: 'linear' | 'nearest' = 'linear',
 ): ImageData | null {
   if (twoFrame) img = twoFrameFace(img, w, h);
   if (!img || w <= 0 || h <= 0 || (img.width === w && img.height === h)) return img;
+  if (filter === 'linear') return resampleLinear(img, w, h);
   const out = newImageData(w, h);
   const s = img.data, d = out.data;
   for (let y = 0; y < h; y++) {
@@ -723,12 +787,13 @@ function reelBand(c: ParsedComponent, horizontal: boolean):
 }
 
 const FLIP_REEL = 0x2d;
+const BONUS_REEL = 0x27;
 
 export function reelIndexMap(comps: readonly ParsedComponent[]): Map<number, number> {
   const map = new Map<number, number>();
   const nums = comps
     .filter((c) => c.type === Type.Reel || c.type === Type.Disc || c.type === Type.Anim
-      || c.type === FLIP_REEL)
+      || c.type === FLIP_REEL || c.type === BONUS_REEL)
     .map((c) => c.number)
     .sort((a, b) => a - b);
   nums.forEach((n, i) => { if (!map.has(n)) map.set(n, i); });
@@ -1091,7 +1156,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         ...acceptorEffect(c),
       }
       : undefined;
-    const brightRaw = !off && nums.length > 0 ? image(c, 'BrightmaskMain', keyed) : null;
+    const brightRaw = !off ? image(c, 'BrightmaskMain', keyed) : null;
     const brightOff = fitToRect(brightRaw, c.width, c.height);
     const pressable = !!c.values.get('#17');
     const onDown = pressable ? pressedFace(onRaw, c.width, c.height) : null;
@@ -1190,7 +1255,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     for (const c of backdropShapes(comps)) {
       const face = newImageData(c.width, c.height);
       fillShape(face, 0, 0, c.width, c.height, boxFill(c)!, val(c, 'ShapeIndex') ?? 0,
-        hasLegend(c) ? 0xff000000 : c.type === Type.Lamp ? shapeOutline(c) : undefined, 0,
+        c.type === Type.Lamp ? shapeOutline(c) : hasLegend(c) ? 0xff000000 : undefined, 0,
         shapeParams(c));
       lamps.push({
         left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
@@ -1300,6 +1365,27 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     });
   }
 
+  const bonusReels: BonusReel<ImageData>[] = [];
+  for (const c of comps) {
+    if (c.type !== BONUS_REEL) continue;
+    const num = (k: string): number | undefined => c.values.get(k) ?? c.defaults.get(k);
+    const symbols = [1, 2, 3, 4].map((i) => image(c, `Lamp${i}On`, true) ?? undefined);
+    const mask = image(c, 'Mask') ?? undefined;
+    bonusReels.push({
+      left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      machineIndex: reelIndex.get(c.number) ?? 0, number: c.number,
+      frames: num('Number') || 0x60,
+      radius: num('SymbolPos') ?? 0,
+      ...(image(c, 'Background') ? { background: image(c, 'Background')! } : {}),
+      symbols,
+      ...(mask ? { mask, lightFloor: reelLightFloor(0, 0, [mask]) } : {}),
+      lampNums: [0, 1, 2, 3].map((i) => c.subs?.[i] ?? -2),
+      overlay: image(c, 'Overlay', 'alpha') ?? undefined,
+      windowW: symbols[0]?.width ?? 0,
+      windowH: symbols[0]?.height ?? 0,
+    });
+  }
+
   for (const c of comps) {
     if (c.type !== Type.Button) continue;
     const btn = inputId(c) ?? (c.number > 0 ? c.number : undefined);
@@ -1307,12 +1393,12 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     if (btn === undefined && !coin) continue;
     let on = fitToRect(
       image(c, 'Lamp1', true) ?? (hasPicture(c) ? firstImage(c, true) : null),
-      c.width, c.height,
+      c.width, c.height, true, 'nearest',
     );
     let onLamp = on && (c.subs?.[0] ?? -1) >= 0 ? c.subs![0] : -1;
     const lamp2 = on && (c.subs?.[1] ?? -1) >= 0
-      ? fitToRect(image(c, 'Lamp2', true), c.width, c.height) : null;
-    const offPic = on && hasPicture(c) ? fitToRect(image(c, 'Off', true), c.width, c.height) : null;
+      ? fitToRect(image(c, 'Lamp2', true), c.width, c.height, true, 'nearest') : null;
+    const offPic = on && hasPicture(c) ? fitToRect(image(c, 'Off', true), c.width, c.height, true, 'nearest') : null;
     if (!on && c.texts.has('Label')) {
       const lit = val(c, 'Lamp1Colour') ?? val(c, 'Lamp2Colour');
       const lampNo = c.subs?.find((n) => n >= 0) ?? -1;
@@ -1473,6 +1559,40 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         on: val(plx, 'OnColour') ?? 0xffff8d1c,
         off: val(plx, 'OffColour') ?? 0xff000000,
         bg: val(plx, 'BackgroundColour') ?? 0xff000000,
+      }
+    : null;
+
+  const alx = comps.find((c) => c.type === Type.AstraMatrix && c.width > 0 && c.height > 0);
+  const astraLed: AstraLedPanel | null = alx
+    ? {
+        left: alx.x, top: alx.y, width: alx.width, height: alx.height, ...turn(alx),
+        size: Math.max(2, val(alx, 'Size') ?? 7),
+        on: val(alx, 'OnColour') ?? 0xffff0000,
+        off: val(alx, 'OffColour') ?? 0xff000000,
+        bg: val(alx, 'BackgroundColour') ?? 0xff000000,
+      }
+    : null;
+
+  const bcx = comps.find((c) => c.type === Type.BfmColourLed && c.width > 0 && c.height > 0);
+  const bfmColourLed: BfmColourLedPanel | null = bcx
+    ? {
+        left: bcx.x, top: bcx.y, width: bcx.width, height: bcx.height, ...turn(bcx),
+        size: Math.max(1, val(bcx, 'Size') ?? 7),
+        spacing: val(bcx, 'Spacing') ?? 2,
+        off: val(bcx, 'OffColour') ?? 0xff000000,
+        bg: val(bcx, 'BackgroundColour') ?? 0xff000000,
+      }
+    : null;
+
+  const igx = comps.find((c) => c.type === Type.IgtVfd && c.width > 0 && c.height > 0);
+  const igtVfd: IgtVfdPanel | null = igx
+    ? {
+        left: igx.x, top: igx.y, width: igx.width, height: igx.height, ...turn(igx),
+        size: Math.max(0, val(igx, 'DotSize') ?? 1),
+        spacing: Math.max(0, val(igx, 'DotSpacing') ?? 2),
+        on: val(igx, 'OnColour') ?? 0xff00ff00,
+        off: val(igx, 'OffColour') ?? 0xff000000,
+        bg: val(igx, 'BackgroundColour') ?? 0xff000000,
       }
     : null;
 
@@ -1679,6 +1799,9 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...(maygayMatrix ? [maygayMatrix] : []),
     ...(epochMatrix ? [epochMatrix] : []),
     ...(plasmaPanel ? [plasmaPanel] : []),
+    ...(astraLed ? [astraLed] : []),
+    ...(bfmColourLed ? [bfmColourLed] : []),
+    ...(igtVfd ? [igtVfd] : []),
     ...bfmLeds,
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
@@ -1688,7 +1811,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   return {
     width, height, background, backgroundRect, backgroundOffset, backgroundColour,
     backgroundKey, backdrop,
-    reels, bandReels, flipReels, lamps: [...lamps, ...legends], vfd, vfdIsDots, vfdFont, vfdGlyphWidth,
+    reels, bandReels, flipReels, ...(bonusReels.length ? { bonusReels } : {}), lamps: [...lamps, ...legends], vfd, vfdIsDots, vfdFont, vfdGlyphWidth,
     vfdInk,
     vfdOffBrightness: vfdOffLevel ?? 80,
     ...(vfdStripColumns ? { vfdStripColumns } : {}),
@@ -1699,6 +1822,9 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     maygayMatrix,
     epochMatrix,
     plasmaPanel,
+    astraLed,
+    bfmColourLed,
+    igtVfd,
     bfmLeds,
     videoScreen,
     rgbLeds,

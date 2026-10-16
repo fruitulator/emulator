@@ -1,0 +1,13 @@
+.fontpick-note { margin: 0 0 12px; color: var(--muted); }
+.fontpick-list { display: flex; flex-direction: column; gap: 2px; }
+.ui-dialog .fontpick-row { display: grid; grid-template-columns: 18px minmax(7em, 10em) 1fr; align-items: center; gap: 12px; text-align: left; }
+.fontpick-row .fontpick-name { font-size: 0.85em; opacity: 0.8; }
+.fontpick-row .fontpick-sample { font-size: 1.35em; line-height: 1.2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-dialog .fontpick-row .fontpick-mark { width: 18px; min-width: 18px; height: 18px; display: inline-flex; flex: 0 0 18px; }
+.fontpick-row .fontpick-tick { color: var(--on); }
+@media (max-width: 420px) { .ui-dialog .fontpick-row { grid-template-columns: 18px 1fr; gap: 2px 8px; } .ui-dialog .fontpick-row .fontpick-sample { grid-column: 2; } }
+.menu-stack .fontpick-row { display: grid; grid-template-columns: 18px 1fr; gap: 1px 10px; align-items: center; text-align: left; }
+.menu-stack .fontpick-row .fontpick-mark { grid-row: 1 / span 2; width: 18px; min-width: 18px; height: 18px; display: inline-flex; }
+.menu-stack .fontpick-row .fontpick-name { grid-column: 2; font-size: 0.8em; opacity: 0.7; }
+.menu-stack .fontpick-row .fontpick-sample { grid-column: 2; font-size: 1em; line-height: 1.2; white-space: normal; overflow: visible; }
+.menu-stack .fontpick-row .fontpick-tick { color: var(--on); }

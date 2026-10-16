@@ -26,6 +26,7 @@ export const REEL_COMPONENTS: ReadonlyMap<number, string> = new Map([
   [0x06, 'DiscReel'],
   [0x08, 'BandReel'],
   [0x2d, 'Reel2D'],
+  [0x27, 'ReelBonusReel'],
 ]);
 
 const DAT_REEL_CLASSES = /^(TFancyReel|TReel|TBandReel|TDiscReel)$/;

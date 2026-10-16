@@ -130,6 +130,14 @@ export function mpu5LampBanks(rom: Uint8Array): Mpu5LampBanks | null {
 }
 
 export function bcosNameMap(rom: Uint8Array): Map<number, string> | null {
+  const run = bcosNameEntries(rom);
+  if (!run) return null;
+  const out = new Map<number, string>();
+  for (const { id, name } of run) if (!out.has(id)) out.set(id, name);
+  return out;
+}
+
+export function bcosNameEntries(rom: Uint8Array): { id: number; name: string }[] | null {
   const nameAt = (a: number): string | null => {
     if (a <= 0 || a >= rom.length) return null;
     let s = '';
@@ -156,11 +164,10 @@ export function bcosNameMap(rom: Uint8Array): Map<number, string> | null {
     }
   }
   if (bestLen < 64) return null;
-  const out = new Map<number, string>();
+  const out: { id: number; name: string }[] = [];
   for (let i = 0; i < bestLen; i++) {
     const e = best + i * 6;
-    const id = u16(rom, e);
-    if (!out.has(id)) out.set(id, nameAt(u32(rom, e + 2))!);
+    out.push({ id: u16(rom, e), name: nameAt(u32(rom, e + 2))! });
   }
   return out;
 }
@@ -192,6 +199,48 @@ export function mpu5MatrixSwitches(rom: Uint8Array): Mpu5MatrixSwitch[] | null {
     const name = names.get(d.id);
     if (row > 3 || b < 0 || !name) continue;
     out.push({ name, number: row * 8 + b });
+  }
+  return out.sort((a, b) => a.number - b.number);
+}
+
+export interface Mpu5PanelButton {
+  device: number;
+  number: number;
+  level: number;
+  names: string[];
+}
+
+export function mpu5PanelButtons(rom: Uint8Array): Mpu5PanelButton[] | null {
+  const table = findDeviceTable(rom);
+  if (table < 0) return null;
+  const entries = bcosNameEntries(rom);
+  if (!entries) return null;
+  const bytes = new Map<number, { id: number; bit: number }[]>();
+  for (let id = 0; id < MAX_ID && table + (id + 1) * 20 <= rom.length; id++) {
+    const e = table + id * 20;
+    const level = u32(rom, e);
+    if (level >>> 16 !== 0xffff || rom[e + 15] !== 3) continue;
+    if (u32(rom, e + 4) !== ((level + 2) >>> 0) || u32(rom, e + 8) !== ((level - 2) >>> 0)) continue;
+    const b = [1, 2, 4, 8, 16, 32, 64, 128].indexOf(rom[e + 14]);
+    if (b < 0) continue;
+    (bytes.get(level) ?? bytes.set(level, []).get(level)!).push({ id, bit: b });
+  }
+  const full = (l: number) => (bytes.get(l)?.length ?? 0) === 8
+    && new Set(bytes.get(l)!.map((d) => d.bit)).size === 8;
+  const pairs = [...bytes.keys()].filter((l) => full(l) && full(l + 1))
+    .sort((a, b) => Math.min(...bytes.get(a)!.map((d) => d.id)) - Math.min(...bytes.get(b)!.map((d) => d.id)));
+  if (!pairs.length) return null;
+  const lo = pairs[0];
+  const out: Mpu5PanelButton[] = [];
+  for (const [strobe, level] of [[4, lo], [5, lo + 1]] as const) {
+    for (const d of bytes.get(level)!) {
+      out.push({
+        device: d.id,
+        number: strobe * 8 + d.bit,
+        level: level & 0xffffff,
+        names: entries.filter((x) => x.id === d.id).map((x) => x.name),
+      });
+    }
   }
   return out.sort((a, b) => a.number - b.number);
 }

@@ -90,6 +90,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
   }
   return {
     system,
+    ...(m.quietIsWaiting ? { quietIsWaiting: true } : {}),
     clockHz: m.clockHz,
     audioRate: m.audioSource?.rate ?? null,
     optionKeys: (m.optionKeys ?? []).map((k) => ({
@@ -112,6 +113,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       : {}),
     ...(m.coinChutes ? { coins: m.coinChutes.map((c) => ({ ...c })) } : {}),
     ...(m.unnamedCoinLines?.length ? { unnamedCoins: [...m.unnamedCoinLines] } : {}),
+    ...(m.uncountedCoinLines?.length ? { uncountedCoins: [...m.uncountedCoinLines] } : {}),
     ...(m.nameCoin ? { namesCoins: true } : {}),
     ...coinTableInfo(m),
     ...slotCoinLinesOf(game, m, resolved),
@@ -135,7 +137,7 @@ function codegenOf(m: Machine): 'regions' | 'predecode' | 'wasm' | null {
 function buildSchematic(
   system: string, m: Machine, game: Game, layout: FrameLayout,
 ): Schematic | null {
-  const base = schematicFor(system);
+  const base = (m as { schematic?: () => Schematic }).schematic?.() ?? schematicFor(system);
   if (!base) return null;
   const s: Schematic = structuredClone(base);
   const by = new Map(s.nodes.map((n) => [n.id, n]));

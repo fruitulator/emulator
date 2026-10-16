@@ -18,7 +18,7 @@ import { gameFromZip } from './ingest';
 import { batteriesOf, isQuotaError, persistGame } from './persist';
 import { importPunnet } from './portable';
 import {
-  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, getMeta, getPak, hashGameFiles, playCountOf,
+  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, getMeta, getPak, hashGameFiles, playCountOf, programHashOf,
   putMeta, type GameMeta,
 } from './store';
 
@@ -223,6 +223,7 @@ async function openPak(
         linkedInstances: linked.length ? linked : undefined,
         contentHash: stamped ? storedMeta.contentHash : await contentHashOf(files),
         contentRule: CONTENT_RULE,
+        programHash: storedMeta.programHash ?? await programHashOf(files) ?? undefined,
         batteries: batteries.length ? batteries : undefined,
       };
       await putMeta(bumped);

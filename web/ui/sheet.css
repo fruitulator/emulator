@@ -77,6 +77,13 @@
   pointer-events: none;
   color: var(--muted);
 }
+.sheet-row:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+.sheet-row:disabled:hover {
+  background: none;
+}
 .sheet-row.destructive {
   color: var(--danger);
 }

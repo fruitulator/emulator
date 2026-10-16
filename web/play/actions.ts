@@ -30,6 +30,7 @@ export interface ActionSurface {
   readonly effects: CabinetEffects;
   redraw(): void;
   refit?(): void;
+  fontRows?(options: HTMLElement): Node[];
   optionRows?(m: MenuMachine): Node[];
   fillKeys(root: HTMLElement): void;
   openSystem(): void;
@@ -129,6 +130,7 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
           opts.append(reelBandsRow(refit));
           opts.append(fillScreenRow(refit));
         }
+        for (const r of s.fontRows?.(opts) ?? []) opts.append(r);
         nav('options', opts);
         break;
       }

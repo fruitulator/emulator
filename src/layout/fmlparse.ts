@@ -196,7 +196,9 @@ const LAMP = m({
   0x01: ['bitmap', 'Sublamp1'], 0x02: ['bitmap', 'Sublamp2'],
   0x0f: ['bitmap', 'Sublamp3'], 0x10: ['bitmap', 'Sublamp4'],
   0x03: ['bitmap', 'OffImage'],
-}, LAMP_NESTED, LAMP2);
+}, LAMP_NESTED, LAMP2, {
+  Roundness: 10, ShapeParameter: 6, ShapeAngle: 90,
+});
 
 const BUTTON = m({
   0x17: ['bool', ''], 0x18: ['u32', 'ButtonNumber'], 0x4a: ['u32', 'InhibitLamp'],

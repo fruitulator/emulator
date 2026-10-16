@@ -1,3 +1,5 @@
+import { IGT_VFD_COLS, IGT_VFD_ROWS, igtVfdDotAt, igtVfdLit } from './igtvfd';
+import { loadShippedFaces } from './captionfont';
 import { discAngleDeg, discLampWedges } from './discreel';
 import { withAngle } from '../src/layout/compangle';
 import { LAMP_FULL, type FrameView } from '../src/machine/framestate';
@@ -5,8 +7,9 @@ import { glassText } from '../src/machine/layoutdisplay';
 import { MATRIX_COLS, MATRIX_MAP, MATRIX_PLANE, MATRIX_ROWS } from '../src/hw/epochmatrix';
 import { drawBackdrop } from './cabjson';
 import { drawOrder, type PanelKind } from './draworder';
+import { legendCaps, legendFamily } from './legendfonts';
 import {
-  flipLight, flipReelFace,
+  bonusReelFrame, flipLight, flipReelFace, mfmeBonusReelPosition, paintBonusLight, paintBonusReel,
   mfmeBoardReelPosition,
   mfmeFlipReelPosition,
   paintFlip, paintFlipLight, paintReelBorder, paintBandStrip,
@@ -27,6 +30,7 @@ import {
   type Cabinet,
   type PrismLamp,
   type FlipStrip,
+  type BonusReel,
   type ReelBand,
   type ReelBorder,
   type Rect,
@@ -63,6 +67,7 @@ import { prismBothLitPlan } from './prismplan';
 import { peekable } from './play/peek';
 
 const EPOCH_ALPHA_PANEL_BYTES = 32;
+const BFM_COLOUR_LED_COLOURS = ['', '#ff0000', '#00ff00', '#ffff00'];
 
 export const DOT_ON = '#5bf3ff';
 export const DOT_OFF = 'rgba(90,140,150,0.10)';
@@ -224,6 +229,10 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         canvasW: 0,
         canvasH: 0,
       };
+      const fontWait = loadShippedFaces(cab.lamps);
+      if (fontWait) {
+        void fontWait.then(() => { if (renderIndex?.cab === cab) renderIndex.lastKeys = null; });
+      }
     }
     const { els } = renderIndex;
     const counters = { stillFrames, frStill };
@@ -364,6 +373,15 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         paintFlip(ctx, f, f.canvas, f.canvas.width, f.canvas.height, flipReelFace(f, pos), f.overlay, light));
     }
 
+    function drawBonus(b: BonusReel): void {
+      const r = m.reels[reelIndex(m, b)];
+      const steps = r?.stepsPerRevolution || 96;
+      const handed = r ? mfmeBonusReelPosition(m.layout.system, Math.round(r.position), steps) : 0;
+      const { angle } = bonusReelFrame(b, handed);
+      const light = bonusLayer(b, (n) => m.layoutLampLevel(n));
+      withAngle(ctx, b, b.angle, () => paintBonusReel(ctx, b, angle, light));
+    }
+
     function drawFrameReel(fr: FrameReel): void {
       const i = reelIndex(m, fr);
       const r = m.reels[i];
@@ -485,7 +503,8 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     }
     function drawPanel(which: PanelKind): void {
       const dm = cab.dotMatrix, pm = cab.proconnMatrix, eda = cab.epochDotAlpha;
-      const mm = cab.maygayMatrix, em = cab.epochMatrix, pp = cab.plasmaPanel;
+      const mm = cab.maygayMatrix, em = cab.epochMatrix, pp = cab.plasmaPanel, al = cab.astraLed;
+      const bc = cab.bfmColourLed, iv = cab.igtVfd;
       switch (which) {
         case 'dotMatrix': if (dm) withAngle(ctx, dm, dm.angle, () => drawDotPanel(m, dm)); break;
         case 'proconnMatrix': if (pm) withAngle(ctx, pm, pm.angle, () => drawProconnMatrix(m, pm)); break;
@@ -493,6 +512,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         case 'maygayMatrix': if (mm) withAngle(ctx, mm, mm.angle, () => drawMaygayMatrix(m, mm)); break;
         case 'epochMatrix': if (em) withAngle(ctx, em, em.angle, () => drawEpochMatrix(m, em)); break;
         case 'plasmaPanel': if (pp) withAngle(ctx, pp, pp.angle, () => drawPlasmaPanel(m, pp)); break;
+        case 'astraLed': if (al) withAngle(ctx, al, al.angle, () => drawAstraLed(m, al)); break;
+        case 'bfmColourLed': if (bc) withAngle(ctx, bc, bc.angle, () => drawBfmColourLed(m, bc)); break;
+        case 'igtVfd': if (iv) withAngle(ctx, iv, iv.angle, () => drawIgtVfd(m, iv)); break;
       }
     }
 
@@ -502,6 +524,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         case 'reel': drawReel(it.reel); break;
         case 'band': drawBand(it.strip); break;
         case 'flip': drawFlip(it.flip); break;
+        case 'bonus': drawBonus(it.bonus); break;
         case 'frame': drawFrameReel(it.frame); break;
         case 'feature': drawFeatureReel(it.feature); break;
         case 'reelLight': applyReelLight(m, cab); break;
@@ -674,6 +697,108 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     }
   }
 
+  function drawAstraLed(m: FrameView, p: NonNullable<Cabinet['astraLed']>): void {
+    const s = p.size;
+    const kx = p.width / (40 * s + 1);
+    const ky = p.height / (8 * s + 1);
+    ctx.fillStyle = argbToCss(p.bg);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
+    if (s <= 2) return;
+    const dots = m.dotsRaw;
+    const w = (s - 2) * kx;
+    const h = (s - 2) * ky;
+    for (const want of [0, 1]) {
+      ctx.beginPath();
+      for (let y = 0; y < 8; y++) {
+        const top = p.top + (1 + y * s) * ky;
+        for (let x = 0; x < 40; x++) {
+          const i = y * 6 + (x >> 3);
+          const on = i < dots.length ? (dots[i] >> (7 - (x & 7))) & 1 : 0;
+          if (on === want) ctx.rect(p.left + (2 + x * s) * kx, top, w, h);
+        }
+      }
+      ctx.fillStyle = argbToCss(want ? p.on : p.off);
+      ctx.fill();
+    }
+  }
+
+  function drawIgtVfd(m: FrameView, p: NonNullable<Cabinet['igtVfd']>): void {
+    ctx.fillStyle = argbToCss(p.bg);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
+    if (p.size <= 0) return;
+    const frame = m.dotsRaw;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(p.left, p.top, p.width, p.height);
+    ctx.clip();
+    for (const want of [false, true]) {
+      ctx.beginPath();
+      for (let row = 0; row < IGT_VFD_ROWS; row++) {
+        for (let col = 0; col < IGT_VFD_COLS; col++) {
+          if (igtVfdLit(frame, col, row) !== want) continue;
+          const [x, y] = igtVfdDotAt(p.spacing, col, row);
+          ctx.rect(p.left + x, p.top + y, p.size, p.size);
+        }
+      }
+      ctx.fillStyle = argbToCss(want ? p.on : p.off);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawBfmColourLed(m: FrameView, p: NonNullable<Cabinet['bfmColourLed']>): void {
+    const s = p.size;
+    const kx = p.width / (24 * s + 2);
+    const ky = p.height / (8 * s + 2);
+    ctx.fillStyle = argbToCss(p.bg);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
+    const d = s - p.spacing;
+    if (d <= 0) return;
+    const r = (d & 1 ? d : d - 1) / 2;
+    if (!(r > 0)) return;
+    const dots = m.dotsRaw;
+    const lit = new Uint8Array(24 * 8);
+    ctx.beginPath();
+    for (let y = 0; y < 8; y++) {
+      for (let u = 0; u < 24; u++) {
+        if (y === 7 && u % 6 !== 0) continue;
+        const i = y * 6 + (u >> 2);
+        lit[y * 24 + u] = i < dots.length ? (dots[i] >> (6 - 2 * (u & 3))) & 3 : 0;
+        const cx = p.left + (2 + s * (23 - u) + r + 0.5) * kx;
+        const cy = p.top + (2 + s * y + r + 0.5) * ky;
+        ctx.moveTo(cx + r * kx, cy);
+        ctx.ellipse(cx, cy, r * kx, r * ky, 0, 0, Math.PI * 2);
+      }
+    }
+    ctx.fillStyle = argbToCss(p.off);
+    ctx.fill();
+    const prevAlpha = ctx.globalAlpha;
+    for (let c = 1; c <= 3; c++) {
+      ctx.fillStyle = BFM_COLOUR_LED_COLOURS[c];
+      for (let j = 0; j < 6; j++) {
+        const a = dots.length > 48 + j ? dots[48 + j] / 255 : 0;
+        if (a <= 0) continue;
+        let any = false;
+        ctx.beginPath();
+        for (let y = 0; y < 8; y++) {
+          for (let k = 0; k < 4; k++) {
+            const u = j * 4 + k;
+            if (lit[y * 24 + u] !== c) continue;
+            const cx = p.left + (2 + s * (23 - u) + r + 0.5) * kx;
+            const cy = p.top + (2 + s * y + r + 0.5) * ky;
+            ctx.moveTo(cx + r * kx, cy);
+            ctx.ellipse(cx, cy, r * kx, r * ky, 0, 0, Math.PI * 2);
+            any = true;
+          }
+        }
+        if (!any) continue;
+        ctx.globalAlpha = prevAlpha * a;
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = prevAlpha;
+  }
+
   function drawBfmLed(m: FrameView, p: NonNullable<Cabinet['bfmLeds']>[number]): void {
     const X = p.xSize, Y = p.ySize, DS = p.digitSpacing;
     const kx = p.width / ((X * 5 + DS) * 4 + 21);
@@ -804,12 +929,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     legend: NonNullable<CabLamp['legend']>,
     nudge = 0,
   ): void {
-    const paras = text.split(/\r?\n/);
+    const paras = (legendCaps(legend.face) ? text.toUpperCase() : text).split(/\r?\n/);
     if (!paras.some((s) => s.length)) return;
     const clip = { x, y, w, h };
     x += (legend.dx ?? 0) + nudge;
     y += (legend.dy ?? 0) + nudge;
-    const family = `"${legend.face}", Tahoma, system-ui, sans-serif`;
+    const family = legendFamily(legend.face);
     const style = legend.style ?? 0;
     const weight = style & 1 ? 'bold ' : '';
     const slant = style & 2 ? 'italic ' : '';
@@ -1030,7 +1155,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     {
       const word = s.digit !== undefined ? m.layoutDigit?.(s.digit) ?? 0 : -1;
       ctx.fillStyle = argbToCss(s.bg);
-      ctx.fillRect(s.left, s.top, s.width, s.height);
+      const bgPoly = segDigitGeometry(s).bg;
+      ctx.beginPath();
+      ctx.moveTo(bgPoly[0], bgPoly[1]);
+      for (let i = 2; i < bgPoly.length; i += 2) ctx.lineTo(bgPoly[i], bgPoly[i + 1]);
+      ctx.closePath();
+      ctx.fill();
       const on = argbToCss(s.on);
       const off = argbToCss(s.off);
       const { segs: polys, dpX, dpY, dpR } = segDigitGeometry(s);
@@ -1231,6 +1361,23 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     lastKey: string | null;
   }
   const fancyLights = new WeakMap<ReelBand, FancyLight | null>();
+
+  const bonusLayers = new WeakMap<BonusReel, { canvas: OffscreenCanvas; key: string }>();
+  function bonusLayer(b: BonusReel, lampLevel: (n: number) => number): OffscreenCanvas | undefined {
+    if (!b.lightFloor || b.width <= 0 || b.height <= 0) return undefined;
+    const lit = b.lampNums.map((n) => n === -1 || (n >= 0 && lampLevel(n) > 0));
+    const key = lit.map((l) => (l ? 1 : 0)).join('');
+    let bl = bonusLayers.get(b);
+    if (!bl) {
+      bl = { canvas: new OffscreenCanvas(b.width, b.height), key: '' };
+      bonusLayers.set(b, bl);
+    }
+    if (bl.key !== key) {
+      bl.key = key;
+      paintBonusLight(bl.canvas.getContext('2d')!, b, lit);
+    }
+    return bl.canvas;
+  }
 
   const flipLayers = new WeakMap<FlipStrip, { canvas: OffscreenCanvas; key: string }>();
   function flipLayer(f: FlipStrip, lampLevel: (n: number) => number): OffscreenCanvas | undefined {

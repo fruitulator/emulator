@@ -241,6 +241,95 @@ export function paintFlip(
   if (overlay) fx.drawImage(overlay, x, y);
 }
 
+export interface BonusReel<A = ImageBitmap> extends Rect {
+  machineIndex: number;
+  number?: number;
+  frames: number;
+  radius: number;
+  background?: A;
+  symbols: (A | undefined)[];
+  mask?: A;
+  lightFloor?: [number, number, number];
+  lampNums: number[];
+  overlay?: A;
+  windowW: number;
+  windowH: number;
+}
+
+export function mfmeBonusReelPosition(system: string, position: number, steps: number): number {
+  if (system !== 'MPS2' || !steps) return position;
+  return (((steps - position) % steps) + steps) % steps;
+}
+
+export function bonusReelFrame(b: Pick<BonusReel<unknown>, 'frames'>, handed: number): { frame: number; angle: number } {
+  const n = b.frames > 0 ? b.frames : 96;
+  const frame = (((16 * n - Math.trunc(handed)) % n) + n) % n;
+  return { frame, angle: (2 * Math.PI / n) * frame };
+}
+
+function bonusCentre(b: Rect & { radius: number }, angle: number, i: number): [number, number] {
+  const a = angle + Math.PI + Math.PI / 2 + Math.PI / 4 + i * (Math.PI / 2);
+  return [Math.trunc(b.width / 2) + b.radius * Math.sin(a), Math.trunc(b.height / 2) - b.radius * Math.cos(a)];
+}
+
+export function bonusWindows(b: Pick<BonusReel<unknown>, 'width' | 'height' | 'left' | 'top' | 'radius' | 'windowW' | 'windowH'>): Rect[] {
+  const out: Rect[] = [];
+  for (let i = 0; i < 4; i++) {
+    const [cx, cy] = bonusCentre(b, 0, i);
+    const left = Math.trunc(cx - (b.windowW >> 1));
+    const top = Math.trunc(cy - (b.windowH >> 1));
+    out.push({ left, top, width: b.windowW, height: b.windowH });
+  }
+  return out;
+}
+
+export function paintBonusLight(
+  lx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  b: BonusReel<CanvasImageSource>, lit: readonly boolean[],
+): void {
+  const floor = b.lightFloor;
+  if (!floor) return;
+  lx.save();
+  lx.globalCompositeOperation = 'source-over';
+  lx.globalAlpha = 1;
+  lx.fillStyle = `rgb(${floor[0]},${floor[1]},${floor[2]})`;
+  lx.fillRect(0, 0, b.width, b.height);
+  if (b.mask) {
+    bonusWindows(b).forEach((r, i) => {
+      if (lit[i]) lx.drawImage(b.mask!, r.left, r.top, r.width, r.height);
+    });
+  }
+  lx.restore();
+}
+
+export function paintBonusReel(
+  fx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  b: BonusReel<CanvasImageSource>, angle: number, light?: CanvasImageSource,
+): void {
+  const { left: x, top: y, width: w, height: h } = b;
+  if (w <= 0 || h <= 0) return;
+  fx.save();
+  fx.beginPath();
+  fx.rect(x, y, w, h);
+  fx.clip();
+  fx.fillStyle = '#fff';
+  fx.fillRect(x, y, w, h);
+  if (b.background) fx.drawImage(b.background, x, y, w, h);
+  b.symbols.forEach((s, i) => {
+    if (!s) return;
+    const sw = (s as { width: number }).width, sh = (s as { height: number }).height;
+    const [cx, cy] = bonusCentre(b, angle, i);
+    fx.drawImage(s, x + Math.trunc(cx - (sw >> 1)), y + Math.trunc(cy - (sh >> 1)));
+  });
+  if (light) {
+    fx.globalCompositeOperation = 'multiply';
+    fx.drawImage(light, x, y);
+    fx.globalCompositeOperation = 'source-over';
+  }
+  fx.restore();
+  if (b.overlay) fx.drawImage(b.overlay, x, y);
+}
+
 export interface ReelBand<A = ImageBitmap> extends Rect {
   machineIndex: number;
   number?: number;
@@ -360,6 +449,7 @@ export interface Cabinet<A = ImageBitmap> {
   reels: ReelBand<A>[];
   bandReels?: BandStrip<A>[];
   flipReels?: FlipStrip<A>[];
+  bonusReels?: BonusReel<A>[];
   lamps: CabLamp<A>[];
   vfd: Rect | null;
   vfdIsDots: boolean;
@@ -390,6 +480,9 @@ export interface Cabinet<A = ImageBitmap> {
   maygayMatrix?: MaygayMatrixPanel | null;
   epochMatrix?: EpochMatrixPanel | null;
   plasmaPanel?: PlasmaPanel | null;
+  astraLed?: AstraLedPanel | null;
+  bfmColourLed?: BfmColourLedPanel | null;
+  igtVfd?: IgtVfdPanel | null;
   bfmLeds?: BfmLedPanel[];
   videoScreen?: VideoScreen | null;
   rgbLeds?: RgbLed[];
@@ -518,6 +611,28 @@ export interface PlasmaPanel extends Rect {
   bg: number;
 }
 
+export interface AstraLedPanel extends Rect {
+  size: number;
+  on: number;
+  off: number;
+  bg: number;
+}
+
+export interface IgtVfdPanel extends Rect {
+  size: number;
+  spacing: number;
+  on: number;
+  off: number;
+  bg: number;
+}
+
+export interface BfmColourLedPanel extends Rect {
+  size: number;
+  spacing: number;
+  off: number;
+  bg: number;
+}
+
 export interface BfmLedPanel extends Rect {
   xSize: number;
   ySize: number;
@@ -578,6 +693,7 @@ export interface SegDigitGeometry {
   thick: number;
   segs: number[][];
   dpX: number; dpY: number; dpR: number;
+  bg: number[];
 }
 
 export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
@@ -611,6 +727,9 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
     }
     return out;
   };
+  const bg = phi === 0
+    ? [s.left, s.top, s.left + s.width, s.top, s.left + s.width, s.top + s.height, s.left, s.top + s.height]
+    : spin([s.left + rx, s.top + ry, s.left + rx + rw, s.top + ry, s.left + rx + rw, s.top + ry + rh, s.left + rx, s.top + ry + rh]);
   const sp = m.space / 2;
   const h = th / 2;
   const q = th / 4;
@@ -649,7 +768,7 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
       poly(L + th + sp, B - th - sp, L + th + sp, B - t2 - h - sp, xC - th - sp, midY + h + sp, xC - h - sp, midY + h + sp, xC - h - sp, midY + t2 + sp, L + th + h + sp, B - th - sp),
     ];
     const p16 = spin([s.dpRight ? R + h + q : L - h - q, B - h]);
-    return { bx: L, by: T, bw: R - L, bh: B - T, thick: th, segs: segs16, dpX: p16[0], dpY: p16[1], dpR: h };
+    return { bx: L, by: T, bw: R - L, bh: B - T, thick: th, segs: segs16, dpX: p16[0], dpY: p16[1], dpR: h, bg };
   }
   const segs = [
     poly(L + sp + chop, T, L + sp + c2, T + c2, L + sp + th, T + th,
@@ -668,7 +787,7 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
       R - sp - h, midY, R - sp - th, midY + h, L + sp + th, midY + h),
   ];
   const dp = spin([s.dpRight ? R + h + q : L - h - q, B - h]);
-  return { bx: L, by: T, bw: R - L, bh: B - T, thick: th, segs, dpX: dp[0], dpY: dp[1], dpR: h };
+  return { bx: L, by: T, bw: R - L, bh: B - T, thick: th, segs, dpX: dp[0], dpY: dp[1], dpR: h, bg };
 }
 
 export interface FrameReel<A = ImageBitmap> extends Rect {
@@ -717,6 +836,11 @@ export function mfmeBandIndex(
     const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
     return reelEffectivePosition(-position, reversed, (bandOffset * 96) / hs);
   }
+  if (system === 'ELECTRO') {
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    return reelEffectivePosition(-position, reversed, (bandOffset * 96) / hs);
+  }
   if (system === 'ELECTROCOIN') {
     void stops;
     const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
@@ -747,6 +871,39 @@ export function mfmeBandIndex(
     const scale = 96 / hs;
     return reelEffectivePosition(
       SYS83_ADJUST * scale - position, reversed, bandOffset * scale,
+    );
+  }
+  if (system === 'IGTS2000') {
+    const IGTS2000_ADJUST = -12;
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(
+      IGTS2000_ADJUST * scale - position, reversed, bandOffset * scale,
+    );
+  }
+  if (system === 'MACH2000E') {
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(-position, reversed, bandOffset * scale);
+  }
+  if (system === 'PCLMAXI') {
+    const PCLMAXI_ADJUST = 2;
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(
+      PCLMAXI_ADJUST * scale - position, reversed, bandOffset * scale,
+    );
+  }
+  if (system === 'M1VIDEO') {
+    const M1VIDEO_ADJUST = 1;
+    void stops;
+    const hs = halfSteps && halfSteps > 0 ? halfSteps : 96;
+    const scale = 96 / hs;
+    return reelEffectivePosition(
+      M1VIDEO_ADJUST * scale - position, reversed, bandOffset * scale,
     );
   }
   if (system === 'MMM') {

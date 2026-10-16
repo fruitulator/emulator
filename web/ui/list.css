@@ -34,6 +34,13 @@
   scrollbar-width: none;
   padding-bottom: 4px;
 }
+@media (hover: hover) {
+  .tile-strip {
+    padding: 24px 12px;
+    margin: -24px -12px;
+    scroll-padding-inline: 12px;
+  }
+}
 .tile-strip::-webkit-scrollbar { display: none; }
 .tile-strip > * { scroll-snap-align: start; }
 .tiles-small .tile-grid {

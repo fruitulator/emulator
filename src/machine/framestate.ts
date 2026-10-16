@@ -39,6 +39,7 @@ export interface FrameLayout {
   videoHeight: number;
   videoBytes: number;
   effectBytes: number;
+  partSoundBytes?: number;
   reelStripOffsets?: number[];
   unserved: UnservedComponent[];
   byteLength: number;
@@ -77,6 +78,18 @@ export const EFFECT_LINES = 16;
 export const FRAME_FORMAT = 4;
 const EFFECT_BYTES = (EFFECT_LINES * 2 + 2) * 4 + 4 + 4 + 4;
 const TRIAC_LEVELS_KNOWN = 0x80000000;
+
+export interface PartSound {
+  on: number;
+  off: number;
+  level: boolean;
+  rises: number;
+}
+
+interface PartSoundBoard {
+  partSounds?: { on: readonly number[]; off: readonly number[]; rises: Uint32Array; levels: Uint8Array };
+}
+const PART_SOUND_BYTES = 8;
 
 export interface FrameEffects {
   readonly triacs: Uint32Array;
@@ -157,6 +170,8 @@ interface RawBoards {
   segDigits?: Uint8Array;
   digits?: Uint16Array;
   outputs?: { lamps: Uint8Array; segments?: Uint8Array; leds?: Uint8Array; dots?: Uint8Array };
+  ledFrame?: Uint8Array;
+  vfdFrame?: Uint8Array;
 }
 
 function rawLamps(m: Machine, kind: LampKind): Uint8Array {
@@ -166,7 +181,8 @@ function rawLamps(m: Machine, kind: LampKind): Uint8Array {
 }
 
 function rawDots(m: Machine): Uint8Array | null {
-  return (m as unknown as RawBoards).outputs?.dots ?? null;
+  const b = m as unknown as RawBoards;
+  return b.outputs?.dots ?? b.ledFrame ?? b.vfdFrame ?? null;
 }
 
 function rawDigits(m: Machine, kind: DigitKind): Uint8Array | Uint16Array | null {
@@ -265,7 +281,22 @@ export function frameLayoutFor(
     case 'PLUTO5':
       lampKind = 'mfmelevel';
       break;
+    case 'IGTS2000':
+      lampKind = 'mfmelevel';
+      break;
+    case 'MACH2000E':
+      lampKind = 'mfmelevel';
+      break;
+    case 'PCLMAXI':
+      lampKind = 'mfmelevel';
+      break;
+    case 'M1VIDEO':
+      lampKind = 'mfmelevel';
+      break;
     case 'ACEVIDEO':
+      lampKind = 'mfmelevel';
+      break;
+    case 'ELECTRO':
       lampKind = 'mfmelevel';
       break;
     case 'MPU2':
@@ -296,7 +327,9 @@ export function frameLayoutFor(
     ? { base: 0, bytes: 0 }
     : { base: driftBase, bytes: DIAG_RAM_BYTES[system] ?? 0 };
   const diagBytes = diag.bytes;
-  const dotBytes = system === 'SPACE' || system === 'SCORPION1' || system === 'SCORPION2' || system === 'SCORPION4' || system === 'MPU4PLASMA'
+  const dotBytes = system === 'SPACE' || system === 'SCORPION1' || system === 'SCORPION2' || system === 'SCORPION4' || system === 'MPU4PLASMA' || system === 'ASTRASYSA1'
+    || system === 'IGTS2000'
+    || system === 'MACH2000E'
     ? rawDots(m)?.length ?? 0 : 0;
   const lcdBytes = system === 'PROCONN' ? 80
     : system === 'EPOCH' ? 32 + 0x400
@@ -304,6 +337,7 @@ export function frameLayoutFor(
   const ledBoard = (m as unknown as { ledBoard?: { colours: Uint32Array } }).ledBoard;
   const muxLedBytes = ledBoard ? ledBoard.colours.length * 4 : 0;
   const ledBytes = (m as unknown as { ledOutputs?: Uint8Array }).ledOutputs?.length ?? 0;
+  const partSoundBytes = ((m as unknown as PartSoundBoard).partSounds?.on.length ?? 0) * PART_SOUND_BYTES;
   const ledKind = (m as unknown as { ledKind?: 'bfm' | 'plain' }).ledKind ?? 'bfm';
   const ledCount = (m as unknown as { ledCount?: number }).ledCount;
   const dutyBytes = displayKind === 'none' ? 0 : 4;
@@ -350,9 +384,10 @@ export function frameLayoutFor(
     videoBytes,
     format: FRAME_FORMAT,
     effectBytes: EFFECT_BYTES,
+    partSoundBytes,
     byteLength:
       HEADER_BYTES + reelCount * REEL_BYTES + lampBytes + digitBytes + charBytes + segBytes
-      + diagBytes + dutyBytes + dotBytes + lcdBytes + muxLedBytes + ledBytes + EFFECT_BYTES + udfBytes
+      + diagBytes + dutyBytes + dotBytes + lcdBytes + muxLedBytes + ledBytes + EFFECT_BYTES + partSoundBytes + udfBytes
       + videoBytes,
   };
 }
@@ -454,6 +489,18 @@ export function captureFrame(
   }
   writeEffectCounters(m, dv, off);
   off += layout.effectBytes;
+  if (layout.partSoundBytes) {
+    const ps = (m as unknown as PartSoundBoard).partSounds!;
+    for (let i = 0; i < layout.partSoundBytes / PART_SOUND_BYTES; i++) {
+      const at = off + i * PART_SOUND_BYTES;
+      dv.setUint8(at, ps.on[i] >= 0 ? ps.on[i] : 0xff);
+      dv.setUint8(at + 1, ps.off[i] >= 0 ? ps.off[i] : 0xff);
+      dv.setUint8(at + 2, ps.levels[i] ? 1 : 0);
+      dv.setUint8(at + 3, 0);
+      dv.setUint32(at + 4, ps.rises[i] >>> 0, true);
+    }
+    off += layout.partSoundBytes;
+  }
   if (layout.udfBytes) {
     const d = m.display as unknown as { udfDots?: Uint8Array; cellDots?: Uint8Array; gfxDots?: Uint8Array } | null;
     const udf = layout.cellDots ? d?.cellDots : d?.udfDots;
@@ -624,6 +671,7 @@ export class FrameView {
   readonly videoRaw: Uint8Array;
   readonly videoSerial: number;
   readonly effects: FrameEffects;
+  readonly partSounds: readonly PartSound[];
   private readonly digitsRaw: Uint8Array;
   private readonly digitsU16: Uint16Array | null;
 
@@ -712,8 +760,17 @@ export class FrameView {
     this.lcdRaw = new Uint8Array(buf, off + layout.dotBytes, layout.lcdBytes);
     this.muxLedOffset = off + layout.dotBytes + layout.lcdBytes;
     this.ledsRaw = new Uint8Array(buf, this.muxLedOffset + layout.muxLedBytes, layout.ledBytes);
-    this.effects = readEffectCounters(
-      dv, layout.byteLength - layout.videoBytes - layout.udfBytes - layout.effectBytes, layout.effectBytes);
+    const psBytes = layout.partSoundBytes ?? 0;
+    const psOff = layout.byteLength - layout.videoBytes - layout.udfBytes - psBytes;
+    this.effects = readEffectCounters(dv, psOff - layout.effectBytes, layout.effectBytes);
+    const parts: PartSound[] = [];
+    for (let i = 0; i < psBytes / PART_SOUND_BYTES; i++) {
+      const at = psOff + i * PART_SOUND_BYTES;
+      const on = dv.getUint8(at);
+      const off2 = dv.getUint8(at + 1);
+      parts.push({ on: on === 0xff ? -1 : on, off: off2 === 0xff ? -1 : off2, level: dv.getUint8(at + 2) !== 0, rises: dv.getUint32(at + 4, true) });
+    }
+    this.partSounds = parts;
     const vOff = layout.byteLength - layout.videoBytes;
     this.videoSerial = layout.videoBytes ? dv.getUint32(vOff, true) : 0;
     this.videoRaw = new Uint8Array(buf, layout.videoBytes ? vOff + 4 : vOff, Math.max(0, layout.videoBytes - 4));

@@ -34,6 +34,7 @@ import { lockoutRefuses, lockoutRefusing, type CoinLockoutWiring } from '../hw/c
 import { COIN_RAW } from './coinraw';
 import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState, wiringKey, wiringStateFor } from './coinwiring';
 import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
+import { BfmColourLed } from '../hw/bfmcolourled';
 import { locateSc4CoinTables, sc4CoinTable, sc4ProgramCoin, sc4TokenLine, SC4_COIN_LINES, type Sc4CoinTables, type Sc4Mem, type Sc4ProgramCoin } from './sc4coins';
 
 export const MASTER_CLOCK = 16_000_000;
@@ -388,6 +389,9 @@ export class Sc4 implements Bus16, Machine {
   });
   segmentedAlpha = false;
   readonly vfd2 = new Bda(7, true, true);
+  readonly colourLed = new BfmColourLed();
+  colourLedFitted = false;
+  get ledFrame(): Uint8Array | undefined { return this.colourLedFitted ? this.colourLed.frame : undefined; }
   dm01: Dm01 | null = null;
   private dmBusySwitch = 20;
   private dmReady: boolean | null = null;
@@ -1268,6 +1272,7 @@ export class Sc4 implements Bus16, Machine {
     this.vfd.reset();
     this.bd1.reset();
     this.vfd2.reset();
+    this.colourLed.reset();
     this.ac2 = 0xff;
     this.portB = 0;
     this.coinModeHold = 0;
@@ -1418,9 +1423,13 @@ export class Sc4 implements Bus16, Machine {
       this.sim.write8(simOff, v);
       return;
     }
-    if (this.noteFitted && a === this.notePortAddr()) {
-      this.noteIo(a, true);
-      this.writeNotePort(v);
+    if (a === this.notePortAddr()) {
+      if (this.noteFitted) {
+        this.noteIo(a, true);
+        this.writeNotePort(v);
+      } else {
+        this.colourLed.write(v);
+      }
       return;
     }
   }

@@ -73,6 +73,14 @@ export class StopWatch {
   get touched(): boolean { return this.engaged; }
 }
 
+export function judgeStop(
+  watch: StopWatch, v: StopSample, now: number,
+  o: { paused: boolean; quietIsWaiting: boolean },
+): boolean {
+  if (o.paused || o.quietIsWaiting) return watch.paused(now);
+  return watch.sample(v, now);
+}
+
 export function stopNoteText(parts: readonly string[]): string {
   return parts.length ? UNBUILT_NOTE_TEXT : HALT_NOTE_TEXT;
 }

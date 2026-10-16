@@ -130,7 +130,7 @@ function declaredLine(c: ParsedComponent): number | null {
   return id - 0x0f;
 }
 
-export function declaredCoins(layout: Uint8Array | undefined): DeclaredCoin[] {
+export function declaredCoins(layout: Uint8Array | undefined, opts: { offPicture?: boolean } = {}): DeclaredCoin[] {
   const payload = fmlPayload(layout);
   if (!payload) return [];
   let comps: ParsedComponent[];
@@ -142,7 +142,7 @@ export function declaredCoins(layout: Uint8Array | undefined): DeclaredCoin[] {
   const out: DeclaredCoin[] = [];
   const drawn = onPicture(comps);
   for (const c of comps) {
-    if (!drawn(c)) continue;
+    if (!opts.offPicture && !drawn(c)) continue;
     if (!isAcceptor(c.values)) continue;
     const ids = acceptorIds(c.values);
     const note = ids.note ?? null;

@@ -1,6 +1,6 @@
 import {
-  flipReelFace, paintBandStrip, paintFlip, reelBandMetrics, reelVisibleSymbols,
-  type BandClassic, type BandStrip, type Cabinet, type CabBitmap, type CabLamp, type FlipStrip, type FrameReel, type PrismLamp, type ReelBand, type Rect,
+  bonusReelFrame, flipReelFace, paintBandStrip, paintBonusReel, paintFlip, reelBandMetrics, reelVisibleSymbols, segDigitGeometry, type SegDisplay,
+  type BandClassic, type BandStrip, type Cabinet, type CabBitmap, type CabLamp, type BonusReel, type FlipStrip, type FrameReel, type PrismLamp, type ReelBand, type Rect,
 } from './dat';
 import { argbToCss } from './vfd';
 import { angledExtent, withAngle } from '../src/layout/compangle';
@@ -25,6 +25,8 @@ export interface CabGeometry {
       classic?: Omit<BandClassic, 'mask'> & { mask?: number } })[];
   flipReels?: (Omit<FlipStrip, 'canvas' | 'overlay' | 'mask1' | 'mask2' | 'mask3'>
     & { canvas: number; overlay?: number; mask1?: number; mask2?: number; mask3?: number })[];
+  bonusReels?: (Omit<BonusReel, 'background' | 'symbols' | 'mask' | 'overlay'>
+    & { background?: number; symbols: (number | null)[]; mask?: number; overlay?: number })[];
   lamps: (Omit<CabLamp, 'states' | 'offState' | 'rgb'> & {
     states: { n: number; canvas: number; down?: number }[];
     offState?: { nums: number[]; canvas: number; down?: number };
@@ -52,6 +54,9 @@ export interface CabGeometry {
   epochDotAlpha?: Cabinet['epochDotAlpha'];
   maygayMatrix?: Cabinet['maygayMatrix'];
   plasmaPanel?: Cabinet['plasmaPanel'];
+  astraLed?: Cabinet['astraLed'];
+  bfmColourLed?: Cabinet['bfmColourLed'];
+  igtVfd?: Cabinet['igtVfd'];
   bfmLeds?: Cabinet['bfmLeds'];
   epochMatrix?: Cabinet['epochMatrix'];
   videoScreen?: Cabinet['videoScreen'];
@@ -170,6 +175,15 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
       mask2: f.mask2 ? idFor(f.mask2) : undefined,
       mask3: f.mask3 ? idFor(f.mask3) : undefined,
     })),
+    ...(cab.bonusReels?.length ? {
+      bonusReels: cab.bonusReels.map((b) => ({
+        ...b,
+        background: b.background ? idFor(b.background) : undefined,
+        symbols: b.symbols.map((x) => (x ? idFor(x) : null)),
+        mask: b.mask ? idFor(b.mask) : undefined,
+        overlay: b.overlay ? idFor(b.overlay) : undefined,
+      })),
+    } : {}),
     lamps: cab.lamps.map(({ rgb, ...l }) => ({
       ...l,
       states: l.states.map((s) => ({
@@ -213,6 +227,9 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     epochDotAlpha: cab.epochDotAlpha ?? null,
     maygayMatrix: cab.maygayMatrix ?? null,
     plasmaPanel: cab.plasmaPanel ?? null,
+    astraLed: cab.astraLed ?? null,
+    bfmColourLed: cab.bfmColourLed ?? null,
+    igtVfd: cab.igtVfd ?? null,
     bfmLeds: cab.bfmLeds ?? [],
     epochMatrix: cab.epochMatrix ?? null,
     videoScreen: cab.videoScreen ?? null,
@@ -278,6 +295,15 @@ export function assembleCabinet<A>(
       mask2: f.mask2 === undefined ? undefined : get(f.mask2),
       mask3: f.mask3 === undefined ? undefined : get(f.mask3),
     })),
+    ...(geo.bonusReels?.length ? {
+      bonusReels: geo.bonusReels.map((b) => ({
+        ...b,
+        background: b.background === undefined ? undefined : get(b.background),
+        symbols: b.symbols.map((x) => (x === null ? undefined : get(x))),
+        mask: b.mask === undefined ? undefined : get(b.mask),
+        overlay: b.overlay === undefined ? undefined : get(b.overlay),
+      })),
+    } : {}),
     lamps: geo.lamps.map(({ rgb, ...l }) => ({
       ...l,
       states: l.states.map((s) => ({
@@ -323,6 +349,9 @@ export function assembleCabinet<A>(
     epochDotAlpha: geo.epochDotAlpha ?? null,
     maygayMatrix: geo.maygayMatrix ?? null,
     plasmaPanel: geo.plasmaPanel ?? null,
+    astraLed: geo.astraLed ?? null,
+    bfmColourLed: geo.bfmColourLed ?? null,
+    igtVfd: geo.igtVfd ?? null,
     bfmLeds: geo.bfmLeds ?? [],
     epochMatrix: geo.epochMatrix ?? null,
     videoScreen: geo.videoScreen ?? null,
@@ -464,7 +493,7 @@ export function componentBounds(
     const d = cab.proconnMatrix;
     spanR(d);
   }
-  for (const d of [cab.epochDotAlpha, cab.maygayMatrix, cab.epochMatrix, cab.plasmaPanel]) {
+  for (const d of [cab.epochDotAlpha, cab.maygayMatrix, cab.epochMatrix, cab.plasmaPanel, cab.astraLed, cab.bfmColourLed, cab.igtVfd]) {
     if (d) spanR(d);
   }
   for (const d of cab.bfmLeds ?? []) spanR(d);
@@ -613,6 +642,13 @@ function stillFlip(fx: Ctx, f: FlipStrip<AnyImage>): void {
     f.overlay ? drawable(f.overlay) : undefined);
 }
 
+function stillBonus(fx: Ctx, b: BonusReel<AnyImage>): void {
+  const img = (x: AnyImage | undefined) => (x ? drawable(x) : undefined);
+  paintBonusReel(fx, {
+    ...b, background: img(b.background), symbols: b.symbols.map(img), mask: img(b.mask), overlay: img(b.overlay),
+  }, bonusReelFrame(b, 0).angle);
+}
+
 function stillFrames(fx: Ctx, r: FrameReel<AnyImage> | (Rect & { frames: AnyImage[] })): void {
   const img = r.frames[0];
   if (!img || r.width <= 0 || r.height <= 0) return;
@@ -655,12 +691,13 @@ export function drawCabinetStill(
       case 'reel': { const r = it.reel; withAngle(fx, r, r.angle, () => stillReel(fx, r)); break; }
       case 'band': { const b = it.strip; withAngle(fx, b, b.angle, () => stillBand(fx, b)); break; }
       case 'flip': { const f = it.flip; withAngle(fx, f, f.angle, () => stillFlip(fx, f)); break; }
+      case 'bonus': { const b = it.bonus; withAngle(fx, b, b.angle, () => stillBonus(fx, b)); break; }
       case 'frame': stillFrames(fx, it.frame); break;
       case 'feature': stillFrames(fx, it.feature); break;
       case 'bitmap': stillBitmap(fx, it.bitmap); break;
       case 'vfd':
         stillFace(fx, it.vfd, cab.vfdColours?.bg, '#050505'); break;
-      case 'seg': stillFace(fx, it.seg, it.seg.bg); break;
+      case 'seg': stillSegFace(fx, it.seg); break;
       case 'panel': stillFace(fx, it.panel, (it.panel as { bg?: number | null }).bg); break;
       case 'bfmLed': stillFace(fx, it.panel, it.panel.bg); break;
       case 'video': stillFace(fx, it.screen, null); break;
@@ -712,6 +749,19 @@ export function artImage(
   return out;
 }
 const artCache = new WeakMap<object, ReturnType<typeof artImage>>();
+
+function stillSegFace(fx: Ctx, s: SegDisplay): void {
+  if (!(s.width > 0) || !(s.height > 0)) return;
+  withAngle(fx, s, s.angle, () => {
+    const p = segDigitGeometry(s).bg;
+    fx.fillStyle = argbToCss(s.bg);
+    fx.beginPath();
+    fx.moveTo(p[0], p[1]);
+    for (let i = 2; i < p.length; i += 2) fx.lineTo(p[i], p[i + 1]);
+    fx.closePath();
+    fx.fill();
+  });
+}
 
 function stillFace(fx: Ctx, r: Rect, bg: number | null | undefined, fallback = '#000'): void {
   if (!(r.width > 0) || !(r.height > 0)) return;

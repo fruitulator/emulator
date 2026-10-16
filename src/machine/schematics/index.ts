@@ -26,6 +26,10 @@ import { MPU2_SCHEMATIC } from './mpu2';
 import { SYS83_SCHEMATIC } from './sys83';
 import { ACEVIDEO_SCHEMATIC } from './acevideo';
 import { PLUTO5_SCHEMATIC } from './pluto5';
+import { M1VIDEO_SCHEMATIC } from './m1video';
+import { PCLMAXI_SCHEMATIC } from './pclmaxi';
+import { MACH2000E_SCHEMATIC } from './mach2000';
+import { IGTS2000_SCHEMATIC } from './igts2000';
 import { MPU4VIDEO_SCHEMATIC } from './mpu4video';
 import { MPU4PLASMA_SCHEMATIC } from './mpu4plasma';
 
@@ -59,6 +63,10 @@ const BY_SYSTEM: Record<string, Schematic> = {
   SYS83: SYS83_SCHEMATIC,
   ACEVIDEO: ACEVIDEO_SCHEMATIC,
   PLUTO5: PLUTO5_SCHEMATIC,
+  M1VIDEO: M1VIDEO_SCHEMATIC,
+  PCLMAXI: PCLMAXI_SCHEMATIC,
+  MACH2000E: MACH2000E_SCHEMATIC,
+  IGTS2000: IGTS2000_SCHEMATIC,
   MPU4VIDEO: MPU4VIDEO_SCHEMATIC,
   MPU4PLASMA: MPU4PLASMA_SCHEMATIC,
 };

@@ -1,4 +1,5 @@
 import type { ChangeTerm, CoinLine, CoinLineTable, Refusal } from './coinwiring';
+import { dataPakCoinInKind } from '../hw/datapak';
 
 export interface Mps2CoinIo {
   rotaryByte: number;
@@ -77,13 +78,33 @@ export function readWordTable(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable | 
       lines.push({ line, credits: c, change: ch > 0 ? [[{ count: ch, pence: 10 }]] : [] });
     }
     if (!lines.length || lines.every((l) => l.credits === 0 && !l.change.length)) continue;
+    const codes = readDataPakCoinCodes(rom, a + 6, x);
+    if (codes) for (const l of lines) if (dataPakCoinInKind(codes.codes.get(l.line)!) === 'token') l.token = true;
     return {
       lines,
       pricePerCredit: null,
-      source: `MPS2 word table ${hex(credit)}${variant ? ` + ${hex(variant)} (rotary)` : ''}${change >= 0 ? `, change ${hex(change)}` : ''}, code ${hex(a)}`,
+      source: `MPS2 word table ${hex(credit)}${variant ? ` + ${hex(variant)} (rotary)` : ''}${change >= 0 ? `, change ${hex(change)}` : ''}${codes ? `, DataPak codes ${hex(codes.table)}` : ''}, code ${hex(a)}`,
     };
   }
   return null;
+}
+
+function readDataPakCoinCodes(rom: Uint8Array, from: number, x: number): { table: number; codes: Map<number, number> } | null {
+  let found: { table: number; codes: Map<number, number> } | null = null;
+  for (let p = from, end = from + 0x60; p < end && p < rom.length;) {
+    const w = word(rom, p);
+    if (x !== 0 && (w & 0xf03f) === (0xd020 | x)) {
+      const t = word(rom, p + 2);
+      const codes = new Map<number, number>();
+      for (const line of LINES) codes.set(line, rom[t + 2 * (line - 18)] ?? -1);
+      if ([...codes.values()].every((c) => dataPakCoinInKind(c) !== null)) {
+        if (found && [...codes].some(([l, c]) => dataPakCoinInKind(c) !== dataPakCoinInKind(found!.codes.get(l)!))) return null;
+        found ??= { table: t, codes };
+      }
+    }
+    p += insnLen(rom, p);
+  }
+  return found;
 }
 
 export interface JpmScript { index: number; adds: { amount: number; target: number }[] }

@@ -160,6 +160,7 @@ export interface Machine {
   layoutDigitLevel?(n: number): number;
   layoutDigitSegLevel?(n: number, seg: number): number;
   layoutInput(id: number, on: boolean): void;
+  readonly quietIsWaiting?: boolean;
   boardDefaults?: import('./boarddefaults').BoardDefault[];
   pinHostClock?(at: Date | null): void;
   isOptionLine?(id: number): boolean;
@@ -168,6 +169,7 @@ export interface Machine {
   readonly coinRefusing?: number;
   readonly coinLinesShut?: number;
   readonly coinChutes?: readonly CoinChute[];
+  readonly uncountedCoinLines?: readonly number[];
   readonly coinPortLines?: CoinPortLines;
   readonly coinLockHarnessRead?: boolean;
   readonly coinsRefused?: number;

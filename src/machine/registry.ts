@@ -50,12 +50,17 @@ import { Sys83 } from './sys83';
 import { AceVideo, ACEVIDEO_COIN_LINES } from './acevideo';
 import { directCoinSlots, type BookedCoin } from './coinbook';
 import { Pluto5 } from './pluto5';
+import { M1Video } from './m1video';
+import { PclMaxi } from './pclmaxi';
+import { Mach2000 } from './mach2000';
+import { IgtS2000 } from './igts2000';
 import { Mpu4VideoCard } from './mpu4video';
 import { Mpu4PlasmaCard } from './mpu4plasma';
 import { Sys1 } from './sys1';
 import { Proconn, ProconnType } from './proconn';
 import { Electrocoin, STANDARD_METER_GRID } from './electrocoin';
 import { Phoenix } from './phoenix';
+import { Electro } from './electro';
 import { sys80PortMap } from '../layout/sys80ports';
 import { reelGeometry, declaredReelChannels, type ReelGeometry } from './layoutreels';
 import {
@@ -573,6 +578,7 @@ const scorpion4: Platform = {
     }
 
     if (sc4Layout) m.setCoinMech(readSetting(sc4Layout, 'SCORPION4', 'Coin Mech'));
+    m.colourLedFitted = sc4Layout ? parseLayout(sc4Layout).some((c) => c.type === 0x24) : false;
     m.setCabinetCoinSlots(cabinetCoinSlots(game.layout, SC4_COIN_ROW));
     m.setLayoutCoins(declaredCoins(game.layout));
 
@@ -1256,7 +1262,7 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
 
   applyCabinetCoinPence(m, game.layout);
   m.setCabinetCoinSlots(cabinetCoinSlots(game.layout, MPU4_COIN_ROW));
-  m.setLayoutCoins(declaredCoins(game.layout));
+  m.setLayoutCoins(declaredCoins(game.layout), declaredCoins(game.layout, { offPicture: true }));
   if (mpu4SharedCoinConnector && !m.coinLineRead) {
     noteBoardDefault(m, {
       axis: 'hopper',
@@ -2363,9 +2369,23 @@ const mps2: Platform = {
       }
     }
 
+    {
+      const game = layout ? readLayoutWord(layout, 0x5c) : null;
+      if (game !== null) {
+        m.setGame(game);
+      } else {
+        noteBoardDefault(m, {
+          axis: 'reel',
+          text: 'game setting: the layout states none - Other assumed (no bonus reel)',
+          ifWrong: 'A cabinet with a bonus reel never turns it and cannot find it at power-up.',
+        });
+      }
+    }
+
     const meters = layout ? meterMoneyMap(layout, 'MPS2') : null;
     if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
     m.setLayoutCoins(declaredCoins(game.layout));
+    noteUnreadCoinCode(m);
 
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
@@ -2561,6 +2581,7 @@ const proconn: Platform = {
       if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
     }
     m.setLayoutCoins(declaredCoins(game.layout));
+    noteUnreadCoinCode(m);
     m.reset();
     game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
     return m;
@@ -2618,6 +2639,7 @@ const electrocoin: Platform = {
       if (slides) m.setSlidePence(slides);
     }
     m.setLayoutCoins(declaredCoins(game.layout));
+    noteUnreadCoinCode(m);
     m.reset();
     game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
     return m;
@@ -2643,6 +2665,7 @@ function phoenixPlatform(system: 'PHOENIX' | 'PHOENIX2'): Platform {
       m.setPercentage(Number.isInteger(pct) && pct >= 0 && pct < 15 ? pct + 1 : 0);
       m.setSwitches(layoutSwitches(game.layout));
       m.setLayoutCoins(declaredCoins(game.layout));
+      noteUnreadCoinCode(m);
       applyOperatorPresets(m, game, DEFAULT_PRESETS);
       const payload = decodedLayout(game.layout);
       if (payload) {
@@ -2729,6 +2752,7 @@ const blackbox: Platform = {
     m.setReelGeometry(reelGeometry(game.layout));
     m.setSwitches(layoutSwitches(game.layout));
     m.setLayoutCoins(declaredCoins(game.layout));
+    noteUnreadCoinCode(m);
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const bbLayout = decodedLayout(game.layout);
     if (bbLayout) {
@@ -2817,11 +2841,12 @@ const mpu3: Platform = {
       if (meters) m.setMeterMoneyMap(meters);
     }
     m.setLayoutCoins(declaredCoins(game.layout), layoutInputButtons(game.layout) ?? []);
+    noteUnreadCoinCode(m);
     if (!m.moneyPriced) {
       noteBoardDefault(m, {
         axis: 'meter',
-        text: 'meters not priced by the layout - money in and out not booked',
-        ifWrong: 'Bookkeeping shows no money for this machine; play is not affected.',
+        text: 'meters not priced by the layout - money out not booked',
+        ifWrong: 'Payouts are not added to the money-out total; play is not affected.',
         node: TAILORED_IDS.meters,
       });
     }
@@ -2858,9 +2883,20 @@ interface CoinMoneyBoard {
   readonly unnamedCoinLines: readonly number[];
 }
 
+function noteUnreadCoinCode(m: { coinLineTableRefusal?: string | null; unnamedCoinLines?: readonly number[] }): void {
+  if (!m.coinLineTableRefusal || !m.unnamedCoinLines?.length) return;
+  noteBoardDefault(m, {
+    axis: 'coin',
+    text: 'the program\'s coin code was not read - coins in counted at the slot, value not known unless the cabinet says',
+    ifWrong: 'A coin of known value shows as a coin of unknown value.',
+    node: 'coins',
+  });
+}
+
 function wireCoinMoney(
   m: CoinMoneyBoard, game: Game, payload: Uint8Array | null, system: string, node: string,
   boardLines: readonly number[] = [],
+  slideNote = true,
 ): void {
   const slides = payload ? triacSlidePence(payload, system) : null;
   m.setSlides(slides);
@@ -2875,7 +2911,7 @@ function wireCoinMoney(
       node: 'coins',
     });
   }
-  if (!slides?.some((s) => s !== null)) {
+  if (slideNote && !slides?.some((s) => s !== null)) {
     noteBoardDefault(m, {
       axis: 'peripheral',
       text: 'the layout names no payout slide - money out is counted from the meters, not priced',
@@ -2925,6 +2961,57 @@ const mpu2: Platform = {
     const money = payload ? meterMoneyMap(payload, 'MPU2') : null;
     if (money) m.setTriacMoney(money.triacIn, money.triacOut);
     wireCoinMoney(m, game, payload, 'MPU2', 'triacs');
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
+const electro: Platform = {
+  system: 'ELECTRO',
+  build(game) {
+    if (!game.gam) throw noRoms(game, 'no ELECTRO .gam to name the netlist');
+    const netlist = manifestRoms(game)[0];
+    if (!netlist) throw noRoms(game, 'no ELECTRO netlist');
+    const m = new Electro(netlist.bytes);
+    const geometry = storedLayoutProps(game)?.reels ?? reelGeometry(game.layout);
+    m.setReelGeometry(geometry);
+    const missing = m.circuit.reelList.filter((r) => !geometry.some((g) => g.number === r.index));
+    if (missing.length) {
+      noteBoardDefault(m, {
+        axis: 'reel',
+        text: `reels the netlist turns but the layout does not draw: ${missing.length}`,
+        ifWrong: 'A reel the circuit reads is not shown on the cabinet.',
+        node: TAILORED_IDS.reels,
+      });
+    }
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    const payload = decodedLayout(game.layout);
+    wireCoinMoney(m, game, payload, 'ELECTRO', 'meters', m.coinSwitchLines, false);
+    const payouts = m.payoutParts;
+    if (!payouts.length) {
+      noteBoardDefault(m, {
+        axis: 'peripheral',
+        text: 'the netlist names no payout solenoid or hopper - money out is not booked',
+        ifWrong: 'Bookkeeping shows no money out for this machine; play is not affected.',
+        node: 'meters',
+      });
+    } else if (payouts.some((p) => p.coin === 'unpriced' || p.coin === 'token')) {
+      noteBoardDefault(m, {
+        axis: 'peripheral',
+        text: 'a payout part names no coin value - its coins out are counted, value not known',
+        ifWrong: 'Bookkeeping shows those payouts as a count with no value; play is not affected.',
+        node: 'meters',
+      });
+    }
+    if (m.circuit.problems.length) {
+      noteBoardDefault(m, {
+        axis: 'manifest',
+        text: `netlist lines the reader could not place: ${m.circuit.problems.length}`,
+        ifWrong: 'Parts of the circuit are missing, and the machine may not work as wired.',
+      });
+    }
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
     return m;
@@ -3026,6 +3113,7 @@ const astra: Platform = {
       }
     }
     m.setLayoutCoins(declaredCoins(game.layout));
+    noteUnreadCoinCode(m);
     const geometry = reelGeometry(game.layout);
     if (geometry.length) m.setReelGeometry(geometry);
 
@@ -3136,8 +3224,148 @@ const pluto5: Platform = {
   },
 };
 
+const m1video: Platform = {
+  system: 'M1VIDEO',
+  build(game) {
+    const prog = manifestRoms(game);
+    if (!prog.length) throw noRoms(game, 'no M1 Video program ROM');
+    const m = new M1Video();
+    m.loadRom(prog.map((f) => f.bytes));
+    const slave = (game.gam?.slaveRoms ?? []).map((n) => file(game, n)).filter((f): f is GameFile => !!f);
+    if (!slave.length) throw noRoms(game, 'no M1 Video reel card ROM (SLAVEROM)');
+    m.loadSlaveRom(slave.map((f) => f.bytes));
+    const sound = (game.gam?.sound ?? []).map((n) => file(game, n)).find((f): f is GameFile => !!f);
+    if (sound) m.loadSoundRom(sound.bytes);
+    else {
+      noteBoardDefault(m, {
+        axis: 'manifest',
+        text: 'no sample ROM named - the reel card plays no samples',
+        ifWrong: 'The machine runs without its sampled sounds.',
+      });
+    }
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    m.setDips(gamDipByteLsb(game.gam?.dips.get(1)), gamDipByteLsb(game.gam?.dips.get(2)));
+    if (game.gam?.dips.get(1) === undefined && game.gam?.dips.get(2) === undefined) {
+      noteBoardDefault(m, {
+        axis: 'manifest',
+        text: 'no option-switch banks stated - all sixteen read as off',
+        ifWrong: 'The firmware takes its site options from those switches, so it may run at the wrong stake or percentage.',
+      });
+    }
+    const protocol = Number.parseInt(game.gam?.settings.get('Protocol') ?? '', 10);
+    m.dataPakEcho = Number.isFinite(protocol) && protocol !== 0;
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    const payload = decodedLayout(game.layout);
+    const money = payload ? meterMoneyMap(payload, 'M1VIDEO') : null;
+    if (money) m.setMeterMoney(money);
+    wireCoinMoney(m, game, payload, 'M1VIDEO', 'meters');
+    noteUnreadCoinCode(m);
+    if (!declaredCoins(game.layout).length) {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'the cabinet draws no coin slot - coins put in through its buttons are not booked',
+        ifWrong: 'Bookkeeping shows no money in for this machine; play is not affected.',
+        node: 'switches',
+      });
+    }
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
+const pclmaxi: Platform = {
+  system: 'PCLMAXI',
+  build(game) {
+    const prog = manifestRoms(game);
+    if (!prog.length) throw noRoms(game, 'no PCL Maxi program ROM');
+    const m = new PclMaxi();
+    m.loadRom(prog.map((f) => f.bytes));
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    const payload = decodedLayout(game.layout);
+    const tag83 = payload ? fileLevelTags(payload).get(0x83) : undefined;
+    m.opticMode = tag83 && tag83.length >= 4
+      ? (tag83[0] | (tag83[1] << 8) | (tag83[2] << 16) | (tag83[3] << 24)) >>> 0
+      : 0;
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, DEFAULT_PRESETS);
+    const money = payload ? meterMoneyMap(payload, 'PCLMAXI') : null;
+    if (money) m.setMeterMoney(money);
+    wireCoinMoney(m, game, payload, 'PCLMAXI', 'meters');
+    noteUnreadCoinCode(m);
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
+const mach2000e: Platform = {
+  system: 'MACH2000E',
+  build(game) {
+    const main = manifestRoms(game);
+    if (!main.length) throw noRoms(game, 'no Mach 2000 main program ROM');
+    const slave = (game.gam?.slaveRoms ?? []).map((n) => file(game, n)).filter((f): f is GameFile => !!f);
+    if (!slave.length) throw noRoms(game, 'no Mach 2000 slave program ROM (SLAVEROM)');
+    const m = new Mach2000();
+    m.loadRoms(main.map((f) => f.bytes), slave.map((f) => f.bytes));
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    m.setDips(gamDipByteLsb(game.gam?.dips.get(1)), gamDipByteLsb(game.gam?.dips.get(2)));
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, {
+      service: { fallback: 0x18, made: false, tag: false },
+      cash: { fallback: 0x23, made: false, tag: false },
+      refill: { fallback: 0x17, made: false },
+    });
+    const payload = decodedLayout(game.layout);
+    const money = payload ? meterMoneyMap(payload, 'MACH2000E') : null;
+    if (money) m.setMeterMoney(money);
+    wireCoinMoney(m, game, payload, 'MACH2000E', 'meters');
+    noteUnreadCoinCode(m);
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
+const igts2000: Platform = {
+  system: 'IGTS2000',
+  build(game) {
+    const roms = manifestRoms(game);
+    if (!roms.length) throw noRoms(game, 'no IGT S2000 boot ROM');
+    const slaves = (game.gam?.slaveRoms ?? []).map((n) => file(game, n)).filter((f): f is GameFile => !!f);
+    if (!slaves.length) throw noRoms(game, 'no IGT S2000 game ROM (SLAVEROM)');
+    const m = new IgtS2000();
+    m.loadRoms(roms.map((f) => f.bytes), slaves.map((f) => f.bytes));
+    m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
+    m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
+    applyOperatorPresets(m, game, {
+      service: { fallback: 0x18, made: false, tag: false },
+      cash: { fallback: 0x19, made: false, tag: false },
+      refill: { fallback: null, made: false },
+    });
+    const payload = decodedLayout(game.layout);
+    const money = payload ? meterMoneyMap(payload, 'IGTS2000') : null;
+    if (money) m.setMeterMoney(money);
+    wireCoinMoney(m, game, payload, 'IGTS2000', 'meters');
+    noteUnreadCoinCode(m);
+    const eeps = byExt(game, /\.eep$/i);
+    const manifests = [game.variant, ...game.files.filter((f) => CONFIG_FILE.test(f.name)).map((f) => f.name)]
+      .map((n) => stem(baseName(n)).toLowerCase());
+    const eep = manifests.map((s) => eeps.find((f) => stem(f.name).toLowerCase() === s)).find(Boolean) ?? eeps[0];
+    if (eep) m.loadEeprom(eep.bytes);
+    if (game.nvram) m.loadNvram(game.nvram);
+    m.reset();
+    restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
+    return m;
+  },
+};
+
 const PLATFORMS = new Map<string, Platform>(
-  [scorpion4, scorpion2, scorpion1, sys85, sys5, mpu4, mpu4video, impact, acesp, m1ab, mpu5, scorpion5, epoch, mps2, sys80, astra, sru, blackbox, adder5, sys1, proconn, electrocoin, phoenix, phoenix2, mpu3, mmm, mpu4plasma, mpu2, sys83, acevideo, pluto5]
+  [scorpion4, scorpion2, scorpion1, sys85, sys5, mpu4, mpu4video, impact, acesp, m1ab, mpu5, scorpion5, epoch, mps2, sys80, astra, sru, blackbox, adder5, sys1, proconn, electrocoin, phoenix, phoenix2, mpu3, mmm, mpu4plasma, mpu2, sys83, acevideo, pluto5, m1video, pclmaxi, mach2000e, igts2000, electro]
     .map((p) => [p.system, p]),
 );
 
@@ -3156,12 +3384,6 @@ export interface KnownPlatform {
 }
 
 export const UNSUPPORTED_SYSTEMS = new Map<string, KnownPlatform>([
-  ['ELECTRO', {
-    label: 'MFME Electro (electromechanical)',
-    sets: 0,
-    missing: 'a relay/cam/reel-mech circuit simulator; these cabinets have no '
-      + 'CPU or ROM, so no core can be reused and MAME has no driver to port',
-  }],
 ]);
 
 export function unsupportedSystem(system: string): KnownPlatform | undefined {
@@ -3562,7 +3784,7 @@ export function machineFor(game: Game): Machine {
       node: TAILORED_IDS.hopper,
     });
   }
-  const SET_PRICED = new Set(['EPOCH', 'MPU5', 'ASTRASYSA1', 'PROCONN', 'BLACKBOX', 'PHOENIX', 'PHOENIX2', 'SRU', 'SYSTEM80', 'MPU2', 'SYS83']);
+  const SET_PRICED = new Set(['EPOCH', 'MPU5', 'ASTRASYSA1', 'PROCONN', 'BLACKBOX', 'PHOENIX', 'PHOENIX2', 'SRU', 'SYSTEM80', 'MPU2', 'SYS83', 'M1VIDEO', 'PCLMAXI', 'MACH2000E', 'IGTS2000', 'ELECTRO']);
   const readsCoins = (m as { programReadsCoins?: boolean }).programReadsCoins === true;
   if (!SET_PRICED.has(game.system.toUpperCase()) && !cabinetCoinPence(game.layout) && !readsCoins) {
     noteBoardDefault(m, {

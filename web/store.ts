@@ -1,5 +1,5 @@
 import type { GameFile, GameVariant, LayoutProps } from '../src/machine/registry';
-import { contentFiles, setFiles } from '../src/machine/setfiles';
+import { contentFiles, LAYOUT_FILE, setFiles } from '../src/machine/setfiles';
 import { isEffectSample } from '../src/machine/effects';
 import { encodeSrcs } from './gamepak';
 
@@ -37,6 +37,7 @@ export interface GameMeta {
   layoutProps?: LayoutProps;
   contentHash?: string;
   contentRule?: number;
+  programHash?: string;
   batteries?: string[];
   maker?: string;
   makerRule?: number;
@@ -297,12 +298,20 @@ export async function hashGameFiles(files: GameFile[]): Promise<string> {
   return sha256Hex(encodeSrcs(canonicalOrder(files.filter((f) => !isEffectSample(f.name)))));
 }
 
-export const CONTENT_RULE = 2;
+export const CONTENT_RULE = 3;
 
 export async function contentHashOf(files: GameFile[]): Promise<string> {
   const content = contentFiles(setFiles(files))
     .map((f) => ({ name: f.name.toLowerCase(), bytes: f.bytes }));
   return sha256Hex(encodeSrcs(canonicalOrder(content)));
+}
+
+export async function programHashOf(files: GameFile[]): Promise<string | null> {
+  const program = contentFiles(setFiles(files))
+    .filter((f) => !LAYOUT_FILE.test(f.name) && !isEffectSample(f.name));
+  if (!program.length) return null;
+  const digests = (await Promise.all(program.map((f) => sha256Hex(f.bytes)))).sort();
+  return sha256Hex(new TextEncoder().encode(digests.join('\n')));
 }
 
 export async function findByContentHash(contentHash: string): Promise<GameMeta[]> {

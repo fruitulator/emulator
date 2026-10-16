@@ -1,6 +1,7 @@
 import {
   classifyGame, linkedInstances, missingProgramRoms, platformFor, type Game,
 } from '../src/machine/registry';
+import { Presenter, planSize, uniformPlan } from './present';
 import { damagedRoms } from '../src/machine/textcopy';
 import { type FrameView } from '../src/machine/framestate';
 import { SchematicPanel } from './schematic';
@@ -35,7 +36,7 @@ import { openAlert } from './ui/dialog';
 import { pillButton } from './ui/list';
 import { rowIcon } from './ui/icons';
 import { askClearRam } from './clearram';
-import { card, checkRow, choreograph, sliderRow, statRow } from './ui/rows';
+import { backRow, caption, card, checkRow, choreograph, menuRow, sliderRow, statRow } from './ui/rows';
 import { MenuDrawer } from './ui/drawer';
 import { showSpeaker, speakerButton } from './ui/speaker';
 import { fillKeyTable, type KeyTableRow } from './keytable';
@@ -84,6 +85,8 @@ import {
 } from './dat';
 import { StoreConfirm, reelDriftFault } from './reeldrift';
 import { createCabinetPainter, DOT_OFF, DOT_ON } from './cabdraw';
+import { ensureLegendFonts, faceAvailable, facesToAsk } from './legendfonts';
+import { fontChoiceRows, openFontPicker } from './ui/fontpick';
 import { ReelPeek, reelAt } from './play/peek';
 import { reelPeekOn } from './peekpref';
 import { fillScreenOn } from './fillpref';
@@ -103,7 +106,7 @@ import type { Snapshot } from './snapshot';
 import { Audio } from './audio';
 import { CabinetEffects } from './effects';
 import {
-  StopNote, StopWatch, noteReason, noteText, offersState, stopNoteParts, unbuiltLogText,
+  StopNote, StopWatch, judgeStop, noteReason, noteText, offersState, stopNoteParts, unbuiltLogText,
 } from './stopnote';
 import { stageBelongsOnVeil } from './busystage';
 import {
@@ -312,6 +315,7 @@ const HW_URL = new URLSearchParams(location.search).get('hw');
 const hwBridge = HW_URL?.startsWith('ws') ? new HwBridge(emu, HW_URL) : null;
 let running = false;
 const stopWatch = new StopWatch();
+let quietIsWaiting = false;
 const stopNote = new StopNote(document, () => openSchematic('diagram'), () => void downloadSnapshot());
 let stopParts: string[] = [];
 class Session {
@@ -426,6 +430,7 @@ function startGame(
       }
       if (session.hash) startMoneyWatch(session.hash);
       stopParts = stopNoteParts(info.boardDefaults);
+      quietIsWaiting = info.quietIsWaiting === true;
       if (stopParts.length) console.log(`[fruitulator] ${unbuiltLogText(stopParts)}`);
       hwBridge?.gameLoaded(game.name, info.system, info.coins);
       infoBoot = booted;
@@ -492,6 +497,8 @@ function startGame(
       capsAreSwitches(cab.lamps, cabView.nonSwitchInputs);
       cab.content = playView(cab);
       cabinet = cab;
+      void ensureLegendFonts(cab.lamps.map((l) => l.legend?.face)).then(() => { if (cabinet === cab) forceRedraw(); });
+      offerFontChoices(cab);
       stampCabinetCoins();
       refreshKeys?.();
       rebuildMenu?.();
@@ -1893,6 +1900,27 @@ const appActions: ActionSurface = {
   namedSwitch: (id, level) => emu.input(id, level),
   get effects() { return effects; },
   refit: () => { if (!stage.hidden) resetView(); },
+  fontRows: (options) => {
+    const cab = cabinet;
+    if (!cab) return [];
+    const faces = [...new Set(shownCaptionFaces(cab).filter((f) => !faceAvailable(f)))];
+    if (!faces.length) return [];
+    const row: HTMLButtonElement = menuRow(str('main.font'), '', () => {
+      const panel = document.createElement('div');
+      panel.className = 'menu-stack';
+      const fly = drawer.flyoutMode();
+      const back = backRow(str('play.actions.options'), () => drawer.openFlyout(str('play.actions.options'), options, back));
+      if (fly) panel.append(back);
+      for (const face of faces) {
+        const c = card();
+        c.append(...fontChoiceRows(face, () => { if (cabinet === cab) forceRedraw(); }));
+        panel.append(caption(face), c);
+      }
+      if (fly) drawer.openFlyout(str('main.font'), panel, row);
+      else drawer.openSubmenu(str('main.font'), panel, () => drawer.openSubmenu(str('play.actions.options'), options));
+    }, true);
+    return [row];
+  },
   redraw: () => forceRedraw(),
   optionRows: (m) => appOptionRows(m.info),
   fillKeys: (root) => {
@@ -2275,7 +2303,7 @@ function frame(now: number): void {
         session.framesDrawn++;
         if (schemPanel.isOpen) schemPanel.sampleFrame(view);
         {
-          const stopped = stoodDown ? stopWatch.paused(now) : stopWatch.sample(view, now);
+          const stopped = judgeStop(stopWatch, view, now, { paused: stoodDown, quietIsWaiting });
           const reason = noteReason(stopped, stopParts);
           const put = stopNote.update(
             reason, reason ? noteText(reason, stopParts) : '', offersState(reason, stopParts));
@@ -2416,6 +2444,27 @@ function startFrameLoop(): void {
   requestAnimationFrame(frame);
 }
 startFrameLoop();
+
+function shownCaptionFaces(cab: Cabinet): string[] {
+  const c = cab.content;
+  return cab.lamps.flatMap((l) => {
+    const g = l.legend;
+    if (!g?.face || !((g.off ?? '').trim() || (g.on ?? '').trim())) return [];
+    const inView = l.left < c.left + c.width && c.left < l.left + l.width
+      && l.top < c.top + c.height && c.top < l.top + l.height;
+    return inView ? [g.face.trim()] : [];
+  });
+}
+
+function offerFontChoices(cab: Cabinet): void {
+  const ask = facesToAsk(shownCaptionFaces(cab));
+  const next = (): void => {
+    const face = ask.shift();
+    if (!face || cabinet !== cab) return;
+    openFontPicker({ face, onPick: () => { if (cabinet === cab) forceRedraw(); next(); }, onClose: next });
+  };
+  next();
+}
 
 function forceRedraw(): void {
   painter.invalidate();
@@ -2645,7 +2694,7 @@ function fitScreen(): void {
   if (c.sw === sw && c.sh === sh && c.lw === lw && c.lh === lh && c.fill === fill
     && c.bands === bands && c.cab === cab) return;
   if (bands > 0) {
-    const l = bandsLayout({ width: sw, height: sh }, { width: lw, height: lh }, bands, TOUCH_DEVICE, fill);
+    const l = bandsLayout({ width: sw, height: sh }, { width: lw, height: lh }, bands, TOUCH_DEVICE, fill, (colH) => reelBands.wholeCap(colH));
     screenCss = { w: l.screen.width, h: l.screen.height, lw, lh, sw, sh, fill, bands, cab };
     screenEl.style.inset = 'auto';
     screenEl.style.margin = '0';
@@ -2679,17 +2728,8 @@ function presentScreen(): void {
   const need = screenCss.w * dpr * zq;
   const tw = Math.min(lw, Math.ceil(need));
   const th = tw === lw ? lh : Math.max(1, Math.ceil((lh * tw) / lw));
-  let steps = 0;
-  if (smoothFit) for (let w = lw; Math.ceil(w / 2) >= tw; w = Math.ceil(w / 2)) steps++;
-  let hw = lw;
-  let hh = lh;
-  for (let n = 0; n < steps; n++) {
-    hw = Math.ceil(hw / 2);
-    hh = Math.ceil(hh / 2);
-  }
-  const superSample = smoothFit && hw > tw;
-  const bw = superSample ? tw : hw;
-  const bh = superSample ? th : hh;
+  const plan = uniformPlan(lw, lh, tw, smoothFit);
+  const { w: bw, h: bh } = planSize(plan, lw, lh, tw, th);
   if (screenEl.width !== bw || screenEl.height !== bh) {
     screenEl.width = bw;
     screenEl.height = bh;
@@ -2697,49 +2737,10 @@ function presentScreen(): void {
   }
   if (!screenDirty) return;
   screenDirty = false;
-  let src: HTMLCanvasElement = canvas;
-  let sw = lw;
-  let sh = lh;
-  const inSteps = superSample ? steps : steps - 1;
-  for (let n = 0; n < inSteps; n++) {
-    const w = Math.ceil(sw / 2);
-    const h = Math.ceil(sh / 2);
-    const step = screenSteps[n] ??= document.createElement('canvas');
-    if (step.width !== w || step.height !== h) {
-      step.width = w;
-      step.height = h;
-    }
-    smoothBlit(step.getContext('2d')!, src, sw, sh, w, h);
-    src = step;
-    sw = w;
-    sh = h;
-  }
-  screenSteps.length = Math.max(0, inSteps);
-  if (!superSample) {
-    screenSuper = null;
-    smoothBlit(screenCtx, src, sw, sh, bw, bh);
-    return;
-  }
-  const big = screenSuper ??= document.createElement('canvas');
-  if (big.width !== 2 * bw || big.height !== 2 * bh) {
-    big.width = 2 * bw;
-    big.height = 2 * bh;
-  }
-  smoothBlit(big.getContext('2d')!, src, sw, sh, 2 * bw, 2 * bh);
-  smoothBlit(screenCtx, big, 2 * bw, 2 * bh, bw, bh);
+  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh);
 }
 
-let screenSuper: HTMLCanvasElement | null = null;
-
-const screenSteps: HTMLCanvasElement[] = [];
-
-function smoothBlit(
-  dst: CanvasRenderingContext2D, src: HTMLCanvasElement, sw: number, sh: number, dw: number, dh: number,
-): void {
-  dst.imageSmoothingEnabled = true;
-  dst.globalCompositeOperation = 'copy';
-  dst.drawImage(src, 0, 0, sw, sh, 0, 0, dw, dh);
-}
+const screenPresenter = new Presenter();
 
 function componentBox(): { x: number; y: number; w: number; h: number } | null {
   const cab = cabinet;

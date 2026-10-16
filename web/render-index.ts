@@ -252,6 +252,18 @@ export function buildRenderIndex(
     });
   }
 
+  for (const b of cab.bonusReels ?? []) {
+    els.push({
+      extent: turned(rect(b.left, b.top, b.width, b.height), b),
+      key: (m) => {
+        const r = m.reels[reelIndex(m, b)];
+        let h = r ? mix(mix(0, r.travel | 0), r.position | 0) : 0;
+        for (const n of b.lampNums) if (n >= 0) h = mix(h, lampBit(m, n));
+        return h;
+      },
+    });
+  }
+
   cab.frameReels.forEach((fr) => {
     els.push({
       extent: rect(fr.left, fr.top, fr.width, fr.height),
@@ -375,7 +387,7 @@ export function buildRenderIndex(
     });
   }
 
-  for (const d of [cab.dotMatrix, cab.plasmaPanel]) {
+  for (const d of [cab.dotMatrix, cab.plasmaPanel, cab.astraLed, cab.bfmColourLed, cab.igtVfd]) {
     if (!d) continue;
     els.push({
       extent: turned(rect(d.left, d.top, d.width, d.height), d),

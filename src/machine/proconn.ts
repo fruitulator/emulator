@@ -2,6 +2,7 @@ import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, Coi
 import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
 import { locateProconnCoins, proconnCoinOf, proconnCoinTable, proconnRowPattern, type ProconnCoinCode } from './proconncoins';
 import { V20Reels } from './v20reels';
 import { Z80, type Z80Io } from '../cpu/z80';
@@ -148,7 +149,7 @@ class ProconnLcd {
 }
 
 export class Proconn implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'card', 'sampleBankBlock', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'tokenOutAt'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'card', 'sampleBankBlock', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'tokenOutAt'];
 
   readonly digitKind: DigitKind = 'proconn';
   readonly clockHz = CLOCK;
@@ -254,16 +255,16 @@ export class Proconn implements Machine {
   }
 
   private readonly ledger = newCashLedger();
-  private meterInPence: number[] = [];
+  private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  private readonly slotCoins = new SlotCoins();
   private meterOutPence: number[] = [];
   get cashLedger(): CashLedger | undefined {
-    return this.meterInPence.length ? this.ledger : undefined;
+    return this.ledger;
   }
 
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterInPence = inMult.map((x) => x * METER_UNIT_PENCE);
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
   }
 
@@ -350,6 +351,7 @@ export class Proconn implements Machine {
     this.cycles = 0;
     this.coinTimer = 0;
     this.coinMask = 0;
+    this.coinBook.reset();
     this.judgeId.fill(-1);
     this.judgeWait.fill(0);
     this.judging = false;
@@ -561,11 +563,6 @@ export class Proconn implements Machine {
     this.meters[i]++;
     this.gridTotals.in += this.meterInRaw[i] ?? 0;
     this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-    if (!this.wiredIn) {
-      const p = this.meterInPence[i] ?? 0;
-      if (p && i === this.coinCode()?.tokenMeter) this.ledger.tokenInPence += p;
-      else this.ledger.inPence += p;
-    }
     const t = this.tokenOutPulses > 0 ? this.coinCode()?.tokenOut : null;
     if (t && i === t.meter) {
       const acc = this.ram[t.acc & (RAM_SIZE - 1)]! | (this.ram[(t.acc + 1) & (RAM_SIZE - 1)]! << 8);
@@ -583,7 +580,8 @@ export class Proconn implements Machine {
       }
       return;
     }
-    if (this.booksMoney) this.ledger.outPence += this.meterOutPence[i] ?? 0;
+    const q = this.meterOutPence[i] ?? 0;
+    if (this.booksMoney && q) this.coinBook.cashOut(q);
   }
 
   private tokenOutPulses = 0;
@@ -672,6 +670,7 @@ export class Proconn implements Machine {
     this.coinSequencer(c);
     this.tokenOutStep(this.cpu.pc);
     if (this.judging) this.judgeCoinStep(c);
+    this.coinBook.elapse(c);
     if (this.coinTimer > 0) {
       const was = this.coinTimer;
       this.coinTimer -= c;
@@ -799,7 +798,18 @@ export class Proconn implements Machine {
     }
     if (this.coinRow >= this.matrix.length || !this.coinMask) { this.coinTimer = 0; return; }
     this.matrix[this.coinRow] |= this.coinMask;
-    if (this.wiring && this.coinCode()) this.pend(id);
+    if (this.coinCode()) this.pend(id);
+    else this.bookDropped(id);
+  }
+
+  private bookDropped(id: number): void {
+    const w = this.wiring;
+    if (w) {
+      if (!this.booksMoney || w.conflicts.includes(id)) return;
+      const c = w.coins.get(id);
+      if (c !== undefined) { this.coinBook.coin(bookedOfSlotCoin(c)); return; }
+    }
+    this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
   }
   private coinTimer = 0;
   private coinRow = COIN_ROW;
@@ -880,7 +890,7 @@ export class Proconn implements Machine {
 
   private judgeCoinStep(cycles: number): void {
     const code = this.coinCode();
-    if (!code || !this.wiring) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; this.creditCode = -1; return; }
+    if (!code) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; this.creditCode = -1; return; }
     const pc = this.cpu.pc;
     if (pc === code.credit.entry) this.creditCode = this.ram[code.route & (RAM_SIZE - 1)]! & 0x0f;
     else if (this.creditCode >= 0 && (pc === code.credit.at || pc === code.credit.exit)) {
@@ -927,18 +937,20 @@ export class Proconn implements Machine {
     return !this.wiring || this.wiringState.state !== 'disagrees';
   }
 
-  private get wiredIn(): boolean {
-    return !!this.wiring && (!this.booksMoney || this.coinCode() !== null);
-  }
-
   private bookTaken(id: number): void {
-    const w = this.wiring!;
-    if (!this.booksMoney || w.conflicts.includes(id)) return;
     const line = this.programLine(id);
     const taken = line === null ? null : this.priced()?.get(line) ?? null;
+    const w = this.wiring;
+    if (!w) {
+      if (taken) this.coinBook.coin(bookedOfSlotCoin(taken));
+      else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
+      return;
+    }
+    if (!this.booksMoney || w.conflicts.includes(id)) return;
     const c = w.coins.get(id) ?? (line === null ? undefined : w.coins.get(line));
     if (c === undefined) {
-      if (taken) this.bookCoin(taken);
+      if (taken) this.coinBook.coin(bookedOfSlotCoin(taken));
+      else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
       return;
     }
     if (taken) {
@@ -952,9 +964,7 @@ export class Proconn implements Machine {
   }
 
   private bookCoin(c: SlotCoin): void {
-    if (typeof c === 'number') this.ledger.inPence += c;
-    else if (c.token === null) this.ledger.unpricedTokenIn++;
-    else this.ledger.tokenInPence += c.token;
+    this.coinBook.coin(bookedOfSlotCoin(c));
   }
 
   private coinSlots: number[] = [];
@@ -972,6 +982,7 @@ export class Proconn implements Machine {
     }
     this.coinSlots = [...slots].sort((a, b) => a - b);
     this.drawnCoins = [...drawn].sort((a, b) => a - b);
+    this.slotCoins.setLines(slotStatedCoins(list, (c) => (c.named?.name.startsWith('ccTalk') || c.named?.name.startsWith('NV') ? null : proconnSlotId(c))));
   }
 
   get unnamedCoinLines(): readonly number[] {

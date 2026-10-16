@@ -10,6 +10,12 @@ export const DATAPAK_CASH_OUT_PENCE = new Map<number, number>([
   [0x44, 100], [0x45, 200], [0x46, 500], [0x47, 1000],
 ]);
 
+export function dataPakCoinInKind(code: number): 'cash' | 'token' | null {
+  if (code >= 0x38 && code <= 0x3f) return 'token';
+  if ((code >= 0x30 && code <= 0x37) || (code >= 0x27 && code <= 0x29)) return 'cash';
+  return null;
+}
+
 export const V20_CPU32_DATAPAK_CLOCK = 8_389_000;
 
 export class DataPak {

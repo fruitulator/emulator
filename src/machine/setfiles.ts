@@ -14,7 +14,7 @@ export function contentFiles<T extends { name: string }>(files: T[]): T[] {
 }
 
 export const EXTRA_FILE =
-  /\.(jpe?g|png|bmp|gif|webp|tiff?|pspimage|wav|mp3|mp4|m4v|avi|mkv|mov|wmv|webm|mpe?g|flv|pdf|nfo|db|ttf|bak|zip|txt|md|rtf|docx?|html?|url)$/i;
+  /\.(jpe?g|png|bmp|gif|webp|tiff?|pspimage|wav|mp3|mp4|m4v|avi|mkv|mov|wmv|webm|mpe?g|flv|pdf|nfo|db|ttf|bak|zip|md|rtf|docx?|html?|url)$/i;
 
 export function isSetFile(name: string): boolean {
   return !EXTRA_FILE.test(name);

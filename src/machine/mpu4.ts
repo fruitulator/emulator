@@ -1410,11 +1410,11 @@ export class Mpu4 implements Bus, Machine {
 
   private coinSlots: number[] = [];
 
-  setLayoutCoins(list: readonly DeclaredCoin[]): void {
+  setLayoutCoins(list: readonly DeclaredCoin[], mechs: readonly DeclaredCoin[] = list): void {
     const out = new Set<number>();
     this.mechsDeclared = [];
-    if (list.some((c) => c.note === Mpu4.TOK_MPU4_NOTE)) this.mechsDeclared.push(Mpu4.TOKEN_MECH_LINE);
-    if (list.some((c) => c.note === Mpu4.TOK_MPU4_2_NOTE)) this.mechsDeclared.push(Mpu4.TOKEN_MECH2_LINE);
+    if (mechs.some((c) => c.note === Mpu4.TOK_MPU4_NOTE)) this.mechsDeclared.push(Mpu4.TOKEN_MECH_LINE);
+    if (mechs.some((c) => c.note === Mpu4.TOK_MPU4_2_NOTE)) this.mechsDeclared.push(Mpu4.TOKEN_MECH2_LINE);
     for (const c of list) {
       if (c.pence !== null) continue;
       if (c.named?.name.startsWith('ccTalk')) continue;

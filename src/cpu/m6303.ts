@@ -163,6 +163,15 @@ export class HD6303Y {
     else this.internal &= ~SRC_BIT[src] & 0xff;
   }
 
+  takeInterrupt(vector: number): number {
+    const start = this.cycles;
+    this.sleeping = false;
+    this.enterInterrupt(vector & 0xffff);
+    return this.cycles - start;
+  }
+
+  get irqMasked(): boolean { return (this.cc & I) !== 0; }
+
   private read8(addr: number): number {
     return this.bus.read8(addr & 0xffff) & 0xff;
   }
