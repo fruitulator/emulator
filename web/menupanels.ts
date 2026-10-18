@@ -120,6 +120,12 @@ export interface SwitchPanel {
   panel: HTMLElement;
 }
 
+function shownLabel(sw: { id: number; label: string }): string {
+  const text = sw.label.trim();
+  if (/^\d*$/.test(text)) return str('menupanels.switch_n', { 0: sw.id });
+  return text.charAt(0).toLocaleUpperCase() + text.slice(1);
+}
+
 export function switchPanels(
   info: MachineInfo, view: PlatformView,
   onPanel: (sw: MachineInfo['switchPanel'][number], on: boolean) => void,
@@ -135,7 +141,7 @@ export function switchPanels(
         panel = card();
         groups.set(name, panel);
       }
-      const { row, box } = checkRow(testNames.get(sw.id) ?? sw.label, (checked) => onPanel(sw, checked));
+      const { row, box } = checkRow(testNames.get(sw.id) ?? shownLabel(sw), (checked) => onPanel(sw, checked));
       box.checked = sw.on;
       panel.append(row);
     }

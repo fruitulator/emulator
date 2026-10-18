@@ -1,6 +1,6 @@
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, CoinWiringStatus, Machine, MachineDisplay, DigitKind } from './machine';
-import { newCashLedger, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import { HD6303Y } from '../cpu/m6303';
 import { Pia6821 } from '../hw/pia6821';
@@ -196,6 +196,7 @@ export class AceSp implements Bus, Machine {
         id: AceSp.DIL_ID_BASE + i,
         label: dilSwitchLabel(`Switch ${(i & 7) + 1} bank ${i < 8 ? 1 : 2}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Bank ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'Option switches',
         ...(i === AceSp.TEST_SWITCH_ROW ? {} : { bootOnly: true }),
         option: true,

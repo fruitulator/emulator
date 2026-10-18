@@ -1130,7 +1130,8 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   const dots = comps.find((c) => c.type === Type.DotAlpha);
   for (const c of comps) {
     if (c.type !== Type.Lamp) continue;
-    if (!sublampSlots(c).length && !isAcceptor(c.values) && !isUnwiredBox(c)) continue;
+    if (!sublampSlots(c).length && !isAcceptor(c.values) && inputId(c) === undefined
+      && !isUnwiredBox(c)) continue;
     const keyed: LampKey = c.values.get('Transparent') ? 'alpha'
       : c.values.get('Graphic') ? 'alphaonly' : false;
     const offRaw = image(c, 'OffImage', keyed);
@@ -1231,7 +1232,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       blend: pool ? true : undefined,
       multi: val(c, 'Blend') ? true : undefined,
       ...inputGates(c, acceptor || btn !== undefined ? nums.filter((n) => n >= 0) : []),
-      ...(btn ? { cap: true, ...capName(c) } : {}),
+      ...(btn !== undefined && (btn !== 0 || !acceptor) ? { cap: true, ...capName(c) } : {}),
     });
   }
 

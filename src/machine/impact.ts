@@ -1,7 +1,7 @@
 import type { Bus16 } from '../cpu/bus68k';
 import type { CabinetSwitch, CoinWiringStatus, Machine, DigitKind, NoteResult } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import { M68000 } from '../cpu/m68000';
 import { Mc68681 } from '../hw/mc68681';
@@ -723,6 +723,7 @@ export class Impact implements Bus16, Machine {
         id: Impact.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL switch ${i + 1}`, this.dilLabels?.[i]),
         on: (this.idle[PORT_DSW] & (1 << i)) === 0,
+        dil: dilPlace('', i, this.dilLabels?.[i]),
         group: 'DIL switches',
         bootOnly: true,
         option: true,

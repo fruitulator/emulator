@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import type { Machine, OptionKey, DigitKind, NoteResult, CoinPortLines, CoinWiringStatus } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel, type CabinetSwitch } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel, type CabinetSwitch } from './machine';
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
 import { M68000 } from '../cpu/m68000';
@@ -553,6 +553,7 @@ export class Sc4 implements Bus16, Machine {
         id: Sc4.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL${String(i + 1).padStart(2, '0')}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(i < 8 ? 'DIL01-08' : 'DIL09-16', i & 7, this.dilLabels?.[i], { base: i < 8 ? 1 : 9 }),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

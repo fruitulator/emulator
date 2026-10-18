@@ -2,7 +2,7 @@ import { COIN_RAW } from './coinraw';
 import type { Bus16 } from '../cpu/bus68k';
 import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus } from './machine';
 import type { BoardPart } from './parts';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
 import { M68000 } from '../cpu/m68000';
 import {
@@ -344,6 +344,7 @@ export class Astra implements Bus16, Machine {
         id: Astra.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL ${(i & 7) + 1} bank ${i < 8 ? 1 : 2}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Bank ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

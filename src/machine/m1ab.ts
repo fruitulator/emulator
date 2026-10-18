@@ -1,7 +1,7 @@
 import { placeRomFlat } from './pairplacer';
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, CoinChute, CoinWiringStatus, Machine } from './machine';
-import { newCashLedger, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
 import type { BoardPart } from './parts';
@@ -713,6 +713,7 @@ export class M1ab implements Bus, Machine {
         id: M1ab.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL ${(i & 7) + 1} Bank ${i < 8 ? 1 : 2}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Bank ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

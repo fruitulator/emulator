@@ -22,7 +22,7 @@ import { MUX_LAMP_ALT } from '../hw/muxlamps';
 import { mpu5LampBanks, mpu5MatrixSwitches, type Mpu5LampBanks, type Mpu5MatrixSwitch } from './bcosdev';
 import type { LayoutSwitch } from './layoutswitches';
 import type { CabinetSwitch, CoinPortLines, Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult } from './machine';
-import { dilSwitchLabel } from './machine';
+import { dilPlace, dilSwitchLabel } from './machine';
 import { newCashLedger } from './machine';
 import { fittedMech, mpu5CoinTable, readCoinValue, readMpu5Mechs, type CoinValue, type Mpu5Channel, type Mpu5Mechs } from './mpu5coins';
 import { COIN_NOTES, PARALLEL_NOTE_CHANNELS, coinRowPattern, type DeclaredCoin } from './layoutcoins';
@@ -1618,6 +1618,7 @@ export class Mpu5 implements Bus16, Machine {
         id: Mpu5.DIL_ID_BASE + i,
         label: dilSwitchLabel(`Sw ${i < 8 ? 1 : 2}.${(i & 7) + 1}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Sw ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: i < 8 ? 'Option switches - MPU5 board' : 'Option switches - program card',
         option: true,
         bootOnly: true,

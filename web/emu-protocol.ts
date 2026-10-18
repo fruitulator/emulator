@@ -3,7 +3,7 @@ import type { Check, CheckResult, RelayInput } from './relay';
 import type { FrameLayout } from '../src/machine/framestate';
 import type { Schematic } from '../src/machine/schematic';
 import type { Snapshot } from './snapshot';
-import type { CashLedger, CoinChute, CoinWiringStatus, NamedCoin } from '../src/machine/machine';
+import type { CashLedger, CoinChute, CoinWiringStatus, DilPlace, NamedCoin } from '../src/machine/machine';
 import type { CoinLineTable, CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
 import type { DiagEntry } from './diaglog';
 import type { Recording } from '../src/machine/replay';
@@ -33,6 +33,7 @@ export interface MachineInfo {
   switchPanel: {
     id: number; label: string; on: boolean; group?: string; bootOnly?: boolean;
     option?: boolean;
+    dil?: DilPlace;
   }[];
   capNames?: Record<number, { role: string; label: string }>;
   switchIds?: Partial<Record<SwitchControl, number>>;

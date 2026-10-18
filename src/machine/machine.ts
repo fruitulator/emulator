@@ -60,6 +60,26 @@ export interface CabinetSwitch {
   group?: string;
   bootOnly?: boolean;
   option?: boolean;
+  dil?: DilPlace;
+}
+
+export interface DilPlace {
+  bank: string;
+  slot: number;
+  ways: number;
+  base: number;
+  name?: string;
+}
+
+export function dilPlace(
+  bank: string, slot: number, stated: string | undefined,
+  opts: { ways?: number; base?: number } = {},
+): DilPlace {
+  const name = (stated ?? '').trim();
+  return {
+    bank, slot, ways: opts.ways ?? 8, base: opts.base ?? 1,
+    ...(name ? { name } : {}),
+  };
 }
 
 export function dilSwitchLabel(numbering: string, stated: string | undefined): string {

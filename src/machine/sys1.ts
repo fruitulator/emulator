@@ -1,5 +1,5 @@
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinWiringStatus, DigitKind } from './machine';
-import { newCashLedger, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { Reel } from '../hw/reel';
 import { Z80, type Z80Io } from '../cpu/z80';
 import { I8255 } from '../hw/i8255';
@@ -246,6 +246,7 @@ export class Sys1 implements Machine {
         id: Sys1.DIL_ID_BASE + i,
         label: dilSwitchLabel(`Switch ${(i & 7) + 1} Bank ${i < 8 ? 'A' : 'B'}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Bank ${i < 8 ? 'A' : 'B'}`, i & 7, this.dilLabels?.[i]),
         group: 'Option switches',
         bootOnly: true,
         option: true,

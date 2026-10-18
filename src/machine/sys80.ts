@@ -1,5 +1,5 @@
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, type BookedCoin } from './coinbook';
@@ -291,6 +291,7 @@ export class Sys80 implements Machine {
         label: dilSwitchLabel(eight ? `8-way DIL ${bit + 1}` : `4-way DIL ${bit + 1}`,
           this.dilLabels?.[eight ? bit : 16 + bit]),
         on: (bank & (1 << bit)) !== 0,
+        dil: dilPlace(eight ? '8-way DIL' : '4-way DIL', bit, this.dilLabels?.[eight ? bit : 16 + bit], { ways: eight ? 8 : 4 }),
         group: 'DIL switches',
         bootOnly: true,
         option: true,

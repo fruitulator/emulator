@@ -1,5 +1,5 @@
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, AudioSource, DigitKind, CoinChute, CoinWiringStatus } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
@@ -225,6 +225,7 @@ export class Phoenix implements Machine {
         id: Phoenix.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIP switch ${(i & 7) + 1} bank ${i < 8 ? 1 : 2}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Bank ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIP switches',
         bootOnly: true,
         option: true,

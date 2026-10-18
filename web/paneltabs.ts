@@ -2,6 +2,7 @@ import { toggleInput } from './ui/rows';
 import type { DiagEntry, DiagKind } from './diaglog';
 import type { PanelTab } from './schematic';
 import { str } from './i18n';
+import type { DilPlace } from '../src/machine/machine';
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K, cls?: string, text?: string,
@@ -285,6 +286,7 @@ export interface OptionSwitchRow {
   on: boolean;
   group?: string;
   bootOnly?: boolean;
+  dil?: DilPlace;
 }
 
 export interface OptionsTabDeps {
@@ -306,6 +308,7 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
     }
     const banks = el('div', 'opt-banks');
     const made = new Map<string, HTMLElement>();
+    const packages = new Map<string, OptionSwitchRow[]>();
     for (const row of rows) {
       const name = row.group || str('paneltabs.option_switches_2');
       let bank = made.get(name);
@@ -315,6 +318,19 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
         made.set(name, bank);
         banks.append(bank);
       }
+      if (row.dil) {
+        const key = `${name}\u0000${row.dil.bank}`;
+        let pkg = packages.get(key);
+        if (!pkg) {
+          pkg = [];
+          packages.set(key, pkg);
+          const slot = el('div', 'dip');
+          slot.dataset.pkg = key;
+          bank.append(slot);
+        }
+        pkg.push(row);
+        continue;
+      }
       const label = el('label', 'menu-check opt-row');
       const box = toggleInput((on) => {
         const said = deps.set(row, on);
@@ -323,6 +339,12 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
       box.checked = row.on;
       label.append(el('span', 'opt-row-name', row.label), box);
       bank.append(label);
+    }
+    for (const slot of banks.querySelectorAll<HTMLElement>('.dip')) {
+      dipPackage(slot, packages.get(slot.dataset.pkg!)!, (row, on) => {
+        const said = deps.set(row, on);
+        if (note) note.textContent = said;
+      });
     }
     body.append(banks);
   };
@@ -343,4 +365,101 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
       body = null;
     },
   };
+}
+
+function dipPackage(
+  host: HTMLElement, rows: OptionSwitchRow[],
+  set: (row: OptionSwitchRow, on: boolean) => void,
+): void {
+  const first = rows[0].dil!;
+  const ways = Math.max(first.ways, ...rows.map((r) => r.dil!.slot + 1));
+  const bySlot = new Map(rows.map((r) => [r.dil!.slot, r]));
+  const head = el('div', 'dip-head');
+  const bits = el('span', 'dip-bits');
+  if (first.bank) head.append(el('span', 'dip-name', first.bank));
+  head.append(bits);
+
+  const body = el('div', 'dip-body');
+  body.setAttribute('role', 'group');
+  body.setAttribute('aria-label', first.bank || rows[0].group || str('paneltabs.option_switches_2'));
+  body.style.setProperty('--ways', String(ways));
+  const on = el('span', 'dip-on', str('paneltabs.dip_on'));
+  on.setAttribute('aria-hidden', 'true');
+  const levers = el('div', 'dip-levers');
+  const marks = el('div', 'dip-marks');
+  marks.setAttribute('aria-hidden', 'true');
+  body.append(on, levers, marks);
+
+  const legend = el('ol', 'dip-legend');
+  const buttons: HTMLButtonElement[] = [];
+  const legendBySlot = new Map<number, HTMLElement>();
+
+  const readout = (): void => {
+    bits.replaceChildren();
+    for (let i = 0; i < ways; i++) {
+      const row = bySlot.get(i);
+      const bit = el('span', 'dip-bit', row ? (row.on ? '1' : '0') : '-');
+      bit.classList.toggle('on', row?.on === true);
+      bits.append(bit);
+    }
+  };
+  const hot = (slot: number, lit: boolean): void => {
+    buttons.find((b) => Number(b.dataset.slot) === slot)?.classList.toggle('hot', lit);
+    legendBySlot.get(slot)?.classList.toggle('hot', lit);
+  };
+
+  for (let i = 0; i < ways; i++) {
+    const row = bySlot.get(i);
+    const mark = String(first.base + i);
+    marks.append(el('span', undefined, mark));
+    if (!row) {
+      const gap = el('span', 'dip-lever none');
+      gap.title = str('paneltabs.not_connected');
+      levers.append(gap);
+      continue;
+    }
+    const b = el('button', 'dip-lever');
+    b.type = 'button';
+    b.dataset.slot = String(i);
+    b.setAttribute('role', 'switch');
+    b.setAttribute('aria-label', row.label);
+    b.title = row.label;
+    b.append(el('span', 'dip-knob'));
+    const throwTo = (v: boolean): void => {
+      if (v === row.on) return;
+      row.on = v;
+      b.setAttribute('aria-checked', String(v));
+      readout();
+      set(row, v);
+    };
+    b.setAttribute('aria-checked', String(row.on));
+    b.addEventListener('click', () => throwTo(!row.on));
+    b.addEventListener('keydown', (ev) => {
+      const at = buttons.indexOf(b);
+      if (ev.key === 'ArrowUp') throwTo(true);
+      else if (ev.key === 'ArrowDown') throwTo(false);
+      else if (ev.key === 'ArrowLeft') buttons[at - 1]?.focus();
+      else if (ev.key === 'ArrowRight') buttons[at + 1]?.focus();
+      else return;
+      ev.preventDefault();
+    });
+    b.addEventListener('pointerenter', () => hot(i, true));
+    b.addEventListener('pointerleave', () => hot(i, false));
+    b.addEventListener('focus', () => hot(i, true));
+    b.addEventListener('blur', () => hot(i, false));
+    buttons.push(b);
+    levers.append(b);
+    if (row.dil!.name) {
+      const li = el('li');
+      li.append(el('span', 'dip-legend-mark', mark), el('span', undefined, row.dil!.name));
+      li.addEventListener('pointerenter', () => hot(i, true));
+      li.addEventListener('pointerleave', () => hot(i, false));
+      li.addEventListener('click', () => b.click());
+      legendBySlot.set(i, li);
+      legend.append(li);
+    }
+  }
+  readout();
+  host.append(head, body);
+  if (legend.childElementCount) host.append(legend);
 }

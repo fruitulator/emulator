@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
 import { H83002 } from '../hw/h83002';
 import { EpochAsic } from '../hw/epochasic';
@@ -238,6 +238,7 @@ export class Epoch implements Machine {
         id: Epoch.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL ${(i & 7) + 1} Bank ${i < 8 ? 1 : 2}`, this.dilLabels?.[i]),
         on: (this.dips[i >> 3] & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Bank ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         bootOnly: true,
         option: true,

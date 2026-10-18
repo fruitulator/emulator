@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import type { AudioSource, CabinetSwitch, CoinPortLines, CoinWiringStatus, Machine, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import { M68000 } from '../cpu/m68000';
@@ -395,6 +395,7 @@ export class Sys5 implements Bus16, Machine {
         id: Sys5.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIP ${i < 8 ? 1 : 2} SW.${(i & 7) + 1}`, this.dilLabels?.[i]),
         on: (word & (1 << (i & 7))) === 0,
+        dil: dilPlace(`DIP ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         bootOnly: true,
         option: true,

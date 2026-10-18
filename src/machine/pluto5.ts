@@ -1,7 +1,7 @@
 import type { Bus16 } from '../cpu/bus68k';
 import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind } from './machine';
 import type { BoardPart } from './parts';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
 import { M68000 } from '../cpu/m68000';
 import { M68340Sim, MBAR_ADDR, RSR_WATCHDOG, SPURIOUS_VECTOR, OFF_PORTA, OFF_DDRA } from '../hw/m68340';
@@ -234,6 +234,7 @@ export class Pluto5 implements Bus16, Machine {
         id: Pluto5.DIL_ID_BASE + i,
         label: dilSwitchLabel(`SW${i < 8 ? 1 : 2}:${(i & 7) + 1}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`SW${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

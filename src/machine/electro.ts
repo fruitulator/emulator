@@ -558,9 +558,10 @@ export function parseNetlist(bytes: Uint8Array): Circuit {
   return c;
 }
 
+const NS_PER_MS = 1_000_000;
 function motorPeriod(rpm: number): number {
   if (rpm <= 0) return 0;
-  return Math.trunc(((60 / rpm) * 1000) / 360);
+  return Math.min(0x7fffffff, Math.round(((60 / rpm) * 1e9) / 360));
 }
 
 const pathIndex = new WeakMap<Circuit, { parts: number; map: Map<string, Term> }>();
@@ -874,8 +875,8 @@ export class Electro implements Machine {
     let changed = false;
     for (const m of this.circuit.motors) {
       if (s.state[m.id] !== 2) continue;
-      if (--s.countdown[m.id] >= 1) continue;
-      s.countdown[m.id] += m.period;
+      if ((s.countdown[m.id] -= NS_PER_MS) >= 1) continue;
+      s.countdown[m.id] = Math.max(s.countdown[m.id] + m.period, 1 - NS_PER_MS);
       const angle = (s.pos[m.id] = (s.pos[m.id] + s.dir[m.id] + 360) % 360);
       const p = m.parent;
       if (p && p.type === T.HOPPER) {
@@ -900,8 +901,8 @@ export class Electro implements Machine {
     let moved = 0;
     for (const m of this.circuit.mechMotors) {
       if (s.state[m.id] !== 2) continue;
-      if (--s.countdown[m.id] >= 1) continue;
-      s.countdown[m.id] += m.period;
+      if ((s.countdown[m.id] -= NS_PER_MS) >= 1) continue;
+      s.countdown[m.id] = Math.max(s.countdown[m.id] + m.period, 1 - NS_PER_MS);
       s.pos[m.id] = (s.pos[m.id] + s.dir[m.id] + 360) % 360;
       const mech = m.parent!;
       if (mech.motors.length > 1) for (const o of mech.motors) s.pos[o.id] = s.pos[m.id];

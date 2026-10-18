@@ -43,7 +43,7 @@ export function adder5ScreenSize(mode: number): { width: number; height: number 
 }
 import { opticWindowForFlag } from '../layout/datreels';
 import type { Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult, CabinetSwitch } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
 import { resetReelsInPlace } from './v20optic';
@@ -1141,6 +1141,7 @@ export class Sc5 implements Bus16, Machine {
         id: Sc5.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL ${i + 1}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(i < 8 ? 'DIL 1-8' : 'DIL 9-16', i & 7, this.dilLabels?.[i], { base: i < 8 ? 1 : 9 }),
         group: 'DIL switches',
         bootOnly: true,
         option: true,

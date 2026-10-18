@@ -37,6 +37,7 @@ import { pillButton } from './ui/list';
 import { rowIcon } from './ui/icons';
 import { askClearRam } from './clearram';
 import { backRow, caption, card, checkRow, choreograph, menuRow, sliderRow, statRow } from './ui/rows';
+import { enhanceSelect } from './ui/dropdown';
 import { MenuDrawer } from './ui/drawer';
 import { showSpeaker, speakerButton } from './ui/speaker';
 import { fillKeyTable, type KeyTableRow } from './keytable';
@@ -1794,6 +1795,8 @@ function appOptionRows(info: MachineInfo): Node[] {
     const text = document.createElement('span');
     text.textContent = k.label;
     const sel = document.createElement('select');
+    sel.id = `option-key-${index}`;
+    sel.setAttribute('aria-label', k.label);
     k.positions.forEach((name, i) => {
       const o = document.createElement('option');
       o.value = String(i);
@@ -1808,6 +1811,7 @@ function appOptionRows(info: MachineInfo): Node[] {
       status.textContent = str('main.n_refitted_machine_restarted', { 0: k.label });
     });
     row.append(text, sel);
+    enhanceSelect(sel);
     rows.push(row);
   });
 
@@ -1818,6 +1822,8 @@ function appOptionRows(info: MachineInfo): Node[] {
     const text = document.createElement('span');
     text.textContent = str('main.build');
     const sel = document.createElement('select');
+    sel.id = 'build-select';
+    sel.setAttribute('aria-label', str('main.build'));
     for (const v of game.variants) {
       const o = document.createElement('option');
       o.value = v.id;
@@ -1832,6 +1838,7 @@ function appOptionRows(info: MachineInfo): Node[] {
         const hash = session.hash;
         if (!hash) {
           sel.value = game.variant;
+          dd.refresh();
           status.textContent = str('main.still_saving_to_the_library');
           return;
         }
@@ -1839,6 +1846,7 @@ function appOptionRows(info: MachineInfo): Node[] {
         if (hasState
           && !confirm(str('main.switching_build_discards_the_saved', { 0: game.name }))) {
           sel.value = game.variant;
+          dd.refresh();
           return;
         }
         closeMenu();
@@ -1846,6 +1854,7 @@ function appOptionRows(info: MachineInfo): Node[] {
       })();
     });
     row.append(text, sel);
+    const dd = enhanceSelect(sel);
     rows.push(row);
   }
 

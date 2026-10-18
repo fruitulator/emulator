@@ -1,4 +1,4 @@
-import { newCashLedger, ledgerOutMults, dilSwitchLabel, type CabinetSwitch, type CashLedger, type Machine, type MachineDisplay } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel, type CabinetSwitch, type CashLedger, type Machine, type MachineDisplay } from './machine';
 import { Reel } from '../hw/reel';
 import { I8255 } from '../hw/i8255';
 import { Tms9995, type Tms9995Bus } from '../cpu/tms9995';
@@ -532,6 +532,7 @@ export class Mps2 implements Machine {
         id: Mps2.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL ${i < 8 ? 4 : 3} SW.${(i & 7) + 1}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`DIL ${i < 8 ? 4 : 3}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         bootOnly: true,
         option: true,

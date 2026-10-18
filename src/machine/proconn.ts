@@ -1,5 +1,5 @@
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
@@ -308,6 +308,7 @@ export class Proconn implements Machine {
         id: Proconn.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIL SW ${i + 1}`, this.dilLabels?.[i]),
         on: (this.dip1 & (1 << i)) !== 0,
+        dil: dilPlace('', i, this.dilLabels?.[i]),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

@@ -14,7 +14,7 @@ import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
 import type { AudioSource, CabinetSwitch, CoinChute, CoinWiringStatus, Machine, DigitKind, CashLedger } from './machine';
-import { newCashLedger, dilSwitchLabel, ledgerOutMults } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel, ledgerOutMults } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import { locateMpu3Coins, mpu3CoinTable, mpu3Coins, mpu3Payouts, type Mpu3Coin, type Mpu3CoinCode } from './mpu3coins';
 import type { DeclaredCoin } from './layoutcoins';
@@ -243,6 +243,7 @@ export class Mpu3 implements Bus, Machine {
         id: Mpu3.DIL_ID_BASE + i,
         label: dilSwitchLabel(`DIP ${i < 8 ? 1 : 2} switch ${(i & 7) + 1}`, this.dilLabels?.[i]),
         on: (bank & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`DIP ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIP switches',
         option: true,
       });

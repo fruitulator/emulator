@@ -1,7 +1,7 @@
 import { ROM_UNPLACED } from './pairplacer';
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, Machine, CoinWiringStatus } from './machine';
-import { newCashLedger, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import { StatedLines } from './statedlines';
@@ -384,6 +384,7 @@ export class Sc1 implements Bus, Machine {
         id,
         label: dilSwitchLabel(`DIL${String(i + 1).padStart(2, '0')}`, this.dilLabels?.[i]),
         on: state(id),
+        dil: dilPlace(i < 8 ? 'DIL01-08' : 'DIL09-16', i & 7, this.dilLabels?.[i], { base: i < 8 ? 1 : 9 }),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

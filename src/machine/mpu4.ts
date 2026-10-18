@@ -1,6 +1,6 @@
 import type { Bus } from '../cpu/bus';
 import type { Machine, DigitKind, CabinetSwitch, CoinPortLines, CoinWiringStatus } from './machine';
-import { newCashLedger, ledgerOutMults, dilSwitchLabel } from './machine';
+import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { SlideEffect, SwitchControl } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
 import type { BoardPart } from './parts';
@@ -1075,6 +1075,7 @@ export class Mpu4 implements Bus, Machine {
         id: Mpu4.DIL_ID_BASE + i,
         label: dilSwitchLabel(`Sw ${i < 8 ? 1 : 2}.${(i & 7) + 1}`, this.dilLabels?.[i]),
         on: ((i < 8 ? this.inputs.dil1 : this.inputs.dil2) & (1 << (i & 7))) !== 0,
+        dil: dilPlace(`Sw ${i < 8 ? 1 : 2}`, i & 7, this.dilLabels?.[i]),
         group: 'DIL switches',
         option: true,
         bootOnly: true,

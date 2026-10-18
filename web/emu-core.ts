@@ -105,6 +105,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       ...(sw.group ? { group: sw.group } : {}),
       ...(sw.bootOnly ? { bootOnly: true } : {}),
       ...(sw.option ? { option: true } : {}),
+      ...(sw.dil ? { dil: { ...sw.dil } } : {}),
     })),
     switchIds: layoutSwitchIdsFrom(game.layout, system),
     ...(operatorPresetsOf(m).length ? { switchPresets: operatorPresetsOf(m).map((p) => ({ ...p })) } : {}),
