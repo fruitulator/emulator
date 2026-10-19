@@ -483,11 +483,12 @@ function handle(req: EmuRequest): void {
         settleSound(m);
         const snap = captureState(m, gameName);
         const data = deflateSync(strToU8(JSON.stringify(snap)));
+        const nvram = m.batteryRam?.() ?? undefined;
         post({
           type: 'keyframe-result', id: req.id,
           key: {
             cycle: relayRec.cycles, seq: relaySeq, hash: snapshotHash(snap), signals: signalsOf(m), data, cycles: snap.cycles,
-            ledger: m.cashLedger ? { ...m.cashLedger } : null,
+            ledger: m.cashLedger ? { ...m.cashLedger } : null, ...(nvram ? { nvram } : {}),
           },
         }, [data.buffer]);
       } catch (e) {

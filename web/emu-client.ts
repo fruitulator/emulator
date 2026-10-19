@@ -31,7 +31,7 @@ export interface EmuLoadOptions {
   follow?: { cycle: number; seq: number; bufferMs: number };
 }
 
-export type Keyframe = Check & { data: Uint8Array; cycles: number; ledger: CashLedger | null };
+export type Keyframe = Check & { data: Uint8Array; cycles: number; ledger: CashLedger | null; nvram?: Uint8Array };
 
 export interface EmuBenchStats {
   stepMs: number;

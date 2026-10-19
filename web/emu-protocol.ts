@@ -169,6 +169,6 @@ export type EmuResponse =
   | { type: 'diag-log-result'; id: number; entries: DiagEntry[] }
   | { type: 'recording-result'; id: number; recording: Recording | null }
   | { type: 'relay'; epoch: number; inputs: RelayInput[]; upTo: number }
-  | { type: 'keyframe-result'; id: number; key: (Check & { data: Uint8Array; cycles: number; ledger: CashLedger | null }) | null }
+  | { type: 'keyframe-result'; id: number; key: (Check & { data: Uint8Array; cycles: number; ledger: CashLedger | null; nvram?: Uint8Array }) | null }
   | { type: 'follow-report'; epoch: number; result: CheckResult | null; drift?: string; diff?: string[] }
   | { type: 'follow-pos'; epoch: number; cycle: number; lag: number };
