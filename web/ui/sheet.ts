@@ -56,7 +56,9 @@ function bindPull(sheet: HTMLElement, scrim: HTMLElement): void {
 
   sheet.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 || sheet.hidden) return;
-    if ((ev.target as HTMLElement).closest('input, textarea, select')) return;
+    if ((ev.target as HTMLElement).closest('input, textarea, select, .sheet-line')) return;
+    const list = (ev.target as HTMLElement).closest('#sheet-rows');
+    if (list && list.scrollHeight > list.clientHeight) return;
     id = ev.pointerId;
     startY = ev.clientY;
     dy = 0;
@@ -103,11 +105,12 @@ function bindPull(sheet: HTMLElement, scrim: HTMLElement): void {
   }, true);
 }
 
-export function sheetRow(label: string, sub: string, o: { disabled?: boolean } = {}): HTMLButtonElement {
+export function sheetRow(label: string, sub: string, o: { disabled?: boolean; icon?: Element } = {}): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'sheet-row';
   b.disabled = !!o.disabled;
+  if (o.icon) b.append(o.icon);
   const text = document.createElement('span');
   text.textContent = label;
   if (sub) {
@@ -120,15 +123,59 @@ export function sheetRow(label: string, sub: string, o: { disabled?: boolean } =
   return b;
 }
 
-export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HTMLElement): void {
+export function sheetLine(label: string, sub: string, o: { quiet?: boolean; icon?: Element } = {}): HTMLDivElement {
+  const d = document.createElement('div');
+  d.className = o.quiet ? 'sheet-row sheet-line quiet' : 'sheet-row sheet-line';
+  if (o.icon) d.append(o.icon);
+  const text = document.createElement('span');
+  text.textContent = label;
+  if (sub) {
+    const s = document.createElement('span');
+    s.className = 'sheet-sub';
+    s.textContent = sub;
+    text.append(s);
+  }
+  d.append(text);
+  return d;
+}
+
+export function escapeCloses(onClosed?: () => void): void {
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape') return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    closeSheet();
+  };
+  addEventListener('keydown', onKey, true);
+  const sheet = document.getElementById('sheet');
+  const watch = new MutationObserver(() => {
+    if (sheet && !sheet.classList.contains('open')) {
+      removeEventListener('keydown', onKey, true);
+      watch.disconnect();
+      onClosed?.();
+    }
+  });
+  if (sheet) watch.observe(sheet, { attributes: true, attributeFilter: ['class'] });
+}
+
+export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HTMLElement, o: { foot?: HTMLElement[] } = {}): void {
   const { sheet, scrim, rows, title } = parts();
+  let foot = document.getElementById('sheet-foot');
+  if (!foot) {
+    foot = document.createElement('div');
+    foot.id = 'sheet-foot';
+    sheet.append(foot);
+  }
+  foot.replaceChildren(...(o.foot ?? []));
+  foot.hidden = !o.foot?.length;
   returnFocus = returnTo;
   title.textContent = titleText;
   rows.replaceChildren(...rowEls);
   sheet.hidden = false;
   scrim.hidden = false;
   requestAnimationFrame(() => sheet.classList.add('open'));
-  (rows.querySelector('button:not(:disabled)') as HTMLElement | null)?.focus();
+  rows.scrollTop = 0;
+  (rows.querySelector('button:not(:disabled)') as HTMLElement | null)?.focus({ preventScroll: true });
 }
 
 export function closeSheet(): void {

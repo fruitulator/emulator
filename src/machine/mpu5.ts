@@ -1864,7 +1864,7 @@ export class Mpu5 implements Bus16, Machine {
     v.address = Mpu5.VEND_NOTE;
     v.desFitted = false;
     this.keyPart(Mpu5.VEND_NOTE, v);
-    v.onStacked = (billType) => { this.cashLedger.inPence += JcmEba.billPence(billType) ?? 0; };
+    v.onStacked = (billType) => { this.cashLedger.inPence += v.pence(billType) ?? 0; };
     this.vendBus.fit(Mpu5.VEND_NOTE, v);
     this.vendNote = v;
     v.onLampWord = (word) => this.noteLamps.write(word);

@@ -8,6 +8,18 @@ export function chip(label: string, kind?: 'plat' | 'warn'): HTMLElement {
   return el;
 }
 
+export function chipButton(label: string, name: string, onPress: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'chip chip-btn';
+  b.textContent = label;
+  b.setAttribute('aria-label', name);
+  b.title = name;
+  b.addEventListener('click', (ev) => { ev.stopPropagation(); onPress(); });
+  b.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.stopPropagation(); });
+  return b;
+}
+
 export function sectionHeading(label: string): HTMLHeadingElement {
   const head = document.createElement('h2');
   head.className = 'lib-heading group-h';
@@ -35,6 +47,7 @@ export interface TileCardOptions {
   flag?: HTMLElement | null;
   title: string;
   titleTip?: string;
+  titleOnArt?: boolean;
   chips: HTMLElement[];
   body?: HTMLElement[] | null;
   more?: HTMLElement | null;
@@ -50,10 +63,15 @@ export function tileCard(o: TileCardOptions): HTMLElement {
   const panel = document.createElement('div');
   panel.className = 'card-panel';
   const name = document.createElement('h3');
-  name.className = 'card-title';
+  name.className = o.titleOnArt ? 'card-title on-art' : 'card-title';
   name.textContent = o.title;
   if (o.titleTip !== undefined) name.title = o.titleTip;
-  panel.append(name);
+  if (o.titleOnArt) {
+    el.classList.add('title-on-art');
+    o.art.append(name);
+  } else {
+    panel.append(name);
+  }
   const plat = document.createElement('div');
   plat.className = 'chips';
   plat.append(...o.chips);

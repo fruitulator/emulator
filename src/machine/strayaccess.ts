@@ -51,3 +51,36 @@ export function strayAccessLine(c: StrayAccessCount): string | null {
   const top = c.top ? `, most at $${c.top.address.toString(16).toUpperCase()} (${c.top.count})` : '';
   return `stray memory access · ${c.total} so far${top}`;
 }
+
+export interface StrayRegion {
+  address: number;
+  write: boolean;
+  answer?: number;
+}
+
+const STRAY_REGION_SHIFT = 12;
+const STRAY_REGION_CAP = 16;
+
+export class StrayRegions {
+  readonly list: StrayRegion[] = [];
+  private readonly seen = new Set<number>();
+
+  note(address: number, write: boolean, answer?: number): void {
+    const key = (address >>> STRAY_REGION_SHIFT) * 2 + (write ? 1 : 0);
+    if (this.seen.has(key) || this.list.length >= STRAY_REGION_CAP) return;
+    this.seen.add(key);
+    this.list.push(write ? { address, write } : { address, write, answer });
+  }
+}
+
+export function strayRegionsOf(m: object): readonly StrayRegion[] {
+  const r = (m as { strayRegions?: unknown }).strayRegions;
+  return r instanceof StrayRegions ? r.list : [];
+}
+
+export function strayRegionLine(r: StrayRegion): string {
+  const at = `$${r.address.toString(16).toUpperCase()}`;
+  if (r.write) return `unmapped write at ${at} - nothing is wired there, dropped`;
+  const v = (r.answer ?? 0).toString(16).toUpperCase().padStart(2, '0');
+  return `unmapped read at ${at} - nothing is wired there, answered $${v}`;
+}

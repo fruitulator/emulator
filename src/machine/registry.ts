@@ -1142,6 +1142,7 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
     } else if (soundIndex === 5 || soundIndex === 8) {
       sampleCardFitted = true;
     }
+    if (readSetting(mpu4Layout, sys, 'Mod Type') === '4') m.setModType(4);
     if (!m.tokenOutPriced) {
       noteBoardDefault(m, {
         axis: 'coin',
@@ -2058,12 +2059,23 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
     const sc5Currency = sc5Leds ? readSetting(sc5Leds, 'SCORPION5', 'Coin Mech Currency') : null;
     const sc5CurrencyIndex = sc5Currency === 'GB 1' ? 0 : sc5Currency === 'GB 2' ? 1 : sc5Currency === 'EU' ? 2 : null;
     m.setCoinMechCurrency(sc5CurrencyIndex);
+    const sc5NoteCurrency = sc5Leds ? readSetting(sc5Leds, 'SCORPION5', 'Note Acceptor Currency') : null;
+    m.setNoteAcceptorCurrency(
+      sc5NoteCurrency === 'GB 1' ? 0 : sc5NoteCurrency === 'GB 2' ? 1 : sc5NoteCurrency === 'EU' ? 2 : null);
     if (sc5CurrencyIndex === 2) {
       noteBoardDefault(m, {
         axis: 'coin',
         text: 'this cabinet\'s coin mech takes euro coins - they are not booked as money',
         ifWrong: 'Coins put into this machine are missing from the bookkeeping.',
         node: TAILORED_IDS.coinMech,
+      });
+    }
+    if (sc5NoteCurrency === 'EU') {
+      noteBoardDefault(m, {
+        axis: 'coin',
+        text: 'this cabinet\'s note acceptor takes euro notes - they are not booked as money',
+        ifWrong: 'Notes put into this machine are missing from the bookkeeping.',
+        node: TAILORED_IDS.notes,
       });
     }
     if (sc5Leds && sc5Fitted.coinMech !== null && sc5Des.mech === null) {
@@ -2466,7 +2478,7 @@ const sys1: Platform = {
     m.setSwitches(layoutSwitches(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const payload = decodedLayout(game.layout);
-    m.setStepMode((payload && readNumber(payload, 'SYS1', 'Step Mode')) ?? 0);
+    m.setStepMode(payload && readSetting(payload, 'SYS1', 'Step Mode') === 'Half Step' ? 1 : 0);
     const sys1ReelType = payload ? readLayoutWord(payload, 0x37) : null;
     if (sys1ReelType === 1 || sys1ReelType === 2) m.setReelType(sys1ReelType);
     else if (sys1ReelType !== null && sys1ReelType !== 0) {
@@ -3083,6 +3095,8 @@ const astra: Platform = {
         readSetting(payload, 'ASTRASYSA1', 'Hopper Opto') ?? 'Normal');
       m.hopperOpto = opto < 0 ? 0 : opto;
       m.reel56Optos = readSetting(payload, 'ASTRASYSA1', 'Reel 56 Optos') === 'Type 2' ? 1 : 0;
+      m.idDetectMode = readLayoutWord(payload, 0x7f) ?? 0;
+      m.networkId = readLayoutWord(payload, 0x75) ?? 0;
       const astraSec = layoutSecFitted(game, 'ASTRASYSA1');
       m.secFitted = astraSec ?? !!game.gam?.sec.length;
       if (astraSec === null) noteSecInferred(m, m.secFitted ? 'fitted' : 'none');

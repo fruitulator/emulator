@@ -156,6 +156,7 @@ export class SchematicView {
     box.style.height = `${n.h}px`;
     if (n.state === 'live' && n.band !== 'rail' && n.activity) box.dataset.act = '0';
     if (n.note) box.title = n.note;
+    else if (n.band !== 'rail' && n.part) box.title = `${n.label} - ${n.part}`;
 
     if (n.band === 'rail') {
       if (n.rail) box.classList.add(`schem-rail-${n.rail}`);

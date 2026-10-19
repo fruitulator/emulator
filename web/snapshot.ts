@@ -4,7 +4,7 @@ import type { DiagEntry } from './diaglog';
 
 export const DENY = new Set([
   'bus', 'hooks', 'rom', 'sampleRom', 'onIllegal', 'onSnap',
-  'ioLog', 'strayReads', 'strays', 'txLog', 'reads', 'writes', 'mbusLog',
+  'ioLog', 'strayReads', 'strays', 'strayRegions', 'txLog', 'reads', 'writes', 'mbusLog',
   'paySeen', 'phaseTable', 'payFrame', 'ccHoppers',
   'orange1', 'orange2', 'dil1', 'dil2',
   'switchIds',
@@ -253,7 +253,7 @@ function restore(target: any, data: any, parent = ''): void {
   }
 }
 
-export const SNAPSHOT_VERSION = 27;
+export const SNAPSHOT_VERSION = 28;
 
 export interface Snapshot {
   format: 'fruitulator-snapshot';

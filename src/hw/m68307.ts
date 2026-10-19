@@ -2,6 +2,9 @@
 export const SIM_BASE = 0xfff000;
 export const SIM_SIZE = 0x1000;
 
+const BR_RESET = 0xc001;
+const OR_RESET = 0xdffd;
+
 const TIMER_BASE = [0x120, 0x130];
 
 const TMR = 0x00;
@@ -91,7 +94,11 @@ export class M68307Sim {
   base = 0;
   mapped = false;
 
-  constructor(private readonly hooks: SimHooks = {}) {}
+  #cs = new Int32Array(12);
+
+  constructor(private readonly hooks: SimHooks = {}) {
+    this.resetChipSelects();
+  }
 
   offsetOf(addr: number): number {
     return this.mapped && ((addr & 0xfff000) >>> 0) === this.base ? addr & 0xfff : -1;
@@ -127,6 +134,41 @@ export class M68307Sim {
     };
   }
 
+  select(addr: number): number {
+    const c = this.#cs;
+    if (c[2] !== 0 && (addr & c[1]) === c[0]) return 1;
+    if (c[5] !== 0 && (addr & c[4]) === c[3]) return 2;
+    if (c[8] !== 0 && (addr & c[7]) === c[6]) return 3;
+    if (c[11] !== 0 && (addr & c[10]) === c[9]) return 4;
+    return 0;
+  }
+
+  selectBase(cs: number): number {
+    return this.#cs[(cs - 1) * 3];
+  }
+
+  selectProgrammed(n: number): boolean {
+    return this.r16(0x40 + n * 4) !== BR_RESET;
+  }
+
+  refreshChipSelects(): void {
+    for (let n = 0; n < 4; n++) {
+      const cs = this.chipSelect(n);
+      this.#cs[n * 3] = cs.base;
+      this.#cs[n * 3 + 1] = cs.mask;
+      this.#cs[n * 3 + 2] = cs.enabled ? 1 : 0;
+    }
+  }
+
+  private resetChipSelects(): void {
+    for (let n = 0; n < 4; n++) {
+      const o = 0x40 + n * 4;
+      this.regs[o] = BR_RESET >> 8; this.regs[o + 1] = BR_RESET & 0xff;
+      this.regs[o + 2] = OR_RESET >> 8; this.regs[o + 3] = OR_RESET & 0xff;
+    }
+    this.refreshChipSelects();
+  }
+
   receive(v: number): void {
     this.rxQueue.push(v & 0xff);
     this.refreshUartIsr();
@@ -137,6 +179,7 @@ export class M68307Sim {
     this.mbar = 0xbfff;
     this.scr = 0x0007f010;
     this.regs.fill(0);
+    this.resetChipSelects();
     this.reads.clear();
     this.writes.clear();
     for (const t of this.timers) {
@@ -313,6 +356,11 @@ export class M68307Sim {
   write8(off: number, val: number): void {
     this.writes.set(off, (this.writes.get(off) ?? 0) + 1);
     this.regs[off] = val & 0xff;
+
+    if (off >= 0x40 && off < 0x50) {
+      this.refreshChipSelects();
+      return;
+    }
 
     if (off >= MBUS_BASE && off < MBUS_END) {
       if (off & 1) this.mbusWrite((off - MBUS_BASE) >> 1, val & 0xff);

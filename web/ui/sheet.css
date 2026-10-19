@@ -21,10 +21,16 @@
   padding: 8px 14px calc(24px + env(safe-area-inset-bottom));
   transform: translate(-50%, 105%);
   transition: transform 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
   touch-action: none;
 }
 #sheet.open {
   transform: translate(-50%, 0);
+}
+#sheet[hidden] {
+  display: none;
 }
 #sheet.pulling {
   transition: none;
@@ -49,6 +55,43 @@
 #sheet-rows {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.grab,
+#sheet h3,
+#sheet-foot {
+  flex: none;
+}
+#sheet-foot[hidden] {
+  display: none;
+}
+.sheet-row > .ui-mark,
+.sheet-row > .row-icon {
+  flex: none;
+}
+.sheet-row > .row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+}
+.sheet-row:disabled > .ui-mark {
+  opacity: 0.6;
+}
+.sheet-line {
+  cursor: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.sheet-line:hover {
+  background: none;
+}
+.sheet-line.quiet {
+  color: var(--muted);
 }
 .sheet-row {
   font-weight: 600;

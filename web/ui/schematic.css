@@ -780,6 +780,14 @@
   white-space: nowrap;
   transition: color 260ms ease;
 }
+.schem-lbl,
+.schem-part {
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .schem-node[data-band="edge"] {
   background: transparent;
   border-color: var(--bp-ink-faint);

@@ -1,4 +1,4 @@
-import { inflateSync, strFromU8 } from 'fflate';
+import { Inflate, inflateSync, strFromU8 } from 'fflate';
 import { crc32 } from './gamepak';
 
 export interface ZipEntry {
@@ -113,6 +113,27 @@ export async function readZipDirectory(blob: Blob): Promise<ZipEntry[]> {
     entries.push({ name, size: uncompressed, crc32: crc, compressedSize, method, flags, offset });
   }
   return entries;
+}
+
+export async function readZipEntryHead(blob: Blob, e: ZipEntry, n: number): Promise<Uint8Array> {
+  if ((e.flags & 1) || (e.method !== 0 && e.method !== 8)) return new Uint8Array(0);
+  const head = await bytesOf(blob, e.offset, e.offset + 30);
+  const hv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  if (head.length < 30 || hv.getUint32(0, true) !== LOC_SIG) return new Uint8Array(0);
+  const start = e.offset + 30 + hv.getUint16(26, true) + hv.getUint16(28, true);
+  if (e.method === 0) return bytesOf(blob, start, start + Math.min(n, e.compressedSize));
+  const out = new Uint8Array(Math.min(n, e.size));
+  let got = 0;
+  const inf = new Inflate((chunk) => {
+    const take = Math.min(chunk.length, out.length - got);
+    out.set(chunk.subarray(0, take), got);
+    got += take;
+  });
+  for (let at = 0, step = 4096; got < out.length && at < e.compressedSize; at += step, step *= 2) {
+    const end = Math.min(e.compressedSize, at + step);
+    inf.push(await bytesOf(blob, start + at, start + end), end === e.compressedSize);
+  }
+  return out.subarray(0, got);
 }
 
 export async function readZipEntry(blob: Blob, e: ZipEntry): Promise<Uint8Array> {

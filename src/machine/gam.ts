@@ -167,3 +167,13 @@ export function gamFromJson(j: GamJson): Gam {
     settings,
   };
 }
+
+export const MASTER_VOLUME_DEFAULT = 100;
+export const MASTER_VOLUME_MAX = 200;
+
+export function gamMasterVolume(gam: Pick<Gam, 'settings'> | null | undefined): number {
+  const raw = gam?.settings.get('MasterVolume');
+  const m = raw === undefined ? null : /^\s*([+-]?\d+)/.exec(raw);
+  if (!m) return MASTER_VOLUME_DEFAULT;
+  return Math.min(MASTER_VOLUME_MAX, Math.max(0, Number(m[1])));
+}

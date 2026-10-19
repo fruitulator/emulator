@@ -5,6 +5,7 @@ import { applyState, captureState } from './snapshot';
 import { readCoinWiring, type CoinWiring } from './coinask';
 import type { FrameLayout } from '../src/machine/framestate';
 import type { Game } from '../src/machine/registry';
+import { gamMasterVolume } from '../src/machine/gam';
 import type { Schematic, SchematicNode } from '../src/machine/schematic';
 import type { UnservedComponent } from '../src/machine/unserved';
 import { TAILORED_IDS, bucketIoCounts } from '../src/machine/schematic';
@@ -93,6 +94,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
     ...(m.quietIsWaiting ? { quietIsWaiting: true } : {}),
     clockHz: m.clockHz,
     audioRate: m.audioSource?.rate ?? null,
+    audioLevel: gamMasterVolume(game.gam) / 100,
     optionKeys: (m.optionKeys ?? []).map((k) => ({
       label: k.label,
       positions: [...k.positions],

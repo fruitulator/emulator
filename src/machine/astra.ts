@@ -78,7 +78,7 @@ const coinPattern = (raw: number): number =>
   ((raw & 1) << 2) | ((raw & 2) << 3) | ((raw & 4) << 1) | ((raw & 8) >> 2) | ((raw & 0x10) >> 4);
 
 export class Astra implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'slotCoins', 'wiring', 'programMem'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'slotCoins', 'wiring', 'programMem', 'idDetectMode', 'networkId'];
 
   readonly digitKind: DigitKind = 'byte64';
   readonly cpu: M68000;
@@ -95,6 +95,8 @@ export class Astra implements Bus16, Machine {
   percentKey = 0;
   fpgaDesign = 0;
   muxType = 0;
+  idDetectMode = 0;
+  networkId = 0;
 
   private reelDrive = new EpochReels([], { opticInverted: false });
 
@@ -580,6 +582,7 @@ export class Astra implements Bus16, Machine {
     this.held.fill(0);
     this.dimSplit = 0;
     this.xcrb = 0;
+    this.idDetect = this.idDetectMode === 1 && this.networkId < 3 ? 0 : 8;
     this.xdr = 0xff;
     this.vfd.reset();
     this.dot.reset();
@@ -920,6 +923,9 @@ export class Astra implements Bus16, Machine {
           if (col === 0) v |= (this.percentCode() & 0x0f) << 4;
           else if (col === 1) v |= REV4[this.prizeCode() & 0x0f] << 4;
           else if (col === 2) v |= ((this.stakeCode() & 3) << 6) | ((this.stakeCode() & 4) << 2);
+          else if (col === 3 && this.idDetectMode === 2 && this.networkId > 1 && this.networkId < 6) {
+            v |= this.networkId - 1;
+          }
         }
         return v & 0xff;
       }
@@ -1065,7 +1071,16 @@ export class Astra implements Bus16, Machine {
       case 0: this.reelDrive.stepPair(0, v); break;
       case 1:
         this.reelDrive.stepPair(1, v);
-        this.idDetect = this.reelDrive.reels.length === 7 ? 8 : 0;
+        if (this.idDetectMode === 1) {
+          const hi = v >> 4;
+          if (hi !== 0 && this.networkId > 2) {
+            const id = this.networkId;
+            const mask = id - 3 < 5 ? id - 2 : id === 8 ? 8 : id - 9 < 3 ? id + 4 : 0;
+            this.idDetect = (hi & mask) === 0 ? 8 : 0;
+          }
+        } else {
+          this.idDetect = this.reelDrive.reels.length === 7 ? 8 : 0;
+        }
         break;
       case 2:
         if (!fiveReels) { this.latch2Seg = v; this.directLamps(0xc0, v); }

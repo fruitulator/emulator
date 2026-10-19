@@ -6,7 +6,8 @@ import { isEffectSample } from '../src/machine/effects';
 function isImportFile(name: string): boolean {
   return isSetFile(name) || isEffectSample(name);
 }
-import { looksLikeZip, readZipDirectory, readZipEntry, type ZipEntry } from './zipdir';
+import { looksLikeZip, readZipDirectory, readZipEntry, readZipEntryHead, type ZipEntry } from './zipdir';
+import { aacsDeclaredSize } from '../src/layout/fml';
 import { collectionEntries } from './punnetpack';
 
 function canonical(files: GameFile[]): GameFile[] {
@@ -82,6 +83,25 @@ function gamDirs(paths: string[]): { games: Set<string>; state: Set<string> } {
   return { games, state };
 }
 
+function setDirs(paths: string[]): { games: Set<string>; state: Set<string> } {
+  const { games, state } = gamDirs(paths);
+  for (const d of [...state]) {
+    if (d !== '' && nearest(games, dirOf(d)) === undefined) {
+      state.delete(d);
+      games.add(d);
+    }
+  }
+  return { games, state };
+}
+
+function addLayoutDirs(dirs: Set<string>, paths: string[]): void {
+  const layoutDirs = [...new Set(paths.filter((p) => /\.(fml|dat)$/i.test(p)).map(dirOf))]
+    .sort((a, b) => a.split('/').length - b.split('/').length);
+  for (const d of layoutDirs) {
+    if (![...dirs].some((s) => isAncestor(s, d))) dirs.add(d);
+  }
+}
+
 function isJunk(path: string): boolean {
   const parts = path.split('/');
   const base = parts[parts.length - 1];
@@ -110,7 +130,9 @@ function planZipGames(listing: ZipEntry[]): ZipGamePlan[] {
     .map((e) => ({ ...e, name: repairC1(e.name) }))
     .filter((e) => !isJunk(e.name) && isImportFile(e.name));
 
-  const { games, state } = gamDirs(entries.map((e) => e.name));
+  const names = entries.map((e) => e.name);
+  const { games, state } = setDirs(names);
+  if (games.size > 1) addLayoutDirs(games, names);
   const stateDirOf = (path: string): string | undefined =>
     [...state].find((d) => under(d, dirOf(path)));
   const live = entries.filter((e) => stateDirOf(e.name) === undefined);
@@ -235,23 +257,13 @@ export function setsFromFolderInput(list: Iterable<File>): FolderSet[] {
     .map((file) => ({ file, path: file.webkitRelativePath || file.name }))
     .filter((e) => !isJunk(e.path));
 
-  const { games, state } = gamDirs(picked.map((e) => e.path));
-  for (const d of [...state]) {
-    if (d !== '' && nearest(games, dirOf(d)) === undefined) {
-      state.delete(d);
-      games.add(d);
-    }
-  }
+  const paths = picked.map((e) => e.path);
+  const { games, state } = setDirs(paths);
   const spare = [...state];
   const stateDirOf = (path: string): string | undefined =>
     spare.find((d) => under(d, dirOf(path)));
   const dirs = new Set(games);
-  const layoutDirs = [...new Set(
-    picked.filter((e) => /\.(fml|dat)$/i.test(e.path)).map((e) => dirOf(e.path)),
-  )].sort((a, b) => a.split('/').length - b.split('/').length);
-  for (const d of layoutDirs) {
-    if (![...dirs].some((s) => isAncestor(s, d))) dirs.add(d);
-  }
+  addLayoutDirs(dirs, paths);
 
   const zipSets: FolderSet[] = [];
   const zipped = new Set<File>();
@@ -356,6 +368,40 @@ async function toBlob(zip: Uint8Array | Blob): Promise<Blob> {
   if (zip instanceof Uint8Array) return new Blob([zip as BlobPart]);
   if (typeof zip.slice === 'function' && typeof zip.size === 'number') return zip;
   return new Blob([await zip.arrayBuffer()]);
+}
+
+export function setReadBytes(set: FolderSet): number {
+  if (set.punnet) return set.inner?.size ?? set.entries[0]?.size ?? 0;
+  if (set.zip) {
+    if (!set.listing) return set.entries[0]?.size ?? 0;
+    return set.listing
+      .filter((e) => !isJunk(e.name) && isImportFile(e.name))
+      .reduce((n, e) => n + e.size, 0);
+  }
+  return set.entries.filter((f) => isImportFile(f.name)).reduce((n, f) => n + (f.size || 0), 0)
+    + (set.spares ?? []).reduce((n, s) => n + (s.file.size || 0), 0);
+}
+
+const LAYOUT_FILE = /\.(fml|dat)$/i;
+
+export async function setImportCost(set: FolderSet): Promise<number> {
+  let layout = 0;
+  try {
+    if (set.zip && set.listing && set.entries[0]) {
+      const blob = await toBlob(set.entries[0]);
+      for (const e of set.listing) {
+        if (isJunk(e.name) || !LAYOUT_FILE.test(e.name)) continue;
+        layout = Math.max(layout, aacsDeclaredSize(await readZipEntryHead(blob, e, 16)) ?? 0);
+      }
+    } else if (!set.zip && !set.punnet) {
+      for (const f of set.entries) {
+        if (!LAYOUT_FILE.test(f.name) || typeof f.slice !== 'function') continue;
+        const head = new Uint8Array(await f.slice(0, 16).arrayBuffer());
+        layout = Math.max(layout, aacsDeclaredSize(head) ?? 0);
+      }
+    }
+  } catch {  }
+  return setReadBytes(set) + 2 * layout;
 }
 
 export async function readFolderSet(set: FolderSet): Promise<GameFile[]> {

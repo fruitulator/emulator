@@ -253,7 +253,6 @@
   "arcade.index.walk": "Walk",
   "arcade.index.walk_back_s": "Walk back (S, ↓)",
   "arcade.index.walk_forwards_w": "Walk forwards (W, ↑)",
-  "arcade.index.walk_up_to_the_machine": "Walk up to the machine",
   "arcade.landing.arcade_name": "Arcade name",
   "arcade.landing.arcades": "Arcades",
   "arcade.landing.back": "Back",
@@ -313,19 +312,10 @@
   "arcade.loadstate.that_state_is_from_another": "That state is from another version of the app and cannot be loaded",
   "arcade.machinelist.add_games_from_a_punnet": "Add games from a .punnet or .zip",
   "arcade.machinelist.added_to_your_library_but": "Added to your library, but none of it stands in this arcade.",
-  "arcade.machinelist.ask_the_host_then_add": "Ask the host to share their games, then add them <link>here</link>",
   "arcade.machinelist.different_version": "You have a different version",
   "arcade.machinelist.importing": "Importing",
   "arcade.machinelist.in_your_library": "In your library",
   "arcade.machinelist.machines_in_this_arcade": "Machines in this arcade",
-  "arcade.machinelist.n_games_are_a_different": {
-    "one": "{n} game here is a different version from the one in your library. Only the host’s version plays in their arcade.",
-    "other": "{n} games here are different versions from the ones in your library. Only the host’s versions play in their arcade."
-  },
-  "arcade.machinelist.n_games_aren_t_in": {
-    "one": "{n} game isn’t in your library. Ask the host to share their games, then add them <link>here</link>",
-    "other": "{n} games aren’t in your library. Ask the host to share their games, then add them <link>here</link>"
-  },
   "arcade.machinelist.n_games_can_now_be": {
     "one": "{n} game here can now be played.",
     "other": "{n} games here can now be played."
@@ -470,7 +460,6 @@
   "arcade.roompage.test_player_n": "Test player {0}",
   "arcade.roompage.this_arcade_cannot_be_found": "This arcade cannot be found. Its link may have stopped working.",
   "arcade.roompage.this_is_a_test_message": "This is a test message, to check how toasts look.",
-  "arcade.roompage.walk_up_to_the_machine": "Walk up to the machine",
   "arcade.roompage.your_arcade": "Your arcade",
   "arcade.roomsound.volume": "Volume",
   "arcade.share.that_did_not_go_through": "That didn't work. Try again in a moment.",
@@ -1092,15 +1081,15 @@
   "paneltabs.clear_ram": "Clear RAM",
   "paneltabs.diagnostics_log": "Diagnostics Log",
   "paneltabs.diagnostics_log_2": "Diagnostics log",
+  "paneltabs.dip_on": "ON",
   "paneltabs.held_by_diag_in_the": "Held by ?diag in the URL",
   "paneltabs.n_lines": {
     "one": "{n} line",
     "other": "{n} lines"
   },
   "paneltabs.no_reel_windows_in_this": "No reel windows in this layout.",
-  "paneltabs.not_recording": "Not recording.",
-  "paneltabs.dip_on": "ON",
   "paneltabs.not_connected": "Not connected",
+  "paneltabs.not_recording": "Not recording.",
   "paneltabs.option_switches": "Option Switches",
   "paneltabs.option_switches_2": "Option switches",
   "paneltabs.record": "Record",

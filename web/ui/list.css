@@ -178,6 +178,46 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.card-title.on-art {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  min-height: 0;
+  padding: 28px 12px 10px;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(5, 5, 6, 0) 0%, rgba(5, 5, 6, 0.78) 55%, rgba(5, 5, 6, 0.9) 100%);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.card.title-on-art .card-panel {
+  margin-top: 0;
+  background: #08080a;
+  justify-content: flex-end;
+}
+.card-byline {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 64px);
+  padding: 3px 9px 3px 3px;
+  border-radius: 999px;
+  background: rgba(5, 5, 6, 0.72);
+  font-size: 12px;
+  color: #fff;
+  pointer-events: none;
+}
+.card-byline > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .card-panel > .chips {
   flex-wrap: nowrap;
 }
@@ -366,6 +406,16 @@
   border: 1px solid var(--hairline);
   color: var(--muted);
   white-space: nowrap;
+}
+.chip.chip-btn {
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.chip.chip-btn:hover,
+.chip.chip-btn:focus-visible {
+  color: var(--text);
+  border-color: var(--muted);
 }
 .chip.plat {
   color: var(--accent);

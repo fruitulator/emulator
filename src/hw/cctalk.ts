@@ -782,9 +782,15 @@ export class Sch3Hopper extends Sch5Hopper {
 }
 
 export class JcmEba implements CcTalkDevice {
-  static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type'];
+  static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'currency'];
 
   readonly model = 'JCM EBA';
+
+  currency = 0;
+
+  private get record(): BillRecord {
+    return BILL_RECORDS[this.currency] ?? BILL_RECORDS[0]!;
+  }
 
   static readonly DEFAULT_KEY: BnvKey = Object.freeze([1, 2, 3, 4, 5, 6]);
 
@@ -815,9 +821,18 @@ export class JcmEba implements CcTalkDevice {
     if (b === 0 && a !== 0) this.onStacked?.(a);
   }
 
-  static billPence(type: number): number | null {
-    const m = /^GB(\d{4})/.exec(GB_BILLS[type] ?? '');
+  static billPence(type: number, currency = 0): number | null {
+    const record = BILL_RECORDS[currency] ?? BILL_RECORDS[0]!;
+    const m = /^GB(\d{4})/.exec(record.bills[type - 1] ?? '');
     return m ? Number(m[1]) * JcmEba.SCALE : null;
+  }
+
+  pence(type: number): number | null {
+    return JcmEba.billPence(type, this.currency);
+  }
+
+  private ownCountry(data: readonly number[]): boolean {
+    return ascii(this.record.country).every((c, i) => c === data[i]);
   }
 
   private static readonly SCALE = 100;
@@ -825,7 +840,7 @@ export class JcmEba implements CcTalkDevice {
   insertNote(type: number): 'stacked' | 'escrow' | 'busy' | 'inhibited' | 'unprogrammed' {
     if (this.held) return 'busy';
     if (!this.enabled || (this.inhibit & (1 << ((type - 1) & 31))) === 0) return 'inhibited';
-    if (JcmEba.billPence(type) === null) return 'unprogrammed';
+    if (this.pence(type) === null) return 'unprogrammed';
     if (this.escrow) {
       this.held = type;
       this.push(type, 1);
@@ -861,7 +876,7 @@ export class JcmEba implements CcTalkDevice {
 
   private monetaryId(position: number, challenge: number): number[] | null {
     if (!this.des.key) return null;
-    const id = ascii(GB_BILLS[position] ?? '');
+    const id = ascii(this.record.bills[position - 1] ?? '');
     const body = id.length
       ? [position, 0x23, id[0], id[1], 2, 0, challenge, this.random() & 0xff, ...id.slice(2), 0x31]
       : [position, 0x2e, 0x2e, 0x2e, 0, 0, challenge, this.random() & 0xff, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e];
@@ -938,9 +953,11 @@ export class JcmEba implements CcTalkDevice {
       case CC.REQUEST_COMMS_REVISION:
         return [0x01, 0x04, 0x06];
       case CC.REQUEST_BILL_POSITION:
-        return ascii('GB').every((c, i) => c === data[i]) ? [0x07, 0x00] : [0x00, 0x00];
+        return this.ownCountry(data)
+          ? [((1 << this.record.bills.length) - 1) & 0xff, ((1 << this.record.bills.length) - 1) >> 8]
+          : [0x00, 0x00];
       case CC.REQUEST_BILL_ID:
-        return ascii(GB_BILLS[data[0]] ?? EMPTY_BILL);
+        return ascii(this.record.bills[data[0] - 1] ?? EMPTY_BILL);
       case CC.READ_ENCRYPTED_MONETARY_ID:
         return this.monetaryId(data[0] ?? 0, data[1] ?? 0);
       case CC.READ_ENCRYPTED_BILL_EVENTS:
@@ -974,7 +991,7 @@ export class JcmEba implements CcTalkDevice {
       case CC.REQUEST_CURRENCY_REVISION:
         return ascii('001');
       case CC.REQUEST_COUNTRY_SCALING_FACTOR:
-        return ascii('GB').every((c, i) => c === data[i]) ? [JcmEba.SCALE & 0xff, JcmEba.SCALE >> 8, 2] : [0, 0, 0];
+        return this.ownCountry(data) ? [JcmEba.SCALE & 0xff, JcmEba.SCALE >> 8, 2] : [0, 0, 0];
       case CC.REQUEST_POLLING_PRIORITY:
         return [3, 2];
       case CC.MODIFY_MASTER_INHIBIT:
@@ -993,11 +1010,13 @@ export class JcmEba implements CcTalkDevice {
   }
 }
 
-const GB_BILLS: Record<number, string> = {
-  1: 'GB0005A',
-  2: 'GB0010A',
-  3: 'GB0020A',
-};
+interface BillRecord { country: string; bills: readonly string[] }
+
+const BILL_RECORDS: readonly BillRecord[] = [
+  { country: 'GB', bills: ['GB0005A', 'GB0010A', 'GB0020A'] },
+  { country: 'GB', bills: ['GB0005A', 'GB0010A', 'GB0020A'] },
+  { country: 'EU', bills: ['EU0005A', 'EU0010A', 'EU0020A', 'EU0050A'] },
+];
 
 const EMPTY_BILL = '.......';
 

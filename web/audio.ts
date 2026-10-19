@@ -509,6 +509,8 @@ export class Audio {
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private gain: GainNode | null = null;
+  private chip: GainNode | null = null;
+  private level = 1;
   private fx: GainNode | null = null;
 
   context(): AudioContext | null {
@@ -542,9 +544,11 @@ export class Audio {
 
   onStateChange: ((state: string) => void) | null = null;
 
-  attach(rate: number | null): void {
+  attach(rate: number | null, level = 1): void {
     this.sourceRate = rate ?? DEFAULT_SOURCE_RATE;
     this.node?.port.postMessage({ rate: this.sourceRate });
+    this.level = level;
+    if (this.chip) this.chip.gain.value = level;
   }
 
   bridge(): MessagePort | null {
@@ -578,7 +582,10 @@ export class Audio {
         const s = (ev.data as { stats?: AudioStats } | null)?.stats;
         if (s) { const w = this.statWaiters; this.statWaiters = []; for (const r of w) r(s); }
       };
-      this.node.connect(this.gain);
+      this.chip = ctx.createGain();
+      this.chip.gain.value = this.level;
+      this.chip.connect(this.gain);
+      this.node.connect(this.chip);
       ctx.onstatechange = () => this.onStateChange?.(ctx.state);
       this.ctx = ctx;
     }
@@ -643,6 +650,7 @@ export class Audio {
       `worklet=${this.node ? 'yes' : 'no'}`,
       `sourceRate=${this.sourceRate}`,
       `gain=${this.gain?.gain.value.toFixed(2) ?? '-'}`,
+      `level=${this.level.toFixed(2)}`,
     ];
     return 'audio: ' + parts.join(' ') + tail;
   }

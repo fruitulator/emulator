@@ -29,6 +29,7 @@ export interface MachineInfo {
   quietIsWaiting?: boolean;
   clockHz: number;
   audioRate: number | null;
+  audioLevel: number;
   optionKeys: { label: string; positions: string[]; position: number }[];
   switchPanel: {
     id: number; label: string; on: boolean; group?: string; bootOnly?: boolean;

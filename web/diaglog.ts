@@ -1,5 +1,5 @@
 import { boardDefaultsOf } from '../src/machine/boarddefaults';
-import { strayAccessesOf, strayAccessLine } from '../src/machine/strayaccess';
+import { strayAccessesOf, strayAccessLine, strayRegionLine, strayRegionsOf } from '../src/machine/strayaccess';
 import { cabinetDisplayReversed, glassText } from '../src/machine/layoutdisplay';
 import type { Machine, CashLedger } from '../src/machine/machine';
 
@@ -146,6 +146,7 @@ export class DiagWatch {
     this.pollCoinRefusals(m);
     this.pollBoardDefaults(m);
     this.pollStrays(m);
+    this.pollStrayRegions(m);
   }
 
   private pollStrays(m: Machine): void {
@@ -163,6 +164,15 @@ export class DiagWatch {
 
   private lastStrays = 0;
   private strayPolledAt = -Infinity;
+
+  private pollStrayRegions(m: Machine): void {
+    const list = strayRegionsOf(m);
+    for (; this.regionsLogged < list.length; this.regionsLogged++) {
+      this.log.add('note', strayRegionLine(list[this.regionsLogged]));
+    }
+  }
+
+  private regionsLogged = 0;
 
   private pollBoardDefaults(m: Machine): void {
     const list = boardDefaultsOf(m);

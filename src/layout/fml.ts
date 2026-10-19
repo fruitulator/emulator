@@ -397,6 +397,13 @@ export function isAacsContainer(b: Uint8Array): boolean {
   return b.length > 32 && b[0] === 0x41 && b[1] === 0x41 && b[2] === 0x43 && b[3] === 0x53;
 }
 
+export function aacsDeclaredSize(head: Uint8Array): number | null {
+  if (head.length < 16 || head[0] !== 0x41 || head[1] !== 0x41 || head[2] !== 0x43 || head[3] !== 0x53) {
+    return null;
+  }
+  return u32(head, 4) * u32(head, 12);
+}
+
 export function isEncryptedFml(b: Uint8Array): boolean {
   return isAacsContainer(b) && b[22] === 0x01;
 }

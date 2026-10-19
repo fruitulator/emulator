@@ -28,6 +28,7 @@ import { percentageCode, prizeCode, sc4StakeBits } from '../hw/bfmkeys';
 import type { LayoutSwitch } from './layoutswitches';
 import { fitReelBank, type ReelFit } from './reelfit';
 import { noteBoardDefault, noteRomCut } from './boarddefaults';
+import { StrayCounter, StrayRegions } from './strayaccess';
 import { ROM_UNPLACED } from './pairplacer';
 import { resetReelsInPlace } from './v20optic';
 import { lockoutRefuses, lockoutRefusing, type CoinLockoutWiring } from '../hw/coinlockout';
@@ -55,17 +56,45 @@ const LATCH_A = 0x0001;
 const LATCH_B = 0x1001;
 const DUART_BASE = 0xc00000;
 
+export function sc4IoClaimed(off: number, write: boolean): boolean {
+  const bank = off & ~0x3ff;
+  if (bank !== 0 && bank !== 0x1000) return false;
+  const lo = off & 0x3ff;
+  if (write) {
+    const row = lo >> 4;
+    if (bank === 0) {
+      return row <= 0x23 || (row >= 0x28 && row <= 0x2a) || row === 0x2c
+        || (row >= 0x2f && row <= 0x33) || (row >= 0x36 && row <= 0x39);
+    }
+    return row <= 0x24 || (row >= 0x2f && row <= 0x31) || row === 0x33 || row === 0x36 || row === 0x37;
+  }
+  const page = lo >> 8;
+  const row = (lo >> 4) & 0xf;
+  if (bank === 0) {
+    if (page === 0) return row <= 7;
+    if (page === 2) return row === 4 || row === 9 || row === 0xe;
+    return false;
+  }
+  if (page === 0) return row <= 7 || row === 0xe;
+  if (page === 2) return row === 4;
+  return false;
+}
+
 const REEL_STOP_LOOP = Uint8Array.of(0x70, 0x00, 0x10, 0x12, 0xd0, 0x40, 0x72, 0x00, 0x12, 0x13, 0x90, 0x41);
 const MOVEA_L_A3 = 0x267c;
 const LOOP_HEAD_BACK = 0xa0;
 
-export function findReelStopArray(rom: Uint8Array): number | undefined {
+export function findReelStopArray(rom: Uint8Array, ramBase = RAM_BASE): number | undefined {
+  const addr = findReelStopPointer(rom);
+  return addr !== undefined && addr >= ramBase && addr + 4 <= ramBase + RAM_SIZE ? addr - ramBase : undefined;
+}
+
+function findReelStopPointer(rom: Uint8Array): number | undefined {
   const at = indexOfBytes(rom, REEL_STOP_LOOP);
   if (at < 0) return undefined;
   for (let j = at - 2; j >= Math.max(0, at - LOOP_HEAD_BACK); j -= 2) {
     if ((rom[j] << 8 | rom[j + 1]) !== MOVEA_L_A3) continue;
-    const addr = (rom[j + 2] << 24 | rom[j + 3] << 16 | rom[j + 4] << 8 | rom[j + 5]) >>> 0;
-    return addr >= RAM_BASE && addr + 4 <= RAM_BASE + RAM_SIZE ? addr - RAM_BASE : undefined;
+    return (rom[j + 2] << 24 | rom[j + 3] << 16 | rom[j + 4] << 8 | rom[j + 5]) >>> 0;
   }
   return undefined;
 }
@@ -345,7 +374,8 @@ export class Sc4 implements Bus16, Machine {
     return readSc4HopperCoins(this.payoutUnits, (a) => {
       if (a < 0) return -1;
       if (a + 1 < ROM_SIZE) return (this.rom[a] << 8) | this.rom[a + 1];
-      if (a >= RAM_BASE && a + 1 < RAM_BASE + RAM_SIZE) return (this.ram[a - RAM_BASE] << 8) | this.ram[a - RAM_BASE + 1];
+      const i = this.ramOffset(a, 2);
+      if (i >= 0) return (this.ram[i] << 8) | this.ram[i + 1];
       return -1;
     });
   }
@@ -858,9 +888,11 @@ export class Sc4 implements Bus16, Machine {
   }
 
   private readonly programMem: Sc4Mem = {
-    w: (a) => (a >= RAM_BASE
-      ? (a + 1 < RAM_BASE + RAM_SIZE ? (this.ram[a - RAM_BASE]! << 8) | this.ram[a - RAM_BASE + 1]! : 0)
-      : a + 1 < ROM_SIZE ? (this.rom[a]! << 8) | this.rom[a + 1]! : 0),
+    w: (a) => {
+      if (a + 1 < ROM_SIZE) return (this.rom[a]! << 8) | this.rom[a + 1]!;
+      const i = this.ramOffset(a, 2);
+      return i >= 0 ? (this.ram[i]! << 8) | this.ram[i + 1]! : 0;
+    },
     l: (a) => ((this.programMem.w(a) << 16) | this.programMem.w(a + 2)) >>> 0,
   };
 
@@ -1117,6 +1149,8 @@ export class Sc4 implements Bus16, Machine {
   private readonly ioLog = new Map<number, IoAccess>();
 
   readonly strayReads = new Map<number, number>();
+  readonly strays = new StrayCounter();
+  readonly strayRegions = new StrayRegions();
 
   constructor() {
     this.cpu = new M68000(this, { level7Latch: true });
@@ -1197,6 +1231,7 @@ export class Sc4 implements Bus16, Machine {
   loadRomPair(evn: Uint8Array, odd: Uint8Array): void {
     const n = Math.min(evn.length, odd.length);
     this.rom.fill(ROM_UNPLACED);
+    noteRomCut(this, Math.max(evn.length, odd.length) * 2, ROM_SIZE);
     for (let i = 0; i < n && i * 2 + 1 < ROM_SIZE; i++) {
       this.rom[i * 2] = evn[i];
       this.rom[i * 2 + 1] = odd[i];
@@ -1217,13 +1252,15 @@ export class Sc4 implements Bus16, Machine {
 
   private fitSecurityKey(): void {
     this.mbus.security.key = findSecurityKey(this.rom) ?? new Uint8Array(16);
-    this.driftBase = findReelStopArray(this.rom);
+    this.driftBase = findReelStopPointer(this.rom);
   }
 
   private driftBase: number | undefined;
 
   get reelDriftBase(): number | undefined {
-    return this.driftBase;
+    if (this.driftBase === undefined) return undefined;
+    const i = this.ramOffset(this.driftBase, 4);
+    return i >= 0 ? i : undefined;
   }
 
   loadSoundRoms(first: Uint8Array, second: Uint8Array): void {
@@ -1236,6 +1273,7 @@ export class Sc4 implements Bus16, Machine {
   batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
 
   postRestore(): void {
+    this.sim.refreshChipSelects();
     if (!this.sim.mapped && this.totalCycles > 0) {
       this.sim.mbar = 0xbfff;
       this.sim.base = SIM_BASE;
@@ -1292,6 +1330,40 @@ export class Sc4 implements Bus16, Machine {
     this.boardWatchdog = 0;
   }
 
+  private decode(a: number): number {
+    const sim = this.sim;
+    const cs = sim.select(a);
+    if (cs === 1) return a & ROM_MASK;
+    if (cs === 2) {
+      const off = a - sim.selectBase(2);
+      if (off < RAM_SIZE) return RAM_BASE + off;
+      if (off < 0x10000 + IO_SIZE) return IO_BASE + off - 0x10000;
+      return -1;
+    }
+    if (cs === 3) {
+      const off = a - sim.selectBase(3);
+      return off < 0x20 ? DUART_BASE + off : -1;
+    }
+    return -1;
+  }
+
+  private notePortHit(a: number): boolean {
+    return this.sim.select(a) === 4 && a - this.sim.selectBase(4) === Sc4.NOTE_PORT_OFF;
+  }
+
+  private ramOffset(a: number, len: number): number {
+    const sim = this.sim;
+    const base = sim.selectProgrammed(1) ? sim.selectBase(2) : RAM_BASE;
+    const off = a - base;
+    return off >= 0 && off + len <= RAM_SIZE ? off : -1;
+  }
+
+  private noteStray(a: number, write: boolean, answer?: number): void {
+    if (!write) this.strayReads.set(a, (this.strayReads.get(a) ?? 0) + 1);
+    this.strays.hit(a);
+    this.strayRegions.note(a, write, answer);
+  }
+
   private noteIo(addr: number, isWrite: boolean): void {
     let e = this.ioLog.get(addr);
     if (!e) {
@@ -1303,9 +1375,24 @@ export class Sc4 implements Bus16, Machine {
   }
 
   read8(addr: number): number {
-    const a = addr & 0xffffff;
-    if (a < RAM_BASE) return (a & 0xfffff0) === 0xf0 ? 0 : this.rom[a & ROM_MASK];
-    if (a >= RAM_BASE && a < RAM_BASE + RAM_SIZE) return this.ram[a - RAM_BASE];
+    const a0 = addr & 0xffffff;
+    const simOff = this.sim.offsetOf(a0);
+    if (simOff >= 0) return this.sim.read8(simOff);
+    if ((a0 & 0xfffff0) === 0xf0) return 0;
+    const a = this.decode(a0);
+    if (a < 0) {
+      if (this.notePortHit(a0)) {
+        if (this.noteFitted) {
+          this.noteIo(a0, false);
+          return this.readNotePort();
+        }
+        return 0xff;
+      }
+      this.noteStray(a0, false, 0xff);
+      return 0xff;
+    }
+    if (a < RAM_BASE) return this.rom[a];
+    if (a < RAM_BASE + RAM_SIZE) return this.ram[a - RAM_BASE];
     if (a >= IO_BASE && a < IO_BASE + IO_SIZE) {
       const off = a - IO_BASE;
       this.noteIo(a, false);
@@ -1333,30 +1420,38 @@ export class Sc4 implements Bus16, Machine {
       if (off === 0x02e1) return 0x80;
       if (off === YMZ_OFF) return this.ymz.read(0);
       if (off === YMZ_OFF + 2) return this.ymz.read(1);
+      if (!sc4IoClaimed(off, false)) return 0xff;
       return this.io[off];
     }
     if (a >= DUART_BASE && a < DUART_BASE + 0x20) {
       this.noteIo(a, false);
       return this.duart.read((a - DUART_BASE) >> 1);
     }
-    const simOff = this.sim.offsetOf(a);
-    if (simOff >= 0) return this.sim.read8(simOff);
-    if (this.noteFitted && a === this.notePortAddr()) {
-      this.noteIo(a, false);
-      return this.readNotePort();
-    }
-    this.strayReads.set(a, (this.strayReads.get(a) ?? 0) + 1);
     return 0;
   }
 
-  private notePortAddr(): number {
-    const cs = this.sim.chipSelect(3);
-    return cs.enabled ? cs.base + Sc4.NOTE_PORT_OFF : -1;
-  }
-
   write8(addr: number, val: number): void {
-    const a = addr & 0xffffff;
+    const a0 = addr & 0xffffff;
     const v = val & 0xff;
+    const simOff = this.sim.offsetOf(a0);
+    if (simOff >= 0) {
+      this.sim.write8(simOff, v);
+      return;
+    }
+    const a = this.decode(a0);
+    if (a < 0) {
+      if (this.notePortHit(a0)) {
+        if (this.noteFitted) {
+          this.noteIo(a0, true);
+          this.writeNotePort(v);
+        } else {
+          this.colourLed.write(v);
+        }
+        return;
+      }
+      this.noteStray(a0, true);
+      return;
+    }
     if (a >= RAM_BASE && a < RAM_BASE + RAM_SIZE) {
       this.ram[a - RAM_BASE] = v;
       return;
@@ -1417,46 +1512,41 @@ export class Sc4 implements Bus16, Machine {
     if (a >= DUART_BASE && a < DUART_BASE + 0x20) {
       this.noteIo(a, true);
       this.duart.write((a - DUART_BASE) >> 1, v);
-      return;
-    }
-    const simOff = this.sim.offsetOf(a);
-    if (simOff >= 0) {
-      this.sim.write8(simOff, v);
-      return;
-    }
-    if (a === this.notePortAddr()) {
-      if (this.noteFitted) {
-        this.noteIo(a, true);
-        this.writeNotePort(v);
-      } else {
-        this.colourLed.write(v);
-      }
-      return;
     }
   }
 
   read16(addr: number): number {
     const a = addr & 0xffffff;
-    if ((a & 0xfffff0) === 0xf0) return this.sim.readControl16(a);
-    if (a + 1 < RAM_BASE) {
-      const r = a & ROM_MASK;
-      if (r + 1 < ROM_SIZE) return (this.rom[r] << 8) | this.rom[r + 1];
-    }
-    if (a >= RAM_BASE && a + 1 < RAM_BASE + RAM_SIZE) {
-      const i = a - RAM_BASE;
-      return (this.ram[i] << 8) | this.ram[i + 1];
+    if (this.sim.offsetOf(a) < 0) {
+      if ((a & 0xfffff0) === 0xf0) return this.sim.readControl16(a);
+      const c = this.decode(a);
+      if (c >= 0 && c < RAM_BASE) {
+        if (c + 1 < ROM_SIZE) return (this.rom[c] << 8) | this.rom[c + 1];
+      } else if (c >= RAM_BASE && c + 1 < RAM_BASE + RAM_SIZE) {
+        const i = c - RAM_BASE;
+        return (this.ram[i] << 8) | this.ram[i + 1];
+      } else if (c < 0 && !this.notePortHit(a)) {
+        this.noteStray(a, false, 0);
+        return 0;
+      }
     }
     return ((this.read8(addr) << 8) | this.read8(addr + 1)) & 0xffff;
   }
 
   write16(addr: number, val: number): void {
     const a = addr & 0xffffff;
+    if (this.sim.offsetOf(a) >= 0) {
+      this.write8(addr, val >> 8);
+      this.write8(addr + 1, val);
+      return;
+    }
     if ((a & 0xfffff0) === 0xf0) {
       this.sim.writeControl16(a, val);
       return;
     }
-    if (a >= RAM_BASE && a + 1 < RAM_BASE + RAM_SIZE) {
-      const i = a - RAM_BASE;
+    const c = this.decode(a);
+    if (c >= RAM_BASE && c + 1 < RAM_BASE + RAM_SIZE) {
+      const i = c - RAM_BASE;
       this.ram[i] = (val >> 8) & 0xff;
       this.ram[i + 1] = val & 0xff;
       return;

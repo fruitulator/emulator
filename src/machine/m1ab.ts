@@ -123,41 +123,52 @@ export class M1ab implements Bus, Machine {
 
   get parts(): BoardPart[] {
     return [
-      { id: 'lamps', label: '256 LAMPS', part: '2 x 16 strobes',
+      { id: 'triacs', label: 'TRIACS', part: 'payslides', device: this.pia },
+      { id: 'lamps', label: 'LAMPS', part: '256 - 3 plugs',
         device: this.lamps, signal: 'lamps' },
-      { id: 'switches', label: 'SWITCH MATRIX', part: 'i8279 return lines',
+      { id: 'switches', label: 'SWITCH MATRIX', part: 'plug 11 - 64',
         device: this.inputs.switches },
-      { id: 'meters', label: '6 METERS', part: 'YM2149 port A', device: this.ay },
-      { id: 'coins', label: 'COIN INPUTS', part: 'lockouts on port B', signal: 'coin' },
+      { id: 'pkey', label: '% KEY', part: '9 way D', device: this.inputs.switches },
+      { id: 'options', label: 'OPTION SWITCHES', part: 'SW1 SW2 - 8 way',
+        device: this.inputs.switches },
+      { id: 'meters', label: 'METERS', part: 'YM2149 port A', device: this.ay },
+      { id: 'index', label: 'REEL INDEX', part: 'optos', device: this.reels },
 
-      { id: 'kbd', label: 'i8279 #1', part: 'lamps - switch matrix', device: this.kbd },
-      { id: 'kbd2', label: 'i8279 #2', part: 'more lamps', device: this.kbd2 },
-      { id: 'mcu', label: '80C51 MCU', part: 'M1A only' },
-      { id: 'latch', label: '74HC259 LATCH', part: 'Srsel - NMIEN - watchdog',
-        device: this.latch },
+      { id: 'pia', label: 'PIA', part: 'MC6821', device: this.pia },
+      { id: 'mcu', label: '80C51 MCU', part: 'second lamp bank', device: this.kbd2 },
+      { id: 'kbd', label: 'i8279', part: 'lamps - switch matrix', device: this.kbd },
+      { id: 'testsw', label: 'TEST / DEMO', part: 'push switch', device: this.inputs.switches },
+      { id: 'duart', label: 'DUART', part: 'MC68681 - RS232', device: this.duart },
 
       { id: 'ram', label: 'BATTERY RAM', part: '8K', device: this.ram },
-      { id: 'rom', label: 'PROGRAM ROM', part: 'banked - Srsel', device: this.rom },
-      { id: 'ay', label: 'PSG', part: 'YM2149', device: this.ay },
+      { id: 'rom', label: 'PROGRAM MODULE', part: 'banked - 64 way', device: this.rom },
       { id: 'opll', label: 'FM', part: 'YM2413', device: this.opll },
       this.necFitted
-        ? { id: 'upd', label: 'SAMPLES', part: 'uPD7759', device: this.upd }
-        : { id: 'oki', label: 'SAMPLES', part: 'MSM6376', device: this.oki },
-      { id: 'alpha', label: 'VFD', part: 'S16LF01 - 16 char',
-        device: this.vfd, signal: 'display' },
+        ? { id: 'samples', label: 'SAMPLES', part: 'uPD7759', device: this.upd }
+        : { id: 'samples', label: 'SAMPLES', part: 'MSM6376', device: this.oki },
+      { id: 'ay', label: 'PSG', part: 'YM2149', device: this.ay },
 
       { id: 'cpu', label: 'CPU', part: 'MC6809 - 2 MHz E', device: this.cpu, cpu: true },
-      { id: 'duart', label: 'DUART', part: 'MC68681 - reel optics', device: this.duart },
-      { id: 'pia', label: 'PIA', part: 'MC6821 - VFD clock', device: this.pia },
-      { id: 'psu', label: 'PSU RELAY', part: 'mains fail - NMI' },
+      { id: 'latch', label: '74HC259 LATCH', part: 'Srsel - NMIEN - watchdog',
+        device: this.latch },
+      { id: 'leds', label: 'LED INDICATORS', part: 'rails - 6 status' },
 
-      { id: 'reels', label: 'REEL MECH', part: 'Starpoint x6',
+      { id: 'reels', label: 'STEPPER MOTORS', part: 'Starpoint',
         device: this.reels, signal: 'reels' },
+      { id: 'spare', label: 'SPARE STEPPERS', part: 'reels 5 and 6', device: this.reels },
+      { id: 'alpha', label: 'ALPHA DISPLAY', part: 'S16LF01 - AUX DISPLAY',
+        device: this.vfd, signal: 'display' },
       ...(this.hopperFitted()
         ? [{ id: 'hopper', label: 'HOPPER', part: 'motor AY PA6',
              device: this.hopper } satisfies BoardPart]
         : [{ id: 'hopper', label: 'HOPPER', part: 'not fitted' } satisfies BoardPart]),
-      { id: 'coinmech', label: 'COIN MECH', part: 'acceptor', signal: 'coin' },
+      { id: 'coinmech', label: 'COIN MECH', part: 'lockouts - AY port B', signal: 'coin' },
+      { id: 'dataport', label: 'RS232 DATA PORT', part: '25 way D',
+        ...(this.dataPakType === 1 ? { device: this.dataPak } : {}) },
+      { id: 'controlport', label: 'CONTROL PORT', part: '8 way' },
+      { id: 'speaker', label: 'SPEAKER', part: 'volume control', modelled: true,
+        note: 'The board\u2019s sound, at the cabinet\u2019s own volume.' },
+      { id: 'psu', label: 'POWER SUPPLY', part: '14 way - relay enable' },
     ];
   }
   meters = 0;

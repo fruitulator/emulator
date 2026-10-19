@@ -415,7 +415,7 @@ function startGame(
   })
     .then((info) => {
       if (booted !== session.boot) return;
-      audio.attach(info.audioRate);
+      audio.attach(info.audioRate, info.audioLevel);
       bridgeAudio();
       console.log(`[emu] ROM optimiser: ${info.codegen ?? 'none'} (${info.system})`);
       if (info.codegen === 'regions') {
@@ -3030,7 +3030,7 @@ function loadSnapshotFile(file: File): void {
       void emu.load({ game, snapshot: snap, optionKeys: readSavedOptionKeys(game), panelSwitches: readSavedPanelSwitches(game), namedCoins: session.coinAnswers, bench: BENCH, noRegions: NO_REGIONS, wasm: USE_WASM })
         .then((info) => {
           if (booted !== session.boot) return;
-          audio.attach(info.audioRate);
+          audio.attach(info.audioRate, info.audioLevel);
           bridgeAudio();
           running = true;
           status.textContent = str('main.n_snapshot_restored', { 0: snap.game });

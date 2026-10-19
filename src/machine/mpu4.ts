@@ -313,7 +313,7 @@ export class SegColumnBank {
 }
 
 export class Mpu4 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache', 'modType'];
   readonly digitKind: DigitKind = 'mpu4led';
   readonly cpu: M6809;
   readonly ram = new Uint8Array(0x0800);
@@ -498,7 +498,7 @@ export class Mpu4 implements Bus, Machine {
       writeCA2: (v) => this.dataportTx(v),
       writeCB2: (v) => {
         this.ayCsel = v;
-        this.updateAy();
+        if (!v && this.modType === 2) this.ayBusDecode();
       },
       readA: () => this.aux1In(),
       readB: () => this.aux2In(),
@@ -541,21 +541,20 @@ export class Mpu4 implements Bus, Machine {
       irqChanged,
       writeA: (v) => {
         this.ayData = v & 0xff;
-        this.updateAy();
       },
       writeB: (v) => {
         const r = this.reelMux === 'seven' ? 3 : 0;
         this.reelUnits[r].update(v & 0x0f);
         this.reelUnits[r + 1].update((v >> 4) & 0x0f);
       },
-      readA: () => this.ayRead,
+      readA: () => this.ay.read(),
       writeCA2: (v) => {
         this.ayBc1 = v;
-        this.updateAy();
+        this.ayBusDecode();
       },
       writeCB2: (v) => {
         this.ayBdir = v;
-        this.updateAy();
+        this.ayBusDecode();
       },
     });
 
@@ -640,18 +639,28 @@ export class Mpu4 implements Bus, Machine {
   readonly ay = new Ay8910(E_CLOCK, 'ay8910');
 
   private ayData = 0;
-  private ayRead = 0xff;
   private ayBc1 = false;
   private ayBdir = false;
   private ayCsel = false;
 
-  private updateAy(): void {
-    if (this.ayCsel) return;
-    if (this.ayBdir) {
-      if (this.ayBc1) this.ay.selectAddress(this.ayData);
-      else this.ay.write(this.ayData);
-    } else if (this.ayBc1) {
-      this.ayRead = this.ay.read();
+  private modType: 2 | 4 = 2;
+
+  setModType(mod: 2 | 4): void {
+    this.modType = mod;
+  }
+
+  private ayBusDecode(): void {
+    if (this.soundCard === 9) return;
+    const code = (this.ayBc1 ? 1 : 0)
+      | (this.modType === 4 || this.ayCsel ? 2 : 0)
+      | (this.ayBdir ? 4 : 0);
+    if (this.modType === 4) {
+      if (code === 6) this.ay.write(this.ayData);
+      else if (code === 7) this.ay.selectAddress(this.ayData);
+    } else if (code === 4) {
+      this.ay.write(this.ayData);
+    } else if (code === 5 || code === 7) {
+      this.ay.selectAddress(this.ayData);
     }
   }
 
@@ -680,12 +689,13 @@ export class Mpu4 implements Bus, Machine {
 
   private boardParts(): BoardPart[] {
     return [
-      { id: 'lamps', label: 'LAMP MATRIX', part: '8 x 16 + extender',
+      { id: 'lamps', label: 'LAMPS', part: '128 + extender',
         device: this.outputs.lamps, signal: 'lamps' },
-      { id: 'switches', label: 'SWITCH MATRIX', part: '8 strobes', device: this.inputs.switches },
-      { id: 'sevenseg', label: '8 x 7-SEG', part: 'LED bank', signal: 'digits' },
-      { id: 'meters', label: '8 METERS', part: 'current sense', device: this.outputs },
-      { id: 'triacs', label: 'TRIACS', part: 'slides - lockouts', device: this.outputs },
+      { id: 'distboard', label: 'DISTRIBUTION BOARD', part: 'blue / green 17 way' },
+      { id: 'switches', label: 'SWITCHES', part: '32 - two 19 way', device: this.inputs.switches },
+      { id: 'sevenseg', label: '7-SEG DISPLAY', part: '8 digits', signal: 'digits' },
+      { id: 'meters', label: 'METER PANEL', part: '8 x 12V dc', device: this.outputs },
+      { id: 'triacs', label: 'SOLENOIDS', part: '8 triacs - 48V ac', device: this.outputs },
       { id: 'coins', label: 'COIN INPUTS', part: 'AUX2', signal: 'coin' },
 
       { id: 'ic3', label: 'PIA IC3', part: 'lamp data', device: this.ic3 },
@@ -696,28 +706,35 @@ export class Mpu4 implements Bus, Machine {
       { id: 'ic8', label: 'PIA IC8', part: 'switches - triacs', device: this.ic8 },
 
       { id: 'ram', label: 'BATTERY RAM', part: '2K', device: this.ram },
-      { id: 'rom', label: 'PROGRAM ROM', part: 'paged - $1000-$FFFF', device: this.rom },
-      { id: 'chr', label: 'CHARACTERISER', part: 'security PAL', device: this.characteriser },
-      { id: 'ptm', label: 'PTM IC2', part: 'MC6840 - system tick', device: this.ptm },
+      { id: 'rom', label: 'PROGRAM MODULE', part: 'EPROMs P1-P3', device: this.rom },
+      { id: 'chr', label: 'CHARACTERISER', part: 'in the module', device: this.characteriser },
+      { id: 'ptm', label: 'PTM IC2', part: 'MC6840', device: this.ptm },
       { id: 'ay', label: 'SOUND', part: 'AY8913', device: this.ay },
       { id: 'oki', label: 'SAMPLES', part: 'MSM6376', device: this.oki },
-      { id: 'alpha', label: 'VFD', part: 'MSC1937 - 16 char', device: this.vfd, signal: 'display' },
+      { id: 'options', label: 'OPTION SWITCHES', part: '2 x 8 DIL', device: this.inputs },
+      { id: 'alpha', label: 'ALPHA DISPLAY', part: 'MSC1937 - 16 char', device: this.vfd, signal: 'display' },
 
       { id: 'cpu', label: 'CPU', part: 'MC6809 - 1.72 MHz E', device: this.cpu, cpu: true },
       { id: 'ic23', label: 'IC23 STROBE', part: '74LS138 decode', modelled: true,
         note: 'Modelled as the strobe field the PIAs drive, not as a decoder chip.' },
+      { id: 'reset', label: 'AERIAL RESET', part: 'interference trip' },
       { id: 'soundpia', label: 'SOUND PIA', part: 'MC6821 - mod4', device: this.icSound },
       { id: 'soundptm', label: 'SOUND PTM', part: 'MC6840 - mod4', device: this.ptmSound },
-      { id: 'duart', label: 'DUART', part: 'MC68681 - hopper optos' },
+      { id: 'duart', label: 'DUART', part: 'MC68681' },
 
-      { id: 'reels', label: 'REEL MECH', part: 'Barcrest 48 step',
+      { id: 'reels', label: 'REEL ASSEMBLY', part: '48 step - backplane',
         device: this.reels, signal: 'reels' },
       this.hopper1
         ? { id: 'hopper', label: 'HOPPER', part: `payout unit ${this.payoutType}`,
             device: this.hopper1 }
-        : { id: 'hopper', label: 'PAYOUT', part: 'tube slides on the triacs',
+        : { id: 'hopper', label: 'PAYOUT', part: 'slides on the triacs',
             device: this.triacPulses },
-      { id: 'coinmech', label: 'COIN MECH', part: 'acceptor', signal: 'coin' },
+      { id: 'coinmech', label: 'COIN MECH', part: 'electronic - AUX2', signal: 'coin' },
+      { id: 'dataport', label: 'DATAPORT', part: '25 way D - data capture',
+        ...(this.dataPakType === 1 ? { device: this.dataPak } : {}) },
+      { id: 'speaker', label: 'SPEAKER', part: 'volume control', modelled: true,
+        note: 'The board\u2019s sound and its alarm tone, at the cabinet\u2019s own volume.' },
+      { id: 'psu', label: 'POWER SUPPLY', part: '+12 +34 -12V dc - 48V ac' },
     ];
   }
 

@@ -1,16 +1,8 @@
 import { Reel } from '../hw/reel';
 import type { ReelGeometry } from './layoutreels';
+import { V20_STEP_TABLE } from '../hw/v20steptable';
 
-export const V20_STEP_TABLE: readonly (readonly number[])[] = [
-  [0, 0, 2, 1, 0, 0, 3, 0, -2, -1, 0, 0, -3, 0, 0, 0],
-  [0, -1, 1, 0, 3, 0, 2, 0, -3, -2, 0, 0, 0, 0, 0, 0],
-  [0, -2, 0, -1, 2, 0, 1, 0, 0, -3, 0, 0, 3, 0, 0, 0],
-  [0, -3, -1, -2, 1, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0],
-  [0, 0, -2, -3, 0, 0, -1, 0, 2, 3, 0, 0, 1, 0, 0, 0],
-  [0, 3, -3, 0, -1, 0, -2, 0, 1, 2, 0, 0, 0, 0, 0, 0],
-  [0, 2, 0, 3, -2, 0, -3, 0, 0, 1, 0, 0, -1, 0, 0, 0],
-  [0, 1, 3, 2, -3, 0, 0, 0, -1, 0, 0, 0, -2, 0, 0, 0],
-];
+export { V20_STEP_TABLE };
 
 export function v20OpticWindow(optoTab: number): [number, number] {
   switch (optoTab) {

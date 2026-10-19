@@ -126,7 +126,7 @@ function deviceAt(addr: number, model: string): CcTalkDevice {
 }
 
 export class Sc5 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency', 'noteCurrency'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: Mcf5206e;
@@ -314,7 +314,7 @@ export class Sc5 implements Bus16, Machine {
     this.applyDesKeys();
     this.applyBnvKey();
     this.applyDesFitted();
-    this.applyMechCurrency();
+    this.applyCurrencies();
     this.hookLedger();
     this.syncCcTalkParts();
     this.resetPeripherals();
@@ -327,12 +327,21 @@ export class Sc5 implements Bus16, Machine {
 
   setCoinMechCurrency(c: number | null): void {
     this.mechCurrency = c;
-    this.applyMechCurrency();
+    this.applyCurrencies();
   }
 
-  private applyMechCurrency(): void {
+  private applyCurrencies(): void {
     const mech = this.bus.get(CC_MECH);
     if (this.mechCurrency !== null && mech instanceof Sr5iMech) mech.currency = this.mechCurrency;
+    const note = this.bus.get(CC_NOTE);
+    if (this.noteCurrency !== null && note instanceof JcmEba) note.currency = this.noteCurrency;
+  }
+
+  private noteCurrency: number | null = null;
+
+  setNoteAcceptorCurrency(c: number | null): void {
+    this.noteCurrency = c;
+    this.applyCurrencies();
   }
 
   setDesFitted(f: Partial<typeof this.desFitted>): void {
@@ -431,7 +440,7 @@ export class Sc5 implements Bus16, Machine {
     }
     const note = this.bus.get(CC_NOTE);
     if (note instanceof JcmEba) {
-      note.onStacked = (type) => { this.cashLedger.inPence += JcmEba.billPence(type) ?? 0; };
+      note.onStacked = (type) => { this.cashLedger.inPence += note.pence(type) ?? 0; };
       note.onLampWord = (word) => { this.noteLamps.write(word); this.packVendLamps(); };
     }
     const mech = this.bus.get(CC_MECH);

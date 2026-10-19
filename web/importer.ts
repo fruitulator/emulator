@@ -34,7 +34,12 @@ interface Pending {
 interface Lane {
   worker: Worker | null;
   inflight: number;
+  served: number;
+  servedBytes: number;
 }
+
+const RETIRE_AFTER = 8;
+const RETIRE_BYTES = 64 * 1024 * 1024;
 
 export function importConcurrency(): number {
   const nav = navigator as Navigator & { deviceMemory?: number };
@@ -71,6 +76,12 @@ function announceWrite(): void {
 function settle(p: Pending, id: number): void {
   pending.delete(id);
   p.lane.inflight = Math.max(0, p.lane.inflight - 1);
+  p.lane.served++;
+  if (p.lane.inflight === 0
+    && (p.lane.served >= RETIRE_AFTER || p.lane.servedBytes >= RETIRE_BYTES)) {
+    p.lane.worker?.terminate();
+    p.lane.worker = null;
+  }
   if (!p.quiet) announceWrite();
 }
 
@@ -108,6 +119,8 @@ function dispatch(msg: ImportResponse): void {
 
 function spawn(lane: Lane): Worker {
   const worker = new Worker(new URL('./import.worker.ts', import.meta.url), { type: 'module' });
+  lane.served = 0;
+  lane.servedBytes = 0;
   worker.onmessage = (ev: MessageEvent<ImportResponse>) => dispatch(ev.data);
   worker.onerror = (ev) => {
     const msg = ev.message || 'import worker failed';
@@ -119,6 +132,8 @@ function spawn(lane: Lane): Worker {
     lane.worker?.terminate();
     lane.worker = null;
     lane.inflight = 0;
+    lane.served = 0;
+    lane.servedBytes = 0;
     announceWrite();
   };
   lane.worker = worker;
@@ -132,7 +147,7 @@ function laneFor(): Lane {
     if (!best || lane.inflight < best.inflight) best = lane;
   }
   if (lanes.length < importConcurrency()) {
-    const lane: Lane = { worker: null, inflight: 0 };
+    const lane: Lane = { worker: null, inflight: 0, served: 0, servedBytes: 0 };
     lanes.push(lane);
     return lane;
   }
@@ -145,8 +160,10 @@ function request(
   return new Promise<GameMeta>((resolve, reject) => {
     const lane = laneFor();
     lane.inflight++;
+    const worker = lane.worker ?? spawn(lane);
+    for (const t of transfer) if (t instanceof ArrayBuffer) lane.servedBytes += t.byteLength;
     pending.set(req.id, { events, resolve, reject, quiet, lane });
-    (lane.worker ?? spawn(lane)).postMessage(req, transfer);
+    worker.postMessage(req, transfer);
   });
 }
 

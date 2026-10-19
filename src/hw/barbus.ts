@@ -504,12 +504,13 @@ export class Barbus {
   buildReply(addr: number, cmd: number, body: number[]): number[] | null {
     const type = addr >> 4;
     if (type !== TYPE_MUX5 && type !== TYPE_REEL5) return null;
+    let decided: number[] | null = null;
     if (type === TYPE_REEL5) {
       const reel = this.reel5At(addr);
       if (!reel) return null;
-      reel.observe(cmd, body);
+      decided = reel.observe(cmd, body);
     }
-    const payload = this.replyPayload(type, cmd, body);
+    const payload = decided ?? this.replyPayload(type, cmd, body);
     if (!payload) return null;
     const replyBody = [addr, ...payload];
     const crc = barbusCrc16(SLAVE_SEED, replyBody);
@@ -554,18 +555,10 @@ export class Barbus {
 
     const reel = this.reel5At(body[0]) ?? this.reel5;
     if (cmd === 0x70) {
-      const [busyMask, tabMask] = reel.poll();
-      return [0x02, busyMask, tabMask];
+      const [flagOff, seen] = reel.poll();
+      return [0x02, flagOff, seen];
     }
-    if (cmd === 0xa1) {
-      const moving = reel.moving(sub);
-      const mark = moving ? 0x0b : 0xff;
-      const pos = moving ? reel.livePosition(sub) : reel.position(sub);
-      const lo = pos & 0xff;
-      const hi = (pos >> 8) & 0xff;
-      if (lo < 0x7f ? hi !== 0 : hi !== 0xff) return [0x03, mark, hi, lo];
-      return [0x02, mark, lo];
-    }
+    if (cmd === 0xa1) return reel.a1Reply(sub);
     if (cmd === 0x8f) {
       const units = Math.max(0, Math.round(
         reel.shortfall(Barbus.hasLength(cmd) ? body[3] : body[2])));

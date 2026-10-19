@@ -4,10 +4,12 @@ import { DECODE_VERSION } from './gamepak';
 import { importPunnet, importUpload, type ImportEvents } from './importer';
 import type { ImportStage } from './import-protocol';
 import {
-  listZipSet, punnetBytes, readFolderSetGames, setFingerprint, sniffPunnetSet, splitZipSet,
+  listZipSet, punnetBytes, readFolderSetGames, setFingerprint, setImportCost, sniffPunnetSet,
+  splitZipSet,
   type FolderSet,
 } from './ingest';
 import { closeCabinet } from './cabjson';
+import { readZipEntry } from './zipdir';
 import {
   SCHEMA_VERSION, getMeta, getSeenHashes, hashGameFiles, inSpareDir, putSeen, type GameMeta,
 } from './store';
@@ -81,34 +83,77 @@ export async function listArchives(
 const STATE_ONLY = /\.(gam|ram|eep|e2p|rtc|wsp)$/i;
 
 async function borrowSplitSets(sets: FolderSet[], trace?: (line: string) => void): Promise<FolderSet[]> {
-  const loose = sets.filter((s) => !s.zip && !s.punnet);
+  interface Member { name: string; read(): Promise<Uint8Array>; give(to: FolderSet): void }
+  const archiveOf = (s: FolderSet): File | undefined =>
+    (s.zip && s.listing && !s.inner ? s.entries[0] : undefined);
+  const membersOf = (s: FolderSet): Member[] => {
+    const archive = archiveOf(s);
+    if (!archive) {
+      return s.entries.map((f) => ({
+        name: f.name,
+        read: async () => new Uint8Array(await f.arrayBuffer()),
+        give: (to) => { to.entries = [...to.entries, f]; },
+      }));
+    }
+    return s.listing!.map((e) => ({
+      name: e.name.slice(e.name.lastIndexOf('/') + 1),
+      read: () => readZipEntry(archive, e),
+      give: (to) => { to.listing = [...to.listing!, e]; },
+    }));
+  };
+  const loose = sets.filter((s) => (!s.zip && !s.punnet) || archiveOf(s));
   const lower = (n: string): string => n.slice(Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\')) + 1).toLowerCase();
   const consumed = new Set<FolderSet>();
   for (const set of loose) {
-    if (!set.entries.length || !set.entries.every((f) => STATE_ONLY.test(f.name))) continue;
-    const gams = set.entries.filter((f) => /\.gam$/i.test(f.name));
+    const mine = membersOf(set);
+    if (!mine.length || !mine.every((m) => STATE_ONLY.test(m.name))) continue;
+    const gams = mine.filter((m) => /\.gam$/i.test(m.name));
     if (!gams.length) continue;
     const named = new Set<string>();
     for (const g of gams) {
-      const gam = parseGam(new TextDecoder('latin1').decode(await g.arrayBuffer()));
+      const gam = parseGam(new TextDecoder('latin1').decode(await g.read()));
       for (const n of [gam.layout ?? '', ...gam.roms, ...gam.vidRoms, ...gam.sound]) if (n) named.add(lower(n));
     }
-    const have = new Set(set.entries.map((f) => f.name.toLowerCase()));
+    const have = new Set(mine.map((m) => m.name.toLowerCase()));
     const missing = [...named].filter((n) => !have.has(n));
     if (!missing.length) continue;
-    const donors = loose.filter((d) => d !== set && missing.every((n) => d.entries.some((f) => f.name.toLowerCase() === n)));
+    const donors = loose.filter((d) => d !== set && archiveOf(d) === archiveOf(set)
+      && missing.every((n) => membersOf(d).some((m) => m.name.toLowerCase() === n)));
     if (donors.length !== 1) {
       trace?.(`${set.name}: ${donors.length ? `${donors.length} folders hold` : 'no folder holds'} the files its .gam names; left as it is`);
       continue;
     }
     const donor = donors[0];
-    const taken = missing.map((n) => donor.entries.find((f) => f.name.toLowerCase() === n)!);
-    set.entries = [...set.entries, ...taken];
+    const theirs = membersOf(donor);
+    const taken = missing.map((n) => theirs.find((m) => m.name.toLowerCase() === n)!);
+    for (const m of taken) m.give(set);
     trace?.(`${set.name}: took ${taken.length} file(s) from ${donor.dir}`);
-    if (!donor.entries.some((f) => /\.gam$/i.test(f.name))) consumed.add(donor);
+    if (!theirs.some((m) => /\.gam$/i.test(m.name))) consumed.add(donor);
   }
   return sets.filter((s) => !consumed.has(s));
 }
+
+export function byteGate(budget: number): {
+  admit(bytes: number): Promise<void>;
+  release(bytes: number): void;
+} {
+  let inFlight = 0;
+  const queue: { bytes: number; go(): void }[] = [];
+  const pump = (): void => {
+    while (queue.length && (inFlight === 0 || inFlight + queue[0].bytes <= budget)) {
+      const next = queue.shift()!;
+      inFlight += next.bytes;
+      next.go();
+    }
+  };
+  return {
+    admit: (bytes) => new Promise<void>((go) => { queue.push({ bytes, go }); pump(); }),
+    release: (bytes) => { inFlight = Math.max(0, inFlight - bytes); pump(); },
+  };
+}
+
+const IMPORT_BYTE_BUDGET = 384 * 1024 * 1024;
+const budget = byteGate(IMPORT_BYTE_BUDGET);
 
 export interface SetImportContext {
   inFlight: Map<string, Promise<GameMeta>>;
@@ -131,53 +176,59 @@ export async function importFolderSet(set: FolderSet, ctx: SetImportContext): Pr
     ctx.known(seen);
     return;
   }
-  const events: ImportEvents = ctx.onProgress ? { onProgress: ctx.onProgress } : {};
-  if (set.punnet) {
-    const bytes = await punnetBytes(set);
-    const meta = await importPunnet(bytes, set.name, events);
-    ctx.setAdded.push(meta.hash);
-    ctx.landed(set.name, meta, meta.hash);
-    if (fp) await putSeen(fp, [meta.hash]);
-    return;
-  }
-  const units = await readFolderSetGames(set);
-  ctx.trace?.(`read ${set.name}: ${units.length} game(s), ${units.reduce((n, u) => n + u.files.length, 0)} file(s)`);
-  const hashes: string[] = [];
-  for (const unit of units) {
-    const hash = await hashGameFiles(unit.files);
-    const held = await getMeta(hash);
-    if (current(held) && kept(held, unit.spares)) {
-      ctx.known([hash]);
-      hashes.push(hash);
-      continue;
+  const bytes = await setImportCost(set);
+  await budget.admit(bytes);
+  try {
+    const events: ImportEvents = ctx.onProgress ? { onProgress: ctx.onProgress } : {};
+    if (set.punnet) {
+      const bytes = await punnetBytes(set);
+      const meta = await importPunnet(bytes, set.name, events);
+      ctx.setAdded.push(meta.hash);
+      ctx.landed(set.name, meta, meta.hash);
+      if (fp) await putSeen(fp, [meta.hash]);
+      return;
     }
-    const busy = ctx.inFlight.get(hash);
-    if (busy) {
-      await busy.catch(() => undefined);
-      const now = await getMeta(hash);
-      if (current(now) && kept(now, unit.spares)) {
+    const units = await readFolderSetGames(set);
+    ctx.trace?.(`read ${set.name}: ${units.length} game(s), ${units.reduce((n, u) => n + u.files.length, 0)} file(s)`);
+    const hashes: string[] = [];
+    for (const unit of units) {
+      const hash = await hashGameFiles(unit.files);
+      const held = await getMeta(hash);
+      if (current(held) && kept(held, unit.spares)) {
         ctx.known([hash]);
         hashes.push(hash);
         continue;
       }
+      const busy = ctx.inFlight.get(hash);
+      if (busy) {
+        await busy.catch(() => undefined);
+        const now = await getMeta(hash);
+        if (current(now) && kept(now, unit.spares)) {
+          ctx.known([hash]);
+          hashes.push(hash);
+          continue;
+        }
+      }
+      const src = { files: unit.files, hash, ...(unit.spares ? { spares: unit.spares } : {}) };
+      const job = importUpload(src, unit.name, {
+        ...events,
+        onCabinet: (cab) => { if (cab) closeCabinet(cab); },
+      }, true, true);
+      ctx.inFlight.set(hash, job);
+      let meta: GameMeta;
+      try {
+        meta = await job;
+      } finally {
+        if (ctx.inFlight.get(hash) === job) ctx.inFlight.delete(hash);
+      }
+      hashes.push(hash);
+      ctx.setAdded.push(hash);
+      ctx.landed(unit.name, meta, hash);
     }
-    const src = { files: unit.files, hash, ...(unit.spares ? { spares: unit.spares } : {}) };
-    const job = importUpload(src, unit.name, {
-      ...events,
-      onCabinet: (cab) => { if (cab) closeCabinet(cab); },
-    }, true, true);
-    ctx.inFlight.set(hash, job);
-    let meta: GameMeta;
-    try {
-      meta = await job;
-    } finally {
-      if (ctx.inFlight.get(hash) === job) ctx.inFlight.delete(hash);
-    }
-    hashes.push(hash);
-    ctx.setAdded.push(hash);
-    ctx.landed(unit.name, meta, hash);
+    if (fp && units.length) await putSeen(fp, hashes);
+  } finally {
+    budget.release(bytes);
   }
-  if (fp && units.length) await putSeen(fp, hashes);
 }
 
 export function stageText(stage: ImportStage, name?: string): string | null {
