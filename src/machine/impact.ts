@@ -451,18 +451,37 @@ export class Impact implements Bus16, Machine {
       this.idle[PORT_DSW] = on ? this.idle[PORT_DSW] & ~mask : this.idle[PORT_DSW] | mask;
       return;
     }
+    if (id === Impact.TEST_DEMO_ID) {
+      this.setTestPush(on);
+      return;
+    }
+    this.#switchLine(id, on);
+  }
+
+  static readonly TEST_DEMO_ID = 152;
+
+  #switchLine(id: number, on: boolean): void {
     const port = id >> 3;
     const bit = id & 7;
-    if (id >= 0 && port < this.matrix.length
+    if (id < 0) return;
+    if (port < this.matrix.length
       && (port >= 10 || (this.#panelMask[port] & (1 << bit)) !== 0)) {
       this.setMatrix(id, on);
     } else if (port < 9) {
       this.setInput(port, bit, on);
     } else if (port === PORT_COINS) {
       this.setCoinLine(bit, on);
-    } else if (port === 19 && bit === 0) {
-      this.setTestDemo(on);
     }
+  }
+
+  #test2: { line: number; invert: boolean } | null = null;
+  setTest2Switch(sw: { line: number; invert: boolean } | null): void { this.#test2 = sw; }
+  get test2Switch(): { line: number; invert: boolean } | null { return this.#test2; }
+
+  setTestPush(on: boolean): void {
+    const t2 = this.#test2;
+    if (t2) this.#switchLine(t2.line, t2.invert ? !on : on);
+    this.setTestDemo(on);
   }
 
   private setMatrix(id: number, on: boolean): void {

@@ -362,7 +362,7 @@ export function phxReadLines(coins: readonly PhxCoin[]): Set<number> {
 }
 
 export function phxSlotId(c: { line: number | null; button: number | null; note: number | null; token: boolean }): number {
-  if (c.line !== null) return c.line;
+  if (c.line !== null) return 0x0f + c.line;
   if (c.note !== null && c.note !== 0x47) return c.note;
   if (c.note === 0x47 && c.button !== null && c.button >= 0) return 0x100 | (c.button & 0x7f);
   return c.token ? 0x100 : 0x104;

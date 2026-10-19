@@ -2498,7 +2498,10 @@ function draw(m: FrameView): void {
   numberReelDiagnostic(m, cab);
   mainReelDriftWatch(m, cab);
   if (painter.paint(m, cab)) screenDirty = true;
-  if (reelBandsOn()) reelBands.paint();
+  if (reelBandsOn()) {
+    reelBands.machine(m);
+    reelBands.paint();
+  }
 }
 
 function numberReelDiagnostic(m: FrameView, cab: Cabinet): void {
@@ -2686,7 +2689,7 @@ function applyView(): void {
 
 let screenCss = {
   w: 0, h: 0, lw: 0, lh: 0, sw: 0, sh: 0, fill: false,
-  bands: 0, cab: null as Cabinet | null,
+  bands: 0, bandsVersion: 0, cab: null as Cabinet | null,
 };
 
 function fitScreen(): void {
@@ -2699,12 +2702,13 @@ function fitScreen(): void {
   const cab = reelBandsOn() ? cabinet : null;
   reelBands.sync(cab);
   const bands = cab ? reelBands.count : 0;
+  const bandsVersion = reelBands.version;
   const c = screenCss;
   if (c.sw === sw && c.sh === sh && c.lw === lw && c.lh === lh && c.fill === fill
-    && c.bands === bands && c.cab === cab) return;
+    && c.bands === bands && c.bandsVersion === bandsVersion && c.cab === cab) return;
   if (bands > 0) {
     const l = bandsLayout({ width: sw, height: sh }, { width: lw, height: lh }, bands, TOUCH_DEVICE, fill, (colH) => reelBands.wholeCap(colH));
-    screenCss = { w: l.screen.width, h: l.screen.height, lw, lh, sw, sh, fill, bands, cab };
+    screenCss = { w: l.screen.width, h: l.screen.height, lw, lh, sw, sh, fill, bands, bandsVersion, cab };
     screenEl.style.inset = 'auto';
     screenEl.style.margin = '0';
     screenEl.style.left = `${l.screen.left}px`;
@@ -2713,8 +2717,8 @@ function fitScreen(): void {
   } else {
     const k = Math.min(1, sw / lw, sh / lh);
     screenCss = fill
-      ? { w: sw, h: sh, lw, lh, sw, sh, fill, bands, cab }
-      : { w: lw * k, h: lh * k, lw, lh, sw, sh, fill, bands, cab };
+      ? { w: sw, h: sh, lw, lh, sw, sh, fill, bands, bandsVersion, cab }
+      : { w: lw * k, h: lh * k, lw, lh, sw, sh, fill, bands, bandsVersion, cab };
     screenEl.style.inset = '';
     screenEl.style.margin = '';
     screenEl.style.left = '';

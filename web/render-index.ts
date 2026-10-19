@@ -63,9 +63,14 @@ function lampBit(m: FrameView, n: number): number {
   return m.layoutLampLevel(n);
 }
 
+function ledLevel(m: FrameView, n: number): number {
+  return typeof m.layoutLedLevel === 'function'
+    ? m.layoutLedLevel(n) : (m.layoutLed(n) ? LAMP_FULL : 0);
+}
+
 export function cabLampLevel(m: FrameView, lp: Pick<CabLamp, 'led' | 'digitSeg'>, n: number): number {
   if (lp.digitSeg) return cabLampLit(m, lp, n) ? LAMP_FULL : 0;
-  return lp.led && m.ledServed(n) ? (m.layoutLed(n) ? LAMP_FULL : 0) : m.layoutLampLevel(n);
+  return lp.led && m.ledServed(n) ? ledLevel(m, n) : m.layoutLampLevel(n);
 }
 
 export function cabLampLit(m: FrameView, lp: Pick<CabLamp, 'led' | 'digitSeg'>, n: number): boolean {

@@ -366,6 +366,10 @@ export class M1ab implements Bus, Machine {
     noteRomCut(this, total, placed);
   }
 
+  setSampleClock(hz: number): void {
+    this.oki.setClock(hz);
+  }
+
   loadSoundRom(data: Uint8Array, files = 1, sampledSound?: number): void {
     this.necFitted = upd7759Header(data, 0);
     if (!this.necFitted) {

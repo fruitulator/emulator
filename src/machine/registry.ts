@@ -76,7 +76,7 @@ import {
   fittedPeripheralsFrom, type FittedPeripherals,
   decodedLayout, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
   dipSwitchLabelsFrom,
-  triacSlidePence, readSwitchNumber, readOperatorTag, readNumber, mpu4CharacteriserConfigFrom,
+  triacSlidePence, readSwitchNumber, readWidthHeight, readOperatorTag, readOperatorSwitch, readNumber, mpu4CharacteriserConfigFrom,
   mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, layoutSwitchIdsFrom, m1abDongleConfig, type SlideEffect,
 } from '../layout/fmlconfig';
 import { parseLayout } from '../layout/fmlparse';
@@ -565,11 +565,13 @@ const scorpion4: Platform = {
     }
 
     const sc4Layout = decodedLayout(game.layout);
+    noteMachineLink(m, sc4Layout, 'SCORPION4');
     m.seg7.mode = bfmLedMode(sc4Layout ? readSetting(sc4Layout, 'SCORPION4', 'LEDs') : null);
     if (sc4Layout) {
       const hoppers = readCheckboxByte(sc4Layout, 'SCORPION4', 'Hopper 1');
       if (hoppers !== null) m.setHoppers(hoppers);
       m.setCabinetStyle(readSetting(sc4Layout, 'SCORPION4', 'Cabinet Style'));
+      m.setRotarySwitch(readSetting(sc4Layout, 'SCORPION4', 'Rotary Switch') === 'Yes');
       const meters = meterMoneyMap(sc4Layout, 'SCORPION4');
       if (meters) {
         m.setSecMoneyMap(meters.secIn, meters.secOut);
@@ -758,6 +760,10 @@ const scorpion1: Platform = {
       const dmBusy = sc1DmLayout ? readSwitchNumber(sc1DmLayout, 'SCORPION1', 'DM Busy') : null;
       m.fitDotMatrix(sc1DotFile.bytes, dmBusy);
     }
+    const sc1SenseLayout = decodedLayout(game.layout);
+    if (sc1SenseLayout) {
+      m.setPaySense([1, 2, 3, 4].map((i) => readSwitchNumber(sc1SenseLayout, 'SCORPION1', `Pay Sense ${i}`)));
+    }
     const props = storedLayoutProps(game);
     fitReels(m, game);
 
@@ -847,12 +853,16 @@ const sys85: Platform = {
   },
 };
 
+export function sys5ProgramFiles(game: Pick<Game, 'files'>): GameFile[] {
+  return game.files
+    .filter((f) => /\.(bin|p[1-4]|[1-4])$/i.test(f.name) && !/snd|sound/i.test(f.name))
+    .slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
 const sys5: Platform = {
   system: 'SYS5',
   build(game) {
-    const progFiles = game.gam
-      ? manifestRoms(game)
-      : byExt(game, /\.(bin|p[1-4])$|magic dragon/i).filter((f) => !/snd|sound/i.test(f.name));
+    const progFiles = game.gam ? manifestRoms(game) : sys5ProgramFiles(game);
     if (!progFiles.length) throw noRoms(game, 'no System 5 program ROM');
 
     const m = new Sys5();
@@ -1411,6 +1421,10 @@ const impact: Platform = {
       cash: { fallback: 61, made: false },
       refill: { fallback: 59, made: false },
     });
+    {
+      const t2Layout = decodedLayout(game.layout);
+      m.setTest2Switch(t2Layout ? readOperatorSwitch(t2Layout, 'IMPACT', 'Test 2') : null);
+    }
 
     const setting = (name: string): number | undefined => {
       const raw = game.gam?.settings.get(name);
@@ -1558,6 +1572,11 @@ const acesp: Platform = {
       for (const f of sounds) { rom.set(f.bytes, at); at += f.bytes.length; }
       m.loadSoundRom(rom);
     }
+    {
+      const lay = decodedLayout(game.layout);
+      const clock = lay ? readNumber(lay, 'SPACE', 'Sample Clock Rate') : null;
+      if (clock) m.setSampleClock(clock);
+    }
 
     m.inputs.switches[2] = AceSp.standingChainByte2([]);
     const panel = storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout);
@@ -1667,6 +1686,11 @@ const m1ab: Platform = {
         ? (tag54[0] | (tag54[1] << 8) | (tag54[2] << 16) | (tag54[3] << 24)) >>> 0
         : undefined;
       m.loadSoundRom(rom, parts.length, sampled);
+    }
+    {
+      const lay = decodedLayout(game.layout);
+      const clock = lay ? readNumber(lay, 'M1AB', 'Sample Clock Rate') : null;
+      if (clock) m.setSampleClock(clock);
     }
 
     if (game.gam) {
@@ -1918,6 +1942,10 @@ const mpu5: Platform = {
         refill: { fallback: 1, made: false },
       });
     }
+    {
+      const t2Layout = decodedLayout(game.layout);
+      m.setTest2Switch(t2Layout ? readOperatorSwitch(t2Layout, 'MPU5', 'Test 2') : null);
+    }
     if (!m.programSwitches.length) {
       noteBoardDefault(m, {
         axis: 'peripheral',
@@ -2163,17 +2191,44 @@ function finishScorpion5(game: Game, m: Sc5): Sc5 {
 }
 
 function fitSc5Video(game: Game, m: Sc5): void {
+  const payload = decodedLayout(game.layout);
+  const screens = sc5VideoScreens(game.system, payload, payload ? parseLayout(payload) : []);
+  if (screens) m.fitAdder5(screens[0].width, screens[0].height, screens[1].width, screens[1].height);
+}
+
+export function noteMachineLink(m: object, payload: Uint8Array | null, system: 'SCORPION4' | 'PLUTO5'): void {
+  if (!payload) return;
+  const raw = readLayoutWord(payload, 0x75);
+  if (!raw) return;
+  const name = readSetting(payload, system, 'Network Id') ?? `id ${raw}`;
+  noteBoardDefault(m, {
+    axis: 'peripheral',
+    text: `machine link (${name}) is not modelled - this cabinet runs alone`,
+    ifWrong: 'Firmware that expects its link partners waits for them or reports them missing.',
+  });
+}
+
+export function sc5VideoScreens(
+  system: string,
+  payload: Uint8Array | null,
+  components: readonly { type: number; number: number; values: ReadonlyMap<string, unknown> }[],
+): { width: number; height: number }[] | null {
   const screens = [{ width: 600, height: 800 }, { width: 600, height: 800 }];
-  const layout = decodedLayout(game.layout);
+  if (payload) {
+    screens[0] = readWidthHeight(payload, 'SCORPION5', 'Adder5 Screen 1') ?? screens[0];
+    screens[1] = readWidthHeight(payload, 'SCORPION5', 'Adder5 Screen 2') ?? screens[1];
+  }
   let declared = false;
-  for (const c of layout ? parseLayout(layout) : []) {
+  for (const c of components) {
     if (c.type !== 0x1f) continue;
     declared = true;
+    if (system !== 'ADDER5') continue;
     if (c.number !== 0 && c.number !== 1) continue;
-    screens[c.number] = adder5ScreenSize(c.values.get('VideoMode') ?? -1) ?? screens[c.number];
+    const mode = c.values.get('VideoMode');
+    screens[c.number] = adder5ScreenSize(typeof mode === 'number' ? mode : -1) ?? screens[c.number];
   }
-  if (game.system !== 'ADDER5' && !declared) return;
-  m.fitAdder5(screens[0].width, screens[0].height, screens[1].width, screens[1].height);
+  if (system !== 'ADDER5' && !declared) return null;
+  return screens;
 }
 
 const scorpion5: Platform = {
@@ -3203,6 +3258,7 @@ const pluto5: Platform = {
     const m = new Pluto5();
     m.loadRom(prog.map((f) => f.bytes));
     const payload = decodedLayout(game.layout);
+    noteMachineLink(m, payload, 'PLUTO5');
     (game.gam?.sec ?? []).forEach((c, i) => {
       m.sec.counters[i] = c.value;
       if (c.label) m.sec.counterText[i] = c.label;

@@ -1000,7 +1000,7 @@ export class Proconn implements Machine {
 }
 
 export function proconnSlotId(c: Pick<DeclaredCoin, 'line' | 'button' | 'note' | 'token'>): number | null {
-  if (c.line !== null) return c.line;
+  if (c.line !== null) return 0x0f + c.line;
   if (c.note !== null && c.note !== 0x47) return c.note;
   if (c.note === 0x47 && c.button !== null && c.button >= 0) return 0x100 | (c.button & 0x7f);
   return c.token ? null : 37;

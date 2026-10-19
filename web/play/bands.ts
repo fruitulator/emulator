@@ -1,5 +1,7 @@
 import type { Cabinet, FrameReel, ReelBand } from '../dat';
 import { str } from '../i18n';
+import type { FrameView } from '../../src/machine/framestate';
+import { reelIndex } from '../render-index';
 import { reelWindowSymbols } from './peek';
 
 const GAP = 6;
@@ -140,14 +142,29 @@ export interface NoBand { reel: number; none: true }
 
 type Img = CanvasImageSource & { width: number; height: number };
 
-export function bandSources(cab: Cabinet<unknown>): (BandSource | NoBand)[] {
+export function bandSources(
+  cab: Cabinet<unknown>,
+  driven?: (place: BandPlace) => boolean,
+): (BandSource | NoBand)[] {
   const out: { at: BandPlace; src: BandSource | NoBand }[] = [];
-  for (const reel of cab.reels) out.push({ at: reel, src: fromBand(reel as ReelBand<unknown>) });
-  for (const fr of cab.frameReels ?? []) out.push({ at: fr, src: fromFrames(fr as FrameReel<unknown>) });
+  const shows = (at: BandPlace): boolean => onCabinet(at, cab) && (!driven || driven(at));
+  for (const reel of cab.reels) if (shows(reel)) out.push({ at: reel, src: fromBand(reel as ReelBand<unknown>) });
+  for (const fr of cab.frameReels ?? []) if (shows(fr)) out.push({ at: fr, src: fromFrames(fr as FrameReel<unknown>) });
   return bandOrder(out.map((o) => o.at)).map((i, n) => ({ ...out[i].src, reel: n + 1 }));
 }
 
-export interface BandPlace { left?: number; top?: number; width?: number; height?: number; machineIndex: number }
+export function onCabinet(at: BandPlace, cab: { width?: number; height?: number }): boolean {
+  const cw = cab.width ?? 0, ch = cab.height ?? 0;
+  if (!(cw > 0 && ch > 0) || at.left === undefined || at.top === undefined) return true;
+  const w = at.width ?? 0, h = at.height ?? 0;
+  return at.left < cw && at.top < ch && at.left + w > 0 && at.top + h > 0;
+}
+
+export function reelDriven(m: FrameView, at: BandPlace & { number?: number }): boolean {
+  return !!m.reels[reelIndex(m, at)];
+}
+
+export interface BandPlace { left?: number; top?: number; width?: number; height?: number; machineIndex: number; number?: number }
 
 export function bandOrder(places: readonly BandPlace[]): number[] {
   const size = (p: BandPlace): string => `${Math.round(p.width ?? 0)}x${Math.round(p.height ?? 0)}`;
@@ -341,7 +358,9 @@ export function paintBand(
 
 export interface ReelBands {
   sync(cab: Cabinet<unknown> | null): void;
+  machine(m: FrameView): void;
   readonly count: number;
+  readonly version: number;
   row(key: object, row: number): void;
   place(layout: BandsLayout | null): void;
   paint(): void;
@@ -382,6 +401,21 @@ export function createReelBands(stage: HTMLElement): ReelBands {
   let sources: (BandSource | NoBand)[] = [];
   const rows = new WeakMap<object, number>();
   let shown: { src: BandSource; canvas: HTMLCanvasElement; mode: BandMode; pitch?: number; drawn: number | null }[] = [];
+  let driven: boolean[] | null = null;
+  let version = 0;
+  const rebuild = (): void => {
+    const c = cab;
+    const d = driven;
+    let isDriven: ((p: BandPlace) => boolean) | undefined;
+    if (c && d) {
+      const all: BandPlace[] = [...c.reels, ...(c.frameReels ?? [])];
+      isDriven = (p) => d[all.indexOf(p)] !== false;
+    }
+    sources = c ? bandSources(c, isDriven) : [];
+    shown = [];
+    root.replaceChildren();
+    version++;
+  };
 
   const at = (el: HTMLElement, b: Box): void => {
     el.style.left = `${b.left}px`;
@@ -394,11 +428,27 @@ export function createReelBands(stage: HTMLElement): ReelBands {
     sync(next) {
       if (next === cab) return;
       cab = next;
-      sources = next ? bandSources(next) : [];
-      shown = [];
-      root.replaceChildren();
+      driven = null;
+      rebuild();
+    },
+    machine(m) {
+      if (!cab) return;
+      const places: readonly BandPlace[][] = [cab.reels, cab.frameReels ?? []];
+      let k = 0;
+      let same = driven !== null;
+      for (const list of places) {
+        for (const p of list) {
+          if (!same) break;
+          same = k < driven!.length && driven![k] === reelDriven(m, p);
+          k++;
+        }
+      }
+      if (same && k === driven!.length) return;
+      driven = places.flatMap((list) => list.map((p) => reelDriven(m, p)));
+      rebuild();
     },
     get count() { return sources.length; },
+    get version() { return version; },
     row(key, row) { rows.set(key, row); },
     place(layout) {
       root.replaceChildren();

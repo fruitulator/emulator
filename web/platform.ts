@@ -831,7 +831,12 @@ export function acceptorResolve(
     && !(a.note !== undefined && (CC_NOTE_CHANNEL.has(a.note) || parallelNoteChannel(a.note) !== undefined || ccCoinChannel(a.note) !== undefined))) {
     return { line: -1, fromCabinet: true };
   }
-  if (a.line !== undefined) return { line: a.line, fromCabinet: true };
+  if (a.line !== undefined) {
+    const reg = view.coinRegister;
+    const viaRow = reg && reg.maskRow >= 0 ? reg.lineOfBit[reg.maskRow]?.[a.line] : undefined;
+    if (viaRow !== undefined && (viaRow === null || viaRow >= 0)) return { line: viaRow ?? -1, fromCabinet: true };
+    return { line: a.line, fromCabinet: true };
+  }
   if (a.note !== undefined) {
     const noteChannel = CC_NOTE_CHANNEL.get(a.note);
     const vendChannel = parallelNoteChannel(a.note);

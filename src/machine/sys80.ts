@@ -988,7 +988,7 @@ export class Sys80 implements Machine {
 }
 
 export function sys80SlotLine(c: Pick<DeclaredCoin, 'line' | 'button' | 'token'> & { note?: number | null }): number {
-  if (c.line !== null) return c.line;
+  if (c.line !== null) return 16 + c.line;
   if (c.button !== null && c.button >= 0) return c.button;
   if (c.note != null && c.note >= 0x0f && c.note <= 0x16) return 16 + (c.note - 0x0f);
   return c.token ? -1 : 22;

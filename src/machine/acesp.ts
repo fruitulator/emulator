@@ -84,7 +84,7 @@ export interface AceSpInputs {
 }
 
 export class AceSp implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult', 'sampleClock'];
   readonly digitKind: DigitKind = 'space';
   readonly cpu: HD6303Y;
 
@@ -357,8 +357,16 @@ export class AceSp implements Bus, Machine {
   private ayLatch = 0;
   private audioMix: Mixer = new Mixer(this.ay);
 
+  private sampleClock: number | undefined;
+
+  setSampleClock(hz: number): void {
+    this.sampleClock = hz;
+    this.sndport.oki?.setClock(hz);
+  }
+
   loadSoundRom(rom: Uint8Array): void {
     this.sndport.oki = new Msm6376(rom);
+    if (this.sampleClock !== undefined) this.sndport.oki.setClock(this.sampleClock);
     this.audioMix = new Mixer([this.sndport.oki, ...this.ay]);
   }
 

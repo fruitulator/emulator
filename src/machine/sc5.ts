@@ -16,6 +16,7 @@ import { Sec } from '../hw/sec';
 import { Bda } from '../hw/bda';
 import { Bd1 } from '../hw/bd1';
 import { BfmLed } from '../hw/bfmled';
+import { BfmLampDim } from '../hw/bfmlampdim';
 import { Reel } from '../hw/reel';
 import { JcmEba, deviceFor, Sr5iMech, Sch2Hopper, type CcTalkDevice } from '../hw/cctalk';
 import { DataPak } from '../hw/datapak';
@@ -834,6 +835,8 @@ export class Sc5 implements Bus16, Machine {
     this.bd1.reset();
     this.betcomAlpha?.reset();
     this.seg7.reset();
+    this.lamps.fill(0, 0, 64);
+    this.muxDim.reset();
     this.security.reset();
     this.sec.reset();
     this.ledBoard.colours.fill(0);
@@ -1187,12 +1190,40 @@ export class Sc5 implements Bus16, Machine {
     const bank = (addr & 0x00ff0000) === 0x00020000 ? 0 : 1;
     const index = bank * 32 + (off >> 4);
     this.lamps[index] = val & 0xff;
+    if (bank === 0) this.muxDim.levelRow(index, val & 0xff);
     if (bank === 1) this.seg7.writeBfm(val, (off >> 4) & 0x0f, (off & 0x100) ? 1 : 0);
     return true;
   }
 
+  private readonly muxDim = new BfmLampDim();
+
+  private writeMuxRow(row: number, ledBank: boolean, v: number): void {
+    this.muxDim.writeColumnRow(row, ledBank, this.scanRow, v, this.lamps, this.seg7);
+  }
+
+  get levelOutputs(): Uint8Array {
+    return this.muxDim.levelBlock(this.seg7);
+  }
+
+  layoutLampLevel(n: number): number {
+    if (!this.layoutLamp(n)) return 0;
+    return this.muxDim.level(n);
+  }
+
   private muxWrite(addr: number, val: number): void {
     if (this.latchLamps(addr, val)) return;
+
+    {
+      const win = addr & 0x00ff0000;
+      const off = addr & 0xffff;
+      if ((win === 0x00010000 || win === 0x00020000) && off < 0x1400) {
+        const row = (off >> 4) & 0x3f;
+        if ((row >= 0x20 && row <= 0x23) || row === 0x36) {
+          this.writeMuxRow(row, win === 0x00010000, val & 0xff);
+          return;
+        }
+      }
+    }
 
     {
       const win = addr & 0x00ff0000;

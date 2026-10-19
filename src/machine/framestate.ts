@@ -33,6 +33,7 @@ export interface FrameLayout {
   ledBytes: number;
   ledKind?: 'bfm' | 'plain';
   ledCount?: number;
+  levelBytes?: number;
   udfBytes: number;
   cellDots: boolean;
   videoWidth: number;
@@ -340,6 +341,7 @@ export function frameLayoutFor(
   const partSoundBytes = ((m as unknown as PartSoundBoard).partSounds?.on.length ?? 0) * PART_SOUND_BYTES;
   const ledKind = (m as unknown as { ledKind?: 'bfm' | 'plain' }).ledKind ?? 'bfm';
   const ledCount = (m as unknown as { ledCount?: number }).ledCount;
+  const levelBytes = (m as unknown as { levelOutputs?: Uint8Array }).levelOutputs?.length ?? 0;
   const dutyBytes = displayKind === 'none' ? 0 : 4;
   const cellDots = !device?.udfDots && !!device?.cellDots;
   const udfBytes = device?.udfDots ? 16 * 5 + (device.gfxDots?.length ?? 0) : cellDots ? 16 * 6 : 0;
@@ -377,6 +379,7 @@ export function frameLayoutFor(
     ledBytes,
     ledKind,
     ...(ledCount !== undefined ? { ledCount } : {}),
+    ...(levelBytes ? { levelBytes } : {}),
     udfBytes,
     cellDots,
     videoWidth,
@@ -387,7 +390,7 @@ export function frameLayoutFor(
     partSoundBytes,
     byteLength:
       HEADER_BYTES + reelCount * REEL_BYTES + lampBytes + digitBytes + charBytes + segBytes
-      + diagBytes + dutyBytes + dotBytes + lcdBytes + muxLedBytes + ledBytes + EFFECT_BYTES + partSoundBytes + udfBytes
+      + diagBytes + dutyBytes + dotBytes + lcdBytes + muxLedBytes + ledBytes + levelBytes + EFFECT_BYTES + partSoundBytes + udfBytes
       + videoBytes,
   };
 }
@@ -486,6 +489,10 @@ export function captureFrame(
   if (layout.ledBytes) {
     bytes.set((m as unknown as { ledOutputs: Uint8Array }).ledOutputs, off);
     off += layout.ledBytes;
+  }
+  if (layout.levelBytes) {
+    bytes.set((m as unknown as { levelOutputs: Uint8Array }).levelOutputs, off);
+    off += layout.levelBytes;
   }
   writeEffectCounters(m, dv, off);
   off += layout.effectBytes;
@@ -760,6 +767,8 @@ export class FrameView {
     this.lcdRaw = new Uint8Array(buf, off + layout.dotBytes, layout.lcdBytes);
     this.muxLedOffset = off + layout.dotBytes + layout.lcdBytes;
     this.ledsRaw = new Uint8Array(buf, this.muxLedOffset + layout.muxLedBytes, layout.ledBytes);
+    this.levelsRaw = new Uint8Array(buf,
+      this.muxLedOffset + layout.muxLedBytes + layout.ledBytes, layout.levelBytes ?? 0);
     const psBytes = layout.partSoundBytes ?? 0;
     const psOff = layout.byteLength - layout.videoBytes - layout.udfBytes - psBytes;
     this.effects = readEffectCounters(dv, psOff - layout.effectBytes, layout.effectBytes);
@@ -791,6 +800,8 @@ export class FrameView {
 
   private readonly ledsRaw: Uint8Array;
 
+  private readonly levelsRaw: Uint8Array;
+
   ledServed(n: number): boolean {
     return n >= 0 && n < (this.layout.ledCount ?? this.layout.ledBytes * 8);
   }
@@ -800,6 +811,11 @@ export class FrameView {
       return this.ledServed(n) && ((this.ledsRaw[n >> 3] >> (n & 7)) & 1) !== 0;
     }
     return bfmLedBit(this.ledsRaw, n);
+  }
+
+  layoutLedLevel(n: number): number {
+    if (!this.layoutLed(n)) return 0;
+    return this.levelsRaw.length === 512 && n >= 0 && n < 256 ? this.levelsRaw[256 + n] : LAMP_FULL;
   }
 
   muxLedColour(n: number): number {
@@ -831,6 +847,10 @@ export class FrameView {
         ? EPOCH_LAMP_LEVELS[this.lampDim & 7] : LAMP_FULL;
     }
     if (this.layout.lampKind === 'mfmelevel') return this.lampsRaw[n];
+    if ((this.layout.lampKind === 'sc4' || this.layout.lampKind === 'bits512')
+      && this.levelsRaw.length === 512 && n >= 0 && n < 256) {
+      return this.levelsRaw[n];
+    }
     return LAMP_FULL;
   }
 

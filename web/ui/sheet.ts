@@ -105,7 +105,7 @@ function bindPull(sheet: HTMLElement, scrim: HTMLElement): void {
   }, true);
 }
 
-export function sheetRow(label: string, sub: string, o: { disabled?: boolean; icon?: Element } = {}): HTMLButtonElement {
+export function sheetRow(label: string, sub: string, o: { disabled?: boolean; icon?: Element; note?: string } = {}): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'sheet-row';
@@ -113,6 +113,7 @@ export function sheetRow(label: string, sub: string, o: { disabled?: boolean; ic
   if (o.icon) b.append(o.icon);
   const text = document.createElement('span');
   text.textContent = label;
+  if (o.note) text.append(noteOf(o.note));
   if (sub) {
     const s = document.createElement('span');
     s.className = 'sheet-sub';
@@ -123,12 +124,20 @@ export function sheetRow(label: string, sub: string, o: { disabled?: boolean; ic
   return b;
 }
 
-export function sheetLine(label: string, sub: string, o: { quiet?: boolean; icon?: Element } = {}): HTMLDivElement {
+function noteOf(text: string): HTMLSpanElement {
+  const n = document.createElement('span');
+  n.className = 'sheet-row-note';
+  n.textContent = text;
+  return n;
+}
+
+export function sheetLine(label: string, sub: string, o: { quiet?: boolean; icon?: Element; note?: string } = {}): HTMLDivElement {
   const d = document.createElement('div');
   d.className = o.quiet ? 'sheet-row sheet-line quiet' : 'sheet-row sheet-line';
   if (o.icon) d.append(o.icon);
   const text = document.createElement('span');
   text.textContent = label;
+  if (o.note) text.append(noteOf(o.note));
   if (sub) {
     const s = document.createElement('span');
     s.className = 'sheet-sub';

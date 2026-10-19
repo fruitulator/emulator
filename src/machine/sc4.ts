@@ -19,6 +19,7 @@ import { DataPak } from '../hw/datapak';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { SteppedVolume, v9Sc4Gain } from '../hw/steppedvolume';
 import { BfmLed } from '../hw/bfmled';
+import { BfmLampDim } from '../hw/bfmlampdim';
 import { Ymz280b } from '../hw/ymz280b';
 import { Bda } from '../hw/bda';
 import { Bd1 } from '../hw/bd1';
@@ -55,6 +56,12 @@ const SEC_OFF_B = 0x1331;
 const LATCH_A = 0x0001;
 const LATCH_B = 0x1001;
 const DUART_BASE = 0xc00000;
+const DUART2_OFF = 0x4000;
+const DUART2_BASE = DUART_BASE + DUART2_OFF;
+const REEL78_WRITE_OFF = 0xc000;
+const REEL78_READ_OFF = 0xc001;
+const ROTARY_GRAY = [0x00, 0x01, 0x03, 0x02];
+const ROTARY_ROW = 15;
 
 export function sc4IoClaimed(off: number, write: boolean): boolean {
   const bank = off & ~0x3ff;
@@ -131,6 +138,8 @@ export class Sc4 implements Bus16, Machine {
       this.updateOptics();
     },
   });
+
+  readonly duart2 = new Mc68681({ irqChanged: () => this.refreshExternalInt() });
 
   private payFrame: number[] = [];
   private readonly ccHoppers = new Map<number, Sch2Hopper>();
@@ -455,13 +464,26 @@ export class Sc4 implements Bus16, Machine {
   readonly reels = [0, 1, 2, 3, 4, 5].map(
     (i) => i === 4
       ? new Reel({ stepsPerRevolution: 192, symbols: 12, opticStart: 80, opticWidth: 16, drive: 'starpoint' })
-      : new Reel({ stepsPerRevolution: 96, symbols: 16, mfmeJpm: true, opticStart: 7, opticWidth: 1 }),
+      : Sc4.fruitReel(),
   );
-  private readonly reelOpticInverted = [false, false, false, false, false, false];
+  private static fruitReel(): Reel {
+    return new Reel({ stepsPerRevolution: 96, symbols: 16, mfmeJpm: true, opticStart: 7, opticWidth: 1 });
+  }
+
+  private static readonly REEL_CHANNELS = 8;
+
+  private growReelBank(n: number): void {
+    const want = Math.min(n, Sc4.REEL_CHANNELS);
+    while (this.reels.length < want) this.reels.push(Sc4.fruitReel());
+  }
+
+  private readonly reelOpticInverted = new Array<boolean>(8).fill(false);
+  private optos = 0;
 
   reelFit: ReelFit = { mask: 0x3f, channels: 6, beyond: [] };
 
   setFittedReels(channels: readonly number[]): ReelFit {
+    this.growReelBank(Math.max(0, ...channels.filter((c) => c < Sc4.REEL_CHANNELS).map((c) => c + 1)));
     this.reelFit = fitReelBank(this.reels, channels);
     this.updateOptics();
     return this.reelFit;
@@ -469,7 +491,8 @@ export class Sc4 implements Bus16, Machine {
 
   setReelGeometry(geometry: readonly { number: number; stops: number; halfSteps: number; flip?: boolean }[]): void {
     for (const g of geometry) {
-      if (g.number < 0 || g.number >= this.reels.length) continue;
+      if (g.number < 0 || g.number >= Sc4.REEL_CHANNELS) continue;
+      this.growReelBank(g.number + 1);
       this.reels[g.number] = new Reel({
         stepsPerRevolution: g.halfSteps, symbols: g.stops, mfmeJpm: true, opticStart: 7, opticWidth: 1,
         flip: g.flip ?? false,
@@ -485,7 +508,7 @@ export class Sc4 implements Bus16, Machine {
     this.updateOptics();
   }
 
-  private readonly reelFromLayout = [false, false, false, false, false, false];
+  private readonly reelFromLayout = new Array<boolean>(8).fill(false);
 
   setReelOpticFlag(channel: number, flag: number, inverted: boolean): void {
     const r = this.reels[channel];
@@ -621,6 +644,40 @@ export class Sc4 implements Bus16, Machine {
 
   private boardWatchdog = 0;
 
+  private muxClock = 0;
+  private muxFlag = false;
+  private muxRaise = false;
+  private muxColumn = 0;
+  private muxBlank = 0;
+
+  private static readonly MUX_TICK_CYCLES = 15000;
+
+  private muxStatus(): number {
+    return (this.muxBlank === 0 ? 0x80 : 0) | (this.muxFlag ? 1 : 0) | (this.muxColumn << 3);
+  }
+
+  private muxTick(): void {
+    this.muxFlag = true;
+    this.muxRaise = true;
+    this.muxColumn = (this.muxColumn + 1) & 0xf;
+    this.refreshExternalInt();
+  }
+
+  private readonly muxDim = new BfmLampDim();
+
+  private writeMuxRow(off: number, v: number): void {
+    this.muxDim.writeColumnRow((off >> 4) & 0x3f, (off & 0x1000) !== 0, this.muxColumn, v, this.lamps, this.seg7);
+  }
+
+  private resetLampDim(): void {
+    this.lamps.fill(0, 0, 64);
+    this.muxDim.reset();
+  }
+
+  get levelOutputs(): Uint8Array {
+    return this.muxDim.levelBlock(this.seg7);
+  }
+
   private secFitted = false;
 
   fitSec(counters: { label: string; value: number }[] = []): void {
@@ -705,6 +762,14 @@ export class Sc4 implements Bus16, Machine {
   }
 
   setInput(strobe: number, bit: number, on: boolean): void {
+    if (strobe === ROTARY_ROW) {
+      const mask = 1 << (bit & 7);
+      this.rotaryRow = on ? this.rotaryRow | mask : this.rotaryRow & ~mask & 0xff;
+      if (on && mask === 2) this.rotaryDial = (this.rotaryDial - 1) & 3;
+      else if (on && mask === 4) this.rotaryDial = (this.rotaryDial + 1) & 3;
+      this.updateOptics();
+      return;
+    }
     const cell = Sc4.matrixCell(strobe, bit);
     if (!cell) return;
     const [reg, mask] = cell;
@@ -793,6 +858,11 @@ export class Sc4 implements Bus16, Machine {
   layoutLamp(n: number): boolean {
     if (n >= Sc4.NOTE_LAMPS && n < Sc4.NOTE_LAMPS + 16) return (this.lamps[n >> 3] & (1 << (n & 7))) !== 0;
     return this.lamp(n >> 8, (n >> 3) & 31, n & 7);
+  }
+
+  layoutLampLevel(n: number): number {
+    if (!this.layoutLamp(n)) return 0;
+    return this.muxDim.level(n);
   }
 
   get ledOutputs(): Uint8Array {
@@ -1154,6 +1224,14 @@ export class Sc4 implements Bus16, Machine {
 
   constructor() {
     this.cpu = new M68000(this, { level7Latch: true });
+    this.cpu.onInterruptAck = (_level, vector) => {
+      if (this.muxRaise && vector === this.sim.extIntVector()) {
+        this.muxRaise = false;
+        this.refreshExternalInt();
+      }
+      return undefined;
+    };
+    this.duart2.inputPort = 0x20;
     this.resetNoteLamps();
     this.parHopper.onCoin = (h) => {
       if (this.pricesOut()) return;
@@ -1206,8 +1284,18 @@ export class Sc4 implements Bus16, Machine {
     for (let i = 0; i < this.reels.length; i++) {
       if (this.reels[i].optic() !== this.reelOpticInverted[i]) pattern |= 1 << i;
     }
-    this.duart.inputPort = pattern & this.reelFit.mask;
+    this.optos = pattern & this.reelFit.mask;
+    this.duart.inputPort = (this.optos & 0x3f)
+      | (this.rotaryFitted && (this.rotaryRow & 1) === 0 ? 0x20 : 0);
   }
+
+  private rotaryFitted = false;
+  setRotarySwitch(fitted: boolean): void {
+    this.rotaryFitted = fitted;
+    this.updateOptics();
+  }
+  private rotaryRow = 0;
+  rotaryDial = 0;
 
   private updateIrq(): void {
     const [level, vector] = this.sim.request();
@@ -1216,14 +1304,14 @@ export class Sc4 implements Bus16, Machine {
 
   private refreshExternalInt(): void {
     if (!this.sim) return;
-    const line = this.duart.irq();
+    const line = this.duart.irq() || this.duart2.irq() || this.muxRaise;
     this.updatePortBIn();
     this.sim.setExternalInt(line);
   }
 
   private updatePortBIn(): void {
     let v = 0xffff;
-    if (this.duart.irq()) v &= ~0x8000;
+    if (this.duart.irq() || this.duart2.irq() || this.muxFlag) v &= ~0x8000;
     if (this.meterLatch !== 0) v &= ~0x0040;
     this.sim.portBIn = v;
   }
@@ -1303,6 +1391,8 @@ export class Sc4 implements Bus16, Machine {
     this.strayReads.clear();
     this.sim.reset();
     this.duart.reset();
+    this.duart2.reset();
+    this.duart2.inputPort = 0x20;
     this.rngByte = -1;
     this.sec.abortTransfer();
     this.parHopper.reset();
@@ -1328,6 +1418,12 @@ export class Sc4 implements Bus16, Machine {
     this.updateOptics();
     this.cpu.reset();
     this.boardWatchdog = 0;
+    this.muxFlag = false;
+    this.muxRaise = false;
+    this.muxColumn = 0;
+    this.muxBlank = 0;
+    this.resetLampDim();
+    this.refreshExternalInt();
   }
 
   private decode(a: number): number {
@@ -1342,9 +1438,30 @@ export class Sc4 implements Bus16, Machine {
     }
     if (cs === 3) {
       const off = a - sim.selectBase(3);
-      return off < 0x20 ? DUART_BASE + off : -1;
+      if (off < 0x20) return DUART_BASE + off;
+      if (off >= DUART2_OFF && off < DUART2_OFF + 0x20) return DUART_BASE + off;
+      return -1;
     }
     return -1;
+  }
+
+  private reel78Off(a: number): number {
+    if (this.sim.select(a) !== 4) return -1;
+    const off = a - this.sim.selectBase(4);
+    return off === REEL78_WRITE_OFF || off === REEL78_READ_OFF ? off : -1;
+  }
+
+  private readReel78(): number {
+    if (this.rotaryFitted) return ROTARY_GRAY[this.rotaryDial & 3];
+    return (this.optos >> 6) & 0xff;
+  }
+
+  private writeReel78(v: number): void {
+    const r6 = this.reels[6];
+    const r7 = this.reels[7];
+    if (r6) { r6.traceClock = this.cpu.cycles >>> 0; r6.update(v & 0x0f); }
+    if (r7) { r7.traceClock = this.cpu.cycles >>> 0; r7.update((v >> 4) & 0x0f); }
+    this.updateOptics();
   }
 
   private notePortHit(a: number): boolean {
@@ -1374,6 +1491,45 @@ export class Sc4 implements Bus16, Machine {
     else e.reads++;
   }
 
+  private readIo(off: number): number {
+    if (!sc4IoClaimed(off, false)) return 0xff;
+    const row = (off >> 4) & 0x0f;
+    if (off < 0x100) {
+      return this.inputRegs[row] | this.senseOr(row);
+    }
+    if (off < 0x400) {
+      if (row === 4) return off & 1 ? this.readHopperByte() : this.readCoinByte();
+      if (row === 9) {
+        if (this.muxFlag) {
+          this.muxFlag = false;
+          this.refreshExternalInt();
+        }
+        return 0xff;
+      }
+      return this.muxStatus();
+    }
+    if (off < 0x1100) {
+      if (row <= 4) return this.inputRegs[16 + row] | this.senseOr(16 + row);
+      if (row <= 7) return 0;
+      return 0x80;
+    }
+    return this.ymz.read(off & 2 ? 1 : 0);
+  }
+
+  private readCoinByte(): number {
+    const m12 = this.inputRegs[12];
+    return ((this.secFitted && this.sec.data()) ? 0x40 : 0x00)
+      | (m12 & 0xc0)
+      | (this.coins & ~this.coinModeHold & ~m12 & 0x3f);
+  }
+
+  private readHopperByte(): number {
+    const m13 = this.inputRegs[13];
+    return this.parHopperFitted
+      ? this.parHopper.readPay(this.cabinetRio) | (m13 & 0x9f)
+      : this.parHopper.readUnfitted(this.cabinetRio, m13);
+  }
+
   read8(addr: number): number {
     const a0 = addr & 0xffffff;
     const simOff = this.sim.offsetOf(a0);
@@ -1388,6 +1544,10 @@ export class Sc4 implements Bus16, Machine {
         }
         return 0xff;
       }
+      if (this.reel78Off(a0) === REEL78_READ_OFF) {
+        this.noteIo(a0, false);
+        return this.readReel78();
+      }
       this.noteStray(a0, false, 0xff);
       return 0xff;
     }
@@ -1396,36 +1556,15 @@ export class Sc4 implements Bus16, Machine {
     if (a >= IO_BASE && a < IO_BASE + IO_SIZE) {
       const off = a - IO_BASE;
       this.noteIo(a, false);
-      if ((off & 0xf00f) === 0x0001 && (off & 0x0ff0) <= 0x70) {
-        const reg = (off >> 4) & 0x0f;
-        return this.inputRegs[reg] | this.senseOr(reg);
-      }
-      if ((off & 0xf00f) === 0x1001 && (off & 0x0ff0) <= 0x70) {
-        const reg = 16 + ((off >> 4) & 0x0f);
-        return this.inputRegs[reg] | this.senseOr(reg);
-      }
-      if (off === 0x0240) {
-        const m12 = this.inputRegs[12];
-        return ((this.secFitted && this.sec.data()) ? 0x40 : 0x00)
-          | (m12 & 0xc0)
-          | (this.coins & ~this.coinModeHold & ~m12 & 0x3f);
-      }
-      if (off === 0x0241) {
-        const m13 = this.inputRegs[13];
-        return this.parHopperFitted
-          ? this.parHopper.readPay(this.cabinetRio) | (m13 & 0x9f)
-          : this.parHopper.readUnfitted(this.cabinetRio, m13);
-      }
-      if (off === 0x02e0) return 0x00;
-      if (off === 0x02e1) return 0x80;
-      if (off === YMZ_OFF) return this.ymz.read(0);
-      if (off === YMZ_OFF + 2) return this.ymz.read(1);
-      if (!sc4IoClaimed(off, false)) return 0xff;
-      return this.io[off];
+      return this.readIo(off);
     }
     if (a >= DUART_BASE && a < DUART_BASE + 0x20) {
       this.noteIo(a, false);
       return this.duart.read((a - DUART_BASE) >> 1);
+    }
+    if (a >= DUART2_BASE && a < DUART2_BASE + 0x20) {
+      this.noteIo(a, false);
+      return this.duart2.read((a - DUART2_BASE) >> 1);
     }
     return 0;
   }
@@ -1449,6 +1588,11 @@ export class Sc4 implements Bus16, Machine {
         }
         return;
       }
+      if (this.reel78Off(a0) === REEL78_WRITE_OFF) {
+        this.noteIo(a0, true);
+        this.writeReel78(v);
+        return;
+      }
       this.noteStray(a0, true);
       return;
     }
@@ -1461,10 +1605,11 @@ export class Sc4 implements Bus16, Machine {
       if (off < 0x1400) this.boardWatchdog = BOARD_WATCHDOG_CYCLES;
       this.noteIo(a, true);
       this.io[off] = v;
-      if (off === 0x0301) this.parHopper.writeP03(v);
-      if (off === 0x0311) this.parHopper.writePayen1(v);
-      if (off === 0x1311) this.parHopper.writePayen2(v);
-      if (off === 0x1301) {
+      const wrow = off & 0xfff0;
+      if (wrow === 0x0300) this.parHopper.writeP03(v);
+      if (wrow === 0x0310) this.parHopper.writePayen1(v);
+      if (wrow === 0x1310) this.parHopper.writePayen2(v);
+      if (wrow === 0x1300) {
         if ((this.reg1301 ^ v) & 4) this.coinModeHold = (v & 4) && this.binaryMech ? 0x20 : 0;
         if ((this.reg1301 ^ v) & v & 1) {
           const level = this.volume.step((v & 2) === 0);
@@ -1472,7 +1617,7 @@ export class Sc4 implements Bus16, Machine {
         }
         this.reg1301 = v;
       }
-      if (off === 0x0331) {
+      if (wrow === 0x0330) {
         if (this.secFitted) {
           this.sec.lineCall(this.totalCycles);
           this.sec.setClock((v & 0x20) === 0);
@@ -1482,7 +1627,7 @@ export class Sc4 implements Bus16, Machine {
           this.updatePortBIn();
         }
       }
-      if (off === 0x1331) {
+      if (wrow === 0x1330) {
         const r3 = this.reels[3];
         if (r3) { r3.traceClock = this.cpu.cycles >>> 0; r3.update(v & 0x0f); }
         this.updateOptics();
@@ -1494,24 +1639,31 @@ export class Sc4 implements Bus16, Machine {
           this.updatePortBIn();
         }
       }
-      if ((off & 0xf) === 0x1 && (off & 0xfff) <= 0x1f1) {
+      if ((off & 0xee00) === 0) {
         if ((off & 0x1000) === 0) {
-          this.lamps[(off & 0xfff) >> 4] = v;
+          const row = (off & 0xfff) >> 4;
+          this.lamps[row] = v;
+          this.muxDim.levelRow(row, v);
         } else {
           this.seg7.writeBfm(v, (off >> 4) & 0x0f, (off & 0x100) ? 1 : 0);
         }
       }
+      if (wrow === 0x0360 || wrow === 0x1360 || (wrow & 0xefc0) === 0x0200) this.writeMuxRow(off, v);
+      if ((off & 0xfff0) === 0x0370) this.muxBlank = v;
       if ((off & 0xffff0) === 0x1370) {
         this.ac2 = v;
         this.updateAc2();
       }
-      if (off === YMZ_OFF + 4) this.ymz.write(0, v);
-      if (off === YMZ_OFF + 6) this.ymz.write(1, v);
+      if (wrow === 0x1240) this.ymz.write((off & 2) ? 1 : 0, v);
       return;
     }
     if (a >= DUART_BASE && a < DUART_BASE + 0x20) {
       this.noteIo(a, true);
       this.duart.write((a - DUART_BASE) >> 1, v);
+    }
+    if (a >= DUART2_BASE && a < DUART2_BASE + 0x20) {
+      this.noteIo(a, true);
+      this.duart2.write((a - DUART2_BASE) >> 1, v);
     }
   }
 
@@ -1525,10 +1677,9 @@ export class Sc4 implements Bus16, Machine {
       } else if (c >= RAM_BASE && c + 1 < RAM_BASE + RAM_SIZE) {
         const i = c - RAM_BASE;
         return (this.ram[i] << 8) | this.ram[i + 1];
-      } else if (c < 0 && !this.notePortHit(a)) {
-        this.noteStray(a, false, 0);
-        return 0;
       }
+      this.noteStray(a, false, 0);
+      return 0;
     }
     return ((this.read8(addr) << 8) | this.read8(addr + 1)) & 0xffff;
   }
@@ -1551,8 +1702,7 @@ export class Sc4 implements Bus16, Machine {
       this.ram[i + 1] = val & 0xff;
       return;
     }
-    this.write8(addr, val >> 8);
-    this.write8(addr + 1, val);
+    if (c < 0 || c >= RAM_BASE) this.noteStray(a, true);
   }
 
   step(): number {
@@ -1561,6 +1711,10 @@ export class Sc4 implements Bus16, Machine {
     this.serviceCcTalk();
     if (this.rng.type) this.serviceRng(cycles);
     if (this.boardWatchdog > 0 && (this.boardWatchdog -= cycles) <= 0) this.warmReset();
+    if ((this.muxClock += cycles) > Sc4.MUX_TICK_CYCLES) {
+      this.muxClock -= Sc4.MUX_TICK_CYCLES;
+      this.muxTick();
+    }
     this.sim.tick(cycles);
     this.mbus.rtc.tick(cycles);
     this.vfd.tick(cycles);
@@ -1574,6 +1728,7 @@ export class Sc4 implements Bus16, Machine {
     this.serviceMeters(cycles);
     this.ymz.tick(cycles, MASTER_CLOCK);
     if (!this.duart.idle()) this.duart.tick(cycles);
+    if (!this.duart2.idle()) this.duart2.tick(cycles);
     return cycles;
   }
 

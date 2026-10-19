@@ -27,6 +27,7 @@ export enum PortType {
 export interface PortEntry { type: PortType; value: number }
 
 export const SYS80_PORT_TAG = 0x9c;
+export const SYS80_PORT_TAG_OLD = 0x25;
 export const SYS80_PORT_COUNT = 512;
 
 export function sys80PortMap(layout: Uint8Array | undefined): PortEntry[] | null {
@@ -42,11 +43,14 @@ export function sys80PortMapFromPayload(payload: Uint8Array): PortEntry[] | null
   } catch {
     return null;
   }
-  const t = tags.get(SYS80_PORT_TAG);
-  if (!t || t.length !== SYS80_PORT_COUNT * 2) return null;
+  const full = (t: Uint8Array | undefined) => (t && t.length === SYS80_PORT_COUNT * 2 ? t : undefined);
+  const t = full(tags.get(SYS80_PORT_TAG));
+  const old = t ? undefined : full(tags.get(SYS80_PORT_TAG_OLD));
+  const src = t ?? old;
+  if (!src) return null;
   const map: PortEntry[] = [];
   for (let p = 0; p < SYS80_PORT_COUNT; p++) {
-    map.push({ type: t[p * 2] as PortType, value: t[p * 2 + 1] });
+    map.push({ type: src[p * 2] as PortType, value: src[p * 2 + 1] });
   }
   return map;
 }

@@ -224,6 +224,12 @@ export class MpuPic {
     this.ptr = STREAM;
   }
 
+  setTest(on: boolean): void {
+    this.config = { ...this.config, test: on };
+    this.mem[STREAM] = on ? this.mem[STREAM] | 8 : this.mem[STREAM] & ~8 & 0xff;
+    this.attention(true);
+  }
+
   private attention(changed: boolean): void {
     if (!this.startPending) {
       if (changed || this.attentionDeferred) {

@@ -282,6 +282,23 @@ export function readSwitchNumber(
   return n === 255 ? null : n;
 }
 
+export function readWidthHeight(
+  payload: Uint8Array,
+  system: string,
+  control: string,
+): { width: number; height: number } | null {
+  const spec = MAPS[normalise(system)]?.controls[control];
+  if (!spec || spec.storage !== 'fml' || !/^width-height-2xu32-le$/i.test(spec.encoding ?? '')) return null;
+  const tag = Number(spec.tag ?? spec.tags?.[0]);
+  if (!Number.isFinite(tag)) return null;
+  const at = spec.byteOffset ?? 0;
+  const value = fileLevelTags(payload).get(tag);
+  if (!value || value.length < at + 8) return null;
+  const width = u32(value, at), height = u32(value, at + 4);
+  if (width === 0 || height === 0 || width > 4096 || height > 4096) return null;
+  return { width, height };
+}
+
 export function readOperatorSwitch(
   payload: Uint8Array,
   system: string,
@@ -336,13 +353,19 @@ export type SwitchControl = (typeof SWITCH_CONTROLS)[number];
 
 const SWITCH_ID_SYSTEMS = new Set(['SCORPION2', 'SCORPION4', 'MPU4', 'MPU4PLASMA', 'IMPACT', 'M1AB', 'SPACE', 'EPOCH', 'SYSTEM80', 'ELECTROCOIN', 'PHOENIX', 'PHOENIX2', 'SYS5', 'SYS85', 'PROCONN', 'ASTRASYSA1']);
 
+const BOARD_SIDE_CONTROLS: Record<string, readonly SwitchControl[]> = {
+  IMPACT: ['Test 2'],
+};
+
 export function layoutSwitchIds(
   payload: Uint8Array,
   system: string,
 ): Partial<Record<SwitchControl, number>> {
   const out: Partial<Record<SwitchControl, number>> = {};
   if (!SWITCH_ID_SYSTEMS.has(normalise(system))) return out;
+  const boardSide = BOARD_SIDE_CONTROLS[normalise(system)];
   for (const control of SWITCH_CONTROLS) {
+    if (boardSide?.includes(control)) continue;
     const n = readSwitchNumber(payload, system, control);
     if (n !== null && n < 0x80000000) out[control] = n;
   }

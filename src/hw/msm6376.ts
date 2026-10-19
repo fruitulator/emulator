@@ -63,6 +63,8 @@ class Voice {
   playing = false;
   gain = 1;
   rateStep = 1;
+  clockScale = 1;
+  private divisorStep = 1;
   private acc = 0;
   private last = 0;
 
@@ -72,7 +74,8 @@ class Voice {
     this.signal = -2;
     this.step = 0;
     this.blockLeft = 0;
-    this.rateStep = phrase.divisor ? 8 / phrase.divisor : 1;
+    this.divisorStep = phrase.divisor ? 8 / phrase.divisor : 1;
+    this.rateStep = this.divisorStep * this.clockScale;
     this.acc = 0;
     this.last = 0;
     this.playing = true;
@@ -90,6 +93,11 @@ class Voice {
 
   stop(): void {
     this.playing = false;
+  }
+
+  setClockScale(scale: number): void {
+    this.clockScale = scale;
+    this.rateStep = this.divisorStep * scale;
   }
 
   next(rom: Uint8Array): number {
@@ -167,6 +175,14 @@ export class Msm6376 implements AudioSource {
     this.flush();
     this.rate = hz;
     this.cycleRemainder = 0;
+  }
+
+  setClock(hz: number): void {
+    if (!Number.isFinite(hz) || hz <= 0) return;
+    const scale = hz / 8 / this.rate;
+    if (scale === this.voices[0].clockScale) return;
+    this.flush();
+    for (const v of this.voices) v.setClockScale(scale);
   }
 
   voicePlaying(ch: number): boolean {

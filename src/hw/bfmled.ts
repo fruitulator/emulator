@@ -33,6 +33,10 @@ export class BfmLed {
 
   readonly raw = new Uint8Array(32);
 
+  readonly levels = new Uint8Array(256).fill(0xff);
+  readonly dimMask = new Uint8Array(32);
+  readonly colLevel = new Uint8Array(16);
+
   mode: BfmLedMode = 'normal';
 
   private latch = 0;
@@ -43,6 +47,30 @@ export class BfmLed {
     this.raw.fill(0);
     this.words.fill(0);
     this.latch = 0;
+    this.levels.fill(0xff);
+  }
+
+  writeDimMask(cell: number, v: number): void {
+    const c = cell & 31;
+    const old = this.dimMask[c];
+    if (old === v) return;
+    const lit = this.raw[c];
+    const level = this.colLevel[c >> 1];
+    for (let b = 0; b < 8; b++) {
+      const bit = 1 << b;
+      if ((old ^ v) & lit & bit) this.levels[c * 8 + b] = (v & bit) ? level : 0xff;
+    }
+    this.dimMask[c] = v;
+  }
+
+  writeDimLevel(pair: number, v: number): void {
+    const p = pair & 15;
+    if (this.colLevel[p] === v) return;
+    this.colLevel[p] = v;
+    for (let c = p * 2; c < p * 2 + 2; c++) {
+      const hit = this.raw[c] & this.dimMask[c];
+      for (let b = 0; b < 8; b++) if (hit & (1 << b)) this.levels[c * 8 + b] = v;
+    }
   }
 
   writeBfm(d: number, column: number, bank: number): void {
@@ -56,6 +84,14 @@ export class BfmLed {
 
   private single(v: number, col: number, bank: number): void {
     let cell = col + bank * 16;
+    const on = (this.raw[cell] ^ v) & v;
+    if (on) {
+      const mask = this.dimMask[cell];
+      const level = this.colLevel[cell >> 1];
+      for (let b = 0; b < 8; b++) {
+        if (on & (1 << b)) this.levels[cell * 8 + b] = (mask & (1 << b)) ? level : 0xff;
+      }
+    }
     this.raw[cell] = v;
     let word: number;
     switch (this.mode) {

@@ -345,8 +345,8 @@ export class M68307Sim {
       return (off === 0x14 ? v >> 8 : v) & 0xff;
     }
     if (off === 0x1a || off === 0x1b) {
-      const ddr = this.r16(0x18);
-      const v = (this.portBIn & ~ddr) | (this.r16(0x1a) & ddr);
+      const out = this.r16(0x18) & ~this.r16(0x16);
+      const v = (this.portBIn & ~out) | (this.r16(0x1a) & out);
       return (off === 0x1a ? v >> 8 : v) & 0xff;
     }
 
@@ -439,6 +439,10 @@ export class M68307Sim {
     if (i === 0 || i === 1) return this.timers[i].event && this.timerIrqEnabled(i);
     if (i === 2) return (this.uartIsr & this.uartImr) !== 0;
     return (this.mbcr & MBCR_MIEN) !== 0 && (this.mbsr & MBSR_MIF) !== 0;
+  }
+
+  extIntVector(): number {
+    return (this.r16(0x26) & 0xf0) | 0x09;
   }
 
   request(): [number, number | null] {

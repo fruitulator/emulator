@@ -50,7 +50,7 @@ export interface IoAccess {
 }
 
 export class Sc1 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'programMem', 'dmBusySwitch'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'programMem', 'dmBusySwitch', 'paySense'];
   readonly cpu: M6809;
   readonly ram = new Uint8Array(RAM_SIZE);
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -199,6 +199,18 @@ export class Sc1 implements Bus, Machine {
   private readonly meterBank = new MeterConfirm();
 
   triacLatch = 0;
+
+  private paySense: number[] = new Array<number>(10).fill(0xff);
+  private senseLine = 0;
+  private senseCycles = 0;
+  private senseOn = false;
+
+  setPaySense(ids: readonly (number | null)[]): void {
+    for (let i = 0; i < 4; i++) {
+      const n = ids[i];
+      this.paySense[i] = n === null || n === undefined || n < 0 ? 0xff : n;
+    }
+  }
 
   private triacWord = 0;
 
@@ -761,6 +773,7 @@ export class Sc1 implements Bus, Machine {
     this.meterBank.reset();
     this.triacLatch = 0;
     this.triacWord = 0;
+    this.senseCycles = 0;
     this.ay.reset();
     this.upd.reset();
     this.updAsked = false;
@@ -898,6 +911,20 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a === 0x2800) {
+      if (v !== this.triacLatch) {
+        if (v !== 0) {
+          const pa = ~this.ay.portAOut & 0xff;
+          const word = (pa & 0x0f) | ((pa & 0xc0) >> 2);
+          if (word) {
+            let line = 0;
+            while (!(word & (1 << line))) line++;
+            this.senseLine = line;
+          }
+        } else if (this.paySense[this.senseLine] !== 0xff) {
+          this.senseCycles = 5000;
+          this.senseOn = false;
+        }
+      }
       this.triacLatch = v;
       this.driveSlides();
       return;
@@ -1041,6 +1068,16 @@ export class Sc1 implements Bus, Machine {
       this.watchdogResets++;
       this.warmReset();
       return cycles;
+    }
+
+    if (this.senseCycles > 0) {
+      this.senseCycles -= cycles;
+      if (this.senseCycles <= 0) {
+        const n = this.paySense[this.senseLine]!;
+        this.setInput(n >> 3, n & 7, !this.senseOn);
+        this.senseCycles = this.senseOn ? 0 : 500;
+        this.senseOn = !this.senseOn;
+      }
     }
 
     this.ay.tick(cycles, CPU_CLOCK);

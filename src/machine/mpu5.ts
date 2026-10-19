@@ -1371,6 +1371,7 @@ export class Mpu5 implements Bus16, Machine {
         : `Switch ${s.number}`;
       rows.push({ id: s.number, label, on: level(s.number) });
     }
+    rows.push({ id: Mpu5.PANEL_TEST, label: 'Test button', on: this.pic.config.test });
     return [...rows, ...this.dilRows];
   }
   readonly optionKeys: readonly OptionKey[] = [];
@@ -1520,6 +1521,7 @@ export class Mpu5 implements Bus16, Machine {
   #panel: LayoutSwitch[] = [];
 
   layoutInput(id: number, on: boolean): void {
+    if (id === Mpu5.PANEL_TEST) { this.setTestPush(on); return; }
     if (id >= Mpu5.DIL_ID_BASE && id < Mpu5.DIL_ID_BASE + 16) {
       const n = id - Mpu5.DIL_ID_BASE;
       const mask = 1 << (n & 7);
@@ -1631,6 +1633,18 @@ export class Mpu5 implements Bus16, Machine {
   setDilLabels(labels: readonly string[] | null): void { this.dilLabels = labels; }
 
   static readonly DIL_ID_BASE = 0x200;
+
+  static readonly PANEL_TEST = 0x220;
+
+  #test2: { line: number; invert: boolean } | null = null;
+  setTest2Switch(sw: { line: number; invert: boolean } | null): void { this.#test2 = sw; }
+  get test2Switch(): { line: number; invert: boolean } | null { return this.#test2; }
+
+  setTestPush(on: boolean): void {
+    const t2 = this.#test2;
+    if (t2) this.layoutInput(t2.line, t2.invert ? !on : on);
+    this.pic.setTest(on);
+  }
 
   private meterSense(): boolean {
     if (this.secFitted) return !this.sec.data();
