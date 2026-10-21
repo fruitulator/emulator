@@ -113,8 +113,8 @@ export async function openPackTarget(name: string): Promise<PackTarget | null> {
       if ((e as Error).name === 'AbortError') return null;
       handle = null;
     }
-    if (handle) {
-      const w = await handle.createWritable();
+    const w = handle ? await handle.createWritable().catch(() => null) : null;
+    if (w) {
       return {
         sink: { write: (c) => w.write(c) },
         close: async () => { await w.close(); return null; },

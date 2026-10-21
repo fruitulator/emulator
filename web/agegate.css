@@ -82,8 +82,7 @@ html:not(.age-ok) body > :not(.agegate) {
   box-sizing: border-box;
   width: 500px;
   max-width: 100%;
-  max-height: calc(100vh - 2 * var(--ag-space-around-card));
-  max-height: calc(100dvh - 2 * var(--ag-space-around-card));
+  max-height: 100%;
   margin: auto;
   display: flex;
   flex-direction: column;
@@ -164,11 +163,14 @@ html:not(.age-ok) body > :not(.agegate) {
   border-color: var(--ag-outline-hot);
 }
 @media (max-width: 520px) {
+  .agegate {
+    align-items: stretch;
+  }
   .agegate-box {
     width: 100%;
-    height: 100vh;
-    height: 100dvh;
+    height: auto;
     max-height: none;
+    margin: 0;
     border: 0;
     border-radius: 0;
     box-shadow: none;
