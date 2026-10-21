@@ -316,6 +316,7 @@
   "arcade.live.n_is_playing_this_machine": "{0} is playing this machine.",
   "arcade.live.no_coin_within_balance": "Not enough money for any coin this machine takes.",
   "arcade.live.not_enough_money_for_that": "Not enough money for that.",
+  "arcade.live.not_enough_tokens": "Not enough tokens.",
   "arcade.live.not_taking_coins_now": "The machine isn't taking coins right now.",
   "arcade.live.play": "Play",
   "arcade.live.someone_is_playing_this_machine": "Someone is playing this machine.",
