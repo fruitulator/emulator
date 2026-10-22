@@ -62,7 +62,7 @@ const IDLE_PORTS = [0xff, 0x00, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
 
 const MATRIX_EXTRA = [13, 14, 11, 12] as const;
 
-const COIN_DWELL = Math.floor(CPU_CLOCK * 0.04);
+const COIN_DWELL = Math.floor(CPU_CLOCK * 0.1);
 
 export interface IoAccess {
   addr: number;

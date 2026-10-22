@@ -96,7 +96,64 @@ export function readImpactCoinLists(rom: Uint8Array): CoinList[] | Refusal {
 export interface ImpactAllLists { parallel: CoinList[]; binary: CoinList[] }
 export function readImpactAllCoinLists(rom: Uint8Array): ImpactAllLists {
   const lists = scanLists(rom);
-  return { parallel: lists.filter(isParallel), binary: lists.filter(isBinary) };
+  const binary = lists.filter(isBinary);
+  const empire = binary.length ? null : readEmpireCoinList(rom);
+  return { parallel: lists.filter(isParallel), binary: empire ? [empire] : binary };
+}
+
+export function readEmpireCoinList(rom: Uint8Array): CoinList | null {
+  const end = Math.min(rom.length, CODE_END);
+  const r16 = (p: number): number => ((rom[p] ?? 0) << 8) | (rom[p + 1] ?? 0);
+  const r32 = (p: number): number => ((r16(p) << 16) | r16(p + 2)) >>> 0;
+  const inRom = (v: number): boolean => v > 0 && v + 8 <= end;
+  let list = -1;
+  for (let p = 0; p + 12 <= end; p += 2) {
+    if (r16(p) === 0x48 && r16(p + 2) === 0x49 && r16(p + 4) === 0x4a && r16(p + 6) === 0x4b && r16(p + 8) === 0x4c && r16(p + 10) === 0x4000) { list = p; break; }
+  }
+  if (list < 0) return null;
+  let loaded = false;
+  for (let p = 0; p + 6 <= end && !loaded; p += 2) loaded = r16(p) === 0x267c && r32(p + 2) === list;
+  if (!loaded) return null;
+  const pence = (rec: number): number | null => {
+    if (!inRom(rec)) return null;
+    const v = r16(rec);
+    return v >= 1 && v <= 10000 ? v : null;
+  };
+  const entries: Entry[] = [];
+  for (let p = 0; p + 14 <= end; p += 2) {
+    if (r16(p) === 0x227c && r16(p + 6) === 0x4a29 && r16(p + 8) === 0x0004) {
+      const recs = r32(p + 2);
+      let stride = 0;
+      for (let q = p + 10; q < p + 40 && q + 4 <= end; q += 2) if (r16(q) === 0x43e9) { stride = r16(q + 2); break; }
+      if (!inRom(recs) || stride < 6 || stride > 64) continue;
+      for (let k = 0; k < 16; k++) {
+        const at = recs + stride * k;
+        const code = rom[at + 4] ?? 0;
+        if (code === 0) break;
+        const v = pence(r32(at));
+        if (v === null || code > 0x1f) return null;
+        entries.push({ chan: at, rec: r32(at), mask: code | 0x20, kind: KIND_CASH, value: v });
+      }
+      return entries.length >= 3 ? { at: recs, stride, entries } : null;
+    }
+    if (r16(p) === 0x207c && r16(p + 6) === 0xb630 && r16(p + 8) === 0x0000) {
+      const codes = r32(p + 2);
+      if (!inRom(codes)) continue;
+      const cs: number[] = [];
+      for (let k = 0; k < 16 && rom[codes + k]; k++) cs.push(rom[codes + k]!);
+      if (cs.length < 3 || cs.some((c) => c > 0x1f)) return null;
+      for (let q = 0; q + 10 <= end; q += 2) {
+        if (r16(q) !== 0x207c || r16(q + 6) !== 0x2230 || r16(q + 8) !== 0x0800) continue;
+        const ptrs = r32(q + 2);
+        if (!inRom(ptrs + 4 * cs.length)) continue;
+        const recs = cs.map((_, k) => r32(ptrs + 4 * k));
+        if (!recs.every((rec, k) => pence(rec) !== null && (k === 0 || rec === recs[k - 1]! + 8))) continue;
+        return { at: codes, stride: 1, entries: cs.map((c, k) => ({ chan: codes + k, rec: recs[k]!, mask: c | 0x20, kind: KIND_CASH, value: pence(recs[k]!)! })) };
+      }
+      return null;
+    }
+  }
+  return null;
 }
 
 export type ProgramCoin = { pence: number; token: boolean } | 'refused' | { unvalued: 'token' } | null;
