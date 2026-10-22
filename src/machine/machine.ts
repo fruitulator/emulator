@@ -10,6 +10,7 @@ export interface CoinWiringStatus {
   state: StepState;
   step: number | null;
   conflicts: number[];
+  totals?: { pence: number; counts: number; unit: number };
 }
 
 export type NamedCoin = number | 'token';

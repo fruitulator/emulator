@@ -3047,12 +3047,13 @@ function loadSnapshotFile(file: File): void {
   reader.readAsText(file);
 }
 
-function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor']): void {
+function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor'], gate?: CabLamp): void {
   if (!emu.latestFrame()) return;
   const booted = session.boot;
   effects.coinDrop(acceptor, () => {
     const f = emu.latestFrame();
     if (!f || booted !== session.boot) return null;
+    if (gate && gatedOff.has(gate)) return 'locked';
     if (f.coinBusy) {
       return 'refused';
     }
@@ -3141,17 +3142,17 @@ function activate(lp: CabLamp, pointerId: number): void {
       showNotice(str('main.this_slot_is_drawn_on', { 0: coinsMenuHint(view) }));
       return;
     }
-    nameThen(bit, () => dropCoinAt(bit, lp.acceptor));
+    nameThen(bit, () => dropCoinAt(bit, lp.acceptor, lp));
     return;
   }
   if (lp.coinInput !== undefined && lp.coinInput >= 0 && emu.info?.namesCoins && emu.info.unnamedCoins?.includes(lp.coinInput)) {
     const line = lp.coinInput;
-    nameThen(line, () => dropCoinAt(line));
+    nameThen(line, () => dropCoinAt(line, undefined, lp));
     return;
   }
   const dropLine = plainCoinDrop(viewFor(session.game?.system ?? ''), lp);
   if (dropLine >= 0) {
-    dropCoinAt(dropLine);
+    dropCoinAt(dropLine, undefined, lp);
     return;
   }
   if (lp.button !== undefined) pressInput(pointerId, lp.button);

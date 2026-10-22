@@ -144,6 +144,7 @@ export class DiagWatch {
     this.pollDisplay(m);
     this.pollReels(m);
     this.pollCoinRefusals(m);
+    this.pollCoinCheck(m);
     this.pollBoardDefaults(m);
     this.pollStrays(m);
     this.pollStrayRegions(m);
@@ -193,6 +194,19 @@ export class DiagWatch {
   }
 
   private lastRefusals: number | null = null;
+
+  private pollCoinCheck(m: Machine): void {
+    const w = m.coinWiringStatus;
+    const state = w?.state ?? null;
+    if (state === this.lastCheckState) return;
+    this.lastCheckState = state;
+    if (!w) return;
+    const t = w.totals;
+    const figures = t ? ` · coins booked ${money(t.pence)}, Cash In meter ${t.counts} × ${t.unit}p = ${money(t.counts * t.unit)}` : '';
+    this.log.add('coin', `coin check ${w.state}${figures}`);
+  }
+
+  private lastCheckState: string | null = null;
 
   private pollLedger(m: Machine): void {
     const l = m.cashLedger;

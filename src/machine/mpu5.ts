@@ -2141,7 +2141,7 @@ export class Mpu5 implements Bus16, Machine {
   get coinWiringStatus(): CoinWiringStatus | undefined {
     const w = this.wiring;
     if (!w) return undefined;
-    return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts] };
+    return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts], totals: { ...w.check.totals, unit: w.check.unit } };
   }
 
   private get booksMoney(): boolean {
