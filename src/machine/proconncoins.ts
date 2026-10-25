@@ -7,13 +7,14 @@ export interface ProconnCoin {
   code: number;
   value: number;
   token: boolean;
+  creditAt?: number;
 }
 
 export interface ProconnCoinCode {
   coins: ProconnCoin[];
   pence: boolean;
   form: 'bit' | 'code';
-  credit: { entry: number; at: number; exit: number };
+  credit: { entry: number; at: number; exit: number } | null;
   route: number;
   tokenMeter: number | null;
   tokenOut: { at: number; acc: number; counts: number; meter: number; code: number; value: number } | null;
@@ -91,7 +92,8 @@ function readerBlocks(rom: Uint8Array, coin: number): { at: number; mask: number
         if (pattern !== null) {
           if (rom[next] === 0xcd) next += 3;
           let counter: number | null = null;
-          if (rom[next] === 0x20) counter = counterAt(next + 2);
+          const gated = (p: number): number => (rom[p] === 0xcb && (rom[p + 1]! & 0xc7) === 0x42 && rom[p + 2] === 0x28 ? p + 4 : p);
+          if (rom[next] === 0x20) counter = counterAt(gated(next + 2));
           else if (rom[next] === 0x28) counter = counterAt(next + 2 + ((rom[next + 1]! << 24) >> 24));
           if (counter !== null) {
             if (eFromCoin) coins.push({ pattern, counter });
@@ -168,22 +170,109 @@ function accumulatorMeter(rom: Uint8Array, acc: number): number | null {
   return null;
 }
 
+function locateLatched(rom: Uint8Array): ProconnCoinCode | Refusal | null {
+  for (const s of find(rom, [0x01, 0xd8, 0x02, 0xed, 0x78, 0x2f, 0xe6, null, 0x32])) {
+    const mask = rom[s + 7]!;
+    let coin = -1;
+    for (const l of find(rom, [0x3a, null, null, 0x32], s + 11, s + 0x50)) {
+      const hold = word(rom, l + 1);
+      if (find(rom, [0x32, hold & 0xff, hold >> 8], s + 11, l).length) { coin = word(rom, l + 4); break; }
+    }
+    if (coin < 0) continue;
+    const blocks = find(rom, [0x3a, coin & 0xff, coin >> 8, 0xcb, null, 0x28, null, 0xaf, 0x32, coin & 0xff, coin >> 8])
+      .filter((b) => (rom[b + 4]! & 0xc7) === 0x47);
+    if (!blocks.length) continue;
+    const jr = (p: number): number => p + 2 + ((rom[p + 1]! << 24) >> 24);
+    const joins = (p: number): number | null => {
+      if (rom[p] !== 0x3e) return null;
+      if (rom[p + 2] === 0x18) return jr(p + 2);
+      return rom[p + 2] === 0xcd ? p + 2 : null;
+    };
+    const ranges = blocks.map((b) => ({ b, end: jr(b + 5) }));
+    const hits = new Map<number, number>();
+    for (const { b, end } of ranges) {
+      for (let pc = b + 11; pc < end; pc += z80Length(rom, pc)) {
+        const t = joins(pc);
+        if (t !== null && rom[t] === 0xcd) hits.set(t, (hits.get(t) ?? 0) + 1);
+      }
+    }
+    const site = [...hits].sort((x, y) => y[1] - x[1])[0]?.[0];
+    if (site === undefined) continue;
+    const coins: ProconnCoin[] = [];
+    for (const { b, end } of ranges) {
+      const at: number[] = [];
+      for (let pc = b + 11; pc < end; pc += z80Length(rom, pc)) if (joins(pc) === site) at.push(pc);
+      if (at.length !== 1) return { refused: `latched coin block ${hex(b)}: ${at.length} credited paths` };
+      const bit = 1 << ((rom[b + 4]! >> 3) & 7);
+      coins.push({ pattern: bit, mask: mask & ranges.reduce((m, r) => m | (1 << ((rom[r.b + 4]! >> 3) & 7)), 0), code: coins.length, value: rom[at[0]! + 1]!, token: false, creditAt: at[0]! });
+    }
+    return {
+      coins,
+      pence: false,
+      form: 'bit',
+      credit: null,
+      route: -1,
+      tokenMeter: null,
+      tokenOut: null,
+      unread: [],
+      source: `Proconn latched coin reader ${hex(s)}, latch ${hex(coin)}, credit ${hex(site)} (10p counts)`,
+    };
+  }
+  return null;
+}
+
+function valueCall(rom: Uint8Array, p: number, route: number):
+  { form: 'byte' | 'word'; values: number | null; tables: number[]; next: number } | null {
+  const tables: number[] = [];
+  for (let pc = p; pc < p + 20; pc += z80Length(rom, pc)) {
+    if (rom[pc] === 0x21 && !(rom[pc + 3] === 0xcb && (rom[pc + 4]! & 7) === 6)) tables.push(word(rom, pc + 1));
+    if (rom[pc] !== 0xcd) continue;
+    const form = valueForm(rom, word(rom, pc + 1), route);
+    if (!form || !tables.length || tables.length > 2) return null;
+    return { form, values: tables.length === 1 ? tables[0]! : null, tables, next: pc + 3 };
+  }
+  return null;
+}
+
+function meterTable(rom: Uint8Array, route: number, exclude: readonly number[]): number | null {
+  const found = new Set<number>();
+  for (const a of find(rom, [0x21, null, null, 0xcd])) {
+    const t = word(rom, a + 1);
+    if (exclude.includes(t)) continue;
+    if (valueForm(rom, word(rom, a + 4), route) === 'byte') found.add(t);
+  }
+  return found.size === 1 ? [...found][0]! : null;
+}
+
 export function locateProconnCoins(rom: Uint8Array): ProconnCoinCode | Refusal {
   const coinBytes = sampler(rom);
-  if (!coinBytes.length) return { refused: 'no coin-row sampler found in the program' };
+  if (!coinBytes.length) return locateLatched(rom) ?? { refused: 'no coin-row sampler found in the program' };
   let reader: NonNullable<ReturnType<typeof readerBlocks>> | null = null;
   for (const c of coinBytes) { reader = readerBlocks(rom, c); if (reader) break; }
   if (!reader) return { refused: 'no coin reader found on the coin byte' };
-  for (const a of find(rom, [0x21, null, null, 0xcd, null, null, 0x21, null, null, 0xcd, null, null, 0xcd])) {
+  for (const a of find(rom, [0x21, null, null, 0xcd])) {
     const route = isCounterDec(rom, word(rom, a + 4));
     if (route === null) continue;
-    const form = valueForm(rom, word(rom, a + 10), route);
-    if (!form) continue;
-    const entry = word(rom, a + 13);
-    const credit = creditPoints(rom, entry, route);
+    const seq = valueCall(rom, a + 6, route);
+    if (!seq) continue;
+    let entry = 0;
+    let credit: ReturnType<typeof creditPoints> = null;
+    for (let c = seq.next; c < seq.next + 9 && rom[c] === 0xcd && !credit; c += 3) {
+      entry = word(rom, c + 1);
+      credit = creditPoints(rom, entry, route);
+    }
     if (!credit) continue;
+    let { form, values } = seq;
+    if (values === null) {
+      const m = meterTable(rom, route, seq.tables);
+      if (m === null) return { refused: 'the program picks its coin values by a setting, and no meter table names the coin' };
+      const agree = form === 'word'
+        ? seq.tables.filter((t) => [...Array(16).keys()].every((k) => !rom[m + k] || word(rom, t + 2 * k) === 10 * rom[m + k]!))
+        : [];
+      if (agree.length === 1) values = agree[0]!;
+      else { form = 'byte'; values = m; }
+    }
     const counters = word(rom, a + 1);
-    const values = word(rom, a + 7);
     const codeOf = new Map<number, number>();
     for (let k = 0; k < 16; k++) { const ctr = word(rom, counters + 2 * k); if (ctr) codeOf.set(ctr, k); }
     const tok = tokenRoute(rom, route);

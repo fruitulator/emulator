@@ -106,3 +106,26 @@ export function readSavedVirtualDisplay(game: Game): boolean | undefined {
     return undefined;
   }
 }
+
+export interface VirtualDisplaySpot { fx: number; fy: number; bare: boolean }
+
+function virtualDisplaySpotSlot(game: Game): string {
+  return optionKeySlot(game).replace(':keys:', ':vdspot:');
+}
+
+export function saveVirtualDisplaySpot(game: Game, spot: VirtualDisplaySpot): void {
+  try {
+    localStorage.setItem(virtualDisplaySpotSlot(game), JSON.stringify(spot));
+  } catch {
+  }
+}
+
+export function readSavedVirtualDisplaySpot(game: Game): VirtualDisplaySpot | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(virtualDisplaySpotSlot(game)) ?? 'null') as Partial<VirtualDisplaySpot> | null;
+    if (!v || !Number.isFinite(v.fx) || !Number.isFinite(v.fy)) return undefined;
+    return { fx: v.fx as number, fy: v.fy as number, bare: v.bare === true };
+  } catch {
+    return undefined;
+  }
+}

@@ -43,7 +43,7 @@ import { showSpeaker, speakerButton } from './ui/speaker';
 import { fillKeyTable, type KeyTableRow } from './keytable';
 import { KeyHintLayer, canvasPlace } from './keyhints';
 import { PlayKeys, showKeysRow } from './play/keys';
-import { answers, HeldButtons, PlayPointer } from './play/pointer';
+import { answers, CLICK_SLOP_PX, HeldButtons, PlayPointer } from './play/pointer';
 import { PlayAutosave } from './play/autosave';
 import { appendItems, menuItems, saveLog, saveState, stateDownload, type ActionId, type ActionSurface } from './play/actions';
 import { machineCoins, restoreCabinetSounds } from './menupanels';
@@ -97,7 +97,8 @@ import { chordCaps, primaryModifier } from './shortcuts';
 import { capsAreSwitches } from './cappulse';
 import {
   decodeState, idleNamedInputs, readSavedOptionKeys, readSavedPanelSwitches, readSavedVirtualDisplay,
-  saveOptionKeys, savePanelSwitch, saveVirtualDisplay, stateRecord,
+  readSavedVirtualDisplaySpot, saveOptionKeys, savePanelSwitch, saveVirtualDisplay, saveVirtualDisplaySpot,
+  stateRecord, type VirtualDisplaySpot,
 } from './gamestate';
 import { settleSavedState } from './resumeask';
 import { boardStamp } from './boardstamp';
@@ -471,6 +472,7 @@ function startGame(
   painter.resetDisplay();
   setVfdStrip(null);
   vfdStripGame = readSavedVirtualDisplay(game);
+  vfdStripSpot = readSavedVirtualDisplaySpot(game);
   canvas.width = 800;
   canvas.height = 480;
   cabPromise
@@ -1973,6 +1975,7 @@ function navRow(label: string, icon: string, panel: HTMLElement): HTMLButtonElem
 const audio = new Audio();
 
 const effects = new CabinetEffects(audio);
+effects.onReport = (text) => emu.diagAudio(text);
 
 restoreCabinetSounds(effects);
 
@@ -2729,6 +2732,7 @@ function fitScreen(): void {
   screenEl.style.width = `${screenCss.w}px`;
   screenEl.style.height = `${screenCss.h}px`;
   screenEl.style.objectFit = fill ? 'fill' : '';
+  if (vfdStrip && !vfdStrip.hidden && vfdStripSpot) placeVfdStrip();
 }
 
 function presentScreen(): void {
@@ -3365,6 +3369,7 @@ let vfdStripOn = (() => {
 })();
 
 let vfdStripGame: boolean | undefined;
+let vfdStripSpot: VirtualDisplaySpot | undefined;
 let vfdStripLcd = false;
 
 function vfdStripShown(): boolean {
@@ -3407,6 +3412,8 @@ function renderVfdStrip(): void {
   panel.hidden = false;
   const dpr = window.devicePixelRatio || 1;
   if (vfdStripFlip) vfdStripFlip.hidden = !!d.lcd;
+  panel.classList.toggle('lcd', !!d.lcd);
+  panel.classList.toggle('bare', !!vfdStripSpot?.bare);
   if (d.lcd) {
     const pitch = LCD_STRIP_PITCH;
     let h = 0;
@@ -3504,13 +3511,35 @@ function placeVfdStrip(x?: number, y?: number): void {
   const w = panel.offsetWidth;
   const h = panel.offsetHeight;
   if (x === undefined || y === undefined) {
-    x = vfdStripPos ? vfdStripPos.x : (window.innerWidth - w) / 2;
-    y = vfdStripPos ? vfdStripPos.y : 64;
+    const r = screenEl.getBoundingClientRect();
+    if (vfdStripSpot && r.width > 0 && r.height > 0) {
+      x = r.left + vfdStripSpot.fx * r.width;
+      y = r.top + vfdStripSpot.fy * r.height;
+    } else {
+      x = vfdStripPos ? vfdStripPos.x : (window.innerWidth - w) / 2;
+      y = vfdStripPos ? vfdStripPos.y : 64;
+    }
   }
   x = Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w));
   y = Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h));
   panel.style.left = `${Math.round(x)}px`;
   panel.style.top = `${Math.round(y)}px`;
+}
+
+const DOUBLE_TAP_MS = 400;
+
+function saveVfdStripSpot(bare: boolean): void {
+  const panel = vfdStrip;
+  const r = screenEl.getBoundingClientRect();
+  if (!panel || !session.game || r.width <= 0 || r.height <= 0) return;
+  vfdStripSpot = { fx: (panel.offsetLeft - r.left) / r.width, fy: (panel.offsetTop - r.top) / r.height, bare };
+  saveVirtualDisplaySpot(session.game, vfdStripSpot);
+}
+
+function toggleVfdStripBare(): void {
+  const bare = !vfdStripSpot?.bare;
+  saveVfdStripSpot(bare);
+  vfdStrip?.classList.toggle('bare', bare);
 }
 
 function createVfdStrip(): HTMLElement {
@@ -3539,33 +3568,47 @@ function createVfdStrip(): HTMLElement {
   panel.append(cv, flip, close);
   vfdStripFlip = flip;
 
-  let grab: { dx: number; dy: number } | null = null;
+  let grab: { dx: number; dy: number; x: number; y: number; moved: boolean } | null = null;
+  let lastTap = -Infinity;
   panel.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
-    grab = { dx: ev.clientX - panel.offsetLeft, dy: ev.clientY - panel.offsetTop };
+    grab = { dx: ev.clientX - panel.offsetLeft, dy: ev.clientY - panel.offsetTop, x: ev.clientX, y: ev.clientY, moved: false };
     panel.setPointerCapture(ev.pointerId);
     panel.classList.add('dragging');
     ev.preventDefault();
   });
   panel.addEventListener('pointermove', (ev) => {
-    if (grab) placeVfdStrip(ev.clientX - grab.dx, ev.clientY - grab.dy);
-  });
-  const drop = (): void => {
     if (!grab) return;
+    if (!grab.moved && Math.hypot(ev.clientX - grab.x, ev.clientY - grab.y) < CLICK_SLOP_PX) return;
+    grab.moved = true;
+    placeVfdStrip(ev.clientX - grab.dx, ev.clientY - grab.dy);
+  });
+  const drop = (ev: PointerEvent): void => {
+    if (!grab) return;
+    const moved = grab.moved;
     grab = null;
     panel.classList.remove('dragging');
+    if (!moved) {
+      if (ev.type === 'pointerup' && ev.timeStamp - lastTap < DOUBLE_TAP_MS) {
+        lastTap = -Infinity;
+        toggleVfdStripBare();
+      } else lastTap = ev.timeStamp;
+      return;
+    }
     vfdStripPos = { x: panel.offsetLeft, y: panel.offsetTop };
     try {
       localStorage.setItem(VFD_STRIP_POS, JSON.stringify(vfdStripPos));
     } catch {
     }
+    saveVfdStripSpot(vfdStripSpot?.bare ?? false);
   };
   panel.addEventListener('pointerup', drop);
   panel.addEventListener('pointercancel', drop);
   window.addEventListener('resize', () => {
     if (panel.hidden) return;
     renderVfdStrip();
-    placeVfdStrip(panel.offsetLeft, panel.offsetTop);
+    if (vfdStripSpot) placeVfdStrip();
+    else placeVfdStrip(panel.offsetLeft, panel.offsetTop);
   });
 
   document.body.append(panel);

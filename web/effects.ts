@@ -46,6 +46,8 @@ export class CabinetEffects {
   private static defaults = new Map<string, AudioBuffer | null>();
   private static pack: Map<string, PackedFile> | null = null;
   private static packLoading = false;
+  private static packFailure: string | null = null;
+  onReport: ((text: string) => void) | null = null;
   private loading = new Set<string>();
   private system = '';
   private cabinetStyle: string | null = null;
@@ -452,17 +454,32 @@ export class CabinetEffects {
       return;
     }
     this.warmedFor = this.game;
+    if (CabinetEffects.packFailure) {
+      this.onReport?.(`cabinet sounds: the default sounds did not load (${CabinetEffects.packFailure}); only the set's own sounds will play`);
+    }
     for (let i = 0; i < EFFECT_SAMPLES.length; i++) this.buffer(i);
   }
 
   private static loadPack(): void {
     if (CabinetEffects.packLoading) return;
     CabinetEffects.packLoading = true;
-    fetch(new URL('sounds.pack', document.baseURI))
-      .then((r) => (r.ok ? r.arrayBuffer() : null))
-      .catch(() => null)
+    fetch(new URL('/sounds.pack', document.baseURI))
+      .then((r) => {
+        if (r.ok) return r.arrayBuffer();
+        CabinetEffects.packFailure = `the server answered ${r.status}`;
+        return null;
+      }, () => {
+        CabinetEffects.packFailure = 'no answer from the server';
+        return null;
+      })
+      .catch(() => {
+        CabinetEffects.packFailure = 'the download broke off';
+        return null;
+      })
       .then((a) => {
-        CabinetEffects.pack = (a && parseEffectPack(new Uint8Array(a))) || new Map();
+        const pack = a && parseEffectPack(new Uint8Array(a));
+        if (a && !pack) CabinetEffects.packFailure = 'the server sent something that is not the sound pack';
+        CabinetEffects.pack = pack || new Map();
       });
   }
 

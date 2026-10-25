@@ -275,6 +275,21 @@
       #vfd-strip.dragging {
         cursor: grabbing;
       }
+      #vfd-strip.lcd {
+        padding-right: 30px;
+      }
+      #vfd-strip.bare {
+        padding: 0;
+        background: none;
+        border-color: transparent;
+        box-shadow: none;
+      }
+      #vfd-strip.bare .vfd-close {
+        display: none;
+      }
+      #vfd-strip.bare canvas {
+        border-radius: 0;
+      }
       #vfd-strip canvas {
         display: block;
         max-width: none;

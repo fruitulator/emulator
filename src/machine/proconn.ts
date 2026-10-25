@@ -836,7 +836,7 @@ export class Proconn implements Machine {
     else return;
     this.coinNext = raw >>> 12;
     if (!this.pressCoin(raw & 0xfff)) { this.coinNext = 0; return; }
-    if (this.coinCode()) this.pend(id);
+    if (this.coinCode() && proconnRowPattern(id) !== null) this.pend(id);
     else this.bookDropped(id);
   }
 
@@ -946,7 +946,15 @@ export class Proconn implements Machine {
     const code = this.coinCode();
     if (!code) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; this.creditCode = -1; return; }
     const pc = this.cpu.pc;
-    if (pc === code.credit.entry) this.creditCode = this.ram[code.route & (RAM_SIZE - 1)]! & 0x0f;
+    if (!code.credit) {
+      const c = code.coins.find((x) => x.creditAt === pc);
+      const k = c ? this.pendingFor(c.code) : -1;
+      if (k >= 0) {
+        this.bookTaken(this.judgeId[k]!);
+        this.judgeId[k] = -1;
+        this.judgeWait[k] = 0;
+      }
+    } else if (pc === code.credit.entry) this.creditCode = this.ram[code.route & (RAM_SIZE - 1)]! & 0x0f;
     else if (this.creditCode >= 0 && (pc === code.credit.at || pc === code.credit.exit)) {
       const k = this.pendingFor(this.creditCode);
       if (k >= 0) {

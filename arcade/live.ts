@@ -215,6 +215,7 @@ export class Live {
 
   constructor() {
     restoreCabinetSounds(this.effects);
+    this.effects.onReport = (text) => this.emu.diagAudio(text);
     window.addEventListener('pointerdown', (ev) => { this.lastDown = { x: ev.clientX, y: ev.clientY, t: performance.now() }; }, true);
     this.keys.watchWindow();
     window.addEventListener('blur', () => this.focusLost());
