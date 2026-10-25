@@ -63,6 +63,7 @@ import {
 import { fancyReelPool, type FancyPool } from './reellight';
 import { PROCONN_LCD_FONT } from './proconnfont';
 import { EPOCH_DOT_FONT } from './epochdotfont';
+import { dotLcdPaint, dotLcdSize } from './dotlcd';
 import { prismBothLitPlan } from './prismplan';
 import { peekable } from './play/peek';
 
@@ -213,6 +214,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   const drawLog: { t: number; rects: 'full' | IntRect[] }[] = [];
 
   function paint(m: FrameView, cab: Cabinet): boolean {
+    virtualDisplay(cab.vfd && !m.graphicLcd() ? null : m);
     if (!lightClusters || lightClusters.cab !== cab) {
       lightClusters = { cab, clusters: computeLightGeometry(cab) };
     }
@@ -427,7 +429,6 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     function drawVfdItem(vfd: Rect): void {
       if (cab.vfdIsDots) withAngle(ctx, vfd, vfd.angle, () => drawDotMatrix(m, vfd, vfdSegColours ?? null, vfdDots));
       else withAngle(ctx, vfd, vfd.angle, () => drawVfd(m, vfd, cab.vfdGlyphWidth));
-      virtualDisplay(null);
     }
 
     function drawLamp(lp: CabLamp): void {
@@ -535,10 +536,10 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         case 'prism': { const pr = it.prism; withAngle(ctx, pr, pr.angle, () => drawPrismLamp(m, pr)); break; }
         case 'panel': drawPanel(it.which); break;
         case 'bfmLed': { const bl = it.panel; withAngle(ctx, bl, bl.angle, () => drawBfmLed(m, bl)); break; }
+        case 'dotLcd': { const dl = it.panel; withAngle(ctx, dl, dl.angle, () => drawDotLcd(dl)); break; }
         case 'video': { const vs = it.screen; withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs)); break; }
       }
     }
-    if (!cab.vfd) virtualDisplay(m);
     drawUnserved(m);
     ctx.restore();
   }
@@ -832,6 +833,15 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         if (clip) ctx.restore();
       }
     }
+  }
+
+  function drawDotLcd(p: NonNullable<Cabinet['dotLcds']>[number]): void {
+    const size = dotLcdSize(p);
+    const kx = p.width / size.width, ky = p.height / size.height;
+    dotLcdPaint((x, y, w, h, argb) => {
+      ctx.fillStyle = argbToCss(argb);
+      ctx.fillRect(p.left + x * kx, p.top + y * ky, w * kx, h * ky);
+    }, p, p);
   }
 
   function drawMaygayMatrix(m: FrameView, p: NonNullable<Cabinet['maygayMatrix']>): void {

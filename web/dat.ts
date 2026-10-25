@@ -484,6 +484,7 @@ export interface Cabinet<A = ImageBitmap> {
   bfmColourLed?: BfmColourLedPanel | null;
   igtVfd?: IgtVfdPanel | null;
   bfmLeds?: BfmLedPanel[];
+  dotLcds?: DotLcdPanel[];
   videoScreen?: VideoScreen | null;
   rgbLeds?: RgbLed[];
   prismLamps?: PrismLamp<A>[];
@@ -638,6 +639,16 @@ export interface BfmLedPanel extends Rect {
   ySize: number;
   digitSpacing: number;
   ledSize: number;
+  on: number;
+  off: number;
+  bg: number;
+}
+
+export interface DotLcdPanel extends Rect {
+  xSize: number;
+  ySize: number;
+  digitSpacing: number;
+  lineSpacing: number;
   on: number;
   off: number;
   bg: number;

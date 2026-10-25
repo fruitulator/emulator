@@ -45,7 +45,11 @@ export const ACE_METER_ROLES = [
   'unassigned', 'unassigned', 'unassigned',
 ] as const;
 
-export const NMI_HZ = 1000;
+export const NMI_TICK_CYCLES = 3000;
+
+const DONGLE_KEY_LENGTH = 22;
+
+export const REEL_TICK_HZ = 1000;
 
 export const IRQ2_HZ = 100;
 
@@ -84,7 +88,7 @@ export interface AceSpInputs {
 }
 
 export class AceSp implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult', 'sampleClock'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult', 'sampleClock', 'dongleFitted', 'dongleKey'];
   readonly digitKind: DigitKind = 'space';
   readonly cpu: HD6303Y;
 
@@ -298,7 +302,21 @@ export class AceSp implements Bus, Machine {
   private chainB4 = 0;
 
   private nmiCycles = 0;
+  private nmiTickOn = false;
+  private reelCycles = 0;
   private irq2Cycles = 0;
+
+  private ramOn = false;
+
+  private dongleFitted = false;
+  private dongleKey = new Uint8Array(DONGLE_KEY_LENGTH);
+  private dongleState = 0;
+  private dongleOut = 0x80;
+  private dongleIndex = 0;
+  private dongleSum = 0;
+  private dongleShift = 0;
+  private dongleOnes = 0;
+  private dongleCycles = 0;
   private irq2Pending = false;
   watchdogKicks = 0;
 
@@ -803,6 +821,7 @@ export class AceSp implements Bus, Machine {
       }
     }
     this.pia.reset();
+    this.pia.setCB1(true);
 
     this.p2 = 0;
     this.p2ddr = 0;
@@ -864,7 +883,17 @@ export class AceSp implements Bus, Machine {
     this.chainB4 = 0;
 
     this.nmiCycles = 0;
+    this.nmiTickOn = false;
+    this.reelCycles = 0;
     this.irq2Cycles = 0;
+    this.ramOn = false;
+    this.dongleState = 0;
+    this.dongleOut = 0x80;
+    this.dongleIndex = 0;
+    this.dongleSum = 0;
+    this.dongleShift = 0;
+    this.dongleOnes = 0;
+    this.dongleCycles = 0;
     this.irq2Pending = false;
     this.watchdogKicks = 0;
 
@@ -901,7 +930,7 @@ export class AceSp implements Bus, Machine {
   read8(addr: number): number {
     addr &= 0xffff;
     if (addr >= ROM_BASE) return this.rom[addr];
-    if (addr >= 0x0140) return this.ram[addr - 0x0140];
+    if (addr >= 0x0140) return this.ramOn ? this.ram[addr - 0x0140] : 0;
     if (addr >= 0x0040) return this.internalRam[addr - 0x0040];
     if (addr >= 0x0028) return this.readExternal(addr);
     return this.readRegister(addr);
@@ -992,8 +1021,10 @@ export class AceSp implements Bus, Machine {
         return;
       default:
         if (addr >= 0x38 && addr <= 0x3b) {
+          const cb2 = this.pia.cb2();
           this.pia.write(addr & 3, val);
           if ((addr & 3) === 1) this.lampCra(val);
+          else if ((addr & 3) === 3) this.syncNmiGate(val, cb2);
         } else this.strays.hit(addr);
     }
   }
@@ -1065,7 +1096,8 @@ export class AceSp implements Bus, Machine {
     const s0 = s[0], s1 = s[1], s2 = s[2], s4 = s[4];
     const s3 = (s[3] & 0xfe) | (this.outputs.shift[1] !== 0 ? 0 : 1);
     this.chainB5 = ((this.reverseBits(s0) << 8) | this.reverseBits(s3)) & 0xffff;
-    this.chainB4 = ((this.reverseBits(s1) << 8) | this.reverseBits(~s4 & 0xff)) & 0xffff;
+    const s1d = this.dongleFitted ? s1 & ~(this.dongleOut & 0xf0) : s1;
+    this.chainB4 = ((this.reverseBits(s1d) << 8) | this.reverseBits(~s4 & 0xff)) & 0xffff;
     this.chainB7 = (s2 | this.inputs.health) & 0xff;
   }
 
@@ -1206,7 +1238,79 @@ export class AceSp implements Bus, Machine {
   }
 
   private writePort2(val: number): void {
+    const changed = this.p2 ^ val;
+    if (changed & 0x20) this.ramOn = (val & 0x20) === 0;
+    if (!(val & 0x04)) this.pia.setCB1(true);
     this.p2 = val;
+  }
+
+  private syncNmiGate(crb: number, cb2Before: boolean): void {
+    if ((crb & 0x30) !== 0x30) return;
+    const cb2 = this.pia.cb2();
+    if (cb2 !== cb2Before) this.nmiTickOn = !cb2;
+  }
+
+  private tickNmiSource(cycles: number): void {
+    if (!this.nmiTickOn) return;
+    this.nmiCycles += cycles;
+    if (this.nmiCycles <= NMI_TICK_CYCLES) return;
+    this.nmiCycles -= NMI_TICK_CYCLES;
+    if (!(this.p2 & 0x04)) return;
+    this.pia.setCB1(false);
+    this.cpu.setNMI(true);
+    this.cpu.setNMI(false);
+  }
+
+  fitSerialDongle(key: Uint8Array | null): void {
+    this.dongleFitted = true;
+    this.dongleKey = new Uint8Array(DONGLE_KEY_LENGTH);
+    if (key) this.dongleKey.set(key.subarray(0, DONGLE_KEY_LENGTH));
+  }
+
+  private dongleBit(): void {
+    let o = this.dongleOut ^ 0x40;
+    if ((this.dongleShift & 1) === 0) o = (o | 0x20) & ~0x10;
+    else {
+      o = (o & ~0x20) | 0x10;
+      this.dongleOnes = (this.dongleOnes + 1) & 0xff;
+    }
+    this.dongleOut = o & 0xff;
+    this.dongleShift >>= 1;
+  }
+
+  private advanceDongle(cycles: number): void {
+    this.dongleCycles += cycles;
+    if (this.dongleCycles <= 20000) return;
+    this.dongleCycles -= 20000;
+    const st = this.dongleState;
+    if (st === 2) this.dongleOut &= 0x7f;
+    else if (st === 3) this.dongleOut |= 0x80;
+    else if (st === 4) {
+      this.dongleOut |= 0x40;
+      this.dongleIndex = 0;
+      this.dongleSum = 0;
+    } else if (st === 5) {
+      this.dongleOnes = 0;
+      this.dongleShift = this.dongleIndex < 0x16 ? this.dongleIndex : 0x3f;
+    } else if ((st >= 6 && st <= 0x0b) || (st >= 0x0d && st <= 0x14)) {
+      this.dongleBit();
+    } else if (st === 0x0c) {
+      if (this.dongleIndex < 0x16) {
+        const b = this.dongleKey[this.dongleIndex];
+        this.dongleShift = b;
+        this.dongleSum = (this.dongleSum + b) & 0xff;
+      } else this.dongleShift = -this.dongleSum & 0xff;
+    } else if (st === 0x15) {
+      let o = this.dongleOut ^ 0x40;
+      o = (this.dongleOnes & 1) === 0 ? (o & ~0x20) | 0x10 : (o | 0x20) & ~0x10;
+      this.dongleOut = o & 0xff;
+    } else if (st === 0x16) {
+      this.dongleOut = (((this.dongleOut ^ 0x40) & ~0x20) | 0x10) & 0xff;
+    } else if (st === 0x17) {
+      this.dongleIndex = (this.dongleIndex + 1) & 0xff;
+      this.dongleState = this.dongleIndex < 0x17 ? 4 : 0;
+    }
+    this.dongleState++;
   }
 
   private readPort6(): number {
@@ -1337,6 +1441,8 @@ export class AceSp implements Bus, Machine {
     }
     if (this.judgeWait[0] || this.judgeWait[1] || this.judgeWait[2] || this.judgeWait[3] || this.judgeWait[4]) this.judgeCoinLeaving(cycles);
 
+    this.advanceDongle(cycles);
+
     this.irq2Cycles += cycles;
     const irq2Period = Math.floor(E_CLOCK / IRQ2_HZ);
     if (this.irq2Cycles >= irq2Period) {
@@ -1350,12 +1456,11 @@ export class AceSp implements Bus, Machine {
       if (this.mcuDebt >= 1) this.mcuDebt -= this.reelpcb.run(this.mcuDebt);
       return cycles;
     }
-    this.nmiCycles += cycles;
-    const nmiPeriod = Math.floor(E_CLOCK / NMI_HZ);
-    while (this.nmiCycles >= nmiPeriod) {
-      this.nmiCycles -= nmiPeriod;
-      this.cpu.setNMI(true);
-      this.cpu.setNMI(false);
+    this.tickNmiSource(cycles);
+    this.reelCycles += cycles;
+    const reelPeriod = Math.floor(E_CLOCK / REEL_TICK_HZ);
+    while (this.reelCycles >= reelPeriod) {
+      this.reelCycles -= reelPeriod;
       this.reelctrl.tick(1);
       for (let i = 0; i < this.reelUnits.length; i++) {
         const u = this.reelUnits[i];

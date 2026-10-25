@@ -23,10 +23,11 @@ interface Port {
   c1: boolean;
   c2in: boolean;
   c2out: boolean;
+  c2strobe: boolean;
 }
 
 function newPort(): Port {
-  return { out: 0, ddr: 0, cr: 0, c1: false, c2in: false, c2out: false };
+  return { out: 0, ddr: 0, cr: 0, c1: false, c2in: false, c2out: false, c2strobe: false };
 }
 
 export class Pia6821 {
@@ -58,11 +59,11 @@ export class Pia6821 {
   }
 
   setCA1(state: boolean): void {
-    this.setC1(this.a, state);
+    this.setC1(this.a, state, true);
   }
 
   setCB1(state: boolean): void {
-    this.setC1(this.b, state);
+    this.setC1(this.b, state, false);
   }
 
   setCA2(state: boolean): void {
@@ -73,13 +74,17 @@ export class Pia6821 {
     this.setC2In(this.b, state);
   }
 
-  private setC1(p: Port, state: boolean): void {
+  private setC1(p: Port, state: boolean, isA: boolean): void {
     const rising = !!(p.cr & CR_C1_RISING);
     const active = rising ? !p.c1 && state : p.c1 && !state;
     p.c1 = state;
     if (active) {
       p.cr |= CR_IRQ1_FLAG;
       this.hooks.irqChanged?.();
+      if (p.c2strobe && (p.cr & 0x38) === CR_C2_OUTPUT) {
+        p.c2strobe = false;
+        this.setC2Out(p, true, isA);
+      }
     }
   }
 
@@ -103,6 +108,7 @@ export class Pia6821 {
   }
 
   read(offset: number): number {
+    this.a.c2strobe = false;
     switch (offset & 3) {
       case 0:
         return this.readData(this.a, true);
@@ -117,6 +123,7 @@ export class Pia6821 {
 
   write(offset: number, val: number): void {
     val &= 0xff;
+    this.b.c2strobe = false;
     switch (offset & 3) {
       case 0:
         this.writeData(this.a, val, true);
@@ -179,17 +186,19 @@ export class Pia6821 {
     p.cr &= ~(CR_IRQ1_FLAG | CR_IRQ2_FLAG) & 0xff;
     if (hadIrq) this.hooks.irqChanged?.();
 
-    this.handshakeOnRead(p, isA);
+    if (isA) this.strobe(p, true);
     return isA ? this.portAValue() : this.portBValue();
   }
 
   private writeData(p: Port, val: number, isA: boolean): void {
     if (!(p.cr & CR_DDR_SELECT)) {
       p.ddr = val;
-    } else {
-      p.out = val;
+      this.emitPort(p, isA);
+      return;
     }
+    p.out = val;
     this.emitPort(p, isA);
+    if (!isA) this.strobe(p, false);
   }
 
   private emitPort(p: Port, isA: boolean): void {
@@ -205,9 +214,10 @@ export class Pia6821 {
     p.cr = next;
 
     const isOutput = !!(p.cr & CR_C2_OUTPUT);
-    if (isOutput) {
-      const level = p.cr & 0x10 ? !!(p.cr & 0x08) : true;
-      this.setC2Out(p, level, isA);
+    if (isOutput && p.cr & 0x10) {
+      p.c2strobe = false;
+      this.setC2Out(p, !!(p.cr & 0x08), isA);
+    } else if (isOutput) {
     } else if (wasOutput) {
       p.c2out = false;
     }
@@ -222,9 +232,13 @@ export class Pia6821 {
     else this.hooks.writeCB2?.(level);
   }
 
-  private handshakeOnRead(p: Port, isA: boolean): void {
+  private strobe(p: Port, isA: boolean): void {
     if ((p.cr & (CR_C2_OUTPUT | 0x10)) !== CR_C2_OUTPUT) return;
     this.setC2Out(p, false, isA);
-    this.setC2Out(p, true, isA);
+    if (p.cr & 0x08) {
+      this.setC2Out(p, true, isA);
+    } else {
+      p.c2strobe = true;
+    }
   }
 }

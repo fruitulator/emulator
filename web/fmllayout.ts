@@ -6,7 +6,7 @@ import {
   type RgbLed,
   SEG_METRICS,
 } from './dat';
-import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, AstraLedPanel, BfmColourLedPanel, IgtVfdPanel, BfmLedPanel, VideoScreen } from './dat';
+import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, AstraLedPanel, BfmColourLedPanel, IgtVfdPanel, BfmLedPanel, DotLcdPanel, VideoScreen } from './dat';
 import { applyOpaqueBand, reelLightFloor } from './reellight';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
@@ -230,6 +230,7 @@ const enum Type {
   IgtVfd = 0x20,
   EpochMatrix = 0x22,
   BfmLed = 0x15,
+  DotLcd = 0x25,
   Disc = 0x06,
   RgbLed = 0x26,
   BFMVideo = 0x1f,
@@ -1610,6 +1611,19 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       bg: val(c, 'BackColour') ?? 0xff000000,
     }));
 
+  const dotLcds: DotLcdPanel[] = comps
+    .filter((c) => c.type === Type.DotLcd && c.width > 0 && c.height > 0)
+    .map((c) => ({
+      left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      xSize: Math.max(1, val(c, 'XSize') ?? 2),
+      ySize: Math.max(1, val(c, 'YSize') ?? 2),
+      digitSpacing: Math.max(0, val(c, 'DigitSpacing') ?? 2),
+      lineSpacing: Math.max(0, val(c, 'LineSpacing') ?? 4),
+      on: val(c, 'OnColour') ?? 0xff000000,
+      off: val(c, 'OffColour') ?? 0xff95ca56,
+      bg: val(c, 'BackgroundColour') ?? 0xff95ca56,
+    }));
+
   const emx = comps.find((c) => c.type === Type.EpochMatrix && c.width > 0 && c.height > 0);
   const epochMatrix: EpochMatrixPanel | null = emx
     ? {
@@ -1804,6 +1818,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...(bfmColourLed ? [bfmColourLed] : []),
     ...(igtVfd ? [igtVfd] : []),
     ...bfmLeds,
+    ...dotLcds,
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
   ], measured, backgroundOffset.x);
@@ -1827,6 +1842,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     bfmColourLed,
     igtVfd,
     bfmLeds,
+    ...(dotLcds.length ? { dotLcds } : {}),
     videoScreen,
     rgbLeds,
     prismLamps,

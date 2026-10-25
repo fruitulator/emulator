@@ -58,6 +58,7 @@ export interface CabGeometry {
   bfmColourLed?: Cabinet['bfmColourLed'];
   igtVfd?: Cabinet['igtVfd'];
   bfmLeds?: Cabinet['bfmLeds'];
+  dotLcds?: Cabinet['dotLcds'];
   epochMatrix?: Cabinet['epochMatrix'];
   videoScreen?: Cabinet['videoScreen'];
   rgbLeds?: Cabinet['rgbLeds'];
@@ -231,6 +232,7 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     bfmColourLed: cab.bfmColourLed ?? null,
     igtVfd: cab.igtVfd ?? null,
     bfmLeds: cab.bfmLeds ?? [],
+    ...(cab.dotLcds?.length ? { dotLcds: cab.dotLcds } : {}),
     epochMatrix: cab.epochMatrix ?? null,
     videoScreen: cab.videoScreen ?? null,
     rgbLeds: cab.rgbLeds ?? [],
@@ -353,6 +355,7 @@ export function assembleCabinet<A>(
     bfmColourLed: geo.bfmColourLed ?? null,
     igtVfd: geo.igtVfd ?? null,
     bfmLeds: geo.bfmLeds ?? [],
+    ...(geo.dotLcds?.length ? { dotLcds: geo.dotLcds } : {}),
     epochMatrix: geo.epochMatrix ?? null,
     videoScreen: geo.videoScreen ?? null,
     rgbLeds: geo.rgbLeds ?? [],
@@ -497,6 +500,7 @@ export function componentBounds(
     if (d) spanR(d);
   }
   for (const d of cab.bfmLeds ?? []) spanR(d);
+  for (const d of cab.dotLcds ?? []) spanR(d);
   if (cab.videoScreen) {
     const d = cab.videoScreen;
     spanR(d);
@@ -700,6 +704,7 @@ export function drawCabinetStill(
       case 'seg': stillSegFace(fx, it.seg); break;
       case 'panel': stillFace(fx, it.panel, (it.panel as { bg?: number | null }).bg); break;
       case 'bfmLed': stillFace(fx, it.panel, it.panel.bg); break;
+      case 'dotLcd': stillFace(fx, it.panel, it.panel.bg); break;
       case 'video': stillFace(fx, it.screen, null); break;
       case 'rgbLed': case 'prism': case 'reelLight': break;
     }

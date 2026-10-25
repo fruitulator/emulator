@@ -16,6 +16,7 @@ import { EpochMatrix } from '../hw/epochmatrix';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import type { ReelGeometry } from './layoutreels';
 import { EPOCH_LAMP_LEVELS, EPOCH_LED_LEVELS, EPOCH_DIGITS, LAMP_FULL } from './framestate';
+import { EpochLampGlass } from './epochlamps';
 import type { BoardPart } from './parts';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
@@ -58,6 +59,13 @@ const key = (label: string, positions: string[], get: () => number,
   fit(v) { set(Math.max(0, Math.min(positions.length - 1, v | 0)) - KEY_OFFSET); },
 });
 const LAMP_BASE = 0x0800;
+
+function decodeEpochLamp(b: number, phase: number): boolean {
+  if ((b & 1) === 0) return false;
+  const rate = (b >> 1) & 7;
+  if (rate === 0) return true;
+  return ((phase >> (Math.min(rate, 6) - 1)) & 1) !== (b >> 7);
+}
 const LED_BASE = 0x0a00;
 const OUTPUT_BASE = 0x1000;
 
@@ -216,6 +224,9 @@ export class Epoch implements Machine {
 
   private readonly mechLamps = new SwitchedLamps(3);
   private readonly inhibitLamps = new SwitchedLamps(8);
+  readonly lampGlass = new EpochLampGlass();
+  private lampAcc = 0;
+  private static readonly LAMP_TICK_CYCLES = 16000;
   private inhibitShown = 0xff;
 
   readonly meterSounds = new Uint32Array(8);
@@ -369,6 +380,7 @@ export class Epoch implements Machine {
       (this.display as EpochAlpha).dot.reset();
       this.mechLamps.resetDark();
       this.inhibitLamps.resetDark();
+      this.lampGlass.reset();
     };
     this.asic.onScan = () => {
       if (this.inhibits === this.inhibitShown) return;
@@ -508,6 +520,8 @@ export class Epoch implements Machine {
     this.mechLamps.reset();
     this.inhibitLamps.reset();
     this.inhibitShown = 0xff;
+    this.lampGlass.reset();
+    this.lampAcc = 0;
     (this.display as EpochAlpha).clear();
     this.secLines = 0xff;
     this.dev.reset();
@@ -549,6 +563,11 @@ export class Epoch implements Machine {
     }
     this.meterAcc += cycles;
     if (this.meterAcc >= Epoch.METER_TICK_CYCLES) this.tickMeters();
+    this.lampAcc += cycles;
+    while (this.lampAcc >= Epoch.LAMP_TICK_CYCLES) {
+      this.lampAcc -= Epoch.LAMP_TICK_CYCLES;
+      this.lampGlass.tick(this.lampPhase());
+    }
     this.ymz.tick(cycles, this.clockHz);
     return cycles;
   }
@@ -614,6 +633,10 @@ export class Epoch implements Machine {
       if (off + 1 < OUTPUT_BASE || off >= OUTPUT_BASE + 8) {
         this.ram[off] = (val >> 8) & 0xff;
         this.ram[off + 1] = val & 0xff;
+        if (off >= LAMP_BASE && off < LAMP_BASE + 0x200) {
+          this.lampGlass.write(off - LAMP_BASE, (val >> 8) & 0xff);
+          this.lampGlass.write(off + 1 - LAMP_BASE, val & 0xff);
+        } else if (off === LAMP_DIM) this.lampGlass.setLevel(val >> 8);
         return;
       }
     }
@@ -651,6 +674,8 @@ export class Epoch implements Machine {
       if (off < 0x800 && this.ram[off] !== (val & 0xff)) this.asic.markMatrixDirty(off >> 10);
       const was = this.ram[off];
       this.ram[off] = val & 0xff;
+      if (off >= LAMP_BASE && off < LAMP_BASE + 0x200) this.lampGlass.write(off - LAMP_BASE, val & 0xff);
+      else if (off === LAMP_DIM) this.lampGlass.setLevel(val);
       if (off === OUTPUT_BASE) (this.display as EpochAlpha).writeData(val);
       else if (off === OUTPUT_BASE + 1) {
         this.writeSlot1(was, val & 0xff);
@@ -760,7 +785,15 @@ export class Epoch implements Machine {
 
   get lamps(): Uint8Array {
     const out = this.lampOut;
-    out.set(this.ram.subarray(LAMP_BASE, LAMP_BASE + 0x200));
+    const g = this.lampGlass;
+    const phase = this.lampPhase();
+    for (let n = 0; n < 0x200; n++) {
+      const b = this.ram[LAMP_BASE + n];
+      const shown = g.shown[n];
+      const dim = g.shownDim[n];
+      out[n] = (decodeEpochLamp(b, phase) === (shown === 1) && (!shown || ((b >> 6) & 1) === dim))
+        ? b : shown ? 0x01 | (dim << 6) : 0;
+    }
     for (let n = 0x200; n < 0x210; n++) out[n] = this.switchedLamp(n) ? 0x01 : 0;
     return out;
   }
@@ -777,11 +810,7 @@ export class Epoch implements Machine {
   layoutLamp(n: number): boolean {
     if (n >= 0x200 && n < 0x210) return this.switchedLamp(n);
     if (n < 0 || n >= 0x200) return false;
-    const b = this.ram[LAMP_BASE + n];
-    if ((b & 1) === 0) return false;
-    const rate = (b >> 1) & 7;
-    if (rate === 0) return true;
-    return ((this.lampPhase() >> (Math.min(rate, 6) - 1)) & 1) !== (b >> 7);
+    return this.lampGlass.shown[n] === 1;
   }
 
   lampPhase(): number {
@@ -790,8 +819,8 @@ export class Epoch implements Machine {
     let bits = 0;
     for (let i = 0; i < 6; i++) {
       const a = FLASH_RATES + i * 2;
-      const on = (this.ram[a + 1] === 1 ? 2 : this.ram[a + 1]) * 12 * ms;
-      const off = (this.ram[a] === 1 ? 2 : this.ram[a]) * 12 * ms;
+      const on = ((this.ram[a + 1] === 1 ? 2 : this.ram[a + 1]) * 12 + 1) * ms;
+      const off = ((this.ram[a] === 1 ? 2 : this.ram[a]) * 12 + 1) * ms;
       const period = on + off;
       if (period > 0 && cycles % period >= on) bits |= 1 << i;
     }
@@ -801,7 +830,7 @@ export class Epoch implements Machine {
   layoutLampLevel(n: number): number {
     if (!this.layoutLamp(n)) return 0;
     if (n >= 0x200) return LAMP_FULL;
-    return (this.ram[LAMP_BASE + n] & 0x40)
+    return this.lampGlass.shownDim[n]
       ? EPOCH_LAMP_LEVELS[this.lampDim()] : LAMP_FULL;
   }
 

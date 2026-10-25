@@ -459,6 +459,23 @@ const MAYGAYVIDEO_TAGS: Record<number, [Role, string]> = {
 };
 const MAYGAYVIDEO = m({ ...BASE_TAGS }, m(MAYGAYVIDEO_TAGS), m(MAYGAYVIDEO_TAGS));
 
+const DOTLCD_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'XSize'], 0x02: ['u32', 'YSize'], 0x03: ['u32', 'DigitSpacing'],
+  0x04: ['color', 'OnColour'], 0x05: ['color', 'OffColour'], 0x06: ['color', 'BackgroundColour'],
+  0x07: ['u32', 'LineSpacing'],
+};
+const DOTLCD = m({ ...BASE_TAGS }, m(DOTLCD_TAGS), m(DOTLCD_TAGS));
+
+const LIGHTSOURCE_TAGS: Record<number, [Role, string]> = {
+  0x01: ['bitmap', 'Image'], 0x02: ['u32', 'Intensity'],
+};
+const LIGHTSOURCE = m({ ...BASE_TAGS }, m(LIGHTSOURCE_TAGS), m(LIGHTSOURCE_TAGS));
+
+const COINMASTERVIDEO_TAGS: Record<number, [Role, string]> = {
+  0x01: ['u32', 'Quality'], 0x02: ['bool', 'Vertical'],
+};
+const COINMASTERVIDEO = m({ ...BASE_TAGS }, m(COINMASTERVIDEO_TAGS), m(COINMASTERVIDEO_TAGS));
+
 const BFMCOLOURLED_TAGS: Record<number, [Role, string]> = {
   0x01: ['u32', 'Size'], 0x02: ['raw4', ''],
   0x03: ['color', 'OffColour'], 0x04: ['color', 'BackgroundColour'],
@@ -603,6 +620,10 @@ const DEFAULTS: Record<number, Record<string, number>> = {
   0x27: { Number: 0x60, SymbolPos: 0 },
   0x20: { DotSize: 1, DotSpacing: 2, OnColour: 0xff00ff00, OffColour: 0xff000000,
     BackgroundColour: 0xff000000 },
+  0x25: { XSize: 2, YSize: 2, DigitSpacing: 2, LineSpacing: 4,
+    OnColour: 0xff000000, OffColour: 0xff95ca56, BackgroundColour: 0xff95ca56 },
+  0x2b: { Intensity: 0x1e },
+  0x2f: { Quality: 0, Vertical: 0 },
   0x26: { SelectedStyle: 0, MaxLED: 1, NoOutline: 0, NoShadow: 0,
     AdjustedOff: 0xff7f0000, AdjustedRed: 0xff000000, AdjustedGreen: 0xff000000,
     AdjustedRedGreen: 0xff000000, AdjustedBlue: 0xff000000, AdjustedRedBlue: 0xff000000,
@@ -621,6 +642,7 @@ const MAPS: Record<number, TagMap> = {
   0x21: ACEVIDEO, 0x15: BFMLED,
   0x2c: ASTRAMATRIX, 0x28: MAYGAYVIDEO, 0x24: BFMCOLOURLED, 0x27: REELBONUSREEL,
   0x20: IGTVFD,
+  0x25: DOTLCD, 0x2b: LIGHTSOURCE, 0x2f: COINMASTERVIDEO,
 };
 
 export function hasTagMap(type: number): boolean {

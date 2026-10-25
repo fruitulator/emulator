@@ -53,6 +53,7 @@ export class BootWatch {
   private glassLine = '';
   private ledgerPrev = '';
   private t0 = 0;
+  private dropped = -1;
   private busy = false;
   private readonly flips = new LampFlips();
   private readonly bankCells: string[][] = [];
@@ -95,6 +96,8 @@ export class BootWatch {
     const v = this.src.latestFrame();
     if (v && v !== this.last) {
       this.last = v;
+      if (this.dropped >= 0 && v.droppedMs > this.dropped) this.t0 += v.droppedMs - this.dropped;
+      this.dropped = v.droppedMs;
       const pose = v.reels.map((r) => `${r.position}/${r.travel}`).join(',');
       if (this.pose !== '' && pose !== this.pose) this.reels = true;
       this.pose = pose;

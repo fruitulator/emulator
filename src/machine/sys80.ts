@@ -5,6 +5,7 @@ import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, type BookedCoin } from './coinbook';
 import { locateSys80Coins, sys80CoinTable, sys80ProgramCoins, sys80PlayMeterPrice, type Sys80CoinCode } from './sys80coins';
 import { Reel } from '../hw/reel';
+import { Hopper, v20Waveform } from '../hw/hopper';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { Tms9995, type Tms9995Bus } from '../cpu/tms9995';
 import { Tms9902 } from '../hw/tms9902';
@@ -28,8 +29,9 @@ const RAM_LO = 0x3000;
 const RAM_HI = 0x4000;
 const RAM_LO_V20 = 0x3800;
 const PAGED_IMAGE = 0x4000;
-const INT1_PERIOD = 1042;
+const INT1_PERIOD = 0x400;
 const INT2_PERIOD = 25000;
+const HOPPER_TICK_CYCLES = 0x9c4;
 const REFRESH_TICK = 800;
 const METER_TICK_CYCLES = 5000;
 const SEG_DATA_PERSIST = 15;
@@ -93,6 +95,7 @@ export class Sys80 implements Machine {
     'coinCodeCache', 'coinPriceCache', 'pricedByPlays', 'coinSlots', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw',
     'layoutSlotLines', 'plainSlots',
     'rom', 'romBytes',
+    'hopperSwitch',
   ];
 
   readonly digitKind: DigitKind = 'words';
@@ -219,6 +222,7 @@ export class Sys80 implements Machine {
       cruWrite: (b, v) => this.writePort(b, v),
     };
     this.cpu = new Tms9995(bus, { variant: '9980a' });
+    this.hopper.onCoin = () => this.bookHopperCoin();
   }
 
   setReelGeometry(geometry: readonly ReelGeometry[]): void {
@@ -258,6 +262,22 @@ export class Sys80 implements Machine {
   setDips(d1: number, d3: number): void { this.dip1 = d1 & 0xff; this.dip3 = d3 & 0xff; }
 
   setRotary(n: number): void { this.rotary = n & 0xf; }
+
+  static readonly HOPPER_WAVEFORM = v20Waveform((HOPPER_TICK_CYCLES / CLOCK) * 1000, { beam: 100, gap: 0x96 });
+  readonly hopper = new Hopper(CLOCK, Sys80.HOPPER_WAVEFORM);
+  private hopperCyc = 0;
+  private hopperSwitch = -1;
+  readonly hopperEjects = { count: 0 };
+
+  setHopperSwitch(n: number | null): void {
+    this.hopperSwitch = n !== null && n >= 0 && n < 32 ? n : -1;
+  }
+
+  private bookHopperCoin(): void {
+    this.hopperEjects.count++;
+    if (!this.booksMoney || this.meterOutPence.some((x) => x > 0)) return;
+    this.ledger.unpricedOut++;
+  }
 
   setSwitches(sw: LayoutSwitch[]): void {
     this.switches = sw;
@@ -332,6 +352,8 @@ export class Sys80 implements Machine {
     this.digits.fill(0);
     this.digitTime.fill(0);
     this.romPage = 0;
+    this.hopper.reset();
+    this.hopperCyc = 0;
     this.cpu.reset();
   }
 
@@ -377,6 +399,11 @@ export class Sys80 implements Machine {
           const mask = this.optoMask();
           this.matrix[0] = (this.matrix[0] & ~mask & 0xff) | ((this.optos() ^ 0xf) & mask);
         }
+        if (this.hopperSwitch >= 0) {
+          const row = this.hopperSwitch >> 3, bit = 1 << (this.hopperSwitch & 7);
+          const sense = !this.hopper.running || this.hopper.opto;
+          this.matrix[row] = sense ? this.matrix[row] | bit : this.matrix[row] & ~bit & 0xff;
+        }
         return (this.matrix[(addr >> 3) & 3] >> (addr & 7)) & 1;
       }
       case 0x020: {
@@ -400,11 +427,11 @@ export class Sys80 implements Machine {
       case 0x050:
         switch (addr) {
           case 0x50:
-            if (this.lev1Int !== value && !this.lev1Int) { this.cpu.setLevel(1, false); this.intPending &= ~1; }
+            if (this.lev1Int !== value && !value) { this.cpu.setLevel(1, false); this.intPending &= ~1; }
             this.lev1Int = value;
             return;
           case 0x51:
-            if (this.lev2Int !== value && !this.lev2Int) { this.cpu.setLevel(2, false); this.intPending &= ~2; }
+            if (this.lev2Int !== value && !value) { this.cpu.setLevel(2, false); this.intPending &= ~2; }
             this.lev2Int = value;
             return;
           default:
@@ -522,6 +549,9 @@ export class Sys80 implements Machine {
       case PortType.RomPage:
         this.romPage = (value ^ 1) & 0xff;
         return;
+      case PortType.HopperEnable:
+        this.hopper.motorDrive(value === 1);
+        return;
       default:
         return;
     }
@@ -554,14 +584,19 @@ export class Sys80 implements Machine {
     this.duart.tick(c);
     this.ay.tick(c, CLOCK);
     this.speaker.tick(c);
+    this.hopperCyc += c;
+    while (this.hopperCyc >= HOPPER_TICK_CYCLES) {
+      this.hopperCyc -= HOPPER_TICK_CYCLES;
+      this.hopper.tick(HOPPER_TICK_CYCLES);
+    }
     if (this.duart.int) {
       this.intPending |= 4;
     } else {
       this.intPending &= ~4;
       this.cpu.setLevel(3, false);
     }
-    if (this.cyc1 > INT1_PERIOD) { this.cyc1 -= INT1_PERIOD; this.intPending |= 1; }
-    if (this.cyc2 > INT2_PERIOD) { this.cyc2 -= INT2_PERIOD; this.intPending |= 2; }
+    if (this.cyc1 >= INT1_PERIOD) { this.cyc1 -= INT1_PERIOD; if (this.lev1Int) this.intPending |= 1; }
+    if (this.cyc2 >= INT2_PERIOD) { this.cyc2 -= INT2_PERIOD; if (this.lev2Int) this.intPending |= 2; }
     if (this.intPending & 1) this.cpu.setLevel(1, true);
     else if (this.intPending & 2) this.cpu.setLevel(2, true);
     else if (this.intPending & 4) this.cpu.setLevel(3, true);
@@ -616,7 +651,7 @@ export class Sys80 implements Machine {
       { id: 'cpu', label: 'CPU', part: 'TMS9980A - 2.5 MHz', device: this.cpu, cpu: true },
       { id: 'uart', label: 'RS232', part: 'TMS9902 - CRU $1E0', device: this.duart },
       { id: 'reels', label: '4 REELS', part: 'stepper, CRU $00-$0F', device: this.sreels },
-      { id: 'hopper', label: 'HOPPER', part: 'not modelled' },
+      { id: 'hopper', label: 'HOPPER', part: 'one - motor and opto from the layout', device: this.hopper },
     ];
   }
 

@@ -1166,8 +1166,8 @@ export class Mpu4 implements Bus, Machine {
     return line === Mpu4.TOKEN_MECH_LINE || line === Mpu4.TOKEN_MECH2_LINE;
   }
   private static readonly MECH_HELD = Math.round(E_CLOCK * 0.07);
-  private mechTail(): number { return Math.round(E_CLOCK * (this.plasma ? 0.005 : 0.02)); }
-  private mechSettle(): number { return this.plasma ? 0 : Math.round(E_CLOCK * 0.15); }
+  private mechTail(): number { return Math.round(E_CLOCK * (this.plasma || this.video ? 0.005 : 0.02)); }
+  private mechSettle(): number { return this.plasma || this.video ? 0 : Math.round(E_CLOCK * 0.15); }
   private mechRaw = 0;
   private mechLine = -1;
   private mechOwned = false;
@@ -1716,6 +1716,10 @@ export class Mpu4 implements Bus, Machine {
   private hopper2: Hopper | null = null;
 
   static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x96, start: 0x96, settle: 1 });
+  static readonly HOPPER_WAVEFORM_VIDEO = v20Waveform(1, { beam: 0x14 + 5, gap: 0x78, start: 0x78, settle: 5 });
+  private hopperWaveform() {
+    return this.video || this.plasma ? Mpu4.HOPPER_WAVEFORM_VIDEO : Mpu4.HOPPER_WAVEFORM;
+  }
   private hopper1Opto = false;
   private duartOp = 0;
   readonly duart = ((): Mc68681 => {
@@ -1815,10 +1819,10 @@ export class Mpu4 implements Bus, Machine {
     this.setHopperType(index >= 1 && index <= 5 ? index : index === 9 ? 5 : 0);
     this.payoutType = index;
     if (index === 6) {
-      this.hopper1 = new Hopper(E_CLOCK, Mpu4.HOPPER_WAVEFORM);
-      this.hopper2 = new Hopper(E_CLOCK, Mpu4.HOPPER_WAVEFORM);
+      this.hopper1 = new Hopper(E_CLOCK, this.hopperWaveform());
+      this.hopper2 = new Hopper(E_CLOCK, this.hopperWaveform());
     } else if (index === 13 || index === 10 || index === 0x0b) {
-      this.hopper1 = new Hopper(E_CLOCK, Mpu4.HOPPER_WAVEFORM);
+      this.hopper1 = new Hopper(E_CLOCK, this.hopperWaveform());
     }
   }
 
@@ -1827,8 +1831,8 @@ export class Mpu4 implements Bus, Machine {
   setHopperType(t: number): void {
     this.hopperType = t;
     this.payoutType = t;
-    if (t >= 1 && t <= 5) this.hopper1 = new Hopper(E_CLOCK, Mpu4.HOPPER_WAVEFORM);
-    if (t === 5) this.hopper2 = new Hopper(E_CLOCK, Mpu4.HOPPER_WAVEFORM);
+    if (t >= 1 && t <= 5) this.hopper1 = new Hopper(E_CLOCK, this.hopperWaveform());
+    if (t === 5) this.hopper2 = new Hopper(E_CLOCK, this.hopperWaveform());
   }
 
   private srlCmd = 0;

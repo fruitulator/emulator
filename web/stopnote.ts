@@ -207,12 +207,13 @@ export class StopNote {
     onClose?: () => void,
     hideAfterMs?: number,
     icon?: { paths: string; label: string },
+    fixed = false,
   ): void {
     this.reason = null;
     this.setIcon(icon ?? null);
     this.closeRun = onClose ?? null;
     if (this.hideTimer !== null) { clearTimeout(this.hideTimer); this.hideTimer = null; }
-    if (this.closeBtn) this.closeBtn.hidden = hideAfterMs !== undefined;
+    if (this.closeBtn) this.closeBtn.hidden = hideAfterMs !== undefined || fixed;
     if (hideAfterMs !== undefined) {
       this.hideTimer = setTimeout(() => {
         this.hideTimer = null;

@@ -86,3 +86,23 @@ export function readSavedPanelSwitches(game: Game): Record<string, boolean> | un
     return undefined;
   }
 }
+
+function virtualDisplaySlot(game: Game): string {
+  return optionKeySlot(game).replace(':keys:', ':vdisp:');
+}
+
+export function saveVirtualDisplay(game: Game, on: boolean): void {
+  try {
+    localStorage.setItem(virtualDisplaySlot(game), on ? 'on' : 'off');
+  } catch {
+  }
+}
+
+export function readSavedVirtualDisplay(game: Game): boolean | undefined {
+  try {
+    const v = localStorage.getItem(virtualDisplaySlot(game));
+    return v === 'on' ? true : v === 'off' ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}

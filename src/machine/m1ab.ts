@@ -55,7 +55,7 @@ export function m1abRomImage(chunks: readonly Uint8Array[]): { image: Uint8Array
   return placeRomFlat(chunks, { min: ROM_SIZE, max: ROM_SIZE * 2, reverse: true });
 }
 
-const LATCH_NMIEN = 2, LATCH_LAMP = 4, LATCH_SRSEL = 6;
+const LATCH_NMIEN = 2, LATCH_LAMP = 4, LATCH_WDOG = 5, LATCH_SRSEL = 6;
 
 export interface M1abInputs {
   readonly switches: Uint8Array;
@@ -101,17 +101,23 @@ export class M1ab implements Bus, Machine {
   static readonly PB_LAMPS = 0x100;
   private pbOut = 0;
 
-  private ayDataWrite(v: number): void {
+  private paOut = 0;
+
+  private ayDataWrite(v: number): number {
     const r = this.ay.selectedAddress;
-    const r7 = this.ay.regs[7], r15 = this.ay.regs[15];
-    let change = 0;
-    if (r === 7 && (~r7 & v & 0x80)) { change = r15 ^ this.pbOut; this.pbOut = r15; }
+    const r7 = this.ay.regs[7], r14 = this.ay.regs[14], r15 = this.ay.regs[15];
+    let change = 0, changeA = 0;
+    if (r === 7) {
+      if (~r7 & v & 0x40) { changeA = r14 ^ this.paOut; this.paOut = r14; }
+      if (~r7 & v & 0x80) { change = r15 ^ this.pbOut; this.pbOut = r15; }
+    } else if (r === 14 && (r7 & 0x40)) { changeA = (v ^ r14) & 0xff; this.paOut = v & 0xff; }
     else if (r === 15 && (r7 & 0x80)) { change = (v ^ r15) & 0xff; this.pbOut = v & 0xff; }
     this.ay.write(v);
     if (change & 0x3f) {
       this.pbLamps.write(this.pbOut & 0x7f);
       this.lamps.set(this.pbLamps.shown, M1ab.PB_LAMPS);
     }
+    return changeA;
   }
 
   private readonly latchLamp = new SwitchedLamps(1);
@@ -172,7 +178,6 @@ export class M1ab implements Bus, Machine {
     ];
   }
   meters = 0;
-  fittedMeters = 0x3f;
   lockouts = 0;
 
   get lockoutWiring(): CoinLockoutWiring {
@@ -279,6 +284,23 @@ export class M1ab implements Bus, Machine {
     return n;
   }
 
+  private get triacMask(): number {
+    return this.latch[LATCH_NMIEN] ? 0xff : 0;
+  }
+
+  private piaBOut = 0;
+  private piaBDdr = 0;
+
+  private piaPortBWrite(): void {
+    const out = this.pia.outB(), ddr = this.pia.ddrB();
+    let change = 0;
+    if (out !== this.piaBOut) change = (out ^ this.piaBOut) & ddr;
+    else if (ddr !== this.piaBDdr) change = (ddr ^ this.piaBDdr) & ~out & 0xff;
+    this.piaBOut = out;
+    this.piaBDdr = ddr;
+    if (change & 0x3f) this.driveTriacs(out & this.triacMask);
+  }
+
   private driveTriacs(v: number): void {
     const rising = v & ~this.triacs & 0x3f;
     this.triacs = v & 0xff;
@@ -341,7 +363,7 @@ export class M1ab implements Bus, Machine {
         this.vfd.data((v & 0x10) !== 0);
         this.vfd.sclk((v & 0x20) === 0);
       },
-      writeB: (v) => { this.driveTriacs(v); },
+      writeB: () => { this.piaPortBWrite(); },
     });
     this.kbd = new I8279({ rowRead: (row) => this.sensorRow(row) ^ 0xff }, true);
     this.kbd2 = new I8279({}, false);
@@ -508,12 +530,12 @@ export class M1ab implements Bus, Machine {
       case 0x2010: this.driveReels(2, v); return;
       case 0x2020: this.driveReels(4, v); return;
       case 0x2090: {
-        this.ayDataWrite(v);
-        const pa = this.ay.regs[14];
-        if (pa !== this.meters) {
+        const changeA = this.ayDataWrite(v);
+        if (changeA) {
+          const pa = this.paOut;
           const meterMask = this.hopperFitted() ? 0x3b : 0x7f;
           this.meterBank.write(pa & meterMask);
-          if (this.hopperFitted()) {
+          if (this.hopperFitted() && (changeA & 0x40)) {
             this.hopper.motorDrive((pa & 0x40) !== 0);
           }
           this.meters = pa;
@@ -561,8 +583,17 @@ export class M1ab implements Bus, Machine {
     }
     this.latch[bit] = state;
     if (bit === LATCH_SRSEL) this.bank = state;
-    if (bit === LATCH_NMIEN) this.updateNmi();
+    if (bit === LATCH_NMIEN) {
+      this.updateNmi();
+      const orb = this.pia.outB();
+      if (state && (orb & 0x3f)) this.driveTriacs(orb & 0x3f);
+    }
+    if (bit === LATCH_WDOG && !state) this.watchdog = M1ab.WATCHDOG;
   }
+
+  static readonly WATCHDOG = 50000;
+  private watchdog = 0;
+  watchdogTrips = 0;
 
   private updateNmi(): void {
     this.cpu.setNMI(this.powerFail && this.latch[LATCH_NMIEN] !== 0);
@@ -575,7 +606,7 @@ export class M1ab implements Bus, Machine {
   }
 
   private meterStatus(): number {
-    return this.fittedMeters & ~this.meters & 0xff;
+    return ~this.paOut & 0xff;
   }
 
   private updateOptics(): void {
@@ -1084,6 +1115,10 @@ export class M1ab implements Bus, Machine {
     this.mainsCycles = 0;
     this.duartFrac = 0;
     this.triacs = 0;
+    this.piaBOut = 0;
+    this.piaBDdr = 0;
+    this.paOut = 0;
+    this.watchdog = 0;
     this.vfd.reset();
     this.duart.reset();
     this.dot?.reset();
@@ -1106,6 +1141,12 @@ export class M1ab implements Bus, Machine {
 
   step(): number {
     const cycles = this.cpu.step();
+
+    if (this.watchdog > 0 && (this.watchdog -= cycles) <= 0) {
+      this.watchdogTrips++;
+      this.reset();
+      return cycles;
+    }
 
     const confirmed = this.meterBank.advance(1, METER_TICK_INSTRUCTIONS);
     if (confirmed) for (let i = 0; i < 8; i++) if (confirmed & (1 << i)) this.meterConfirmed(i);

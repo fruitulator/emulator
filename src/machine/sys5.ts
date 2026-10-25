@@ -835,6 +835,7 @@ export class Sys5 implements Bus16, Machine {
       const o = a - RAM_BASE;
       return (this.ram[o] << 8) | this.ram[o + 1];
     }
+    if (a >= 0x04c100 && a < 0x04c106) { this.noteIo(a, false); return 0; }
     return this.ioRead(a);
   }
 
@@ -900,7 +901,8 @@ export class Sys5 implements Bus16, Machine {
         default: return 0xffff;
       }
     }
-    if (a >= 0x04c100 && a <= 0x04c105) return 0x14 | (this.upd.busy() ? 1 : 0);
+    if (a === 0x04c100) return 0x14 | (this.upd.busy() ? 1 : 0);
+    if (a === 0x04c102 || a === 0x04c104) return 0;
     if (a === 0x044000 || a === 0x044002) return 0;
     this.strays.hit(a);
     return 0;
@@ -972,8 +974,10 @@ export class Sys5 implements Bus16, Machine {
       return;
     }
     if (a === 0x04c104) {
-      this.upd.setResetLine((v & 0x04) === 0 ? false : true);
-      this.upd.setRomBank((v >> 1) & 1);
+      if (mask & 0x00ff) {
+        this.upd.setRomBank((lo >> 1) & 3);
+        if (lo === 0) { this.upd.setResetLine(false); this.upd.setResetLine(true); }
+      }
       return;
     }
     if (a === 0x04c106 || a === 0x044000) return;

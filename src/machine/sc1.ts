@@ -181,8 +181,10 @@ export class Sc1 implements Bus, Machine {
   private firqArmed = false;
   private irqStatus = 0;
 
-  private static readonly WATCHDOG_CYCLES = Math.floor(CPU_CLOCK * 0.1);
-  private watchdogCycles = 0;
+  private static readonly WATCHDOG_RELOAD = 500;
+  private static readonly WATCHDOG_DIVIDE = 1000;
+  private watchdogCount = 0;
+  private stepCount = 0;
   watchdogResets = 0;
 
   readonly ay = new Ay8910(MASTER_CLOCK / 4, 'ay8910', UPD7759_RATE);
@@ -740,6 +742,7 @@ export class Sc1 implements Bus, Machine {
       this.dmResetPending = true;
       this.dmLines = 0;
     }
+    this.watchdogCount = 0;
     this.warmReset();
   }
 
@@ -768,7 +771,7 @@ export class Sc1 implements Bus, Machine {
     this.irqArmed = false;
     this.firqArmed = false;
     this.irqStatus = 0;
-    this.watchdogCycles = 0;
+    this.stepCount = 0;
     this.meterLatch = 0;
     this.meterBank.reset();
     this.triacLatch = 0;
@@ -815,7 +818,7 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a >= 0x8000) {
-      this.watchdogCycles = 0;
+      this.watchdogCount = Sc1.WATCHDOG_RELOAD;
       this.irqStatus &= 0xfe;
     }
   }
@@ -1062,9 +1065,8 @@ export class Sc1 implements Bus, Machine {
       this.irqArmed = true;
     }
 
-    this.watchdogCycles += cycles;
-    if (this.watchdogCycles >= Sc1.WATCHDOG_CYCLES) {
-      this.watchdogCycles = 0;
+    if (++this.stepCount % Sc1.WATCHDOG_DIVIDE === 0 && this.watchdogCount > 0
+        && --this.watchdogCount === 0) {
       this.watchdogResets++;
       this.warmReset();
       return cycles;

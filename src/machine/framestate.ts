@@ -332,7 +332,8 @@ export function frameLayoutFor(
     || system === 'IGTS2000'
     || system === 'MACH2000E'
     ? rawDots(m)?.length ?? 0 : 0;
-  const lcdBytes = system === 'PROCONN' ? 80
+  const lcdBytes = system === 'PROCONN'
+    ? (m as unknown as { panelBytes?: () => Uint8Array }).panelBytes?.().length ?? 80
     : system === 'EPOCH' ? 32 + 0x400
       : system === 'M1AB' && (m as unknown as { dot?: unknown }).dot ? 248 : 0;
   const ledBoard = (m as unknown as { ledBoard?: { colours: Uint32Array } }).ledBoard;
@@ -476,8 +477,8 @@ export function captureFrame(
     off += layout.dotBytes;
   }
   if (layout.lcdBytes) {
-    const src = (m as unknown as { lcd?: { cells: Uint8Array } }).lcd?.cells
-      ?? (m as unknown as { panelBytes?: () => Uint8Array }).panelBytes?.();
+    const src = (m as unknown as { panelBytes?: () => Uint8Array }).panelBytes?.()
+      ?? (m as unknown as { lcd?: { cells: Uint8Array } }).lcd?.cells;
     if (src) bytes.set(src.subarray(0, layout.lcdBytes), off);
     off += layout.lcdBytes;
   }
@@ -783,6 +784,15 @@ export class FrameView {
     const vOff = layout.byteLength - layout.videoBytes;
     this.videoSerial = layout.videoBytes ? dv.getUint32(vOff, true) : 0;
     this.videoRaw = new Uint8Array(buf, layout.videoBytes ? vOff + 4 : vOff, Math.max(0, layout.videoBytes - 4));
+  }
+
+  graphicLcd(): { width: number; height: number; bits: Uint8Array } | null {
+    const p = this.lcdRaw;
+    if (this.layout.system !== 'PROCONN' || p.length <= 84 || !(p[80] & 1)) return null;
+    const stride = p[81];
+    const height = p[82];
+    if (!stride || !height || 84 + stride * height > p.length) return null;
+    return { width: stride * 8, height, bits: p.subarray(84, 84 + stride * height) };
   }
 
   deviceText(): string {

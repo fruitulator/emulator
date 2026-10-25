@@ -8,6 +8,7 @@ export interface PtmHooks {
 const CR_CLOCK_INTERNAL = 0x02;
 const CR_DUAL_8BIT = 0x04;
 const CR_MODE = 0x38;
+const CR_NO_LATCH_INIT = 0x10;
 const CR_IRQ_ENABLE = 0x40;
 const CR_OUTPUT_ENABLE = 0x80;
 
@@ -195,8 +196,10 @@ export class Ptm6840 {
         const n = ((offset & 7) - 2) >> 1;
         if (offset & 1) {
           this.latch[n] = ((this.msbBuffer << 8) | val) & 0xffff;
-          this.counter[n] = this.reloadValue(n);
-          this.running[n] = !this.inReset();
+          if (!(this.cr[n] & CR_NO_LATCH_INIT)) {
+            this.counter[n] = this.reloadValue(n);
+            this.running[n] = !this.inReset();
+          }
           this.clearFlag(n);
         } else {
           this.msbBuffer = val;

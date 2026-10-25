@@ -1,0 +1,150 @@
+{
+  "format": "fruitulator-bookkeeping-audit",
+  "generated": "2026-10-16",
+  "boards": {
+    "ACEVIDEO": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "ADDER5": {
+      "verdict": "books-in-only",
+      "why": "shares another board's money code; money out never seen to move on this board"
+    },
+    "ASTRASYSA1": {
+      "verdict": "books",
+      "why": ""
+    },
+    "BLACKBOX": {
+      "verdict": "books",
+      "why": ""
+    },
+    "ELECTRO": {
+      "verdict": "books",
+      "why": ""
+    },
+    "ELECTROCOIN": {
+      "verdict": "books",
+      "why": ""
+    },
+    "EPOCH": {
+      "verdict": "books-in-only",
+      "why": "money out has not been seen to move since its code last changed"
+    },
+    "IGTS2000": {
+      "verdict": "books-in-only",
+      "why": "money out is not priced from the machine's own settings"
+    },
+    "IMPACT": {
+      "verdict": "books",
+      "why": ""
+    },
+    "M1AB": {
+      "verdict": "books",
+      "why": ""
+    },
+    "M1VIDEO": {
+      "verdict": "cannot-book",
+      "why": "no coin was booked as money in on this board"
+    },
+    "MACH2000E": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "MMM": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "MPS2": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "MPU2": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "MPU3": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "MPU4": {
+      "verdict": "books-in-only",
+      "why": "money out has not been seen to move since its code last changed"
+    },
+    "MPU4PLASMA": {
+      "verdict": "books-in-only",
+      "why": "shares another board's money code; money out never seen to move on this board"
+    },
+    "MPU4VIDEO": {
+      "verdict": "books-in-only",
+      "why": "shares another board's money code; money out never seen to move on this board"
+    },
+    "MPU5": {
+      "verdict": "books",
+      "why": ""
+    },
+    "PCLMAXI": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "PHOENIX": {
+      "verdict": "books",
+      "why": ""
+    },
+    "PHOENIX2": {
+      "verdict": "books",
+      "why": ""
+    },
+    "PLUTO5": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "PROCONN": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SCORPION1": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SCORPION2": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "SCORPION4": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SCORPION5": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SPACE": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SRU": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SYS1": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SYS5": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SYS83": {
+      "verdict": "books-in-only",
+      "why": "money out has never been seen to move on this board"
+    },
+    "SYS85": {
+      "verdict": "books",
+      "why": ""
+    },
+    "SYSTEM80": {
+      "verdict": "books",
+      "why": ""
+    }
+  }
+}

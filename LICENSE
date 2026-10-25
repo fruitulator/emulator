@@ -16,6 +16,13 @@ If you run a modified version of this program for users over a network,
 section 13 of that licence requires you to offer those users its
 complete source code.
 
+The Fruitulator Arcade server (the online service behind the arcade, which
+is not in this repository) is a separate program and is not covered by
+this licence or by any other. It is proprietary, all rights reserved;
+copying, reusing, decompiling and reverse-engineering it are strictly
+forbidden. The arcade pages themselves, in arcade/, are part of this
+program and are covered by this licence.
+
 Versions of this program released before 13 October 2026 were published
 under the BSD 3-Clause License, and those copies remain under it.
 

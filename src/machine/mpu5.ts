@@ -53,6 +53,7 @@ const DAC_SAMPLE = ASIC_WINDOW + 0xe;
 const ROM_SIZE = 0x800000;
 const ROM_MASK = ROM_SIZE - 1;
 const RAM_SIZE = 0x10000;
+const RAM_SIZE_128K = 0x20000;
 
 export const MPU5_REEL_POWER_UP = oursFromMfme(MODEL_RELATIONS.MPU5, V20_REEL_POWER_UP_POS, 96);
 
@@ -100,6 +101,20 @@ export class Mpu5 implements Bus16, Machine {
   readonly rom = new Uint8Array(ROM_SIZE);
   private romTop = 0;
   private ram = new Uint8Array(RAM_SIZE);
+  private ramMask = RAM_SIZE - 1;
+
+  setRamSize128(on: boolean): void {
+    if (this.wasm !== null) throw new Error('setRamSize128() after the WASM core is built');
+    const size = on ? RAM_SIZE_128K : RAM_SIZE;
+    if (size === this.ram.length) return;
+    this.ram = new Uint8Array(size);
+    this.ramMask = size - 1;
+    if (this.nvram) { const n = new Uint8Array(size); n.set(this.nvram.subarray(0, size)); this.nvram = n; this.ram.set(n); }
+  }
+
+  private topRam(off: number): number {
+    return (off & 0xffff) | (this.ramMask & 0x10000);
+  }
   private nvram: Uint8Array | null = null;
 
   private readonly ioLog = new Map<number, IoAccess>();
@@ -125,7 +140,7 @@ export class Mpu5 implements Bus16, Machine {
     });
     this.sim.serial.sclkHz = Mpu5.DUART_X1;
     this.asic = new Mpu5Asic({
-      peekRam: (addr) => this.ram[addr & 0xffff],
+      peekRam: (addr) => this.ram[addr & this.ramMask],
       peekRom: (addr) => this.rom[(addr >>> 0) & ROM_MASK],
       inputPort: () => this.payoutEcho(),
       coinPort: () => this.coinPortF(),
@@ -200,10 +215,11 @@ export class Mpu5 implements Bus16, Machine {
 
   get lampBanks(): Mpu5LampBanks | null { return this.banks; }
 
-  batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
+  batteryRam(): Uint8Array { return this.ram.slice(); }
 
   loadNvram(data: Uint8Array): void {
-    this.nvram = data.slice(0, RAM_SIZE);
+    this.nvram = new Uint8Array(this.ram.length);
+    this.nvram.set(data.subarray(0, this.ram.length));
     this.ram.set(this.nvram);
     this.wasm?.invalidateAllRam();
   }
@@ -330,7 +346,7 @@ export class Mpu5 implements Bus16, Machine {
         return v;
       }
       default:
-        return this.ram[addr & 0xffff];
+        return this.ram[addr & this.ramMask];
     }
   }
 
@@ -378,11 +394,11 @@ export class Mpu5 implements Bus16, Machine {
         this.peripheralWrite(addr, val);
         return;
       default:
-        this.ram[addr & 0xffff] = val & 0xff;
-        if (this.wasm !== null) this.wasm.ramWritten(addr & 0xffff, 1);
+        this.ram[addr & this.ramMask] = val & 0xff;
+        if (this.wasm !== null) this.wasm.ramWritten(addr & this.ramMask, 1);
         {
-          const cmdOff = this.asic.commandAddr & 0xffff;
-          const off = addr & 0xffff;
+          const cmdOff = this.asic.commandAddr & this.ramMask;
+          const off = addr & this.ramMask;
           if (off >= cmdOff && off <= cmdOff + 5) {
             this.asic.noteCommandWrite(off - cmdOff, this.cpu.instructionCycle);
           }
@@ -569,7 +585,7 @@ export class Mpu5 implements Bus16, Machine {
         if ((cs & 3) === 0) {
           if (addr + 1 < this.romTop) return (this.rom[addr] << 8) | this.rom[addr + 1];
         } else if ((cs & 3) !== 1) {
-          const i = addr & 0xffff;
+          const i = addr & this.ramMask;
           return (this.ram[i] << 8) | this.ram[i + 1];
         }
       }
@@ -586,11 +602,11 @@ export class Mpu5 implements Bus16, Machine {
       && !(this.sim.valid && addr - this.sim.base >= 0 && addr - this.sim.base < 0x1000)) {
       const cs = this.sim.csLookup(addr);
       if (cs >= 0 && !(cs & CS_WP) && (cs & 3) !== 0 && (cs & 3) !== 1) {
-        const i = addr & 0xffff;
+        const i = addr & this.ramMask;
         this.ram[i] = (val >> 8) & 0xff;
         this.ram[i + 1] = val & 0xff;
         if (this.wasm !== null) this.wasm.ramWritten(i, 2);
-        const cmdOff = this.asic.commandAddr & 0xffff;
+        const cmdOff = this.asic.commandAddr & this.ramMask;
         const at = this.cpu.instructionCycle;
         if (i >= cmdOff && i <= cmdOff + 5) this.asic.noteCommandWrite(i - cmdOff, at);
         if (i + 1 >= cmdOff && i + 1 <= cmdOff + 5) this.asic.noteCommandWrite(i + 1 - cmdOff, at);
@@ -687,7 +703,7 @@ export class Mpu5 implements Bus16, Machine {
       variant: 'cpu32',
       codeBase: 0,
       romBytes: this.rom.subarray(0, this.romTop),
-      ramSize: RAM_SIZE,
+      ramSize: this.ram.length,
       cartSize: 0,
       onTrapPre: () => this.wasmTrapPre(),
       onTrapPost: (write) => this.wasmTrapPost(write),
@@ -729,9 +745,9 @@ export class Mpu5 implements Bus16, Machine {
     if (overlapsSim(0, romTop - 1)) romTop = 0;
     let ramBase = 0, ramSize = 0, ramW = 1, ramB = 1;
     let cs2Lo = 0, cs2Size = 0, cs2W = 1, cs2B = 1, cs2Wp = false;
-    if (!global && c3.on && (c3.lo & 0xffff) === 0) {
+    if (!global && c3.on && (c3.lo & this.ramMask) === 0) {
       const lo = c3.lo;
-      let hi = Math.min(c3.hi, lo + 0xffff);
+      let hi = Math.min(c3.hi, lo + this.ramMask);
       if (c1.on && c1.lo >= lo && c1.lo <= hi) hi = c1.lo - 1;
       if (hi >= lo && !overlaps(lo, hi, c0) && !overlapsSim(lo, hi)
         && !(c1.on && c1.lo < lo && c1.hi >= lo)) {
@@ -750,7 +766,7 @@ export class Mpu5 implements Bus16, Machine {
       romTop, cs0Hi, romWordPen: romW, romBytePen: romB, cartBase, cartSize,
       ramBase, ramSize, ramWordPen: ramW, ramBytePen: ramB,
       cs2Lo, cs2Size, cs2WordPen: cs2W, cs2BytePen: cs2B, cs2WriteProtect: cs2Wp,
-      watchLo: ramSize ? ramBase + (this.asic.commandAddr & 0xffff) : 0, watchSize: ramSize ? 6 : 0,
+      watchLo: ramSize ? ramBase + (this.asic.commandAddr & this.ramMask) : 0, watchSize: ramSize ? 6 : 0,
       shadowBase: DAC_PTR, shadowSize, sinkBase: DAC_SAMPLE, sinkSize,
       cs1WordPen: c1.wordPen, cs1BytePen: c1.bytePen,
     });
@@ -976,7 +992,7 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   diagPeek(addr: number): number {
-    if (addr < 0x10000) return this.ram[addr] ?? -1;
+    if (addr < 0x10000) return this.ram[this.topRam(addr)] ?? -1;
     const off = addr - 0x10000000;
     if (off < 0) return -1;
     const slot = off & 0xfff;
@@ -1224,13 +1240,13 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   readRam(off: number): number {
-    return this.ram[off & 0xffff];
+    return this.ram[this.topRam(off)];
   }
 
   statusText(): string {
     let s = '';
     for (let off = 0xff6c; off < 0xfffc; off++) {
-      const b = this.ram[off];
+      const b = this.ram[this.topRam(off)];
       if (b >= 32 && b < 127) s += String.fromCharCode(b);
       else if (s.length && b === 0) break;
     }
@@ -1265,7 +1281,7 @@ export class Mpu5 implements Bus16, Machine {
       { id: 'vreg', label: '12 V REG', part: 'power in' },
 
       { id: 'batt', label: 'BATT MGR' },
-      { id: 'ram', label: 'RAM', part: '2 × 32K · battery', device: this.ram },
+      { id: 'ram', label: 'RAM', part: this.ram.length > RAM_SIZE ? '2 × 64K · battery' : '2 × 32K · battery', device: this.ram },
       { id: 'pal', label: 'PAL' },
       { id: 'asic', label: 'ASIC', part: '$FFFFFE00 · gate array', device: this.asic,
         io: [[ASIC_WINDOW, DAC_PTR], [DAC_PTR_END, DAC_SAMPLE]] },
@@ -1394,9 +1410,10 @@ export class Mpu5 implements Bus16, Machine {
 
   private planePair(base: number, stride: number, i: number): number {
     if (!base) return 0;
-    const p = this.banks!.phase & 0xffff;
+    const p = this.topRam(this.banks!.phase);
     const q = (((this.ram[p] << 8) | this.ram[p + 1]) & 3) * stride * 2;
-    return this.ram[base + q + i] | (this.ram[base + q + stride + i] << 8);
+    const b = this.topRam(base);
+    return this.ram[b + q + i] | (this.ram[b + q + stride + i] << 8);
   }
 
   private spreadMux(out: Uint8Array, first: number, unit: number, col: number, pair: number): void {

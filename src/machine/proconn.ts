@@ -14,6 +14,7 @@ import { Upd7759, UPD7759_RATE } from '../hw/upd7759';
 import { Mixer } from '../hw/mixer';
 import { Hopper, v20Waveform } from '../hw/hopper';
 import { S16lf01 } from '../hw/s16lf01';
+import { T6963c } from '../hw/t6963c';
 import { DataPak } from '../hw/datapak';
 import { COIN_RAW } from './coinraw';
 import type { ReelGeometry } from './layoutreels';
@@ -43,6 +44,10 @@ const COIN_HOLD = Math.round(0.1 * CLOCK);
 const COIN_HOLD_LINE = Math.round(0.07 * CLOCK);
 const COIN_TAIL = Math.round(0.005 * CLOCK);
 const COIN_GAP = Math.round(0.1 * CLOCK);
+
+export const GLCD_WIDTH = 240;
+export const GLCD_HEIGHT = 64;
+export const PROCONN_PANEL_BYTES = 80 + 4 + (GLCD_WIDTH >> 3) * GLCD_HEIGHT;
 const coinReachesRow = (id: number): boolean =>
   id >= 0 && id < COIN_RAW.length && !(id >= 0x1e && id <= 0x20) && !(id >= 0x27 && id <= 0x32);
 
@@ -149,7 +154,7 @@ class ProconnLcd {
 }
 
 export class Proconn implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'card', 'sampleBankBlock', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'tokenOutAt'];
+  static readonly snapshotConfig: readonly string[] = ['panel', 'panelBitmap', 'switches', 'card', 'sampleBankBlock', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'tokenOutAt'];
 
   readonly digitKind: DigitKind = 'proconn';
   readonly clockHz = CLOCK;
@@ -175,6 +180,10 @@ export class Proconn implements Machine {
   private sampleLatch = 0;
   private readonly sampleBankBlock = Int8Array.from([0, -1, -1, -1, -1, -1, -1, -1]);
   readonly vfd = new S16lf01();
+  readonly glcd = new T6963c();
+  private glcdA = 0;
+  private glcdB = 0xff;
+  private glcdCd = 0;
 
   readonly rom = new Uint8Array(ROM_TOP);
   readonly ram = new Uint8Array(RAM_SIZE);
@@ -329,6 +338,10 @@ export class Proconn implements Machine {
     for (const p of this.pio) p.reset();
     this.sio.reset();
     this.lcd.reset();
+    this.glcd.reset();
+    this.glcdA = 0;
+    this.glcdB = 0xff;
+    this.glcdCd = 0;
     this.dataPak.reset();
     this.dataPakOut = [];
     this.dataPakWait = 0;
@@ -351,6 +364,7 @@ export class Proconn implements Machine {
     this.segDigit = -1;
     this.cycles = 0;
     this.coinTimer = 0;
+    this.coinNext = 0;
     this.coinMask = 0;
     this.coinBook.reset();
     this.judgeId.fill(-1);
@@ -436,10 +450,35 @@ export class Proconn implements Machine {
       case 5: this.sampleWrite(v); return;
       case 6:
         if (this.displayType === 0) this.vfd.por((port >> 10) & 1);
+        this.glcdWrite((port >> 8) & 3, v);
         return;
       default: return;
     }
   }
+
+  private glcdWrite(reg: number, v: number): void {
+    if (reg === 0) { this.glcdA = v; return; }
+    if (reg !== 2) return;
+    const was = this.glcdB;
+    this.glcdB = v;
+    if ((was & 1) && !(v & 1)) this.glcdCd = (v >> 3) & 1;
+    if (!(was & 1) && (v & 1) && !(v & 4)) this.glcd.write(this.glcdCd, this.glcdA);
+  }
+
+  panelBytes(): Uint8Array {
+    const b = this.panel;
+    b.set(this.lcd.cells, 0);
+    const on = this.glcd.on;
+    b[80] = on ? 1 : 0;
+    b[81] = GLCD_WIDTH >> 3;
+    b[82] = GLCD_HEIGHT;
+    b[83] = 0;
+    if (on) this.glcd.render(this.panelBitmap, GLCD_WIDTH, GLCD_HEIGHT >> 3, 8);
+    else this.panelBitmap.fill(0);
+    return b;
+  }
+  private readonly panel = new Uint8Array(PROCONN_PANEL_BYTES);
+  private readonly panelBitmap = this.panel.subarray(84);
 
   private pioIndex(sel: number): number {
     switch (sel) {
@@ -679,7 +718,14 @@ export class Proconn implements Machine {
         this.matrix[this.coinRow] &= ~this.coinMask;
         this.coinMask = 0;
       }
-      if (this.coinTimer < 0) this.coinTimer = 0;
+      if (this.coinTimer <= 0) {
+        this.coinTimer = 0;
+        if (this.coinNext) {
+          const code = this.coinNext & 0xfff;
+          this.coinNext >>>= 12;
+          this.pressCoin(code);
+        }
+      }
     }
     return c;
   }
@@ -783,11 +829,18 @@ export class Proconn implements Machine {
   }
 
   insertCoin(id: number): void {
-    if (this.coinTimer > 0) return;
+    if (this.coinTimer > 0 || this.coinNext) return;
     let raw: number;
     if (id >= 0x100 && id < 0x180) raw = id;
     else if (coinReachesRow(id)) raw = COIN_RAW[id];
     else return;
+    this.coinNext = raw >>> 12;
+    if (!this.pressCoin(raw & 0xfff)) { this.coinNext = 0; return; }
+    if (this.coinCode()) this.pend(id);
+    else this.bookDropped(id);
+  }
+
+  private pressCoin(raw: number): boolean {
     if (raw & 0x100) {
       this.coinRow = (raw & 0x78) >> 3;
       this.coinMask = 1 << (raw & 7);
@@ -797,10 +850,9 @@ export class Proconn implements Machine {
       this.coinMask = raw & 0xff;
       this.coinTimer = COIN_HOLD + COIN_TAIL + COIN_GAP;
     }
-    if (this.coinRow >= this.matrix.length || !this.coinMask) { this.coinTimer = 0; return; }
+    if (this.coinRow >= this.matrix.length || !this.coinMask) { this.coinTimer = 0; return false; }
     this.matrix[this.coinRow] |= this.coinMask;
-    if (this.coinCode()) this.pend(id);
-    else this.bookDropped(id);
+    return true;
   }
 
   private bookDropped(id: number): void {
@@ -813,9 +865,10 @@ export class Proconn implements Machine {
     this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
   }
   private coinTimer = 0;
+  private coinNext = 0;
   private coinRow = COIN_ROW;
   private coinMask = 0;
-  get coinBusy(): boolean { return this.coinTimer > 0; }
+  get coinBusy(): boolean { return this.coinTimer > 0 || this.coinNext !== 0; }
 
   private coinCodeCache: ProconnCoinCode | Refusal | null = null;
   private coinCodeFound(): ProconnCoinCode | Refusal {

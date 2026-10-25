@@ -232,7 +232,7 @@ export class Quart {
     const c = this.ch[ch];
     if (!c.rxOn) return;
     const blk = ch >> 1;
-    this.isr[blk] |= ch & 1 ? 0x20 : 0x02;
+    this.isr[blk] |= ch === 0 ? 0x02 : 0x20;
     c.sr |= 1;
     if (c.fifo.length < 3) c.fifo.push(v & 0xff);
     else c.sr |= 2;

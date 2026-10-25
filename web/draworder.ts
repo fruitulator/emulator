@@ -23,13 +23,14 @@ export type DrawItem<A> =
   | { kind: 'prism'; z: number; prism: PrismLamp<A> }
   | { kind: 'panel'; z: number; which: PanelKind; panel: Rect }
   | { kind: 'bfmLed'; z: number; panel: NonNullable<Cabinet<A>['bfmLeds']>[number] }
+  | { kind: 'dotLcd'; z: number; panel: NonNullable<Cabinet<A>['dotLcds']>[number] }
   | { kind: 'video'; z: number; screen: VideoScreen };
 
 export const PASS = {
   reel: 2000, band: 2100, flip: 2200, bonus: 2250, frame: 2300, feature: 2400, reelLight: 2500,
   vfd: 2700, lamp: 3000, seg: 4000, rgbLed: 4100, prism: 4200,
   dotMatrix: 4300, proconnMatrix: 4310, epochDotAlpha: 4320, maygayMatrix: 4330,
-  epochMatrix: 4340, plasmaPanel: 4350, astraLed: 4355, bfmColourLed: 4357, igtVfd: 4358, bfmLed: 4360, video: 4370,
+  epochMatrix: 4340, plasmaPanel: 4350, astraLed: 4355, bfmColourLed: 4357, igtVfd: 4358, bfmLed: 4360, dotLcd: 4365, video: 4370,
 } as const;
 
 export function zOf(index: number, slot: 0 | 1 | 2 = 0): number {
@@ -64,6 +65,7 @@ export function drawOrder<A>(cab: Cabinet<A>): DrawItem<A>[] {
   ];
   for (const [which, panel] of panels) if (panel) items.push({ kind: 'panel', z: at(panel, PASS[which]), which, panel });
   for (const panel of cab.bfmLeds ?? []) items.push({ kind: 'bfmLed', z: at(panel, PASS.bfmLed), panel });
+  for (const panel of cab.dotLcds ?? []) items.push({ kind: 'dotLcd', z: at(panel, PASS.dotLcd), panel });
   if (cab.videoScreen) items.push({ kind: 'video', z: at(cab.videoScreen, PASS.video), screen: cab.videoScreen });
   const order = items.map((it, i) => ({ it, i }))
     .sort((a, b) => a.it.z - b.it.z || a.i - b.i)

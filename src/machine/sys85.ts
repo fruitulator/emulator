@@ -113,7 +113,7 @@ export class Sys85 implements Bus, Machine {
     this.cpu.setIRQ(this.timerFlag || this.aciaAssertingIrq());
   }
 
-  private static readonly WATCHDOG_CYCLES = Math.floor(CPU_CLOCK * 0.1);
+  private static readonly WATCHDOG_RELOAD = 10_000;
   private watchdogCycles = 0;
   watchdogResets = 0;
 
@@ -663,7 +663,7 @@ export class Sys85 implements Bus, Machine {
       return;
     }
     if (a >= 0x8000) {
-      this.watchdogCycles = 0;
+      this.watchdogCycles = Sys85.WATCHDOG_RELOAD;
       if (this.timerFlag) {
         this.timerFlag = false;
         this.updateIrq();
@@ -827,12 +827,14 @@ export class Sys85 implements Bus, Machine {
       this.updateIrq();
     }
 
-    this.watchdogCycles += cycles;
-    if (this.watchdogCycles >= Sys85.WATCHDOG_CYCLES) {
-      this.watchdogCycles = 0;
-      this.watchdogResets++;
-      this.warmReset();
-      return cycles;
+    if (this.watchdogCycles > 0) {
+      this.watchdogCycles -= cycles;
+      if (this.watchdogCycles < 1) {
+        this.watchdogCycles = 0;
+        this.watchdogResets++;
+        this.warmReset();
+        return cycles;
+      }
     }
 
     this.ay.tick(cycles, CPU_CLOCK);

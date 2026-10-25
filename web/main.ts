@@ -96,8 +96,8 @@ import { bandsLayout, createReelBands } from './play/bands';
 import { chordCaps, primaryModifier } from './shortcuts';
 import { capsAreSwitches } from './cappulse';
 import {
-  decodeState, idleNamedInputs, readSavedOptionKeys, readSavedPanelSwitches, saveOptionKeys,
-  savePanelSwitch, stateRecord,
+  decodeState, idleNamedInputs, readSavedOptionKeys, readSavedPanelSwitches, readSavedVirtualDisplay,
+  saveOptionKeys, savePanelSwitch, saveVirtualDisplay, stateRecord,
 } from './gamestate';
 import { settleSavedState } from './resumeask';
 import { boardStamp } from './boardstamp';
@@ -424,7 +424,7 @@ function startGame(
         showBusy(str('main.starting_the_machine_wasm_cpu'));
       }
       status.textContent = game.name;
-      running = true;
+      machineRunning();
       if (pendingResetNotice) {
         pendingResetNotice = false;
         showToast(str('main.this_update_had_to_reset'), { sticky: true });
@@ -470,6 +470,7 @@ function startGame(
   gateSeenLit.clear();
   painter.resetDisplay();
   setVfdStrip(null);
+  vfdStripGame = readSavedVirtualDisplay(game);
   canvas.width = 800;
   canvas.height = 480;
   cabPromise
@@ -1860,9 +1861,9 @@ function appOptionRows(info: MachineInfo): Node[] {
 
   vfdStripBox = null;
   vfdReverseBox = null;
-  if (cabinet && !cabinet.vfd) {
+  if (cabinet && (!cabinet.vfd || vfdStripLcd)) {
     const { row: vdRow, box: vdBox } = checkRow(str('main.virtual_display'), setVfdStripOn);
-    vdBox.checked = vfdStripOn;
+    vdBox.checked = vfdStripShown();
     vfdStripBox = vdBox;
     rows.push(vdRow);
     const { row: rvRow, box: rvBox } = checkRow(str('main.reverse_virtual_display'), (on) => setVfdReverse(on));
@@ -2947,6 +2948,13 @@ function standDown(
   audio.machinePaused();
 }
 
+function machineRunning(): void {
+  running = true;
+  if (!stoodDown) return;
+  emu.pause();
+  audio.machinePaused();
+}
+
 function standTo(): void {
   stoodDown = false;
   if (running) emu.resume();
@@ -3036,7 +3044,7 @@ function loadSnapshotFile(file: File): void {
           if (booted !== session.boot) return;
           audio.attach(info.audioRate, info.audioLevel);
           bridgeAudio();
-          running = true;
+          machineRunning();
           status.textContent = str('main.n_snapshot_restored', { 0: snap.game });
         })
         .catch((e: Error) => showError(str('main.snapshot_load_failed_n', { 0: e.message })));
@@ -3326,7 +3334,11 @@ pointerHost.addEventListener('pointerleave', () => magnifier.hide());
 let vfdStrip: HTMLElement | null = null;
 let vfdStripCanvas: HTMLCanvasElement | null = null;
 let vfdStripKey = '';
-let vfdStripLatest: { text: string; cells: (readonly number[])[]; duty: number } | null = null;
+let vfdStripLatest: {
+  text: string; cells: (readonly number[])[]; duty: number;
+  lcd: { width: number; height: number; bits: Uint8Array } | null;
+} | null = null;
+let vfdStripFlip: HTMLButtonElement | null = null;
 let vfdStripSeen = false;
 let vfdStripBox: HTMLInputElement | null = null;
 
@@ -3352,13 +3364,17 @@ let vfdStripOn = (() => {
   }
 })();
 
+let vfdStripGame: boolean | undefined;
+let vfdStripLcd = false;
+
+function vfdStripShown(): boolean {
+  return vfdStripGame ?? (vfdStripLcd || vfdStripOn);
+}
+
 function setVfdStripOn(on: boolean): void {
-  vfdStripOn = on;
+  vfdStripGame = on;
   if (vfdStripBox) vfdStripBox.checked = on;
-  try {
-    localStorage.setItem(VFD_STRIP_STORE, on ? 'on' : 'off');
-  } catch {
-  }
+  if (session.game) saveVirtualDisplay(session.game, on);
   renderVfdStrip();
 }
 
@@ -3366,38 +3382,79 @@ function setVfdStrip(m: FrameView | null): void {
   if (!m) {
     vfdStripLatest = null;
     vfdStripSeen = false;
+    vfdStripLcd = false;
   } else {
     const text = painter.displayText(m);
     const cells: (readonly number[])[] = [];
     for (let cell = 0; cell < 16; cell++) cells.push(painter.cellColumns(m, text, cell));
-    if (!vfdStripSeen) vfdStripSeen = cells.some((cols) => cols.some((c) => c !== 0));
-    vfdStripLatest = { text, cells, duty: m.display?.duty ?? 31 };
+    const g = m.graphicLcd();
+    const lcd = g ? { width: g.width, height: g.height, bits: g.bits.slice() } : null;
+    if (!vfdStripSeen) vfdStripSeen = !!lcd || cells.some((cols) => cols.some((c) => c !== 0));
+    if (lcd) vfdStripLcd = true;
+    vfdStripLatest = { text, cells, duty: m.display?.duty ?? 31, lcd };
   }
   renderVfdStrip();
 }
 
 function renderVfdStrip(): void {
   const d = vfdStripLatest;
-  if (!vfdStripOn || !vfdStripSeen || !d) {
+  if (!vfdStripShown() || !vfdStripSeen || !d) {
     if (vfdStrip) vfdStrip.hidden = true;
     return;
   }
   const panel = vfdStrip ?? createVfdStrip();
   const appearing = panel.hidden;
   panel.hidden = false;
-  const pitch = vfdStripPitch();
   const dpr = window.devicePixelRatio || 1;
-  const key = `${pitch}:${dpr}:${d.duty}:${d.cells.map((c) => c.join('.')).join(',')}`;
-  if (key !== vfdStripKey) {
-    vfdStripKey = key;
-    drawVfdStripDots(d.cells, d.duty, pitch, dpr);
-    vfdStripCanvas?.setAttribute('aria-label', d.text.trimEnd());
+  if (vfdStripFlip) vfdStripFlip.hidden = !!d.lcd;
+  if (d.lcd) {
+    const pitch = LCD_STRIP_PITCH;
+    let h = 0;
+    for (let i = 0; i < d.lcd.bits.length; i++) h = (Math.imul(h, 31) + d.lcd.bits[i]) | 0;
+    const key = `lcd:${pitch}:${dpr}:${d.lcd.width}x${d.lcd.height}:${h}`;
+    if (key !== vfdStripKey) {
+      vfdStripKey = key;
+      drawLcdStrip(d.lcd, pitch, dpr);
+      vfdStripCanvas?.setAttribute('aria-label', str('main.graphic_lcd'));
+    }
+  } else {
+    const pitch = vfdStripPitch();
+    const key = `${pitch}:${dpr}:${d.duty}:${d.cells.map((c) => c.join('.')).join(',')}`;
+    if (key !== vfdStripKey) {
+      vfdStripKey = key;
+      drawVfdStripDots(d.cells, d.duty, pitch, dpr);
+      vfdStripCanvas?.setAttribute('aria-label', d.text.trimEnd());
+    }
   }
   if (appearing) placeVfdStrip();
 }
 
 function vfdStripPitch(): number {
   return Math.max(2, Math.min(4, Math.floor((window.innerWidth - 90) / 95)));
+}
+
+const LCD_STRIP_PITCH = 1;
+
+function drawLcdStrip(lcd: { width: number; height: number; bits: Uint8Array }, pitch: number, dpr: number): void {
+  const cv = vfdStripCanvas;
+  const g = cv?.getContext('2d');
+  if (!cv || !g) return;
+  const w = lcd.width * pitch;
+  const h = lcd.height * pitch;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  cv.style.width = `${w}px`;
+  cv.style.height = `${h}px`;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = 'rgb(128,142,120)';
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = 'rgb(44,50,70)';
+  const stride = lcd.width >> 3;
+  for (let y = 0; y < lcd.height; y++) {
+    for (let x = 0; x < lcd.width; x++) {
+      if (lcd.bits[y * stride + (x >> 3)] & (0x80 >> (x & 7))) g.fillRect(x * pitch, y * pitch, pitch, pitch);
+    }
+  }
 }
 
 function drawVfdStripDots(
@@ -3480,6 +3537,7 @@ function createVfdStrip(): HTMLElement {
   flip.addEventListener('pointerdown', (ev) => ev.stopPropagation());
   flip.addEventListener('click', () => setVfdReverse(!painter.vfdReversed));
   panel.append(cv, flip, close);
+  vfdStripFlip = flip;
 
   let grab: { dx: number; dy: number } | null = null;
   panel.addEventListener('pointerdown', (ev) => {

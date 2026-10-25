@@ -20,6 +20,12 @@ npm run dev      # a local server with live reload
 npm run build    # a production build in dist/
 ```
 
+## Contributing
+
+Pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first:
+contributors sign a short [Contributor Licence Agreement](CLA.md), and no
+pull request may include or name any game, ROM or layout.
+
 ## Licence
 
 GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later);

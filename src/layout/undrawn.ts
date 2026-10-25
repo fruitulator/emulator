@@ -5,6 +5,8 @@ export const UNDRAWN_TYPES: ReadonlyMap<number, string> = new Map([
   [0x1b, 'border'],
   [0x1c, 'digit block'],
   [0x28, 'Maygay video'],
+  [0x2b, 'light source'],
+  [0x2f, 'Coinmaster video'],
 ]);
 
 const LINE_MAX_TYPES = 4;

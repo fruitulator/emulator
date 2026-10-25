@@ -40,7 +40,7 @@ import { picDriverScan, picTypeFromLayout } from '../hw/pic';
 import { deviceFor, Sch2Hopper } from '../hw/cctalk';
 import { Sc5, adder5ScreenSize } from './sc5';
 import { Mps2 } from './mps2';
-import { Sys80 } from './sys80';
+import { Sys80, PortType as Sys80PortType } from './sys80';
 import { Sru, SRU_TONE_POT_DEFAULT, SRU_COIN_ROW, sruCoinsFromCabinet, sruFittedCoinLines, sruUnmarkedCoinLines } from './sru';
 import { BlackBox } from './blackbox';
 import { Mpu3, Mpu3DisplayPort } from './mpu3';
@@ -77,7 +77,7 @@ import {
   decodedLayout, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
   dipSwitchLabelsFrom,
   triacSlidePence, readSwitchNumber, readWidthHeight, readOperatorTag, readOperatorSwitch, readNumber, mpu4CharacteriserConfigFrom,
-  mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, layoutSwitchIdsFrom, m1abDongleConfig, type SlideEffect,
+  mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, mpu5Ram128kFrom, layoutSwitchIdsFrom, m1abDongleConfig, sc2DongleConfig, spaceDongleConfig, type SlideEffect,
 } from '../layout/fmlconfig';
 import { parseLayout } from '../layout/fmlparse';
 import { recordOperatorPreset } from './statedlines';
@@ -708,6 +708,15 @@ const scorpion2: Platform = {
     }
 
     m.setLayoutCoins(declaredCoins(game.layout));
+
+    const sc2Dongle = sc2Layout ? sc2DongleConfig(sc2Layout) : null;
+    if (sc2Dongle?.fitted && m.fitDongle(sc2Dongle.table) === 'none') {
+      noteBoardDefault(m, {
+        axis: 'peripheral',
+        text: 'a dongle is fitted but neither the layout nor the program holds its table - answering from zeros',
+        ifWrong: 'The firmware rejects the dongle and will not run.',
+      });
+    }
 
     const sc2Protocol = Number(game.gam?.settings.get('Protocol') ?? 0);
     if (sc2Protocol) m.fitDataport(sc2Protocol);
@@ -1576,6 +1585,17 @@ const acesp: Platform = {
       const lay = decodedLayout(game.layout);
       const clock = lay ? readNumber(lay, 'SPACE', 'Sample Clock Rate') : null;
       if (clock) m.setSampleClock(clock);
+      const dongle = lay ? spaceDongleConfig(lay) : null;
+      if (dongle?.fitted) {
+        m.fitSerialDongle(dongle.key);
+        if (!dongle.key) {
+          noteBoardDefault(m, {
+            axis: 'peripheral',
+            text: 'a serial dongle is fitted but the layout stores no key for it - sending zeros',
+            ifWrong: 'The firmware rejects the dongle and will not run.',
+          });
+        }
+      }
     }
 
     m.inputs.switches[2] = AceSp.standingChainByte2([]);
@@ -1815,6 +1835,7 @@ const mpu5: Platform = {
   system: 'MPU5',
   build(game) {
     const m = new Mpu5();
+    m.setRamSize128(mpu5Ram128kFrom(game.layout));
     const mpu5Alpha = v20AlphaServe(game.layout, { m10937: [0, 1, 2, 3] });
     m.alphaRoute = !mpu5Alpha || mpu5Alpha.classic ? 'barbus'
       : mpu5Alpha.decoder === '10937' && mpu5Alpha.index === 0 ? 'board'
@@ -2478,6 +2499,15 @@ const sys80: Platform = {
     m.setPortMap(sys80PortMap(game.layout));
     const payload = decodedLayout(game.layout);
     m.setRotary((payload && readNumber(payload, 'SYSTEM80', 'Rotary Switch')) ?? 0);
+    m.setHopperSwitch(payload ? readSwitchNumber(payload, 'SYSTEM80', 'Opto') : null);
+    if (m.portMap.some((e) => e.type === Sys80PortType.HopperEnable)) {
+      noteBoardDefault(m, {
+        axis: 'hopper',
+        text: 'hopper coin value not stated - each coin it pays is counted, not priced',
+        ifWrong: 'Money paid out by the hopper shows as a count of coins rather than in pence.',
+        node: TAILORED_IDS.hopper,
+      });
+    }
     const s80Meters = payload ? meterMoneyMap(payload, 'SYSTEM80') : null;
     noteBoardDefault(m, {
       axis: 'meter',

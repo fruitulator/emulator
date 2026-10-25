@@ -93,8 +93,8 @@ export function v20PiaWrite(p: Pia6821, reg: number, v: number): PiaWrite {
   } else if (reg === 3) {
     r.crbManual = (v & 0x30) === 0x30;
   }
-  r.ca2 = p.ca2() !== ca2;
-  r.cb2 = p.cb2() !== cb2;
+  r.ca2 = reg === 1 && p.ca2() !== ca2;
+  r.cb2 = reg === 3 && p.cb2() !== cb2;
   return r;
 }
 
@@ -551,8 +551,11 @@ export class Mpu3 implements Bus, Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      if (this.booksMoney && this.triacOutPence[i]) this.coinBook.cashOut(this.triacOutPence[i]!);
       const p = this.slidePence[i];
+      if (this.booksMoney && this.triacOutPence[i]) {
+        if (p === 'token') this.coinBook.pay({ token: this.triacOutPence[i]! });
+        else this.coinBook.cashOut(this.triacOutPence[i]!);
+      }
       if (p === null) continue;
       if (typeof p === 'number') this.slideOutPence += p;
       if (this.outPriced || !this.booksMoney) continue;

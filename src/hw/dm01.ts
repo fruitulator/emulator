@@ -2,7 +2,7 @@ import { M6809 } from '../cpu/m6809';
 import type { Bus } from '../cpu/bus';
 
 export const DM01_CLOCK = 2_000_000;
-export const DM01_NMI_HZ = 1500;
+export const DM01_NMI_HZ = DM01_CLOCK / 1000;
 
 export class Dm01 implements Bus {
   readonly cpu = Object.assign(new M6809(this), { illegalAsV20: true });
@@ -16,7 +16,7 @@ export class Dm01 implements Bus {
   private xcounter = 0;
   private readonly scanline = new Uint8Array(9);
 
-  private readonly queue = new Uint8Array(500);
+  private readonly queue = new Uint8Array(10);
   private readPos = 0;
   private writePos = 0;
 

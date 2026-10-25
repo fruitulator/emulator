@@ -109,7 +109,7 @@ export class Mach2000 implements Machine {
     this.now = at ? () => new Date(at.getTime()) : this.hostNow;
   }
   private rtcCmd = 0;
-  private rtcInt = 0;
+  rtcInt = 0;
   private rtcLastSec = -1;
 
   readonly cashLedger: CashLedger = newCashLedger();
@@ -438,9 +438,8 @@ export class Mach2000 implements Machine {
       case 6: return d.getFullYear() % 100;
       case 7: return (d.getDay() + 1 + 5) & 7;
       case 0x10: {
-        let v = this.rtcInt;
-        if (d.getSeconds() !== this.rtcLastSec) { v |= 8; this.rtcLastSec = d.getSeconds(); }
-        return v;
+        if (d.getSeconds() !== this.rtcLastSec) { this.rtcLastSec = d.getSeconds(); return 8; }
+        return 0;
       }
       default: return 0;
     }

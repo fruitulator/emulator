@@ -33,7 +33,7 @@ const METER_TICK_CYCLES = 20 * 600;
 
 const ROM_SIZE = 0x100000;
 const RAM_BASE = 0x400000;
-const RAM_SIZE = 0x4000;
+const RAM_SIZE = 0x10000;
 
 const DUART_BASE = 0x480000;
 const DUART_END = 0x480020;
@@ -334,7 +334,7 @@ export class Impact implements Bus16, Machine {
       { id: 'optos', label: 'REEL OPTOS', part: 'OPTOSEL',
         device: this.reels, io: [[OPTOS_ADDR, OPTOS_ADDR + 1]] },
 
-      { id: 'ram', label: 'BATTERY RAM', part: '16K - U2 U3', device: this.ram },
+      { id: 'ram', label: 'BATTERY RAM', part: '64K - U2 U3', device: this.ram },
       { id: 'rom', label: 'MEMORY CARD', part: 'game EPROMs', device: this.rom },
       { id: 'upd', label: 'SOUND CARD', part: 'uPD7759 - J3', device: this.upd,
         io: [[UPD_BASE, UPD_END]] },
@@ -877,7 +877,8 @@ export class Impact implements Bus16, Machine {
   batteryRam(): Uint8Array { return this.ram.slice(0, RAM_SIZE); }
 
   loadNvram(data: Uint8Array): void {
-    this.nvram = data.slice(0, RAM_SIZE);
+    this.nvram = new Uint8Array(RAM_SIZE);
+    this.nvram.set(data.subarray(0, RAM_SIZE));
     this.ram.set(this.nvram);
   }
 

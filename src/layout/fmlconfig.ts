@@ -610,6 +610,11 @@ export function mpu5Mux5ExtendedFrom(layout: Uint8Array | undefined): boolean {
   return payload ? readSetting(payload, 'MPU5', 'MUX5E') === 'Yes' : false;
 }
 
+export function mpu5Ram128kFrom(layout: Uint8Array | undefined): boolean {
+  const payload = decodedLayout(layout);
+  return payload ? readSetting(payload, 'MPU5', 'RAM Size') === '128K' : false;
+}
+
 export function fittedPeripheralsFrom(
   layout: Uint8Array | undefined,
   system: string,
@@ -681,6 +686,33 @@ export function m1abDongleConfig(payload: Uint8Array): { fitted: boolean; key: n
   if (!value || value.length < 4) return null;
   const array = tags.get(MPU4_CHARACTER_TAG);
   return { fitted: u32(value, 0) !== 0, key: array && array.length >= 1 ? array[0] : null };
+}
+
+export function sc2DongleConfig(payload: Uint8Array): { fitted: boolean; table: Uint8Array | null } | null {
+  const spec = MAPS[normalise('SCORPION2')]?.controls['Dongle Fitted'];
+  const tag = Number(spec?.tag);
+  if (!Number.isFinite(tag)) return null;
+  const tags = fileLevelTags(payload);
+  const value = tags.get(tag);
+  if (!value || value.length < 4) return null;
+  const array = tags.get(MPU4_CHARACTER_TAG);
+  return { fitted: u32(value, 0) !== 0, table: array && array.length >= 16 ? array.slice(0, 16) : null };
+}
+
+export const SPACE_DONGLE_KEY_LENGTH = 22;
+
+export function spaceDongleConfig(payload: Uint8Array): { fitted: boolean; key: Uint8Array | null } | null {
+  const spec = MAPS[normalise('SPACE')]?.controls['Serial Dongle'];
+  const tag = Number(spec?.tag);
+  if (!Number.isFinite(tag)) return null;
+  const tags = fileLevelTags(payload);
+  const value = tags.get(tag);
+  if (!value || value.length < 4) return null;
+  const array = tags.get(MPU4_CHARACTER_TAG);
+  return {
+    fitted: u32(value, 0) !== 0,
+    key: array && array.length >= SPACE_DONGLE_KEY_LENGTH ? array.slice(0, SPACE_DONGLE_KEY_LENGTH) : null,
+  };
 }
 
 export function mpu4CharacteriserConfigFrom(

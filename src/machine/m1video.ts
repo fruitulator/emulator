@@ -159,7 +159,7 @@ export class M1Video implements Bus16, Machine {
       readPort: (p) => this.slavePortRead(p),
       writePort: (p, v) => this.slavePortWrite(p, v),
       serialTx: (v) => this.duart.receive(0, v),
-    }, { ramSize: 256, timer2: true });
+    }, { ramSize: 256, timer2: true, dualDptr: true });
     this.vregInit();
     this.reset();
   }

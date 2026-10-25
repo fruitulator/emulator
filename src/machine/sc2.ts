@@ -9,7 +9,7 @@ import type { SlideEffect } from '../layout/fmlconfig';
 import { M6809 } from '../cpu/m6809';
 import { Bd1 } from '../hw/bd1';
 import { Dm01 } from '../hw/dm01';
-import { Eeprom24c, I2cBitBang } from '../hw/eeprom';
+import { Sc2Dongle, dongleTableFromRom } from '../hw/sc2dongle';
 import { Reel } from '../hw/reel';
 import { MODEL_RELATIONS, parkAtV20PowerUp, resetReelsInPlace } from './v20optic';
 import { Upd7759, UPD7759_RATE } from '../hw/upd7759';
@@ -27,7 +27,7 @@ import { locateSc2CoinTables, sc2CoinTable, sc2LinePattern, sc2ProgramLine, SC2_
 import { StrayCounter } from './strayaccess';
 
 export const MASTER_CLOCK = 8_000_000;
-const DIM_SELECT = 0;
+const TIMER_ROLL = 0x800;
 
 export const CPU_CLOCK = MASTER_CLOCK / 4;
 
@@ -36,11 +36,12 @@ const RAM_SIZE = 0x2000;
 const sc2ReadDecoded = (a: number): boolean =>
   a === 0x2000 || (a >= 0x2300 && a <= 0x230b) || a === 0x2324 || a === 0x2329 || a === 0x232e
   || a === 0x2400 || a === 0x2500 || a === 0x2600 || a === 0x2700
-  || (a >= 0x3c00 && a <= 0x3c07) || a === 0x3e00 || a === 0x3e01 || a === 0x3ffe || a === 0x3fff;
+  || (a >= 0x3c00 && a <= 0x3c1f) || a === 0x3c40 || a === 0x3e00 || a === 0x3e01 || a === 0x3ffe || a === 0x3fff;
 const sc2WriteDecoded = (a: number): boolean =>
   (a >= 0x2000 && a <= 0x2339) || a === 0x2400 || a === 0x2500 || a === 0x2600 || a === 0x2700
   || a === 0x2800 || a === 0x2900 || (a >= 0x2a00 && a <= 0x2bff) || a === 0x2c00
-  || a === 0x2d00 || a === 0x2d01 || a === 0x2e00 || a === 0x3c80 || a === 0x3e00 || a === 0x3e01;
+  || a === 0x2d00 || a === 0x2d01 || a === 0x2e00 || (a >= 0x3c00 && a <= 0x3c1f) || a === 0x3cc0
+  || a === 0x3e00 || a === 0x3e01;
 
 const MUX_BASE = 0x2300;
 const MUX_END = 0x2320;
@@ -49,8 +50,6 @@ const UPD_RESET = 0x2b00;
 const OPLL_ADDR = 0x2d00;
 const OPLL_DATA = 0x2d01;
 const ROM_SIZE = 0x10000;
-
-const TIMER_HZ = 1000;
 
 const ADDRESS_DECODE = [
   0x0800, 0x1000, 0x0001, 0x0004, 0x0008, 0x0020, 0x0080, 0x0200,
@@ -103,10 +102,20 @@ export class Sc2 implements Bus, Machine {
     }
   }
 
-  readonly eeprom = new Eeprom24c(1024, 0xa0);
-  private readonly i2c = new I2cBitBang(this.eeprom);
+  readonly rtcPage = new Uint8Array(0x20);
 
-  readonly key = new Uint8Array(8);
+  dongle: Sc2Dongle | null = null;
+
+  fitDongle(table: Uint8Array | null): 'layout' | 'rom' | 'none' {
+    let from: 'layout' | 'rom' | 'none' = 'layout';
+    let t: ArrayLike<number> | null = table && table[0] !== 0 ? table : null;
+    if (!t) {
+      t = dongleTableFromRom(this.rom);
+      from = t ? 'rom' : 'none';
+    }
+    this.dongle = new Sc2Dongle(t ?? table ?? []);
+    return from;
+  }
 
   readonly reels = parkAtV20PowerUp([0, 1, 2, 3, 4, 5].map(
     () => new Reel({
@@ -153,11 +162,10 @@ export class Sc2 implements Bus, Machine {
 
   coins = 0;
 
-  private timerEnabled = false;
-  private timerCycles = 0;
-  private irqArmed = false;
-  private irqStatus = 0;
-  private timerStat = 0;
+  private timerEnable = 0;
+  private timerAcc = 0;
+  private timerFlag = false;
+  private dimSel = 0;
 
   private static readonly ALPHA_BUSY_CYCLES = 2000;
   private alphaBusyCycles = 0;
@@ -323,13 +331,7 @@ export class Sc2 implements Bus, Machine {
   constructor() {
     this.cpu = new M6809(this);
     this.cpu.illegalAsV20 = true;
-    this.initE2ram();
     this.inputRegs.set(this.idleInputs);
-  }
-
-  private initE2ram(): void {
-    this.eeprom.data.fill(0);
-    this.eeprom.data.set([1, 4, 10, 20, 0, 1, 1, 4, 10, 20]);
   }
 
   get clockHz(): number {
@@ -495,8 +497,10 @@ export class Sc2 implements Bus, Machine {
 
       { id: 'ram', label: 'BATTERY RAM', part: '8K', device: this.ram },
       { id: 'rom', label: 'PROGRAM ROM', part: '64K - banked window', device: this.rom },
-      { id: 'eeprom', label: 'EEPROM', part: 'X24C08', device: this.eeprom },
-      { id: 'keyprom', label: 'KEY PROM', part: 'video sets only' },
+      { id: 'rtc', label: 'RTC PAGE', part: '$3C00-$3C1F - 32 bytes', device: this.rtcPage },
+      ...(this.dongle
+        ? [{ id: 'dongle', label: 'DONGLE', part: 'bit-serial - $3CC0 / $3C40', device: this.dongle } as BoardPart]
+        : [{ id: 'dongle', label: 'DONGLE', part: 'not fitted' } as BoardPart]),
       { id: 'upd', label: 'SPEECH', part: 'uPD7759', device: this.upd,
         io: [[UPD_LATCH, UPD_LATCH + 1], [UPD_RESET, UPD_RESET + 1]] },
       { id: 'opll', label: 'FM', part: 'YM2413', device: this.opll,
@@ -508,7 +512,7 @@ export class Sc2 implements Bus, Machine {
             signal: 'display' } as BoardPart]),
 
       { id: 'cpu', label: 'CPU', part: 'MC6809 - 2 MHz E', device: this.cpu, cpu: true },
-      { id: 'timer', label: 'TIMER IRQ', part: '1 kHz tick', modelled: true,
+      { id: 'timer', label: 'TIMER IRQ', part: '976 Hz tick', modelled: true,
         note: 'Modelled as a cycle accumulator on this board, not as a timer chip.' },
       { id: 'bank', label: 'ROM BANK', part: '$2E00 - 4 pages', modelled: true,
         note: 'Modelled as a page register indexing the ROM image, not as a device.' },
@@ -790,15 +794,13 @@ export class Sc2 implements Bus, Machine {
   private warmReset(): void {
     this.bank = 3;
     this.vfd.reset();
-    this.i2c.reset();
+    this.dongle?.reset();
     resetReelsInPlace(this.reels);
     this.lampStore.reset();
     this.io.fill(0);
-    this.timerEnabled = false;
-    this.timerCycles = 0;
-    this.irqArmed = false;
-    this.irqStatus = 0;
-    this.timerStat = 0;
+    this.timerFlag = false;
+    this.dimSel = 0;
+    this.timerEnable = 0;
     this.watchdogCycles = 0;
     this.alphaBusyCycles = 0;
     this.upd.reset();
@@ -845,6 +847,7 @@ export class Sc2 implements Bus, Machine {
       return;
     }
     if (a < 0x4000) this.writeIo(a, v);
+    else if (a >= 0x8000) this.timerFlag = false;
   }
 
   private readIo(a: number): number {
@@ -867,17 +870,9 @@ export class Sc2 implements Bus, Machine {
       const key = off >= 6 ? this.percentKey : 0;
       return low | high | key;
     }
-    if (a === 0x2329) {
-      this.cpu.setIRQ(false);
-      this.irqArmed = false;
-      this.timerStat = 0;
-      this.irqStatus = 0;
-      return 0;
-    }
+    if (a === 0x2329) return this.timerEnable;
     if (a === 0x232e) {
-      const v = this.irqStatus | this.timerStat | 0x80;
-      this.timerStat = 0;
-      return v;
+      return (this.timerFlag ? 1 : 0) | (this.dimSel << 3) | ((this.expansionLatch & 1) << 7);
     }
     if (a === 0x2400) return 0x02 | (this.ackReady() ? 0x01 : 0x00);
     if (a === 0x2600) return 0x02;
@@ -888,11 +883,10 @@ export class Sc2 implements Bus, Machine {
       return v;
     }
     if (a === 0x2700) return 0x00;
-    if (a >= 0x3c00 && a < 0x3c08) {
-      const off = a - 0x3c00;
-      let v = this.key[off];
-      if (off === 7) v = (v & 0xfe) | (this.i2c.data() ? 1 : 0);
-      return v;
+    if (a >= 0x3c00 && a < 0x3d00) {
+      if (a === 0x3c40 && this.dongle) return this.dongle.out;
+      if (!sc2ReadDecoded(a)) this.strays.hit(a);
+      return this.rtcPage[a & 0x1f];
     }
     if (a === 0x3fff) return this.coins;
     if (!sc2ReadDecoded(a)) this.strays.hit(a);
@@ -926,15 +920,17 @@ export class Sc2 implements Bus, Machine {
     switch (a) {
       case 0x2320:
       case 0x2321:
+        if (!(this.dimSel & 1)) this.lampStore.setDimMask(this.dimSel * 2 + (a - 0x2320), v);
+        return;
       case 0x2322:
       case 0x2323:
-        this.lampStore.setDimMask(DIM_SELECT * 2 + (a - 0x2320), v);
+        this.lampStore.setDimMask(this.dimSel * 2 + (a - 0x2320) - (this.dimSel & 1 ? 2 : 0), v);
         return;
       case 0x2336:
-        this.lampStore.setDimLevel(DIM_SELECT, v);
+        this.lampStore.setDimLevel(this.dimSel, v);
         return;
       case 0x2329:
-        this.timerEnabled = (v & 1) !== 0;
+        this.timerEnable = v;
         return;
       case 0x2332:
         this.watchdogCycles = Sc2.WATCHDOG_RELOAD;
@@ -1006,18 +1002,19 @@ export class Sc2 implements Bus, Machine {
       case 0x2e00:
         this.bank = v & 3;
         return;
-      case 0x3c80:
-        this.i2c.set((v & 1) === 0, (v & 2) === 0);
-        return;
       default:
+        if (a >= 0x3c00 && a < 0x3d00) {
+          if (a === 0x3cc0 && this.dongle) this.dongle.write(v);
+          if (a < 0x3c20) this.rtcPage[a & 0x1f] = v;
+          else if (!sc2WriteDecoded(a)) this.strays.hit(a);
+          return;
+        }
         if (!sc2WriteDecoded(a)) this.strays.hit(a);
         return;
     }
   }
 
   step(): number {
-    const dropIrq = this.irqArmed;
-
     const cycles = this.cpu.step();
     this.tickMeters(1);
     this.ledgerClock += cycles;
@@ -1026,10 +1023,6 @@ export class Sc2 implements Bus, Machine {
     if (this.ackDue > 0) this.ackDue -= cycles;
     if (this.alphaBusyCycles > 0) this.alphaBusyCycles -= cycles;
 
-    if (dropIrq) {
-      this.cpu.setIRQ(false);
-      this.irqArmed = false;
-    }
     if (this.meterFirqCountdown !== 0) {
       this.meterFirqCountdown -= cycles;
       if (this.meterFirqCountdown <= 0) {
@@ -1039,17 +1032,13 @@ export class Sc2 implements Bus, Machine {
     }
     this.cpu.setFIRQ(this.meterFirq);
 
-    this.timerCycles += cycles;
-    const period = Math.floor(CPU_CLOCK / TIMER_HZ);
-    if (this.timerCycles >= period) {
-      this.timerCycles -= period;
-      if (this.timerEnabled) {
-        this.timerStat = 0x01;
-        this.irqStatus = 0x02;
-        this.cpu.setIRQ(true);
-        this.irqArmed = true;
-      }
+    this.timerAcc += cycles;
+    if (this.timerAcc >= TIMER_ROLL) {
+      this.timerAcc -= TIMER_ROLL;
+      this.dimSel = (this.dimSel + 1) & 0xf;
+      this.timerFlag = true;
     }
+    this.cpu.setIRQ(this.timerFlag && this.timerEnable !== 0);
 
     if (this.watchdogCycles > 0) {
       this.watchdogCycles -= cycles;
