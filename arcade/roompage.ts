@@ -4,6 +4,7 @@ import { arcadeName, loadMachines } from './machines';
 import { devPlayerForPage, serverFlag, walletServer } from './remote';
 import { Room } from './room';
 import { openMachineList } from './machinelist';
+import { watchPlaying } from './playerpills';
 import { rowIcon, UI_ICONS } from '../web/ui/icons';
 import { lookOf } from './roomlook';
 import { decorateSection, type DecorateSection } from './decorate';
@@ -14,6 +15,7 @@ import { listGames } from '../web/store';
 import { VIEW_LIMIT } from './serverwire';
 import { leaveArcade, RoomMenu } from './roommenu';
 import { RoomSound } from './roomsound';
+import { brightnessControl } from '../web/ui/brightness';
 import { viewerIsHost } from './viewer';
 import { Wallet } from './wallet';
 import { str } from '../web/i18n';
@@ -92,6 +94,7 @@ if (!doc) {
   const room = new Room(host, machines, { name, look: lookOf(doc?.room), props: readProps(doc?.props) ?? [] });
   room.onLeave = leaveArcade;
   const sound = new RoomSound(room.live);
+  const brightness = brightnessControl({ key: 'fruitulator.arcade.brightness', apply: (pct) => room.setBrightness(pct) });
   const server = serverFlag();
   if (server) {
     const wallet = new Wallet(walletServer(server, await devPlayerForPage()));
@@ -154,7 +157,11 @@ if (!doc) {
     get: async () => { const r = await arcadeApi.rating(arcadeId).catch(() => null); return r?.ok ? r.mine : null; },
     set: async (n: number) => (await arcadeApi.rate(arcadeId, n).catch(() => null))?.ok === true,
   } : undefined;
-  const menu = new RoomMenu(room, sound, menuBtn, isHost, undefined, floor, rating);
+  if (server) {
+    const api = arcadeApi ?? await arcadeServer();
+    if (api) watchPlaying(api, doc.id, (p) => room.setPlaying(p));
+  }
+  const menu = new RoomMenu(room, sound, brightness, menuBtn, isHost, undefined, floor, rating);
   menu.update();
   if (floor && floorAsked) floor();
   const padWalk = (id: string, dir: 1 | -1): void => holdPad(byId(id), () => { room.walkHeld = dir; },

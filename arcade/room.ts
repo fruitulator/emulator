@@ -20,6 +20,7 @@ import { glowPlan, makeGlow, type GlassGlow } from './glassglow';
 import { copyLook, lookOf as roomLook, neonMotionOn, REDUCED_MOTION, type RoomLook } from './roomlook';
 import { DPR_CAP, glassSaid, roomSwitches, switchesSaid, type RoomSwitches } from './roomperf';
 import { PropLayer } from './proplayer';
+import { PlayerPills, type PillAnchor, type PillPlayer } from './playerpills';
 import type { Prop } from './proplist';
 import { GpuTimer } from './roombench';
 import { setSurfaceOptions } from './roomtextures';
@@ -35,6 +36,8 @@ const DEV_ROOM = import.meta.env.DEV;
 const ARRIVED_M = 0.02;
 const ASK_BY_MS = 1500;
 const NAME_NOTE_MS = 2500;
+const PILL_LIFT_M = 0.08;
+const PILL_FALLBACK_M = 2;
 const READY_WAIT_MS = 60_000;
 const EYE = 1.6;
 const AISLE_Z = 2.3;
@@ -188,6 +191,8 @@ export class Room {
     this.renderer = new THREE.WebGLRenderer({ antialias: this.switches.aa, powerPreference: 'high-performance', alpha: true });
     this.renderer.setPixelRatio(this.switches.dpr ?? Math.min(devicePixelRatio, DPR_CAP));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.LinearToneMapping;
+    this.renderer.toneMappingExposure = 1;
     host.appendChild(this.renderer.domElement);
     this.renderer.setClearColor(0x000000, 0);
     host.style.background = '#020203';
@@ -229,6 +234,22 @@ export class Room {
     addEventListener('resize', () => this.resize());
     this.live.keys.layer = new KeyHintLayer(host);
     this.live.hintPlace = () => this.hintPlace();
+    this.pills = new PlayerPills(host);
+  }
+
+  private readonly pills: PlayerPills;
+
+  setPlaying(players: ReadonlyMap<string, PillPlayer>): void {
+    this.pills.set(players);
+  }
+
+  private pillAnchor(key: string): PillAnchor | null {
+    const s = this.slots.find((x) => x.glass.machine.id === key);
+    if (!s) return null;
+    const at = s.box && !s.box.isEmpty()
+      ? new THREE.Vector3((s.box.min.x + s.box.max.x) / 2, s.box.max.y + PILL_LIFT_M, (s.box.min.z + s.box.max.z) / 2)
+      : new THREE.Vector3(s.spot.x, PILL_FALLBACK_M, s.spot.z);
+    return { at, yaw: s.spot.yaw };
   }
 
   private paintTokens = 2;
@@ -1093,7 +1114,7 @@ export class Room {
   private shadeGlass(s: Slot): void {
     const k = this.glassShade(s);
     const ov = s.glass.overlaid ? this.overlays.get(s) : null;
-    ov?.setDim(k);
+    ov?.setDim(k, this.bright);
     for (const m of s.shell?.glassMeshes ?? []) {
       const mat = m.material as THREE.MeshBasicMaterial;
       if (mat.color.r !== k) mat.color.setScalar(k);
@@ -1177,6 +1198,16 @@ export class Room {
         if (mat?.isMeshStandardMaterial && mat.envMap) mat.envMapIntensity = env;
       });
     }
+  }
+
+  private bright = 1;
+
+  setBrightness(pct: number): void {
+    const b = pct / 100;
+    if (b === this.bright) return;
+    this.bright = b;
+    this.renderer.toneMappingExposure = Math.pow(b, 2.2);
+    for (const s of this.slots) this.shadeGlass(s);
   }
 
   get othersFrozen(): boolean { return this.switches.focusFreeze && this.focus !== null; }
@@ -1298,6 +1329,10 @@ export class Room {
         this.live.keys.refreshHints();
       }
     } else this.hintView = '';
+    if (this.pills.count) {
+      const c = this.renderer.domElement;
+      this.pills.place(this.camera, c.clientWidth, c.clientHeight, (k) => this.pillAnchor(k), !!this.focus || !!this.shot);
+    }
     const tEnd = performance.now();
 
     const ms = tEnd - t0;
@@ -1379,6 +1414,8 @@ export class Room {
     const vw = Math.min(size.x, (vh * w) / h);
     const dimWas = this.dimK;
     if (dimWas < 1) this.applyDim(1);
+    const exposureWas = this.renderer.toneMappingExposure;
+    this.renderer.toneMappingExposure = 1;
     const holed: Slot[] = [];
     for (const s of this.slots) {
       if (!s.shell) continue;
@@ -1399,6 +1436,7 @@ export class Room {
     for (const s of holed) if (s.shell) holeGlass(s.shell, true);
     for (const s of this.slots) this.shadeGlass(s);
     if (dimWas < 1) this.applyDim(dimWas);
+    this.renderer.toneMappingExposure = exposureWas;
     const el = this.renderer.domElement;
     const pr = this.renderer.getPixelRatio();
     const out = document.createElement('canvas');

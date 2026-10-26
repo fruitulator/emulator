@@ -13,6 +13,7 @@ import { StopNote } from '../web/stopnote';
 import type { Glass } from './glass';
 import type { Room } from './room';
 import type { RoomSound, SoundView } from './roomsound';
+import type { BrightnessControl } from '../web/ui/brightness';
 import { str } from '../web/i18n';
 
 declare const __BUILD_ID__: string;
@@ -40,6 +41,7 @@ export class RoomMenu {
   constructor(
     private readonly room: Room,
     sound: RoomSound,
+    private readonly bright: BrightnessControl,
     private readonly burger: HTMLButtonElement,
     readonly host: boolean,
     private readonly decorate?: () => void,
@@ -166,7 +168,10 @@ export class RoomMenu {
 
   private soundCard(): HTMLElement {
     const sound = card();
-    sound.append(sliderRow(this.soundView.button, this.soundView.slider));
+    sound.append(
+      sliderRow(this.soundView.button, this.soundView.slider),
+      sliderRow(this.bright.button, this.bright.slider, 'menu-bright'),
+    );
     return sound;
   }
 

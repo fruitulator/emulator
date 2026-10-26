@@ -2,7 +2,7 @@ import { WorkerEmu, type AutosaveBlob } from '../web/emu-client';
 import { getMeta, playCountOf, putMeta } from '../web/store';
 import { coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
-import { coinsForLoad, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
+import { coinsForLoad, markedChutes, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
 import { openCoinMenu } from '../web/ui/coinmenu';
 import { UI_ICONS } from '../web/ui/icons';
 import {
@@ -12,6 +12,7 @@ import { boardStamp } from '../web/boardstamp';
 import type { StateRec } from '../web/store';
 import { cabinetSurfaces, classifyGlassCore, readGlass, type CabinetSurfaces } from '../src/machine/alarmread';
 import { SNAPSHOT_VERSION, type Snapshot } from '../web/snapshot';
+import { gatesOf } from '../web/play/gates';
 import { Audio } from '../web/audio';
 import { CabinetEffects } from '../web/effects';
 import { restoreCabinetSounds } from '../web/menupanels';
@@ -571,6 +572,8 @@ export class Live {
           why = `cold boot: the saved state could not be read (${(e as Error).message})`;
         }
       }
+      glass.resetGates(gatesOf(snapshot));
+      glass.onGateSeen = (lamps) => { if (this.glass === glass && seq === this.loadSeq) this.emu.gateSeen(lamps); };
       const cfg = glass.machine.config;
       const opts = {
         game: battery ? { ...game, nvram: battery } : game,
@@ -599,13 +602,14 @@ export class Live {
         why = `cold boot: the saved state cannot be restored by this build (${(e as Error).message})`;
         if (rec) thrown = { version: snapshot.version ?? null };
         snapshot = undefined;
+        glass.resetGates();
         this.lastStart = { t0, resumed: false, why };
         info = await this.emu.load({ ...opts, relay });
       }
       if (seq !== this.loadSeq) return;
       console.log(`[arcade] ${why}`);
       this.resendWiring(opts.coinWiring, info);
-      if (glass.cab) stampCoinInputs(glass.cab.lamps, viewFor(game.system), info.coins ?? viewFor(game.system).coins);
+      this.stampCoins();
       this.lastStart.loadedAt = performance.now();
       idleNamedInputs(this.emu, game, info);
       this.stopParts = stopNoteParts(info.boardDefaults);
@@ -735,6 +739,15 @@ export class Live {
     if (coinWiring) this.emu.setCoinWiring(coinWiring);
     for (const [line, coin] of Object.entries(namedCoins)) this.emu.nameCoin(Number(line), coin);
     this.setCoinsStopped(false);
+    this.stampCoins();
+  }
+
+  private stampCoins(): void {
+    const g = this.glass;
+    const info = this.emu.info;
+    if (!g?.cab || !g.game || !info) return;
+    const view = viewFor(g.game.system);
+    stampCoinInputs(g.cab.lamps, view, [...(info.coins ?? view.coins), ...markedChutes(this.coinWiring(), info)]);
   }
 
   private checkWiring(): void {
@@ -1002,6 +1015,7 @@ export class Live {
     this.paused = false;
     this.glass = glass;
     glass.resetGates();
+    glass.onGateSeen = null;
     glass.mode = 'live';
     const w: NonNullable<Live['watching']> = {
       glass, slot, hash, handle: null, session: null, loading: null, pending: [], queued: null, resync: false, free: false,

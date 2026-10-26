@@ -13,7 +13,7 @@ import type { ArcadeMachine } from './machines';
 import { machineTitle } from './machinelist';
 import { cabinetModels, styleModel } from './cabinets';
 import { reassign } from './mounts';
-import { controlName } from '../web/controlname';
+import { controlName, controlNaming } from '../web/controlname';
 import { viewFor } from '../web/platform';
 import { invalidateRec } from './cache';
 import {
@@ -38,8 +38,8 @@ import { listGames } from '../web/store';
 import { PlayPointer } from '../web/play/pointer';
 import { str } from '../web/i18n';
 import { coinTicks } from '../web/ui/coinsetup';
-import { editedSlot, readCoinWiring, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
-import { slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type WireSlot } from './coinwiring';
+import { editedSlot, markedSlots, readCoinWiring, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
+import { markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 
 declare const __BUILD_ID__: string;
 const BUILD = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev';
@@ -1387,7 +1387,9 @@ class Wizard {
     const w = this.wiring();
     return this.wiringRun !== 'running'
       && this.wireSlots().every((s) => (w[String(s.line)]?.coins.some((c) => c.line !== null) ?? false))
-      && this.slotlessLines().every((l) => w[String(l)] !== undefined);
+      && this.slotlessLines().every((l) => w[String(l)] !== undefined)
+      && !this.markDrafts.length
+      && markedSlots(w).every(({ slot }) => slot.checked === true);
   }
 
   private setWiring(w: CoinWiring): void {
@@ -1453,7 +1455,8 @@ class Wizard {
 
   private renderCoins(): HTMLElement | null {
     const slots = this.wireSlots();
-    if (!slots.length && !this.wm.live.emu.info?.slotlessCoins?.length) return null;
+    const marking = this.markOffer();
+    if (!slots.length && !this.wm.live.emu.info?.slotlessCoins?.length && !marking) return null;
     if (this.wiringRun === 'no') { queueMicrotask(() => { void this.findWiring(); }); }
     const box = card();
     if (this.wiringRun !== 'done') {
@@ -1500,23 +1503,32 @@ class Wizard {
       const row = el('div', null, { class: 'coin-slot' });
       row.append(head, ticks.root, notes);
       box.append(row);
-      const col = this.wm.glass.shown;
-      if (col && slots.length > 1) {
-        const mark = el('span', null, { class: 'wz-slot-mark', 'data-n': String(i + 1) });
-        mark.style.left = `${((slot.left - col.left) / col.width) * 100}%`;
-        mark.style.top = `${((slot.top - col.top) / col.height) * 100}%`;
-        mark.style.width = `${(slot.width / col.width) * 100}%`;
-        mark.style.height = `${(slot.height / col.height) * 100}%`;
-        this.slotMarks.append(mark);
-        const lit = (on: boolean): void => { mark.classList.toggle('on', on); };
-        row.addEventListener('pointerenter', () => lit(true));
-        row.addEventListener('pointerleave', () => lit(row.contains(document.activeElement)));
-        row.addEventListener('focusin', () => lit(true));
-        row.addEventListener('focusout', () => lit(false));
-      }
+      if (slots.length > 1) this.glassMark(i + 1, slot, row);
     });
     this.renderSlotless(box);
+    if (marking) this.renderMarked(box);
     return box.childElementCount ? box : null;
+  }
+
+  private glassMark(n: number | string, at: { left: number; top: number; width: number; height: number }, row?: HTMLElement): HTMLElement | null {
+    const col = this.wm.glass.shown;
+    if (!col) return null;
+    const mark = el('span', null, { class: 'wz-slot-mark', 'data-n': String(n) });
+    mark.style.left = `${((at.left - col.left) / col.width) * 100}%`;
+    mark.style.top = `${((at.top - col.top) / col.height) * 100}%`;
+    mark.style.width = `${(at.width / col.width) * 100}%`;
+    mark.style.height = `${(at.height / col.height) * 100}%`;
+    this.slotMarks.append(mark);
+    if (row) this.lightWith(mark, row);
+    return mark;
+  }
+
+  private lightWith(mark: HTMLElement, row: HTMLElement): void {
+    const lit = (on: boolean): void => { mark.classList.toggle('on', on); };
+    row.addEventListener('pointerenter', () => lit(true));
+    row.addEventListener('pointerleave', () => lit(row.contains(document.activeElement)));
+    row.addEventListener('focusin', () => lit(true));
+    row.addEventListener('focusout', () => lit(false));
   }
 
   private renderSlotless(box: HTMLElement): void {
@@ -1552,6 +1564,154 @@ class Wizard {
       row.append(head, ticks.root);
       box.append(row);
     });
+  }
+
+  private markDrafts: { line: number | null; coin: SlotCoin | null }[] = [];
+  private markChecks = new Map<number, 'running' | 'counted' | 'not-counted' | 'unmeasured'>();
+  private markQueue: Promise<void> = Promise.resolve();
+
+  private markables(): MarkableButton[] {
+    const game = this.wm.glass.game;
+    const cab = this.wm.glass.cab;
+    if (!game || !cab || !this.wm.live.running) return [];
+    return markableButtons(cab.lamps, viewFor(game.system), new Set(markedSlots(this.wiring()).map((m) => m.line)));
+  }
+
+  private markOffer(): boolean {
+    if (!this.markables().length) return false;
+    if (markedSlots(this.wiring()).length || this.markDrafts.length) return true;
+    return !this.wireSlots().length && !this.wm.live.emu.info?.slotlessCoins?.length && !this.wm.coinSlot();
+  }
+
+  private checkMarked(line: number): void {
+    if (this.markChecks.get(line) === 'running') return;
+    this.markChecks.set(line, 'running');
+    this.markQueue = this.markQueue.then(async () => {
+      if (this.gone()) return;
+      const got = await this.wm.live.emu.measureCoins([line]).catch((e) => {
+        console.warn('[arcade] a marked coin button could not be checked', e);
+        return null;
+      });
+      const verdict = markedCounted(got?.result, line);
+      console.info(`[arcade] marked coin button on line ${line}: ${verdict}`);
+      this.markChecks.set(line, verdict);
+      if (this.gone()) return;
+      const w = this.wiring();
+      const s = w[String(line)];
+      if (s?.how === 'marked' && !!s.checked !== (verdict === 'counted')) {
+        w[String(line)] = { ...s, ...(verdict === 'counted' ? { checked: true } : {}) };
+        if (verdict !== 'counted') delete w[String(line)].checked;
+        this.setWiring(w);
+      }
+      if (this.step === FILL) this.render();
+    });
+  }
+
+  private keepMarked(line: number, coin: SlotCoin): void {
+    const w = this.wiring();
+    const counted = this.markChecks.has(line) ? this.markChecks.get(line) === 'counted' : !!w[String(line)]?.checked;
+    w[String(line)] = { coins: [{ coin, line }], how: 'marked', ...(counted ? { checked: true } : {}) };
+    this.setWiring(w);
+  }
+
+  private dropMarked(line: number): void {
+    const w = this.wiring();
+    if (w[String(line)]?.how !== 'marked') return;
+    delete w[String(line)];
+    this.setWiring(w);
+  }
+
+  private renderMarked(box: HTMLElement): void {
+    const buttons = this.markables();
+    const game = this.wm.glass.game;
+    const info = this.wm.live.emu.info;
+    if (!game || !info) return;
+    const view = viewFor(game.system);
+    const names = new Map<number, string>();
+    const marks = new Map<number, HTMLElement>();
+    buttons.forEach((b, i) => {
+      const letter = i < 26 ? String.fromCharCode(65 + i) : String(i + 1);
+      const named = controlNaming(b.lamp, view, info.coins ?? view.coins, info.capNames, info.coinPort);
+      names.set(b.line, named.source === 'none' ? str('arcade.wizard.button_letter', { 0: letter }) : str('arcade.wizard.button_letter_named', { 0: letter, 1: named.label }));
+      const mark = this.glassMark(letter, b.lamp);
+      if (mark) marks.set(b.line, mark);
+    });
+    const w = this.wiring();
+    const rows: { line: number | null; coin: SlotCoin | null; draft: number | null }[] = [
+      ...markedSlots(w).map(({ line, slot }) => ({ line, coin: slot.coins[0]?.coin ?? null, draft: null })),
+      ...this.markDrafts.map((d, i) => ({ line: d.line, coin: d.coin, draft: i })),
+    ];
+    box.append(el('p', str('arcade.wizard.mark_lead'), { class: 'coin-slot-note coin-slot-lead' }));
+    const taken = new Set(rows.map((r) => r.line).filter((l): l is number => l !== null));
+    rows.forEach((r, i) => {
+      const name = rows.length === 1 ? str('arcade.wizard.coin_button') : str('arcade.wizard.coin_button_n', { 0: i + 1 });
+      if (r.line !== null && !w[String(r.line)]?.checked && !this.markChecks.has(r.line)) this.checkMarked(r.line);
+      const check = r.line === null ? null : w[String(r.line)]?.checked ? 'counted' : this.markChecks.get(r.line) ?? null;
+      const head = el('div', null, { class: 'coin-slot-head' });
+      head.append(el('span', name, { class: 'row-label' }), el('span', str('arcade.wizard.which_button_and_coin'), { class: 'row-sub' }));
+      const sel = el('select', null, { 'aria-label': str('arcade.wizard.which_button') }) as HTMLSelectElement;
+      if (r.line === null) sel.append(el('option', str('arcade.wizard.choose_a_button'), { value: '' }));
+      for (const b of buttons) if (b.line === r.line || !taken.has(b.line)) sel.append(el('option', names.get(b.line) ?? '', { value: String(b.line) }));
+      sel.value = r.line === null ? '' : String(r.line);
+      sel.addEventListener('change', () => {
+        const line = Number(sel.value);
+        if (!sel.value || line === r.line) return;
+        if (r.draft === null && r.line !== null) {
+          this.dropMarked(r.line);
+          this.markDrafts.push({ line, coin: r.coin });
+        } else if (r.draft !== null) this.markDrafts[r.draft] = { line, coin: r.coin };
+        this.settleDrafts();
+        this.render();
+      });
+      const pick = el('div', null, { class: 'coin-mark-pick' });
+      pick.append(sel);
+      enhanceSelect(sel);
+      const ticks = coinTicks({
+        label: name, single: true, noUnused: true,
+        start: r.coin === null ? [] : [r.coin],
+        onChange: (coins: SlotCoin[]) => {
+          const coin = coins[0] ?? null;
+          if (r.draft === null && r.line !== null) {
+            if (coin === null) { this.dropMarked(r.line); this.markDrafts.push({ line: r.line, coin: null }); } else this.keepMarked(r.line, coin);
+          } else if (r.draft !== null) this.markDrafts[r.draft] = { line: r.line, coin };
+          this.settleDrafts();
+          this.render();
+        },
+      });
+      const remove = actionButton(str('arcade.wizard.remove'), 'tertiary', () => {
+        if (r.draft !== null) this.markDrafts.splice(r.draft, 1);
+        else if (r.line !== null) this.dropMarked(r.line);
+        this.render();
+      });
+      const row = el('div', null, { class: 'coin-slot' });
+      row.append(head, pick, ticks.root);
+      if (check === 'running') row.append(statusRow('running', str('arcade.wizard.mark_checking')));
+      else if (check === 'counted') row.append(statusRow('pass', str('arcade.wizard.mark_counted')));
+      else if (check === 'not-counted') row.append(statusRow('fail', str('arcade.wizard.mark_not_counted')));
+      else if (check === 'unmeasured') row.append(statusRow('fail', str('arcade.wizard.mark_unmeasured')));
+      row.append(remove);
+      box.append(row);
+      const mark = r.line === null ? undefined : marks.get(r.line);
+      if (mark) this.lightWith(mark, row);
+    });
+    if (taken.size < buttons.length && !this.markDrafts.some((d) => d.line === null)) {
+      const add = actionButton(str('arcade.wizard.add_a_coin_button'), 'secondary', () => {
+        this.markDrafts.push({ line: null, coin: null });
+        this.render();
+      });
+      add.classList.add('coin-slot-add');
+      box.append(add);
+    }
+  }
+
+  private settleDrafts(): void {
+    const keep: typeof this.markDrafts = [];
+    for (const d of this.markDrafts) {
+      if (d.line !== null && d.coin !== null) this.keepMarked(d.line, d.coin);
+      else keep.push(d);
+      if (d.line !== null && !this.markChecks.has(d.line)) this.checkMarked(d.line);
+    }
+    this.markDrafts = keep;
   }
 
   private autoTestedFor: string | null = null;

@@ -20,6 +20,7 @@ import type { Snapshot } from '../web/snapshot';
 import { ATTRACT_WINDOW_S } from './bootdoor';
 import { str } from '../web/i18n';
 import { wiredCoinOn } from '../web/coinask';
+import { markedChutes } from './coinwiring';
 
 export const WINDOW_S = ATTRACT_WINDOW_S;
 export const TRACE_S = 30;
@@ -301,6 +302,12 @@ export class WizardMachine {
       if (acceptorTakesToken(view, lp, got.line, info.coins)) continue;
       const pence = priceOf(got.line);
       if (!best || (pence ?? -1) > (best.pence ?? -1)) best = { line: got.line, pence, from: 'layout' };
+    }
+    if (best) return best;
+    for (const c of markedChutes(wiring, info)) {
+      const coin = wiredCoinOn(wiring, c.bit);
+      if (typeof coin !== 'number') continue;
+      if (!best || coin > (best.pence ?? -1)) best = { line: c.bit, pence: coin, from: 'layout' };
     }
     if (best) return best;
     const coins = chutes.filter((c) => !c.token);

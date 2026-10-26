@@ -13,6 +13,7 @@ export function coinTicks(o: {
   label: string; start: readonly SlotCoin[];
   onChange: (coins: SlotCoin[], unused: boolean) => void;
   single?: boolean; unused?: boolean;
+  noUnused?: boolean;
 }): CoinTicks {
   const root = document.createElement('div');
   root.className = 'coin-ticks';
@@ -88,7 +89,7 @@ export function coinTicks(o: {
   const dd = enhanceSelect(worth);
   dd.root.hidden = !token;
 
-  if (o.single) root.append(tick(str('coinsetup.not_used'), unused, (on) => { unused = on; }));
+  if (o.single && !o.noUnused) root.append(tick(str('coinsetup.not_used'), unused, (on) => { unused = on; }));
 
   return { root, value };
 }

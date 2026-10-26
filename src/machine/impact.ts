@@ -639,6 +639,7 @@ export class Impact implements Bus16, Machine {
     const t = this.readCoinTable();
     const cashIn = new Set<number>();
     this.meterInMult.forEach((x, i) => { if (x > 0) cashIn.add(i); });
+    if (cashIn.has(Impact.METER_CASH_IN)) cashIn.delete(Impact.METER_TOKEN_IN);
     if (!cashIn.size) cashIn.add(Impact.METER_CASH_IN);
     this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), Impact.freshWiringState);
     this.wiring = {
@@ -712,6 +713,7 @@ export class Impact implements Bus16, Machine {
 
   private static readonly COIN_ROW = 9;
   private static readonly METER_CASH_IN = 0;
+  private static readonly METER_TOKEN_IN = 2;
 
   get unnamedCoinLines(): readonly number[] {
     return this.coinSlots;

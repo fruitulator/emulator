@@ -74,6 +74,12 @@ void main() {
   } else {                       // a spill: from the neighbour's side (u = 0), fading across
     a = pow(1.0 - vUv.x, 2.0) * (1.0 - vUv.y * 0.5);
   }
+  // The viewer's brightness (arcade/room.ts \`setBrightness\`): three's
+  // exposure, which this hand-written shader takes as the room's materials
+  // do. 1 at neutral.
+#ifdef TONE_MAPPING
+  light *= toneMappingExposure;
+#endif
   outColor = vec4(oetf(clamp(light * (a * vGain * dim), 0.0, 1.0)), 1.0);
 }`;
 

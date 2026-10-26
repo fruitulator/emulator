@@ -7,6 +7,7 @@ import {
   FrameView, captureFrame, frameLayoutFor, type FrameLayout,
 } from '../src/machine/framestate';
 import { applyState, captureState, captureStateRaw } from './snapshot';
+import { gatesOf, stampGates } from './play/gates';
 import {
   CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
@@ -30,6 +31,7 @@ export class InlineEmu implements Emu {
   private layout: FrameLayout | null = null;
   private infoValue: MachineInfo | null = null;
   private gameName = '';
+  private gates: number[] = [];
   private benchStep = false;
   private readonly dwell = new InputDwell();
   private readonly coins = new CoinPacer((event, bit) => {
@@ -90,6 +92,7 @@ export class InlineEmu implements Emu {
     try {
       const m = machineFor(opts.game);
       this.gameName = opts.game.name;
+      this.gates = gatesOf(opts.snapshot);
       applyOptionKeyState(m, opts.optionKeys);
       if (opts.snapshot) applyState(m, opts.snapshot);
       applyPanelSwitchState(m, opts.panelSwitches);
@@ -228,6 +231,10 @@ export class InlineEmu implements Emu {
     return w ? { ...w, conflicts: [...w.conflicts] } : null;
   }
 
+  gateSeen(lamps: readonly number[]): void {
+    this.gates = gatesOf({ gates: [...lamps] });
+  }
+
   nameCoin(line: number, coin: NamedCoin): void {
     const m = this.machine;
     if (!m?.nameCoin) return;
@@ -289,6 +296,7 @@ export class InlineEmu implements Emu {
     if (!m) return Promise.resolve(null);
     const snap = captureState(m, this.gameName);
     if (this.log.enabled) snap.diag = [...this.log.entries()];
+    stampGates(snap, this.gates);
     return Promise.resolve(snap);
   }
 
@@ -424,6 +432,7 @@ export class InlineEmu implements Emu {
     if (!m) return null;
     try {
       const snap = captureStateRaw(m, this.gameName);
+      stampGates(snap, this.gates);
       return { snap, cycles: snap.cycles, at: Date.now(), nvram: m.batteryRam?.() ?? undefined };
     } catch (e) {
       console.warn('[emu] inline autosave capture failed', e);

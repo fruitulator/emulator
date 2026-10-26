@@ -172,7 +172,10 @@ export interface ArcadeDoc {
 export function configDigest(c: MachineConfig): string {
   const sort = (o: Record<string, unknown> | undefined): [string, unknown][] =>
     Object.entries(o ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify([sort(c.optionKeys), sort(c.panelSwitches)]);
+  const marked = Object.entries(c.coins ?? {}).filter(([, s]) => s.how === 'marked')
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([k, s]) => [k, s.coins.map((x) => x.coin), !!s.checked]);
+  return JSON.stringify([sort(c.optionKeys), sort(c.panelSwitches), ...(marked.length ? [marked] : [])]);
 }
 
 export function newArcade(name = ''): ArcadeDoc {

@@ -10,7 +10,7 @@ export interface Mpu3Coin {
 }
 
 export interface Mpu3CoinCode {
-  shape: 'strobed' | 'records';
+  shape: 'strobed' | 'records' | 'dispatch';
   take: number;
   credit: number;
   creditX?: number;
@@ -22,6 +22,10 @@ export interface Mpu3CoinCode {
   changeTable?: number;
   changeRawLine?: number;
   refillLine?: number;
+  idxVar?: number;
+  handlers?: (number | null)[];
+  changeVar?: number;
+  changeAt?: number[];
   rows: number;
   strobed?: Mpu3Coin[];
   source: string;
@@ -51,13 +55,40 @@ function isBcdAdd(rom: Uint8Array, a: number): boolean {
 
 interface Walk { credits: number; counters: Map<number, number>; alt?: { line: number; credits: number } }
 
-function walkBranch(rom: Uint8Array, start: number, rows: number, add: { at: number | null; x: number | null }, depth = 0): Walk | null {
+interface WalkOpts { dil?: (strobe: number) => number; stores?: Map<number, Set<number>> }
+
+function addEntry(rom: Uint8Array, t: number): number | null {
+  const rd = rdOf(rom);
+  return rd(t) === 0x86 && isBcdAdd(rom, t + 2) ? rd(t + 1) : null;
+}
+
+function isMeter(rom: Uint8Array, t: number): boolean {
+  const rd = rdOf(rom);
+  if (rd(t) !== 0x7d || rd(t + 3) !== 0x2b || rd(t + 5) !== 0xbd || rd(t + 8) !== 0x25 || rd(t + 10) !== 0xbd || rd(t + 13) !== 0x39) return false;
+  const add = ((rd(t + 11) << 8) | rd(t + 12)) & 0x7fff;
+  return addEntry(rom, add) !== null || isBcdAdd(rom, add);
+}
+
+function walkBranch(rom: Uint8Array, start: number, rows: number, add: { at: number | null; x: number | null }, depth = 0, opts: WalkOpts = {}): Walk | null {
   const rd = rdOf(rom);
   let pc = start & 0x7fff;
   let a: number | null = null;
   let x: number | null = null;
   const w: Walk = { credits: 0, counters: new Map() };
   const bump = (addr: number, n: number): void => { w.counters.set(addr, (w.counters.get(addr) ?? 0) + n); };
+  const stored = (addr: number, at: number): void => {
+    if (!opts.stores) return;
+    const s = opts.stores.get(addr) ?? new Set<number>();
+    s.add(at);
+    opts.stores.set(addr, s);
+  };
+  const credit = (t: number, n: number): boolean => {
+    if (x === null) return false;
+    if (add.at === null) { add.at = t; add.x = x; }
+    if (add.at !== t || add.x !== x) return false;
+    w.credits += n;
+    return true;
+  };
   for (let steps = 0; steps < 48; steps++) {
     const op = rd(pc);
     if (op === 0x7c && rd(pc + 1) === 0x00) { bump(rd(pc + 2), 1); pc += 3; continue; }
@@ -84,31 +115,44 @@ function walkBranch(rom: Uint8Array, start: number, rows: number, add: { at: num
         const line = (dd - rows) * 8 + bit - 2;
         const made = rd(pc + 4) === 0x26 ? rel(pc + 4, rd(pc + 5)) : pc + 6;
         const open = rd(pc + 4) === 0x26 ? pc + 6 : rel(pc + 4, rd(pc + 5));
-        const alt = walkBranch(rom, made, rows, add, depth + 1);
+        const alt = walkBranch(rom, made, rows, add, depth + 1, opts);
         if (!alt) return null;
         w.alt = { line, credits: alt.credits };
         pc = open;
         continue;
       }
       if (rd(pc + 2) === 0x8b && rd(pc + 4) === 0x97 && rd(pc + 5) === dd) {
-        bump(dd, rd(pc + 3)); a = null; pc += 6; continue;
+        bump(dd, rd(pc + 3)); stored(dd, pc + 4); a = null; pc += 6; continue;
+      }
+      if (opts.dil && rd(pc + 2) === 0xb4 && rd(pc + 5) === 0x85 && (rd(pc + 7) === 0x26 || rd(pc + 7) === 0x27)) {
+        const ea = (rd(pc + 3) << 8) | rd(pc + 4);
+        if (dd < rows + 4 || dd > rows + 7 || ea < 0x0800 || (ea >= 0x8000 && ea < 0xb000)) return null;
+        const set = ((opts.dil(dd - rows) & 0xfc) & rd(ea) & rd(pc + 6)) !== 0;
+        pc = (rd(pc + 7) === 0x26) === set ? rel(pc + 7, rd(pc + 8)) : pc + 9;
+        a = null;
+        continue;
       }
       return null;
     }
     if (op === 0x9b && rd(pc + 2) === 0x97 && rd(pc + 3) === rd(pc + 1)) {
       if (a === null) return null;
-      bump(rd(pc + 1), a); a = null; pc += 4; continue;
+      bump(rd(pc + 1), a); stored(rd(pc + 1), pc + 2); a = null; pc += 4; continue;
     }
     if (op === 0xbd) {
       const t = ((rd(pc + 1) << 8) | rd(pc + 2)) & 0x7fff;
-      if (!isBcdAdd(rom, t) || a === null || x === null) return null;
-      if (add.at === null) { add.at = t; add.x = x; }
-      if (add.at !== t || add.x !== x) return null;
-      w.credits += a;
+      if (isMeter(rom, t)) { a = null; pc += 3; continue; }
+      if (!isBcdAdd(rom, t) || a === null || !credit(t, a)) return null;
       pc += 3;
       continue;
     }
-    if (op === 0x7e || op === 0x39) return w;
+    if (op === 0x7e) {
+      const t = ((rd(pc + 1) << 8) | rd(pc + 2)) & 0x7fff;
+      const n = addEntry(rom, t);
+      if (n !== null) return credit(t + 2, n) ? w : null;
+      if (isBcdAdd(rom, t)) return a !== null && credit(t, a) ? w : null;
+      return w;
+    }
+    if (op === 0x39) return w;
     return null;
   }
   return null;
@@ -206,8 +250,76 @@ function locateRecords(rom: Uint8Array): Mpu3CoinCode | null {
   };
 }
 
+function locateDispatch(rom: Uint8Array): Mpu3CoinCode | null {
+  const rd = rdOf(rom);
+  for (const at of find(rom, [0xb6, 0x90, 0x00])) {
+    let p = at + 3;
+    while (rd(p) === 0x7f) p += 3;
+    if (rd(p) !== 0x84 || rd(p + 1) !== 0xfc || rd(p + 2) !== 0xa7) continue;
+    const rows = rd(p + 3);
+    p += 4;
+    const s3 = [0x8c, 0x00, 0x03, 0x26, -1, 0xce, 0x00, 0x00, 0xc6, 0x04, 0xd5, rows + 3, 0x26, -1, 0xa6];
+    if (!s3.every((b, i) => b < 0 || rd(p + i) === b)) continue;
+    const cnt = rd(p + s3.length);
+    const s5 = find(rom, [0x8c, 0x00, 0x05, 0x26, -1, 0xce, 0x00, 0x04, 0xf6, 0xa8, 0x02, 0xc4, 0x0f, 0x58, 0x58, 0x84, 0xc3, 0x1b, 0x97, -1, 0xc6, 0x04, 0xd5, -1, 0x26, -1, 0xa6, cnt], p, p + 0x80)
+      .filter((q) => rd(q + 19) === rd(q + 23));
+    if (s5.length !== 1) return null;
+    if (find(rom, [0x08, 0x58, 0xc5, 0x40, 0x27], p, s5[0]!).length !== 1 || find(rom, [0x08, 0x58, 0xc5, 0x40, 0x27], s5[0]!, s5[0]! + 0x60).length !== 1) return null;
+    const rr = find(rom, [0xde, -1, 0xa6, cnt, 0x81, 0x40, 0x26, -1, 0xbd], s5[0]!, s5[0]! + 0x80);
+    if (rr.length !== 1) return null;
+    const idxVar = rd(rr[0]! + 1) + 1;
+    const take = ((rd(rr[0]! + 9) << 8) | rd(rr[0]! + 10)) & 0x7fff;
+    if (rd(take) !== 0xd6 || rd(take + 1) !== idxVar) return null;
+    const recs = find(rom, [0x96, idxVar, 0x16, 0x48, 0x48, 0x1b, 0xce, -1, -1, 0xdf, -1, 0x9b, -1, 0x97, -1, 0x24, 0x03, 0x7c, 0x00, -1, 0xde, -1], take, take + 0x80)
+      .filter((q) => { const t = rd(q + 10); return rd(q + 12) === t + 1 && rd(q + 14) === t + 1 && rd(q + 19) === t && rd(q + 21) === t; });
+    if (recs.length !== 1) return null;
+    const r = recs[0]!;
+    const table = ((rd(r + 7) << 8) | rd(r + 8)) & 0x7fff;
+    if (find(rom, [0xa6, 0x02, 0x26], r, r + 0x40).length !== 1 || find(rom, [0xee, 0x03, 0x6e, 0x00], r, r + 0x40).length !== 1) return null;
+    const lineOfIndex = [0, 1, 2, 3].map((b) => 3 * 8 + b).concat([0, 1, 2, 3].map((b) => 5 * 8 + b));
+    const handlers = lineOfIndex.map((_, i) => (rd(table + 5 * i + 2) ? null : ((rd(table + 5 * i + 3) << 8) | rd(table + 5 * i + 4)) & 0x7fff));
+    const paid = new Set(find(rom, [0x96, -1, 0x27, -1, 0x81, 0x01, 0x27, -1, 0xd6, -1, 0xf4, -1, -1, 0xc5, -1, 0x27, -1, 0xd6, -1, 0xc5, -1, 0x26, -1, 0x80, 0x02, 0x97])
+      .filter((q) => rd(q + 26) === rd(q + 1)).map((q) => rd(q + 1)));
+    const add = { at: null as number | null, x: null as number | null };
+    const stores = new Map<number, Set<number>>();
+    for (const dil of [() => 0, () => 0xff]) {
+      for (const h of handlers) if (h !== null && !walkBranch(rom, h, rows, add, 0, { dil, stores })) return null;
+    }
+    if (add.at === null) return null;
+    const change = [...stores.keys()].filter((c) => paid.has(c));
+    if (change.length > 1) return null;
+    const changeVar = change[0];
+    return {
+      shape: 'dispatch', take, credit: add.at, creditX: add.x!, rows, idxVar, table, lineOfIndex, handlers,
+      ...(changeVar !== undefined ? { changeVar, changeAt: [...stores.get(changeVar)!] } : {}),
+      source: `MPU3 coin dispatch ${hex(table)}`,
+    };
+  }
+  return null;
+}
+
 export function locateMpu3Coins(rom: Uint8Array): Mpu3CoinCode | Refusal {
-  return locateStrobed(rom) ?? locateRecords(rom) ?? { refused: 'no MPU3 coin reader this build can read was found in the program' };
+  return locateStrobed(rom) ?? locateRecords(rom) ?? locateDispatch(rom) ?? { refused: 'no MPU3 coin reader this build can read was found in the program' };
+}
+
+function dispatchCoins(code: Mpu3CoinCode, rom: Uint8Array, rowRaw: (strobe: number) => number): Mpu3Coin[] | null {
+  const out: Mpu3Coin[] = [];
+  const add = { at: code.credit, x: code.creditX! };
+  for (let i = 0; i < 8; i++) {
+    const h = code.handlers![i];
+    const line = code.lineOfIndex![i];
+    if (h === null || h === undefined || line === null || line === undefined) continue;
+    const w = walkBranch(rom, h, code.rows, add, 0, { dil: rowRaw });
+    if (!w) return null;
+    const tens = code.changeVar !== undefined ? w.counters.get(code.changeVar) ?? 0 : 0;
+    if (w.credits === 0 && tens === 0) continue;
+    const change: ChangeTerm[][] = tens ? [[{ count: tens, pence: 10 }], [{ count: tens % 2, pence: 10 }, { count: tens >> 1, pence: 20 }]] : [];
+    out.push({
+      id: 0x100 | line, credits: w.credits, change, token: false,
+      ...(w.alt && w.alt.credits === 0 ? { tubeSwitch: w.alt.line } : {}),
+    });
+  }
+  return out;
 }
 
 export function mpu3Message(rom: Uint8Array, code: number): string | null {
@@ -225,6 +337,7 @@ export function mpu3Message(rom: Uint8Array, code: number): string | null {
 
 export function mpu3Coins(code: Mpu3CoinCode, rom: Uint8Array, rowRaw: (strobe: number) => number): Mpu3Coin[] | null {
   if (code.shape === 'strobed') return code.strobed!;
+  if (code.shape === 'dispatch') return dispatchCoins(code, rom, rowRaw);
   const rd = rdOf(rom);
   const out: Mpu3Coin[] = [];
   for (let i = 0; i < 8; i++) {

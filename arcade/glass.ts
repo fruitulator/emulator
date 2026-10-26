@@ -24,6 +24,7 @@ import { trimFromArt } from './trimcolour';
 import { boundsOf } from './quad';
 import type { MountArt, MountRig } from './mountrig';
 import { str } from '../web/i18n';
+import { followGate } from '../web/play/gates';
 
 export type GlassMode = 'loading' | 'front' | 'attract' | 'still' | 'dark' | 'live' | 'failed';
 
@@ -72,6 +73,7 @@ export class Glass {
   readonly heldInputs = new Set<number>();
   readonly gatedOff = new Set<CabLamp>();
   private readonly gateSeenLit = new Set<number>();
+  onGateSeen: ((lamps: number[]) => void) | null = null;
   lastPaint = -Infinity;
   paints = 0;
   readonly times: LoadTimes = newTimes();
@@ -512,25 +514,19 @@ export class Glass {
   }
 
   private updateGate(m: FrameView, lp: CabLamp): void {
-    const gate = lp.enableLamp !== undefined ? [lp.enableLamp] : lp.enableLamps;
-    if (!gate?.length) return;
-    let lit = false;
-    for (const n of gate) {
-      if (m.layoutLamp(n)) { lit = true; this.gateSeenLit.add(n); }
-    }
-    if (lit) this.gatedOff.delete(lp);
-    else if (lp.enableLatched || gate.some((n) => this.gateSeenLit.has(n))) this.gatedOff.add(lp);
-    else this.gatedOff.delete(lp);
+    if (followGate(m, lp, this.gatedOff, this.gateSeenLit)) this.onGateSeen?.([...this.gateSeenLit]);
   }
 
-  resetGates(): void {
+  resetGates(seen: readonly number[] = []): void {
     this.heldInputs.clear();
     this.gatedOff.clear();
     this.gateSeenLit.clear();
+    for (const n of seen) this.gateSeenLit.add(n);
   }
 
   standDown(): void {
     this.resetGates();
+    this.onGateSeen = null;
     this.painter?.invalidate();
     this.mode = this.player ? 'attract' : this.mode === 'live' ? 'still' : this.mode;
     this.lastPaint = -Infinity;

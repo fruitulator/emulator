@@ -443,6 +443,7 @@ const astra: PlatformView = {
   coinBit: 5,
   tokenBit: -1,
   acceptorLineIsNote: true,
+  serialAcceptor: { parallelNote: true },
 };
 
 const sru: PlatformView = {
@@ -942,6 +943,11 @@ export function coinInputLine(
   }
   const direct = 0x100 | button;
   return reg.directIds && coins.some((c) => c.bit === direct) ? direct : -1;
+}
+
+export function markableLine(view: Pick<PlatformView, 'coinRegister'>, button: number): number {
+  if (!view.coinRegister?.directIds || !Number.isInteger(button) || button < 0 || button >= 0x80) return -1;
+  return 0x100 | button;
 }
 
 export function plainCoinDrop(

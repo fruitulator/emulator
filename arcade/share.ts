@@ -1,6 +1,6 @@
 import {
-  ARCADES_PATH, arcadeNameKey, RATING_PATH, VIEW_KEY_HEADER, VIEW_LIMIT, VISIT_PATH,
-  type ArcadeSort, type ArcadeVisitReply, type RatingReply,
+  ARCADES_PATH, arcadeNameKey, PLAYING_PATH, RATING_PATH, VIEW_KEY_HEADER, VIEW_LIMIT, VISIT_PATH,
+  type ArcadeSort, type ArcadeVisitReply, type PlayingReply, type RatingReply,
   type ArcadeListReply, type ArcadeListing, type ArcadeReply, type DeleteReply, type PublishBody, type PublishReply,
 } from './serverwire';
 import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, type ArcadeDoc, type DocMachine } from './doc';
@@ -149,6 +149,10 @@ export class ArcadeServer {
 
   rating(id: string): Promise<RatingReply> {
     return this.call<RatingReply>(`/${encodeURIComponent(id)}/${RATING_PATH}`, 'GET');
+  }
+
+  playing(id: string): Promise<PlayingReply> {
+    return this.call<PlayingReply>(`/${encodeURIComponent(id)}/${PLAYING_PATH}`, 'GET');
   }
 
   rate(id: string, stars: number): Promise<RatingReply> {

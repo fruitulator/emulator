@@ -3180,6 +3180,26 @@ const astra: Platform = {
         readSetting(payload, 'ASTRASYSA1', 'Hopper Opto') ?? 'Normal');
       m.hopperOpto = opto < 0 ? 0 : opto;
       m.reel56Optos = readSetting(payload, 'ASTRASYSA1', 'Reel 56 Optos') === 'Type 2' ? 1 : 0;
+      const nv4 = readSetting(payload, 'ASTRASYSA1', 'NV4 Note');
+      m.nv4Fitted = nv4 === 'Yes';
+      const noteSlots = declaredCoins(game.layout)
+        .filter((c) => c.note !== null && ((c.note >= 0x2f && c.note <= 0x31) || (c.note >= 0x3b && c.note <= 0x3d))).length;
+      if (nv4 === null && noteSlots > 0) {
+        noteBoardDefault(m, {
+          axis: 'coin',
+          text: 'note slots are drawn but this layout does not state whether a note reader is fitted - none is',
+          ifWrong: 'Those slots refuse every note; the machine cannot take one.',
+        });
+      } else if (!m.nv4Fitted) {
+        const jpm = declaredCoins(game.layout).filter((c) => c.note !== null && c.note >= 0x3b && c.note <= 0x3d).length;
+        if (jpm > 0) {
+          noteBoardDefault(m, {
+            axis: 'coin',
+            text: `${jpm} note slot(s) are drawn but this layout fits no note reader`,
+            ifWrong: 'Those slots do nothing when clicked, as the layout says.',
+          });
+        }
+      }
       m.idDetectMode = readLayoutWord(payload, 0x7f) ?? 0;
       m.networkId = readLayoutWord(payload, 0x75) ?? 0;
       const astraSec = layoutSecFitted(game, 'ASTRASYSA1');

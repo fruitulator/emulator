@@ -230,8 +230,9 @@ export class GlassOverlay {
 
   get showing(): boolean { return this.el.style.display !== 'none'; }
 
-  setDim(k: number): void {
-    const f = k < 1 ? `brightness(${+Math.pow(k, 1 / 2.2).toFixed(3)})` : '';
+  setDim(k: number, bright = 1): void {
+    const s = (k < 1 ? Math.pow(k, 1 / 2.2) : 1) * bright;
+    const f = s !== 1 ? `brightness(${+s.toFixed(3)})` : '';
     if (this.el.style.filter !== f) this.el.style.filter = f;
   }
 

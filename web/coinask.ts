@@ -5,9 +5,9 @@ export type SlotCoin = number | { token: number | null };
 
 export interface WiredCoin { coin: SlotCoin; line: number | null }
 
-export type WiringHow = 'detected' | 'measured' | 'asked';
+export type WiringHow = 'detected' | 'measured' | 'asked' | 'marked';
 
-export interface SlotWiring { coins: WiredCoin[]; how: WiringHow }
+export interface SlotWiring { coins: WiredCoin[]; how: WiringHow; checked?: boolean }
 
 export type CoinWiring = Record<string, SlotWiring>;
 
@@ -65,8 +65,8 @@ export function readCoinWiring(raw: unknown): CoinWiring {
       coins.push({ coin, line: typeof line === 'number' && Number.isInteger(line) && line >= 0 ? line : null });
     }
     if (!coins.length) continue;
-    const how: WiringHow = s.how === 'detected' || s.how === 'measured' ? s.how : 'asked';
-    out[k] = { coins, how };
+    const how: WiringHow = s.how === 'detected' || s.how === 'measured' || s.how === 'marked' ? s.how : 'asked';
+    out[k] = how === 'marked' && (v as { checked?: unknown }).checked === true ? { coins, how, checked: true } : { coins, how };
   }
   return out;
 }
@@ -114,7 +114,7 @@ export function editedSlot(prev: SlotWiring | undefined, slotLine: number, coins
   const fresh = askedSlot(slotLine, coins);
   if (!prev) return fresh;
   const same = coins.length === prev.coins.length && coins.every((c) => prev.coins.some((p) => sameCoin(p.coin, c)));
-  if (same) return { coins: prev.coins.map((c) => ({ ...c })), how: prev.how };
+  if (same) return { coins: prev.coins.map((c) => ({ ...c })), how: prev.how, ...(prev.checked ? { checked: true } : {}) };
   return {
     coins: fresh.coins.map((c) => {
       const v = slotCoinPence(c.coin);
@@ -123,6 +123,16 @@ export function editedSlot(prev: SlotWiring | undefined, slotLine: number, coins
     }),
     how: 'asked',
   };
+}
+
+export function markedSlots(w: CoinWiring): { line: number; slot: SlotWiring }[] {
+  return Object.entries(w).filter(([, s]) => s.how === 'marked').map(([k, slot]) => ({ line: Number(k), slot }));
+}
+
+export function playableWiring(w: CoinWiring): CoinWiring {
+  const out: CoinWiring = {};
+  for (const [k, s] of Object.entries(w)) if (s.how !== 'marked' || s.checked) out[k] = s;
+  return out;
 }
 
 export function unplacedCoins(s: SlotWiring): SlotCoin[] {

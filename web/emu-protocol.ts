@@ -76,6 +76,7 @@ export type EmuRequest =
   | { type: 'input'; epoch: number; id: number; on: boolean }
   | { type: 'coin'; epoch: number; bit: number }
   | { type: 'name-coin'; epoch: number; line: number; coin: NamedCoin }
+  | { type: 'gate-seen'; epoch: number; lamps: number[] }
   | { type: 'coin-wiring'; epoch: number; wiring: CoinWiring }
   | { type: 'note'; epoch: number; billType: number; parallel?: boolean }
   | { type: 'reset'; epoch: number }

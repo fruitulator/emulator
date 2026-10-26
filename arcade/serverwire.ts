@@ -135,6 +135,10 @@ export interface RatingBody { stars: number }
 export interface ArcadeRating { rating: number; ratings: number; mine: number }
 export type RatingReply = ({ ok: true } & ArcadeRating) | { ok: false; why: 'gone' | 'bad' | 'own' | 'not-visited' | 'signed-out' };
 export type ArcadeVisitReply = { ok: true } | { ok: false; why: 'gone' };
+export const PLAYING_PATH = 'playing';
+export const PLAYING_POLL_MS = 15_000;
+export interface MachinePlayer { machine: string; id: string; name: string; avatarAt?: number }
+export type PlayingReply = { ok: true; playing: MachinePlayer[] };
 export const VIEW_KEY_HEADER = 'x-arcade-key';
 export const VIEW_TYPES = ['image/webp', 'image/jpeg'] as const;
 export const VIEW_LIMIT = 60 * 1024;

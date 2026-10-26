@@ -7,6 +7,7 @@ import {
   captureFrame, frameLayoutFor, type FrameLayout,
 } from '../src/machine/framestate';
 import { applyState, captureState, captureStateRaw } from './snapshot';
+import { gatesOf, stampGates } from './play/gates';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { Follower, diffPaths, followBudget, settleSound, signalsOf, snapshotHash, type Check, type RelayInput } from './relay';
 import {
@@ -38,6 +39,7 @@ let epoch = -1;
 let layout: FrameLayout | null = null;
 let schematic: Schematic | null = null;
 let gameName = '';
+let gateSeen: number[] = [];
 let benchStep = false;
 let paused = false;
 let halted = false;
@@ -95,6 +97,7 @@ function pushAutosave(now: number, trigger: AutosaveTrigger): void {
   }
   try {
     const snap = captureStateRaw(machine, gameName);
+    stampGates(snap, gateSeen);
     const nvram = machine.batteryRam?.() ?? undefined;
     post({ type: 'autosave', epoch, snap, cycles: snap.cycles, trigger, nvram });
   } catch (e) {
@@ -299,6 +302,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
   try {
     const m = machineFor(req.game);
     gameName = req.game.name;
+    gateSeen = gatesOf(req.snapshot);
     applyOptionKeyState(m, req.optionKeys);
     if (req.snapshot) applyState(m, req.snapshot);
     applyPanelSwitchState(m, req.panelSwitches);
@@ -459,6 +463,9 @@ function handle(req: EmuRequest): void {
     case 'name-coin':
       m.nameCoin?.(req.line, req.coin);
       break;
+    case 'gate-seen':
+      gateSeen = gatesOf({ gates: req.lamps });
+      break;
     case 'coin-wiring':
       applyCoinWiring(m, req.wiring);
       break;
@@ -482,6 +489,7 @@ function handle(req: EmuRequest): void {
         sendRelay(performance.now(), true);
         settleSound(m);
         const snap = captureState(m, gameName);
+        stampGates(snap, gateSeen);
         const data = deflateSync(strToU8(JSON.stringify(snap)));
         const nvram = m.batteryRam?.() ?? undefined;
         post({
@@ -558,6 +566,7 @@ function handle(req: EmuRequest): void {
       try {
         const snap = captureState(m, gameName);
         if (diagLog.enabled) snap.diag = [...diagLog.entries()];
+        stampGates(snap, gateSeen);
         if (req.deflate) {
           const data = deflateSync(strToU8(JSON.stringify(snap)));
           post({ type: 'snapshot-result', id: req.id, data, cycles: snap.cycles }, [data.buffer]);

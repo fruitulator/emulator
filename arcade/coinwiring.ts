@@ -1,9 +1,10 @@
 import type { MachineInfo } from '../web/emu-protocol';
 import type { Emu } from '../web/emu-client';
-import { viewFor } from '../web/platform';
-import { wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, type CoinWiring } from '../web/coinask';
+import { markableLine, viewFor, type PlatformView } from '../web/platform';
+import { wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, type CoinWiring } from '../web/coinask';
+import { hasInput, type CabLamp } from '../web/dat';
 import type { NamedCoin } from '../src/machine/machine';
-import { detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE } from '../src/machine/coinwiring';
+import { detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
 
 export type { WireSlot } from '../web/coinslots';
 
@@ -58,7 +59,7 @@ export function slotlessToWire(info: MachineInfo | null, refusing: number, w: Co
 }
 
 export function wiringFor(configCoins: unknown, oldAnswers: unknown, info: MachineInfo | null): CoinWiring {
-  const own = readCoinWiring(configCoins);
+  const own = playableWiring(readCoinWiring(configCoins));
   const w = Object.keys(own).length ? own : wiringFromAnswers(oldAnswers);
   return info ? wiringFinder.mapAsked(w, info) : w;
 }
@@ -110,3 +111,26 @@ export function takesACoin(
   }
   return false;
 }
+
+export interface MarkableButton { button: number; line: number; lamp: CabLamp }
+
+export function markableButtons(lamps: readonly CabLamp[], view: Pick<PlatformView, 'coinRegister'>, marked: ReadonlySet<number> = new Set()): MarkableButton[] {
+  const by = new Map<number, MarkableButton>();
+  for (const lp of lamps) {
+    if (!hasInput(lp) || lp.acceptor || (lp.coinInput !== undefined && !marked.has(lp.coinInput))) continue;
+    const line = markableLine(view, lp.button);
+    if (line < 0) continue;
+    const at = by.get(lp.button);
+    if (!at || lp.left < at.lamp.left || (lp.left === at.lamp.left && lp.top < at.lamp.top)) by.set(lp.button, { button: lp.button, line, lamp: lp });
+  }
+  return [...by.values()].sort((a, b) => a.lamp.left - b.lamp.left || a.lamp.top - b.lamp.top);
+}
+
+export function markedChutes(w: CoinWiring, info: Pick<MachineInfo, 'coins'> | null | undefined): { label: string; bit: number }[] {
+  const own = info?.coins?.length ? info.coins : null;
+  return markedSlots(playableWiring(w))
+    .filter(({ line }) => !own || own.some((c) => c.bit === line))
+    .map(({ line }) => ({ label: '', bit: line }));
+}
+
+export { markedCounted };

@@ -62,6 +62,7 @@ import {
 } from './render-index';
 import { fancyReelPool, type FancyPool } from './reellight';
 import { PROCONN_LCD_FONT } from './proconnfont';
+import { proconnGlcdFit, proconnGlcdPixels } from './proconnglcd';
 import { EPOCH_DOT_FONT } from './epochdotfont';
 import { dotLcdPaint, dotLcdSize } from './dotlcd';
 import { prismBothLitPlan } from './prismplan';
@@ -163,7 +164,7 @@ export function paintBfmAlpha(
 
 export interface CabinetPainterOptions {
   inputHeld?: (input: number) => boolean;
-  virtualDisplay?: (m: FrameView | null) => void;
+  virtualDisplay?: (m: FrameView | null, lcdOnGlass: boolean) => void;
   dirtyDisabled?: boolean;
   lampGate?: (m: FrameView, lp: CabLamp) => void;
   reelPeek?: () => number;
@@ -214,7 +215,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   const drawLog: { t: number; rects: 'full' | IntRect[] }[] = [];
 
   function paint(m: FrameView, cab: Cabinet): boolean {
-    virtualDisplay(cab.vfd && !m.graphicLcd() ? null : m);
+    const lcdOnGlass = !!cab.proconnMatrix;
+    const floatLcd = !lcdOnGlass && !!m.graphicLcd();
+    virtualDisplay(cab.vfd && !floatLcd ? null : m, lcdOnGlass);
     if (!lightClusters || lightClusters.cab !== cab) {
       lightClusters = { cab, clusters: computeLightGeometry(cab) };
     }
@@ -605,6 +608,11 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   }
 
   function drawProconnMatrix(m: FrameView, p: NonNullable<Cabinet['proconnMatrix']>): void {
+    const lcd = m.graphicLcd();
+    if (lcd) {
+      drawProconnGlcd(lcd, p);
+      return;
+    }
     const s = p.size;
     const g = s < 2 ? 0 : s < 4 ? 1 : 2;
     const kx = p.width / (100 * s + 18 * g + 23);
@@ -627,6 +635,34 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         }
       }
     }
+  }
+
+  let glcdCanvas: HTMLCanvasElement | null = null;
+  function drawProconnGlcd(
+    lcd: { width: number; height: number; bits: Uint8Array },
+    p: NonNullable<Cabinet['proconnMatrix']>,
+  ): void {
+    const s = proconnGlcdFit(p.size, p.width, p.height, lcd.width, lcd.height);
+    const px = proconnGlcdPixels(lcd, Math.max(1, s), p.on, p.off, p.bg);
+    if (!glcdCanvas) glcdCanvas = document.createElement('canvas');
+    if (glcdCanvas.width !== px.width || glcdCanvas.height !== px.height) {
+      glcdCanvas.width = px.width;
+      glcdCanvas.height = px.height;
+    }
+    const img = new ImageData(new Uint8ClampedArray(px.data.buffer as ArrayBuffer), px.width, px.height);
+    glcdCanvas.getContext('2d')!.putImageData(img, 0, 0);
+    ctx.save();
+    ctx.fillStyle = argbToCss(p.bg);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
+    if (s > 0) {
+      ctx.drawImage(glcdCanvas, p.left + Math.floor((p.width - px.width) / 2),
+        p.top + Math.floor((p.height - px.height) / 2));
+    } else {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(glcdCanvas, p.left, p.top, p.width, p.height);
+    }
+    ctx.restore();
   }
 
   function drawEpochDotAlpha(m: FrameView, p: NonNullable<Cabinet['epochDotAlpha']>): void {

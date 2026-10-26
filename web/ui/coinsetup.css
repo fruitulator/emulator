@@ -95,6 +95,15 @@
   font-size: 12.5px;
   color: var(--muted);
 }
+.coin-mark-pick {
+  padding: 10px 12px 0;
+}
+.coin-slot > .ui-btn.tertiary {
+  margin: 0 12px 10px;
+}
+.coin-slot-add {
+  margin: 10px 12px 12px;
+}
 .coin-slot-notes {
   display: flex;
   flex-direction: column;

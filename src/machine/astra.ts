@@ -1,6 +1,6 @@
 import { COIN_RAW } from './coinraw';
 import type { Bus16 } from '../cpu/bus68k';
-import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus } from './machine';
+import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus, NoteResult } from './machine';
 import type { BoardPart } from './parts';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
@@ -78,7 +78,7 @@ const coinPattern = (raw: number): number =>
   ((raw & 1) << 2) | ((raw & 2) << 3) | ((raw & 4) << 1) | ((raw & 8) >> 2) | ((raw & 0x10) >> 4);
 
 export class Astra implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'slotCoins', 'wiring', 'programMem', 'idDetectMode', 'networkId'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'coinCodeCache', 'cabinetLines', 'coinSlots', 'slotCoins', 'wiring', 'programMem', 'idDetectMode', 'networkId', 'nv4Fitted'];
 
   readonly digitKind: DigitKind = 'byte64';
   readonly cpu: M68000;
@@ -133,6 +133,18 @@ export class Astra implements Bus16, Machine {
   private coinMask = 0;
   private coinRow = 2;
   private coinTimer = 0;
+
+  nv4Fitted = false;
+  get parallelNoteReaderFitted(): boolean {
+    return this.nv4Fitted;
+  }
+  private jpmNoteGated(id: number): boolean {
+    return id >= 0x3b && id <= 0x3d && !this.nv4Fitted;
+  }
+  private noteRow = 0;
+  private noteLeft = 0;
+  private static readonly NOTE_HELD = Math.round(100 * ASTRA_CLOCK / 1000);
+  private static readonly NOTE_BUSY = Math.round(105 * ASTRA_CLOCK / 1000);
 
   private readonly i2c: I2cBitBang;
   readonly i2cSelects: number[] = [];
@@ -385,6 +397,7 @@ export class Astra implements Bus16, Machine {
 
   insertCoin(id: number): void {
     if (this.coinTimer > 0) return;
+    if (this.jpmNoteGated(id)) return;
     const taken = this.programCoinOn(id);
     if (taken === 'refused') this.coinsRefused++;
     else if (this.wiring) this.bookWiredCoin(id, taken);
@@ -412,6 +425,25 @@ export class Astra implements Bus16, Machine {
 
   get coinBusy(): boolean {
     return this.coinTimer > 0;
+  }
+
+  insertParallelNote(channel: number): NoteResult {
+    if (!this.nv4Fitted) return 'unfitted';
+    const value = [0x80, 0x40, 0x20][channel - 1];
+    if (value === undefined) return 'unprogrammed';
+    if ((this.latch[4]! & 0x80) === 0) return 'inhibited';
+    if (this.noteLeft > 0) return 'busy';
+    this.noteRow = value === 0x80 ? 0x10 : value === 0x40 ? 0x20 : 0x40;
+    this.noteLeft = Astra.NOTE_BUSY;
+    const id = 0x2f + channel - 1;
+    if (this.wiring) this.bookWiredCoin(id, null);
+    else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
+    return 'stacked';
+  }
+
+  private tickNote(cycles: number): void {
+    if ((this.noteLeft -= cycles) <= Astra.NOTE_BUSY - Astra.NOTE_HELD) this.noteRow = 0;
+    if (this.noteLeft < 0) this.noteLeft = 0;
   }
 
   coinsRefused = 0;
@@ -598,6 +630,8 @@ export class Astra implements Bus16, Machine {
     this.coinMask = 0;
     this.coinRow = 2;
     this.coinTimer = 0;
+    this.noteRow = 0;
+    this.noteLeft = 0;
     this.coinBook.reset();
     this.matrix[2] = 0;
     for (const s of this.switches) if (s.closed && s.number >> 3 === 2) this.layoutInput(s.number, true);
@@ -664,6 +698,7 @@ export class Astra implements Bus16, Machine {
       if (this.coinTimer <= COIN_TAIL) this.matrix[this.coinRow] &= ~this.coinMask;
       if (this.coinTimer < 0) this.coinTimer = 0;
     }
+    if (this.noteLeft > 0) this.tickNote(cycles);
     return cycles;
   }
 
@@ -901,7 +936,7 @@ export class Astra implements Bus16, Machine {
     switch (n) {
       case 0: return REV8[this.dip1] & 0x0f;
       case 1: {
-        let v = (~(this.idDetect | this.reelDrive.optics()) & 0x0f) | (m[0] & 0xf0);
+        let v = (~(this.idDetect | this.reelDrive.optics()) & 0x0f) | ((m[0] | this.noteRow) & 0xf0);
         if (col === 0) v |= m[10] & 0xf0;
         else if (col === 1) v |= m[11] & 0xf0;
         return v;

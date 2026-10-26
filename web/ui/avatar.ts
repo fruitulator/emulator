@@ -80,3 +80,13 @@ export function avatarFace(name: string | null, pic: string | null, size: number
   drawFace(el, name, pic);
   return el;
 }
+
+export function namePill(name: string, pic: string | null, size = 22): HTMLSpanElement {
+  const el = document.createElement('span');
+  el.className = 'ui-name-pill';
+  const label = document.createElement('span');
+  label.className = 'ui-name-pill-name';
+  label.textContent = name;
+  el.append(avatarFace(name, pic, size), label);
+  return el;
+}

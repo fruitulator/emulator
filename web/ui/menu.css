@@ -350,7 +350,7 @@ button.menu-row:hover .row-chev {
 }
 #soundBtn,
 .ui-speaker,
-#brightBtn,
+.ui-bright,
 .ui-reset {
   display: flex;
   flex: none;
@@ -367,16 +367,16 @@ button.menu-row:hover .row-chev {
 #soundBtn:hover,
 .ui-speaker[aria-pressed="true"],
 .ui-speaker:hover,
-#brightBtn:hover:not(:disabled),
+.ui-bright:hover:not(:disabled),
 .ui-reset:hover:not(:disabled) {
   color: var(--text);
 }
-#brightBtn:disabled,
+.ui-bright:disabled,
 .ui-reset:disabled {
   cursor: default;
 }
-#brightBtn.off-neutral,
-#brightBtn.off-neutral:hover,
+.ui-bright.off-neutral,
+.ui-bright.off-neutral:hover,
 .ui-reset.off-neutral,
 .ui-reset.off-neutral:hover {
   color: var(--accent);

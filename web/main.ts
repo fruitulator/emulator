@@ -34,7 +34,7 @@ import { exportPunnet, punnetFileName } from './portable';
 import { openExportPicker, openPackTarget, packGames, packReport } from './punnetexport';
 import { openAlert } from './ui/dialog';
 import { pillButton } from './ui/list';
-import { rowIcon } from './ui/icons';
+import { BRIGHT_NEUTRAL, brightnessControl } from './ui/brightness';
 import { askClearRam } from './clearram';
 import { backRow, caption, card, checkRow, choreograph, menuRow, sliderRow, statRow } from './ui/rows';
 import { enhanceSelect } from './ui/dropdown';
@@ -45,6 +45,7 @@ import { KeyHintLayer, canvasPlace } from './keyhints';
 import { PlayKeys, showKeysRow } from './play/keys';
 import { answers, CLICK_SLOP_PX, HeldButtons, PlayPointer } from './play/pointer';
 import { PlayAutosave } from './play/autosave';
+import { followGate, gatesOf, stampGates } from './play/gates';
 import { appendItems, menuItems, saveLog, saveState, stateDownload, type ActionId, type ActionSurface } from './play/actions';
 import { machineCoins, restoreCabinetSounds } from './menupanels';
 import { mustName, readCoinAnswers, withCoinAnswer } from './coinask';
@@ -134,7 +135,7 @@ const reelPeek = new ReelPeek();
 let peekPointer: number | null = null;
 const painter = createCabinetPainter(canvas, {
   inputHeld: (input) => held.holding(input),
-  virtualDisplay: (m) => setVfdStrip(m),
+  virtualDisplay: (m, lcdOnGlass) => setVfdStrip(m, lcdOnGlass),
   dirtyDisabled: !liveValue('dirty'),
   lampGate: (m, lp) => updateGate(m, lp),
   reelPeek: () => reelPeek.value(),
@@ -469,6 +470,7 @@ function startGame(
   playKeys.reset();
   gatedOff.clear();
   gateSeenLit.clear();
+  for (const n of gatesOf(snapshot)) gateSeenLit.add(n);
   painter.resetDisplay();
   setVfdStrip(null);
   vfdStripGame = readSavedVirtualDisplay(game);
@@ -2105,55 +2107,20 @@ document.getElementById('soundnote-close')?.addEventListener('click', () => {
 
 syncSoundButton();
 
-const brightSlider = document.getElementById('brightSlider') as HTMLInputElement;
-const BRIGHT_KEY = 'fruitulator.brightness';
-const BRIGHT_NEUTRAL = 100;
-
-const SUN =
-  '<circle cx="12" cy="12" r="4"/>' +
-  '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
-
-const brightBtn = document.createElement('button');
-brightBtn.id = 'brightBtn';
-brightBtn.type = 'button';
-brightBtn.append(rowIcon(SUN).firstElementChild!);
-
-function applyBrightness(): void {
-  const pct = +brightSlider.value;
+function applyBrightness(pct = brightness.pct): void {
   const filter = pct === BRIGHT_NEUTRAL ? '' : `brightness(${pct / 100})`;
   stage.style.filter = filter;
   const strip = document.getElementById('vfd-strip');
   if (strip) strip.style.filter = filter;
-  const neutral = pct === BRIGHT_NEUTRAL;
-  brightBtn.classList.toggle('off-neutral', !neutral);
-  brightBtn.disabled = neutral;
-  brightBtn.setAttribute('aria-label', neutral ? str('main.brightness') : str('main.reset_brightness'));
-  brightBtn.title = neutral ? str('main.brightness_n', { 0: pct }) : str('main.brightness_n_press_to_reset', { 0: pct });
 }
 
-function saveBrightness(): void {
-  try { localStorage.setItem(BRIGHT_KEY, brightSlider.value); } catch {  }
-}
-
-brightSlider.addEventListener('input', () => {
-  applyBrightness();
-  saveBrightness();
+const brightness = brightnessControl({
+  key: 'fruitulator.brightness',
+  slider: document.getElementById('brightSlider') as HTMLInputElement,
+  apply: (pct) => applyBrightness(pct),
 });
-
-brightBtn.addEventListener('click', () => {
-  brightSlider.value = String(BRIGHT_NEUTRAL);
-  applyBrightness();
-  saveBrightness();
-});
-
-try {
-  const v = Number(localStorage.getItem(BRIGHT_KEY) ?? NaN);
-  if (Number.isFinite(v) && v >= +brightSlider.min && v <= +brightSlider.max) {
-    brightSlider.value = String(v);
-  }
-} catch {  }
-
-applyBrightness();
+const brightSlider = brightness.slider;
+const brightBtn = brightness.button;
 
 let fatal = '';
 
@@ -2656,15 +2623,7 @@ function clickable(lp: CabLamp): boolean {
 }
 
 function updateGate(m: FrameView, lp: CabLamp): void {
-  const gate = lp.enableLamp !== undefined ? [lp.enableLamp] : lp.enableLamps;
-  if (!gate?.length) return;
-  let lit = false;
-  for (const n of gate) {
-    if (m.layoutLamp(n)) { lit = true; gateSeenLit.add(n); }
-  }
-  if (lit) gatedOff.delete(lp);
-  else if (lp.enableLatched || gate.some((n) => gateSeenLit.has(n))) gatedOff.add(lp);
-  else gatedOff.delete(lp);
+  if (followGate(m, lp, gatedOff, gateSeenLit)) emu.gateSeen([...gateSeenLit]);
 }
 
 const MAX_ZOOM = 4;
@@ -3043,6 +3002,8 @@ function loadSnapshotFile(file: File): void {
         return;
       }
       const booted = ++session.boot;
+      for (const n of gatesOf(snap)) gateSeenLit.add(n);
+      stampGates(snap, [...gateSeenLit]);
       void emu.load({ game, snapshot: snap, optionKeys: readSavedOptionKeys(game), panelSwitches: readSavedPanelSwitches(game), namedCoins: session.coinAnswers, bench: BENCH, noRegions: NO_REGIONS, wasm: USE_WASM })
         .then((info) => {
           if (booted !== session.boot) return;
@@ -3343,6 +3304,7 @@ let vfdStripLatest: {
   lcd: { width: number; height: number; bits: Uint8Array } | null;
 } | null = null;
 let vfdStripFlip: HTMLButtonElement | null = null;
+let vfdStripNote: HTMLElement | null = null;
 let vfdStripSeen = false;
 let vfdStripBox: HTMLInputElement | null = null;
 
@@ -3383,7 +3345,7 @@ function setVfdStripOn(on: boolean): void {
   renderVfdStrip();
 }
 
-function setVfdStrip(m: FrameView | null): void {
+function setVfdStrip(m: FrameView | null, lcdOnGlass = false): void {
   if (!m) {
     vfdStripLatest = null;
     vfdStripSeen = false;
@@ -3392,7 +3354,7 @@ function setVfdStrip(m: FrameView | null): void {
     const text = painter.displayText(m);
     const cells: (readonly number[])[] = [];
     for (let cell = 0; cell < 16; cell++) cells.push(painter.cellColumns(m, text, cell));
-    const g = m.graphicLcd();
+    const g = lcdOnGlass ? null : m.graphicLcd();
     const lcd = g ? { width: g.width, height: g.height, bits: g.bits.slice() } : null;
     if (!vfdStripSeen) vfdStripSeen = !!lcd || cells.some((cols) => cols.some((c) => c !== 0));
     if (lcd) vfdStripLcd = true;
@@ -3412,6 +3374,7 @@ function renderVfdStrip(): void {
   panel.hidden = false;
   const dpr = window.devicePixelRatio || 1;
   if (vfdStripFlip) vfdStripFlip.hidden = !!d.lcd;
+  if (vfdStripNote) vfdStripNote.hidden = !d.lcd;
   panel.classList.toggle('lcd', !!d.lcd);
   panel.classList.toggle('bare', !!vfdStripSpot?.bare);
   if (d.lcd) {
@@ -3565,8 +3528,13 @@ function createVfdStrip(): HTMLElement {
   flip.setAttribute('aria-label', str('main.reverse_virtual_display_text'));
   flip.addEventListener('pointerdown', (ev) => ev.stopPropagation());
   flip.addEventListener('click', () => setVfdReverse(!painter.vfdReversed));
-  panel.append(cv, flip, close);
+  const note = document.createElement('div');
+  note.className = 'vfd-note';
+  note.hidden = true;
+  note.textContent = str('main.this_game_s_layout_does');
+  panel.append(cv, note, flip, close);
   vfdStripFlip = flip;
+  vfdStripNote = note;
 
   let grab: { dx: number; dy: number; x: number; y: number; moved: boolean } | null = null;
   let lastTap = -Infinity;

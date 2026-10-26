@@ -725,21 +725,25 @@ export class Mpu3 implements Bus, Machine {
     if (!code) return;
     const pc = this.cpu.pc & 0x7fff;
     if (this.takeId >= 0) {
-      if (pc === code.credit && (code.creditX === undefined || this.cpu.x === code.creditX)) {
+      if ((pc === code.credit && (code.creditX === undefined || this.cpu.x === code.creditX)) || code.changeAt?.includes(pc)) {
         const id = this.takeId;
         this.takeId = -1;
         this.unpend(id);
         this.bookTaken(id);
         return;
       }
-      const ended = code.shape === 'strobed' ? pc === this.takeEnd : this.recordPtr(code) !== this.takeEnd;
+      const ended = code.shape === 'records' ? this.recordPtr(code) !== this.takeEnd : pc === this.takeEnd;
       if (ended || --this.takeLeft <= 0) { this.unpend(this.takeId); this.takeId = -1; }
     }
     if (pc !== code.take) return;
     let line: number | null = null;
-    if (code.shape === 'strobed') {
-      const st = this.ram[code.strobeVar!]!;
-      if (st < 4) line = st * 8 + 5;
+    if (code.shape !== 'records') {
+      if (code.shape === 'strobed') {
+        const st = this.ram[code.strobeVar!]!;
+        if (st < 4) line = st * 8 + 5;
+      } else {
+        line = code.lineOfIndex![this.ram[code.idxVar!]!] ?? null;
+      }
       const sp = this.cpu.s;
       this.takeEnd = ((this.read8((sp + 1) & 0xffff) << 8) | this.read8((sp + 2) & 0xffff)) & 0x7fff;
     } else {
@@ -827,6 +831,7 @@ export class Mpu3 implements Bus, Machine {
   }
 
   private changeFor(id: number): number {
+    if (this.coinCode()?.shape === 'dispatch') return 0;
     const t = this.coinLineTable;
     const l = t?.lines.find((x) => x.line === id);
     if (!t || !l || !l.change.length) return 0;

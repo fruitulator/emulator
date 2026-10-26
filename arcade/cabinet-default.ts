@@ -241,7 +241,7 @@ export function profileFaces(
 }
 
 export function faceMaterial(texture: THREE.Texture | null): THREE.MeshBasicMaterial {
-  const m = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+  const m = new THREE.MeshBasicMaterial({ map: texture });
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec3 uvq;\nvarying vec3 vUvq;')

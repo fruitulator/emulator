@@ -112,7 +112,7 @@ export async function arcadeSign(name: string, renderer: THREE.WebGLRenderer, co
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(width, height),
     new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+      map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     }),
   );
   mesh.renderOrder = 1;

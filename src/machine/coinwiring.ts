@@ -469,3 +469,14 @@ export interface MeterCheckState { pence: number; counts: number; last: number; 
 export function meterCheckState(): MeterCheckState {
   return { pence: 0, counts: 0, last: 0, dirty: false, state: 'waiting' };
 }
+
+export function markedCounted(m: CoinMeasurement | null | undefined, line: number): 'counted' | 'not-counted' | 'unmeasured' {
+  if (!m || 'refused' in m) return 'unmeasured';
+  const got = m.lines.find((l) => l.line === line);
+  if (!got) return 'unmeasured';
+  if (got.refused) return 'not-counted';
+  const c = m.control;
+  if (got.inCounts > c.inCounts) return 'counted';
+  if (got.meters.some((v, i) => v > (c.meters[i] ?? 0))) return 'counted';
+  return 'not-counted';
+}

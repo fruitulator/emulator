@@ -58,6 +58,7 @@ export interface Emu {
   input(id: number, on: boolean): void;
   coin(bit: number): void;
   nameCoin(line: number, coin: NamedCoin): void;
+  gateSeen(lamps: readonly number[]): void;
   setCoinWiring(wiring: CoinWiring): void;
   readonly coinWiringStatus: CoinWiringStatus | null;
   note(billType: number, parallel?: boolean): void;
@@ -339,6 +340,10 @@ export class WorkerEmu implements Emu {
 
   nameCoin(line: number, coin: NamedCoin): void {
     this.post({ type: 'name-coin', epoch: this.epoch, line, coin });
+  }
+
+  gateSeen(lamps: readonly number[]): void {
+    this.post({ type: 'gate-seen', epoch: this.epoch, lamps: [...lamps] });
   }
 
   setCoinWiring(wiring: CoinWiring): void {
