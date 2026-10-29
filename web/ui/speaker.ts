@@ -13,8 +13,8 @@ export function speakerButton(): HTMLButtonElement {
   return b;
 }
 
-export function showSpeaker(b: HTMLButtonElement, on: boolean): void {
-  b.querySelector('svg')!.innerHTML = on ? SPEAKER_ON : SPEAKER_OFF;
+export function showSpeaker(b: HTMLButtonElement, on: boolean, silent = false): void {
+  b.querySelector('svg')!.innerHTML = on && !silent ? SPEAKER_ON : SPEAKER_OFF;
   b.setAttribute('aria-pressed', String(on));
   const action = on ? str('ui.speaker.turn_sound_off') : str('ui.speaker.turn_sound_on');
   b.setAttribute('aria-label', action);

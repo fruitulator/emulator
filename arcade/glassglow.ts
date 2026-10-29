@@ -139,7 +139,7 @@ export interface GlassGlow {
   dispose(): void;
 }
 
-export function makeGlow(size: { W: number; H: number; D: number }, own: THREE.Texture, left: THREE.Texture | null, right: THREE.Texture | null, wall: boolean): GlassGlow {
+export function makeGlow(size: { W: number; H: number; D: number; lowerFront?: number }, own: THREE.Texture, left: THREE.Texture | null, right: THREE.Texture | null, wall: boolean): GlassGlow {
   const group = new THREE.Group();
   const mats: THREE.ShaderMaterial[] = [];
   let leftMat: THREE.ShaderMaterial | null = null;
@@ -160,7 +160,7 @@ export function makeGlow(size: { W: number; H: number; D: number }, own: THREE.T
     mats.push(m);
     if (side < 0) leftMat = m; else rightMat = m;
     group.add(new THREE.Mesh(quads([{
-      w: size.W, h: lowerH, at: new THREE.Vector3(0, lowerH / 2 + 0.05, front - size.D * 0.12 + 0.035), rot: new THREE.Euler(0, 0, 0),
+      w: size.W, h: lowerH, at: new THREE.Vector3(0, lowerH / 2 + 0.05, (size.lowerFront ?? front - size.D * 0.12) + 0.035), rot: new THREE.Euler(0, 0, 0),
       shape: 2, gain: SPILL_GAIN, flipU: side > 0,
     }]), m));
   };

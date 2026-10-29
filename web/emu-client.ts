@@ -6,6 +6,7 @@ import type { AutosaveTrigger, CashLedger, DiagEntry, EmuRequest, EmuResponse, M
 import type { Snapshot } from './snapshot';
 import type { Recording } from '../src/machine/replay';
 import type { Check, CheckResult, RelayInput } from './relay';
+import { workerName } from './i18n';
 
 export interface ClearRamSettings {
   optionKeys?: Record<string, number>;
@@ -140,7 +141,7 @@ export class WorkerEmu implements Emu {
 
   private ensureWorker(): Worker {
     if (!this.worker) {
-      this.worker = new Worker(new URL('./emu.worker.ts', import.meta.url), { type: 'module' });
+      this.worker = new Worker(new URL('./emu.worker.ts', import.meta.url), { type: 'module', name: workerName('emu') });
       this.worker.onmessage = (ev: MessageEvent<EmuResponse>) => this.dispatch(ev.data);
       this.worker.onerror = (ev) => {
         const msg = ev.message || 'emulation worker failed';

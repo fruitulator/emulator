@@ -44,7 +44,7 @@ export interface KeyInputs {
 export function cacheKey(k: KeyInputs): string {
   const s = k.setup;
   const box = (q: MachineSetup['glass']) => (q ? q.flatMap((p) => [p.x, p.y]) : null);
-  const setup = [box(s.glass), box(s.buttons), box(s.deck), s.trim ?? null, s.cabinet ?? null, s.mounts ?? null, !!s.noDeck];
+  const setup = [box(s.glass), box(s.buttons), box(s.deck), s.trim ?? null, s.cabinet ?? null, !!s.noDeck, !!s.noLower];
   return JSON.stringify([
     ARCADE_CACHE_VERSION, k.held.hash, k.held.contentHash ?? k.contentHash, k.held.decodeVersion,
     k.held.variant, setup, k.cabinetStyle, k.traceUrl, k.texSize,

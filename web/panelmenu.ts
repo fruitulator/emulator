@@ -1,4 +1,5 @@
 import { str } from './i18n';
+import { rowIcon } from './ui/icons';
 
 export interface PanelDownload {
   label: string;
@@ -37,7 +38,7 @@ export class DownloadMenu {
   constructor(private readonly downloads: () => PanelDownload[]) {
     this.button = document.createElement('button');
     this.button.type = 'button';
-    this.button.className = 'schem-action';
+    this.button.className = 'schem-action nb-btn nb-btn--sm';
     this.button.setAttribute('aria-haspopup', 'true');
     this.button.setAttribute('aria-expanded', 'false');
     this.button.append(icon(DOWNLOAD, 'schem-action-icon', 14), span('', str('panelmenu.download')));
@@ -60,7 +61,7 @@ export class DownloadMenu {
   open(): void {
     if (this.isOpen) return;
     const card = document.createElement('div');
-    card.className = 'menu-card';
+    card.className = 'menu-card nb-group';
     card.append(...this.downloads().map((d, i) => this.row(d, i)));
     this.popover.replaceChildren(card);
     this.popover.hidden = false;
@@ -96,9 +97,9 @@ export interface PanelUpload {
 export function uploadRow(u: PanelUpload, i: number): HTMLButtonElement {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'menu-row';
+  row.className = 'menu-row nb-menu-item';
   row.style.setProperty('--d', `${i * 28}ms`);
-  row.append(icon(UPLOAD, 'row-icon', 17), span('row-label', u.label));
+  row.append(rowIcon(`<path d="${UPLOAD}"/>`), span('row-label', u.label));
   row.addEventListener('click', () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -115,13 +116,13 @@ export function uploadRow(u: PanelUpload, i: number): HTMLButtonElement {
 export function downloadRow(d: PanelDownload, i: number): HTMLButtonElement {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'menu-row';
+  row.className = 'menu-row nb-menu-item';
   row.style.setProperty('--d', `${i * 28}ms`);
   const text = span('row-label', d.label);
   const note = span('row-sub', str('panelmenu.saved'));
   note.hidden = true;
   text.append(note);
-  row.append(icon(DOWNLOAD, 'row-icon', 17), text);
+  row.append(rowIcon(`<path d="${DOWNLOAD}"/>`), text);
   let timer = 0;
   row.addEventListener('click', () => {
     if (row.dataset.state === 'busy') return;

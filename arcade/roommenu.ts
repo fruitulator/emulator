@@ -8,7 +8,7 @@ import { chordCaps } from '../web/shortcuts';
 import { showKeysRow } from '../web/play/keys';
 import { viewFor } from '../web/platform';
 import { SchematicPanel } from '../web/schematic';
-import { appendItems, disabledItems, menuItems, saveState, type ActionId, type ActionSurface } from '../web/play/actions';
+import { appendItems, appendMenuFoot, disabledItems, menuItems, saveState, type ActionId, type ActionSurface } from '../web/play/actions';
 import { StopNote } from '../web/stopnote';
 import type { Glass } from './glass';
 import type { Room } from './room';
@@ -23,8 +23,6 @@ const byId = (id: string): HTMLElement => document.getElementById(id) as HTMLEle
 export function leaveArcade(): void {
   location.href = '/arcade/';
 }
-
-export const HOST_PAGE = '/arcade/?host';
 
 export class RoomMenu {
   readonly drawer = new MenuDrawer({
@@ -44,8 +42,6 @@ export class RoomMenu {
     private readonly bright: BrightnessControl,
     private readonly burger: HTMLButtonElement,
     readonly host: boolean,
-    private readonly decorate?: () => void,
-    private readonly floor?: () => void,
     private readonly rating?: { get: () => Promise<number | null>; set: (stars: number) => Promise<boolean> },
   ) {
     this.soundView = sound.view();
@@ -98,18 +94,15 @@ export class RoomMenu {
         if (g && live.payCoin(c.bit)) live.dropCoin(c.bit);
       },
       coinList: () => (g ? live.menuCoins() : null),
-      throwSwitch: (sw, on) => {
-        live.emu.input(sw.id, on);
-        if (sw.bootOnly) live.powerCycle();
-      },
+      throwSwitch: (sw, on) => live.throwSwitch(sw, on),
       namedSwitch: (id, level) => live.emu.input(id, level),
       effects: live.effects,
       redraw: () => g?.painter?.invalidate(),
       fillKeys: (root) => {
         const esc = [chordCaps([], 'Esc')];
-        fillKeyTable(root, {
-          own: { title: str('arcade.roommenu.arcade'), rows: [showKeysRow(), { label: str('arcade.roommenu.close_menu'), chords: esc }, { label: str('arcade.roommenu.leave_machine'), chords: esc }] },
-        });
+        fillKeyTable(root, [
+          { title: str('arcade.roommenu.arcade'), rows: [showKeysRow(), { label: str('arcade.roommenu.close_menu'), chords: esc }, { label: str('arcade.roommenu.leave_machine'), chords: esc }] },
+        ]);
       },
       openSystem: () => this.openSystem(),
       reboot: () => live.powerCycle(),
@@ -175,17 +168,6 @@ export class RoomMenu {
     return sound;
   }
 
-  private hostCard(): HTMLElement {
-    const c = card();
-    const floor = this.floor;
-    c.append(menuRow(str('arcade.roommenu.host'), UI_ICONS.cabinet, () => {
-      if (floor) { this.drawer.close(); floor(); } else location.href = HOST_PAGE;
-    }, false));
-    const decorate = this.decorate;
-    if (decorate) c.append(menuRow(str('arcade.roommenu.theme'), UI_ICONS.edit, () => { this.drawer.close(); decorate(); }, false));
-    return c;
-  }
-
   private rateCard(r: { get: () => Promise<number | null>; set: (stars: number) => Promise<boolean> }): HTMLElement {
     const c = card();
     const row = document.createElement('div');
@@ -199,15 +181,18 @@ export class RoomMenu {
       value: 0,
       onPick: (n) => {
         void r.set(n).then((ok) => {
-          if (ok) { mine = n; showToast(str('arcade.roommenu.thanks_for_rating')); return; }
+          if (ok) { mine = n; showToast(str('arcade.roommenu.thanks_for_rating'), { kind: 'ok' }); return; }
           stars.set(mine);
           showToast(str('arcade.roommenu.rating_not_kept'));
         });
       },
     });
     void r.get().then((n) => { if (n) { mine = n; stars.set(n); } });
-    row.append(rowIcon(UI_ICONS.star), label, stars.el);
-    c.append(row);
+    row.append(rowIcon(UI_ICONS.star, 'row-icon', 20), label);
+    const item = document.createElement('div');
+    item.className = 'menu-rate-item';
+    item.append(row, stars.el);
+    c.append(item);
     return c;
   }
 
@@ -225,11 +210,11 @@ export class RoomMenu {
     this.drawer.closeFlyout();
     content.append(this.soundCard());
     appendItems(content, disabledItems(this.ids), (label, icon, panel) => this.drawer.navRow(label, icon, panel));
-    if (this.host) content.lastElementChild?.before(this.hostCard());
-    else if (this.rating) content.lastElementChild?.before(this.rateCard(this.rating));
+    if (!this.host && this.rating) content.lastElementChild?.before(this.rateCard(this.rating));
     const out = card();
     out.append(menuRow(str('arcade.roompage.arcades'), UI_ICONS.back, leaveArcade, false));
     content.append(out);
+    appendMenuFoot(content);
     choreograph(content, 90);
   }
 
@@ -248,7 +233,7 @@ export class RoomMenu {
 
     appendItems(content, menuItems(this.actions(g), { info, view, system: game.system }, this.ids),
       (label, icon, panel) => this.drawer.navRow(label, icon, panel));
-    if (this.host) content.lastElementChild?.before(this.hostCard());
+    appendMenuFoot(content);
 
     choreograph(content, 90);
   }

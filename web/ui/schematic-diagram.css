@@ -1,0 +1,313 @@
+:root {
+  --bp-paper: #0b2a60;
+  --bp-paper-deep: #05193f;
+  --bp-grid: rgba(190, 214, 255, 0.085);
+  --bp-grid-major: rgba(190, 214, 255, 0.16);
+  --bp-ink: #eaf2ff;
+  --bp-ink-dim: rgba(234, 242, 255, 0.5);
+  --bp-ink-faint: rgba(234, 242, 255, 0.26);
+  --bp-glow: #8fe3ff;
+  --bp-glow-soft: rgba(143, 227, 255, 0.35);
+  --bp-glow-faint: rgba(143, 227, 255, 0.14);
+}
+.schem-scroll {
+  background-image:
+    linear-gradient(var(--bp-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bp-grid-major) 1px, transparent 1px),
+    linear-gradient(var(--bp-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bp-grid) 1px, transparent 1px);
+  background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+  background-position: 4px 4px;
+}
+.schem-pan {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.schem-diagram {
+  position: relative;
+  transform-origin: 0 0;
+  flex: none;
+}
+.schem-diagram.schem-reveal {
+  animation: schem-wipe 620ms cubic-bezier(0.3, 0.7, 0.2, 1) both;
+}
+.schem-diagram.schem-reveal::after {
+  content: "";
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  top: 0;
+  height: 2px;
+  background: var(--bp-glow);
+  box-shadow: 0 0 14px 3px var(--bp-glow-soft);
+  animation: schem-scan 620ms cubic-bezier(0.3, 0.7, 0.2, 1) both;
+  pointer-events: none;
+}
+@keyframes schem-wipe {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 -10px 0); }
+}
+@keyframes schem-scan {
+  from { top: 0; opacity: 1; }
+  90% { opacity: 1; }
+  to { top: 100%; opacity: 0; }
+}
+.schem-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.schem-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 0;
+  background: rgba(5, 25, 63, 0.3);
+  border: 1px solid var(--bp-ink-dim);
+  overflow: hidden;
+  text-align: center;
+  line-height: 1.15;
+  transition: border-color 260ms ease, box-shadow 320ms ease, background-color 260ms ease;
+}
+.schem-lbl {
+  font-family: var(--nb-font-body);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  color: var(--bp-ink);
+  opacity: 0.82;
+  white-space: nowrap;
+  transition: opacity 260ms ease, text-shadow 320ms ease;
+}
+.schem-part {
+  font-family: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  color: var(--bp-ink-dim);
+  white-space: nowrap;
+  transition: color 260ms ease;
+}
+.schem-lbl,
+.schem-part {
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.schem-node[data-band="edge"] {
+  background: transparent;
+  border-color: var(--bp-ink-faint);
+}
+.schem-node[data-band="edge"] .schem-lbl {
+  font-size: 11px;
+  font-weight: 500;
+}
+.schem-node[data-state="unmodelled"],
+.schem-node[data-state="unfitted"] {
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      transparent 0 5px,
+      rgba(234, 242, 255, 0.07) 5px 6px
+    );
+  border-style: dashed;
+  border-color: var(--bp-ink-faint);
+}
+.schem-node[data-state="unmodelled"] .schem-lbl,
+.schem-node[data-state="unfitted"] .schem-lbl {
+  opacity: 0.42;
+  font-weight: 400;
+}
+.schem-node[data-state="unmodelled"] .schem-part,
+.schem-node[data-state="unfitted"] .schem-part {
+  color: var(--bp-ink-faint);
+}
+.schem-node[data-state="unserved"] {
+  background: rgba(255, 138, 128, 0.1);
+  border-style: dashed;
+  border-color: rgba(255, 138, 128, 0.72);
+}
+.schem-node[data-state="unserved"] .schem-lbl {
+  color: #ffb3aa;
+  opacity: 0.95;
+}
+.schem-node[data-state="unserved"] .schem-part {
+  color: rgba(255, 179, 170, 0.7);
+}
+.schem-bang {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-family: var(--nb-font-body);
+  font-size: 13px;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1;
+  color: #ffb3aa;
+}
+.schem-led {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--bp-ink-faint);
+  background: transparent;
+  transition: background-color 200ms ease, box-shadow 320ms ease, border-color 200ms ease;
+}
+.schem-node[data-act="1"] {
+  border-color: var(--bp-ink);
+  box-shadow: 0 0 10px var(--bp-glow-faint);
+}
+.schem-node[data-act="1"] .schem-lbl {
+  opacity: 1;
+}
+.schem-node[data-act="1"] .schem-led {
+  background: var(--bp-glow);
+  border-color: var(--bp-glow);
+  box-shadow: 0 0 6px var(--bp-glow-soft);
+}
+.schem-node[data-act="2"] {
+  border-color: #ffffff;
+  background: rgba(143, 227, 255, 0.07);
+  box-shadow:
+    0 0 0 1px var(--bp-glow-faint),
+    0 0 18px var(--bp-glow-soft),
+    inset 0 0 14px var(--bp-glow-faint);
+  animation: schem-breathe 2.2s ease-in-out infinite;
+}
+.schem-node[data-act="2"] .schem-lbl {
+  opacity: 1;
+  color: #ffffff;
+  text-shadow: 0 0 8px var(--bp-glow-soft);
+}
+.schem-node[data-act="2"] .schem-part {
+  color: var(--bp-ink);
+}
+.schem-node[data-act="2"] .schem-led {
+  background: #ffffff;
+  border-color: #ffffff;
+  box-shadow: 0 0 8px 1px var(--bp-glow);
+}
+@keyframes schem-breathe {
+  50% {
+    box-shadow:
+      0 0 0 1px var(--bp-glow-faint),
+      0 0 26px var(--bp-glow-soft),
+      inset 0 0 18px var(--bp-glow-faint);
+  }
+}
+.schem-node[data-band="rail"] {
+  border: 0;
+  border-radius: 0;
+  background: var(--bp-ink-dim);
+  overflow: visible;
+  transition: none;
+}
+.schem-node[data-band="rail"]::before,
+.schem-node[data-band="rail"]::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--bp-ink-dim);
+}
+.schem-node[data-band="rail"]::before { left: 0; }
+.schem-node[data-band="rail"]::after { right: 0; }
+.schem-rail-data { background: var(--bp-ink) !important; opacity: 0.85; }
+.schem-rail-address { height: 2px !important; margin-top: 0.5px; }
+.schem-rail-control {
+  height: 2px !important;
+  margin-top: 0.5px;
+  background: repeating-linear-gradient(90deg, var(--bp-ink-dim) 0 7px, transparent 7px 11px) !important;
+}
+.schem-rail-serial {
+  height: 2px !important;
+  margin-top: 0.5px;
+  background: repeating-linear-gradient(90deg, var(--bp-ink-dim) 0 9px, transparent 9px 12px, var(--bp-ink-dim) 12px 14px, transparent 14px 17px) !important;
+}
+.schem-raillbl {
+  position: absolute;
+  bottom: 100%;
+  left: 4px;
+  margin-bottom: 3px;
+  font-family: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  color: var(--bp-ink-dim);
+  white-space: nowrap;
+}
+.schem-bus {
+  fill: none;
+  stroke: var(--bp-ink);
+  stroke-width: 1.5;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  opacity: 0.42;
+  transition: opacity 260ms ease;
+}
+.schem-bus-data { stroke-width: 2.2; }
+.schem-bus-address { stroke-width: 1.2; }
+.schem-bus-control { stroke-dasharray: 5 3; }
+.schem-bus-serial { stroke-dasharray: 7 3 1.5 3; }
+.schem-bus-analog { stroke-dasharray: 1.5 3; stroke-linecap: round; }
+.schem-bus-power { stroke-width: 1; opacity: 0.3; }
+.schem-halo {
+  fill: none;
+  stroke: var(--bp-glow);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+.schem-halo.schem-flow {
+  opacity: 0.22;
+}
+.schem-bus.schem-flow {
+  opacity: 1;
+  stroke: #ffffff;
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+  animation: schem-march 0.7s linear infinite;
+}
+@keyframes schem-march {
+  to { stroke-dashoffset: -12; }
+}
+.schem-legend svg {
+  width: 18px;
+  height: 10px;
+  overflow: visible;
+}
+.schem-legend svg .schem-bus {
+  opacity: 0.75;
+}
+.schem-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--bp-ink-dim);
+}
+.schem-legend i.schem-key-live {
+  border-color: #ffffff;
+  box-shadow: 0 0 6px var(--bp-glow-soft);
+}
+.schem-legend i.schem-key-off {
+  border-style: dashed;
+  border-color: var(--bp-ink-faint);
+  background: repeating-linear-gradient(-45deg, transparent 0 2px, rgba(234, 242, 255, 0.2) 2px 3px);
+}

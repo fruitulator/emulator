@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
-import { bodyTint, buildFruitCabinet, DERIVED, faceMaterial, makeFaceMesh, makeShapedMesh, type CabinetFace } from './cabinet-default';
+import { buildFruitCabinet, cabinetStyle, DERIVED, faceMaterial, makeFaceMesh, makeShapedMesh, type CabinetFace } from './cabinet-default';
 import { dressShared, ENV_INTENSITY, type CabinetDress } from './cabinetlight';
 import { fracAspect, type ShellFit } from './fit';
-import { DARK_INSERT, MountRig, reveal } from './mountrig';
+import { CoinEntry, reveal } from './coinentry';
 import { findDeck, flipTris, insetQuad, joinSection, pickFace, planarFaces, shapedSurface, splitFoot, type CabinetQuad, type FacePick, type ShapedSurface } from './modelpanels';
 
 export interface CabinetModel {
@@ -14,10 +14,11 @@ export interface CabinetModel {
   styles: string[];
   panels?: { glass?: PanelSpec; lower?: PanelSpec; buttons?: PanelSpec };
   glass?: CabinetQuad;
+  buttonQuad?: CabinetQuad;
   hide?: string[];
   trim?: string[];
-  mounts?: string[];
   coin?: string[];
+  onTop?: { part: string; mat: string; level: number }[];
 }
 
 export type { CabinetQuad };
@@ -43,24 +44,22 @@ export interface CabinetPanels {
   glass: number;
   buttons: number | null;
   deck: number | null;
-  mounts: number;
 }
 
 export interface CabinetShell {
   group: THREE.Group;
   glassMeshes: THREE.Mesh[];
-  size: { W: number; H: number; D: number };
+  size: { W: number; H: number; D: number; lowerFront?: number };
   glassCentre: THREE.Vector3;
   glassHeight: number;
   frameHeight: number;
   modelId: string;
   panels: CabinetPanels;
-  rig: MountRig | null;
+  coin: CoinEntry | null;
   shared?: ReadonlySet<object>;
 }
 
 export function disposeShell(s: CabinetShell, keep: THREE.Texture | null): void {
-  s.rig?.dispose();
   const shared = s.shared;
   const geos = new Set<THREE.BufferGeometry>();
   const mats = new Set<THREE.Material>();
@@ -72,7 +71,7 @@ export function disposeShell(s: CabinetShell, keep: THREE.Texture | null): void 
   });
   for (const g of geos) if (!shared?.has(g)) g.dispose();
   for (const m of mats) {
-    if (m === DARK_INSERT || shared?.has(m)) continue;
+    if (shared?.has(m)) continue;
     for (const t of texturesOf(m)) if (t !== keep && !shared?.has(t)) t.dispose();
     m.dispose();
   }
@@ -156,6 +155,7 @@ export interface ShellOptions {
   model: CabinetModel | null;
   name: string;
   dress?: CabinetDress | null;
+  cabinet?: string;
 }
 
 export async function buildShell(o: ShellOptions): Promise<CabinetShell> {
@@ -171,24 +171,23 @@ export async function buildShell(o: ShellOptions): Promise<CabinetShell> {
 
 function defaultShell(o: ShellOptions): CabinetShell {
   const f = o.fit;
-  const glassAspect = fracAspect(f.glass, f.aspect);
-  const deckAspect = fracAspect(f.buttons, f.aspect);
-  const buttonsAspect = f.deck ? fracAspect(f.deck, f.aspect) : null;
+  const glassSrc = f.noLower ? f.glassOnly : f.glass;
+  const glassAspect = fracAspect(glassSrc, f.aspect);
+  const deckAspect = f.noLower ? null : fracAspect(f.buttons, f.aspect);
+  const buttonsAspect = f.deck && !f.noLower ? fracAspect(f.deck, f.aspect) : null;
   const built = buildFruitCabinet({
     glassAspect,
-    glassSrc: f.glass,
-    glassLean: 7.6,
+    glassSrc,
     deckAspect,
     deckSrc: f.buttons,
     deckRake: 46.3,
     buttonsAspect,
     buttonsSrc: f.deck ?? undefined,
     buttonsRake: 48.6,
-    glassTop: 0.03,
-    tint: bodyTint(o.trim),
     dress: o.dress,
     trim: o.trim,
     furniture: true,
+    style: cabinetStyle(o.cabinet),
   });
   const glassMeshes: THREE.Mesh[] = [];
   const mat = faceMaterial(o.texture);
@@ -207,10 +206,38 @@ function defaultShell(o: ShellOptions): CabinetShell {
     glassHeight: g.top - g.bottom,
     frameHeight: g.top - g.bottom + (g.zFront - g.z) / 2,
     modelId: 'default',
-    panels: { fixed: false, glass: glassAspect, buttons: deckAspect, deck: buttonsAspect, mounts: 0 },
-    rig: null,
+    panels: { fixed: false, glass: glassAspect, buttons: deckAspect, deck: buttonsAspect },
+    coin: null,
     shared: o.dress ? dressShared(o.dress) : undefined,
   };
+}
+
+const ONTOP_FACTOR = 0;
+const ONTOP_UNITS = -2;
+
+function partOf(o: THREE.Object3D): string {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.name && !/^mesh_/.test(p.name)) return p.name;
+  return '';
+}
+
+function liftOverlaps(group: THREE.Object3D, onTop: readonly { part: string; mat: string; level: number }[]): void {
+  if (!onTop.length) return;
+  const level = new Map(onTop.map((t) => [`${t.part}|${t.mat}`, t.level]));
+  group.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const part = partOf(mesh);
+    const lift = (m: THREE.Material): THREE.Material => {
+      const lv = level.get(`${part}|${m.name}`);
+      if (!lv) return m;
+      const c = m.clone();
+      c.polygonOffset = true;
+      c.polygonOffsetFactor = ONTOP_FACTOR * lv;
+      c.polygonOffsetUnits = ONTOP_UNITS * lv;
+      return c;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(lift) : lift(mesh.material);
+  });
 }
 
 function reflectModel(group: THREE.Object3D, dress: CabinetDress | null | undefined): void {
@@ -261,7 +288,8 @@ export function modelPanels(model: CabinetModel): Promise<ModelPanels> {
         const d = findDeck(glass.quad, frontZ);
         if (d) lower = { quad: d, source: 'its side profile (no named part)' };
       }
-      const buttons = named(model.panels?.buttons, 'button panel');
+      const buttons = named(model.panels?.buttons, 'button panel')
+        ?? (model.buttonQuad ? { quad: model.buttonQuad, source: 'the manifest (measured by hand)' } : null);
       const joined = lower && buttons ? joinSection(lower.quad, buttons.quad) : null;
       const section = joined ? { quad: joined, source: `${lower!.source} and ${buttons!.source}, one plane` } : lower;
       console.info(`[arcade] cabinet ${model.id}: top glass from ${glass.source}; lower glass ${lower ? `from ${lower.source}` : 'none'}; button panel ${buttons ? `from ${buttons.source}` : 'none named'}${model.hide?.length ? `; not drawn: ${model.hide.join(', ')}` : ''}`);
@@ -307,7 +335,7 @@ async function modelShell(model: CabinetModel, o: ShellOptions): Promise<Cabinet
   if (!model.url) throw new Error('no URL for this model');
   const src = await loadGltf(model.url);
   const panels = await modelPanels(model);
-  let deck = panels.section?.quad ?? null;
+  let deck = o.fit.noLower ? null : panels.section?.quad ?? null;
   let btns: CabinetQuad | null = null;
   if (o.fit.deck && deck) {
     if (panels.buttons && panels.lower) {
@@ -324,9 +352,8 @@ async function modelShell(model: CabinetModel, o: ShellOptions): Promise<Cabinet
   group.add(src.clone(true));
   const hide = new Set(model.hide ?? []);
   if (hide.size) group.traverse((obj) => { if (hide.has(obj.name)) obj.visible = false; });
-  const rig = model.mounts?.length || model.coin?.length
-    ? new MountRig(group, model.mounts ?? [], model.coin ?? [], model.id) : null;
-  if (rig) reveal(group, rig.nodes);
+  const coin = model.coin?.length ? new CoinEntry(group, model.coin, model.id) : null;
+  if (coin) reveal(group, coin.nodes);
   const trimNames = new Set(model.trim ?? []);
   if (trimNames.size) {
     group.traverse((obj) => {
@@ -341,6 +368,7 @@ async function modelShell(model: CabinetModel, o: ShellOptions): Promise<Cabinet
       mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
     });
   }
+  liftOverlaps(group, model.onTop ?? []);
   reflectModel(group, o.dress);
   const box = new THREE.Box3().setFromObject(group);
   const s = box.getSize(new THREE.Vector3());
@@ -379,8 +407,15 @@ async function modelShell(model: CabinetModel, o: ShellOptions): Promise<Cabinet
   if (btns && fit.deck) {
     const bl = THREE.MathUtils.degToRad(btns.leanDeg);
     const bout = new THREE.Vector3(0, Math.sin(bl), Math.cos(bl));
+    const fitted = (): { w: number; h: number } => {
+      if (surfaceOf(btns)) return { w: btns.w, h: btns.h };
+      const box = fracAspect(fit.deck!, fit.aspect);
+      if (!(box > 0)) return { w: btns.w, h: btns.h };
+      return box >= btns.w / btns.h ? { w: btns.w, h: btns.w / box } : { w: btns.h * box, h: btns.h };
+    };
+    const { w: dw, h: dh } = fitted();
     glassMeshes.push(faceMesh({
-      name: 'deck', w: btns.w, h: btns.h,
+      name: 'deck', w: dw, h: dh,
       position: new THREE.Vector3(...btns.centre).addScaledVector(bout, 0.005),
       rotation: new THREE.Euler(-bl, 0, 0),
       src: fit.deck,
@@ -393,8 +428,8 @@ async function modelShell(model: CabinetModel, o: ShellOptions): Promise<Cabinet
     size: { W: s.x, H: s.y, D: s.z },
     ...framedOn(gc, h, lean, btns ?? deck),
     modelId: model.id,
-    panels: { fixed: true, glass: w / h, buttons: deck ? deck.w / deck.h : null, deck: btns ? btns.w / btns.h : null, mounts: rig?.count ?? 0 },
-    rig,
+    panels: { fixed: true, glass: w / h, buttons: deck ? deck.w / deck.h : null, deck: btns ? btns.w / btns.h : null },
+    coin,
     shared: o.dress ? new Set([...sharedOf(src), ...dressShared(o.dress)]) : sharedOf(src),
   };
 }

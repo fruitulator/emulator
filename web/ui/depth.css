@@ -1,0 +1,47 @@
+:root {
+  --raise-face: linear-gradient(180deg, #474747 0%, #333333 55%, #2a2a2a 100%);
+  --raise-face-hover: linear-gradient(180deg, #525252 0%, #3b3b3b 55%, #303030 100%);
+  --raise-face-pressed: linear-gradient(180deg, #2a2a2a, #333333);
+  --raise-red: linear-gradient(180deg, #ff5059 0%, #e11d2a 55%, #b8131e 100%);
+  --raise-red-hover: linear-gradient(180deg, #ff6a72 0%, #ff3b46 55%, #c81622 100%);
+  --raise-red-pressed: linear-gradient(180deg, #b8131e, #e11d2a);
+  --raise-edge: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+  --raise-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), 0 4px 8px rgba(0, 0, 0, 0.55);
+  --raise-press: inset 0 2px 3px rgba(0, 0, 0, 0.55);
+}
+
+:is(.ui-btn.secondary, .dd-btn:where(:not(.nb-btn))):not(.ui-flat) {
+  background: var(--raise-face);
+  border-color: rgba(0, 0, 0, 0.5);
+  box-shadow: var(--raise-edge), var(--raise-shadow);
+  transition: background 0.15s ease, box-shadow 0.12s ease, transform 0.08s ease, border-color 0.15s ease;
+}
+:is(.ui-btn.secondary, .dd-btn:where(:not(.nb-btn))):not(.ui-flat):hover:not(:disabled) {
+  background: var(--raise-face-hover);
+  border-color: rgba(0, 0, 0, 0.5);
+}
+.ui-btn.primary:not(.ui-flat) {
+  background: var(--raise-red);
+  border-color: rgba(0, 0, 0, 0.45);
+  box-shadow: var(--raise-edge), var(--raise-shadow);
+  transition: background 0.15s ease, box-shadow 0.12s ease, transform 0.08s ease;
+}
+.ui-btn.primary:not(.ui-flat):hover:not(:disabled) {
+  background: var(--raise-red-hover);
+}
+:is(.ui-btn.primary, .ui-btn.secondary, .dd-btn:where(:not(.nb-btn))):not(.ui-flat):active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: var(--raise-press);
+  background: var(--raise-face-pressed);
+}
+.ui-btn.primary:not(.ui-flat):active:not(:disabled) {
+  background: var(--raise-red-pressed);
+}
+:is(.ui-btn.primary, .ui-btn.secondary):not(.ui-flat):disabled {
+  box-shadow: var(--raise-edge);
+}
+.dd.open .dd-btn:where(:not(.nb-btn)):not(.ui-flat),
+.dd.open .dd-btn:where(:not(.nb-btn)):not(.ui-flat):hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: var(--raise-edge), 0 0 0 1px rgba(225, 29, 42, 0.35), 0 0 18px rgba(225, 29, 42, 0.28);
+}

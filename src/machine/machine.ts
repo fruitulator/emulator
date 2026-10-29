@@ -13,7 +13,7 @@ export interface CoinWiringStatus {
   totals?: { pence: number; counts: number; unit: number };
 }
 
-export type NamedCoin = number | 'token';
+export type NamedCoin = number | { token: number } | 'token';
 
 export interface CoinChute {
   label: string;
@@ -191,6 +191,7 @@ export interface Machine {
   readonly coinLinesShut?: number;
   readonly coinChutes?: readonly CoinChute[];
   readonly uncountedCoinLines?: readonly number[];
+  readonly unpricedPayoutLines?: readonly number[];
   readonly coinPortLines?: CoinPortLines;
   readonly coinLockHarnessRead?: boolean;
   readonly coinsRefused?: number;

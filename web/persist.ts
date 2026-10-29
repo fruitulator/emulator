@@ -6,6 +6,7 @@ import { damagedRoms } from '../src/machine/textcopy';
 import type { Cabinet } from './dat';
 import { MAKER_RULE, makerOf } from './maker';
 import { THUMB_RULE, dehydrateCabinet, encodePng, makeThumb } from './cabjson';
+import { hashThumbBytes } from './thumbhash';
 import {
   DECODE_VERSION, decodePak, decodeSrcs, encodeImgs, encodeMeta, encodePak, encodeSrcs,
   type PakChunkIn, type PakMeta,
@@ -149,6 +150,7 @@ async function writeGame(
   ];
   if (spare.length) chunks.push({ type: 'SPAR', bytes: encodeSrcs(spare), deflate: true });
   let thumb: Uint8Array | null = null;
+  let artHash: string | undefined;
   const cache = cab && artwork === 'full';
   if (cab) {
     onStage?.('encoding');
@@ -162,6 +164,9 @@ async function writeGame(
     }
     thumb = await makeThumb(cab);
     if (thumb) chunks.push({ type: 'THMB', bytes: thumb });
+    if (thumb && !prev?.artHash) {
+      try { artHash = await hashThumbBytes(thumb); } catch {  }
+    }
   }
   onStage?.('caching');
   const pak = encodePak(chunks);
@@ -185,6 +190,9 @@ async function writeGame(
     variant: game.variant,
     sourceName: sourceName ?? prev?.sourceName,
     title: prev?.title,
+    ...(artHash ?? prev?.artHash ? { artHash: artHash ?? prev?.artHash } : {}),
+    ...(prev?.groupWith ? { groupWith: prev.groupWith } : {}),
+    ...(prev?.ungrouped ? { ungrouped: true as const } : {}),
     ...(prev?.coinAnswers ? { coinAnswers: prev.coinAnswers } : {}),
     hasThumb: prev?.hasThumb || !!thumb,
     thumbFromPlay: prev?.thumbFromPlay,

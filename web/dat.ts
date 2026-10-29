@@ -1,8 +1,9 @@
 import type { DiscLamps } from './discreel';
 import { unzlibSync } from 'fflate';
 import { isAacsContainer, readAacsContainer } from './fml';
-import { flatTrim, isFmlLayout, parseFmlLayout, sidewaysCrop } from './fmllayout';
+import { fillShape, flatTrim, isFmlLayout, ledFace, parseFmlLayout, sidewaysCrop } from './fmllayout';
 import { shortcutKnown } from './shortcuts';
+import { PASS } from './draworder';
 import { str } from './i18n';
 
 export interface Rect {
@@ -357,7 +358,7 @@ export interface ReelBand<A = ImageBitmap> extends Rect {
   lampTray?: number[];
   lampsEnabled?: boolean;
   lightFloor?: [number, number, number];
-  lightAlpha?: number;
+  opaqueKey?: [number, number, number];
   gradient?: A;
   winLines?: WinLines;
   border?: ReelBorder;
@@ -365,6 +366,8 @@ export interface ReelBand<A = ImageBitmap> extends Rect {
     steps: number; offsetDeg: number;
     reversed?: boolean;
     lamps?: DiscLamps;
+    backing?: [number, number, number];
+    wholeDegrees?: boolean;
   };
   discMask?: A;
   discInnerMask?: A;
@@ -395,6 +398,7 @@ export interface CabLamp<A = ImageBitmap> {
   enableLamps?: number[];
   shortcut?: number;
   shortcut2?: number;
+  hidden?: boolean;
   cap?: boolean;
   blend?: boolean;
   multi?: boolean;
@@ -414,6 +418,10 @@ export interface CabLamp<A = ImageBitmap> {
     dy?: number;
     lamp: number;
     litOnly?: true;
+    wholeLitOnly?: true;
+    align?: 'left' | 'right';
+    valign?: 'top' | 'bottom';
+    nowrap?: true;
     input?: number;
   };
   offState?: { nums: number[]; canvas: A; down?: A };
@@ -485,16 +493,30 @@ export interface Cabinet<A = ImageBitmap> {
   igtVfd?: IgtVfdPanel | null;
   bfmLeds?: BfmLedPanel[];
   dotLcds?: DotLcdPanel[];
+  coinmasterVideos?: CoinmasterVideoPanel[];
   videoScreen?: VideoScreen | null;
   rgbLeds?: RgbLed[];
   prismLamps?: PrismLamp<A>[];
   bitmaps?: CabBitmap<A>[];
+  lightSources?: LightSource<A>[];
+  checkboxes?: CabCheckbox[];
+}
+
+export interface CabCheckbox extends Rect {
+  id: number;
+  checked: boolean;
+  legend: NonNullable<CabLamp['legend']>;
+}
+
+export interface LightSource<A = ImageBitmap> extends Rect {
+  face: A;
 }
 
 export interface CabBitmap<A = ImageBitmap> extends Rect {
   image: A | null;
   overlay: A | null;
   stretch: number;
+  natural?: boolean;
 }
 
 export interface PrismLamp<A = ImageBitmap> extends Rect {
@@ -524,6 +546,8 @@ export interface SegDisplay extends Rect {
   autoDp?: boolean;
   dpOff?: boolean;
   metrics?: SegMetrics;
+  zeroOn?: boolean;
+  block?: { left: number; top: number; width: number; height: number };
 }
 
 export interface SegMetrics {
@@ -557,6 +581,12 @@ export const MFME_SEG16_ASCII: readonly number[] = [
   0x0401, 0x4971, 0x41e0, 0x00e1, 0x4970, 0x09e1, 0x01c1, 0x49a1, 0x41c0, 0x4800, 0x4820, 0x31c0, 0x00e0, 0x14cc, 0x48c1, 0x48e1,
   0x09c1, 0x4991, 0x00c1, 0x41a1, 0x01e0, 0x48e0, 0x88c0, 0xa0cc, 0xb400, 0x49a0, 0x8821, 0x01f1, 0x4800, 0x4921, 0x1c00, 0xa030,
 ];
+
+export function segLampLit(s: SegDisplay, i: number, lampOn: (n: number) => boolean): boolean {
+  const n = (s.metrics?.seg16 ?? false) && s.seg.length >= 16 ? 16 : 7;
+  const lamp = s.seg[i];
+  return i < n && lamp !== undefined && lamp >= 0 && lampOn(lamp);
+}
 
 export function segPointLit(
   s: { autoDp?: boolean; dpOff?: boolean; dpOn: boolean }, bits7: number, bit7: boolean,
@@ -642,6 +672,21 @@ export interface BfmLedPanel extends Rect {
   on: number;
   off: number;
   bg: number;
+  classic?: true;
+}
+
+export function classicBfmLedDots(p: Pick<BfmLedPanel, 'xSize' | 'ySize' | 'digitSpacing'>):
+  { col: number; bit: number; x: number; y: number; w: number; h: number }[] {
+  const X = p.xSize, Y = p.ySize, DS = p.digitSpacing;
+  const out: { col: number; bit: number; x: number; y: number; w: number; h: number }[] = [];
+  for (let i = 0; i < 20; i++) {
+    const count = i % 5 === 4 && i !== 19 ? 8 : 7;
+    const x0 = (X + 1) * i + Math.floor(i / 5) * DS + 3;
+    for (let k = 0; k < count; k++) {
+      out.push({ col: i, bit: k, x: k < 7 ? x0 : x0 + X + 1, y: 4 + k * (Y + 1), w: X, h: Y });
+    }
+  }
+  return out;
 }
 
 export interface DotLcdPanel extends Rect {
@@ -652,6 +697,11 @@ export interface DotLcdPanel extends Rect {
   on: number;
   off: number;
   bg: number;
+}
+
+export interface CoinmasterVideoPanel extends Rect {
+  vertical: boolean;
+  quality: number;
 }
 
 export interface EpochMatrixPanel extends Rect {
@@ -672,6 +722,8 @@ export interface ProconnMatrix extends Rect {
 
 export interface VideoScreen extends Rect {
   chip: number;
+  stretch?: number;
+  vertical?: boolean;
 }
 
 export interface RgbLed extends Rect {
@@ -712,7 +764,7 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
   const th = m.thickness;
   const phi = ((m.digitAngle ?? 0) * Math.PI) / 180;
   let rx = 0, ry = 0, rw = s.width, rh = s.height;
-  if (phi !== 0 && s.width > 0 && s.height > 0) {
+  if (phi !== 0 && s.width > 0 && s.height > 0 && !s.block) {
     const beta = Math.atan2(s.height / 2, s.width / 2);
     const k = Math.cos(beta) / Math.cos(beta - Math.abs(phi));
     if (Number.isFinite(k) && k > 0) {
@@ -726,8 +778,9 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
   const T = s.top + ry + m.vSpace / 2;
   const R = s.left + rx + rw + m.offset - m.hSpace / 2;
   const B = s.top + ry + rh - m.vSpace / 2;
-  const cx = s.left + s.width / 2;
-  const cy = s.top + s.height / 2;
+  const pivot = s.block ?? s;
+  const cx = pivot.left + pivot.width / 2;
+  const cy = pivot.top + pivot.height / 2;
   const cosP = Math.cos(phi), sinP = Math.sin(phi);
   const spin = (out: number[]): number[] => {
     if (phi === 0) return out;
@@ -1288,6 +1341,27 @@ export function reassembleDfm(dat: Uint8Array): Uint8Array {
   return buf;
 }
 
+function convertNwColorBtns(comps: Component[]): Component[] {
+  const kept: Component[] = [];
+  const converted: Component[] = [];
+  for (const c of comps) {
+    if (c.cls !== 'TzNWColorBtn') { kept.push(c); continue; }
+    const black = c.colour2 === undefined || c.colour2 === 0
+      || (typeof c.colour2 === 'string' && c.colour2.toLowerCase() === 'clblack');
+    converted.push({
+      ...c,
+      cls: 'TzcShapeBitColBtn',
+      onColor: c.colour1 ?? 0,
+      offColor: black ? 'clBtnFace' : c.colour2,
+      bins: {},
+      btnProps: c.btnProps?.MultipleLines !== undefined ? { MultipleLines: c.btnProps.MultipleLines } : {},
+      alignment: undefined,
+      wordWrap: undefined,
+    });
+  }
+  return converted.length ? [...kept, ...converted] : comps;
+}
+
 interface Component {
   cls: string;
   left: number;
@@ -1315,8 +1389,18 @@ interface Component {
   space?: number;
   horzSpace?: number;
   vertSpace?: number;
+  programmable: boolean;
+  seg14: boolean;
+  masks: number[];
   colour?: number | string;
+  colour1?: number | string;
+  colour2?: number | string;
   offBrightness?: number;
+  ledColor?: string;
+  ledStyle?: string;
+  sizeX?: number;
+  sizeY?: number;
+  spacing?: number;
   winLine: boolean;
   winLines: number;
   winLineWidth: number;
@@ -1327,7 +1411,35 @@ interface Component {
   totalSteps?: number;
   vertical?: boolean;
   lamps?: boolean;
+  size?: number;
+  shape?: string;
+  style?: string;
+  stretch: boolean;
+  transparent: boolean;
+  caption: string;
+  font: DfmFont;
+  discProps?: Record<string, number>;
+  btnProps?: Record<string, number | string | boolean>;
+  alignment?: string;
+  textLayout?: string;
+  wordWrap?: boolean;
+  visible?: boolean;
   bins: Record<string, { off: number; len: number }>;
+}
+
+export interface DfmFont {
+  name: string;
+  height: number;
+  color: number | string;
+  style: number;
+}
+
+const VCL_FONT_FACE = 'MS Sans Serif';
+const FORM_FONT: DfmFont = { name: VCL_FONT_FACE, height: -10, color: 'clWindowText', style: 0 };
+const TFONT_DEFAULT: DfmFont = { name: VCL_FONT_FACE, height: -11, color: 'clWindowText', style: 0 };
+
+export function reelFromTag(tag: number): number {
+  return (tag & 7) | ((tag & 0x10000000) >>> 25);
 }
 
 export function parseDfm(b: Uint8Array): Component[] {
@@ -1361,14 +1473,33 @@ export function parseDfm(b: Uint8Array): Component[] {
       case 8: return false;
       case 9: return true;
       case 10: { const n = dv.getUint32(p, true); p += 4; bins[name] = { off: p, len: n }; p += n; return null; }
-      case 11: { while (b[p] !== 0) sstr(); p++; return null; }
-      case 12: case 17: case 20: { const n = dv.getUint32(p, true); p += 4 + n; return null; }
-      case 18: { const n = dv.getUint32(p, true); p += 4 + n * 2; return null; }
+      case 11: { const m: string[] = []; while (b[p] !== 0) m.push(sstr()); p++; return `[${m.join(',')}]`; }
+      case 12: {
+        const n = dv.getUint32(p, true); p += 4;
+        let s = '';
+        for (let i = 0; i < n; i++) s += String.fromCharCode(b[p + i]);
+        p += n;
+        return s;
+      }
+      case 17: { const n = dv.getUint32(p, true); p += 4 + n; return null; }
+      case 20: {
+        const n = dv.getUint32(p, true); p += 4;
+        const s = new TextDecoder('utf-8').decode(b.subarray(p, p + n));
+        p += n;
+        return s;
+      }
+      case 18: {
+        const n = dv.getUint32(p, true); p += 4;
+        let s = '';
+        for (let i = 0; i < n; i++) s += String.fromCharCode(dv.getUint16(p + i * 2, true));
+        p += n * 2;
+        return s;
+      }
       default: throw new Error('DFM value type ' + t);
     }
   };
 
-  const obj = (): void => {
+  const obj = (parentFont: DfmFont = FORM_FONT): void => {
     if ((b[p] & 0xf0) === 0xf0) {
       const f = b[p++] & 0x0f;
       if (f & 2) skipVal({}, '');
@@ -1377,6 +1508,8 @@ export function parseDfm(b: Uint8Array): Component[] {
     sstr();
     const bins: Record<string, { off: number; len: number }> = {};
     const geom: Record<string, number> = { Left: 0, Top: 0, Width: 0, Height: 0, RHeight: 0, Stops: 0, Darkness: 0, Number: -1, WinLines: 1, WinLineWidth: 1 };
+    if (cls === 'TzLed') { geom.Width = 17; geom.Height = 17; }
+    if (cls === 'TzcShapeBitColBtn') { geom.Width = 50; geom.Height = 50; }
     let hint = '';
     let reversed = false;
     let horizontal = false;
@@ -1387,6 +1520,9 @@ export function parseDfm(b: Uint8Array): Component[] {
     let totalSteps: number | undefined;
     let vertical = false;
     let lamps = false;
+    let size: number | undefined;
+    let stretch = false;
+    let transparent = false;
     let trans = false;
     let button = 0;
     let tag = 0;
@@ -1396,18 +1532,53 @@ export function parseDfm(b: Uint8Array): Component[] {
     let offColor: number | string | undefined;
     let color: number | string | undefined;
     let colour: number | string | undefined;
+    let colour1: number | string | undefined;
+    let colour2: number | string | undefined;
     let offBrightness: number | undefined;
+    let ledColor: string | undefined;
+    let ledStyle: string | undefined;
+    let sizeX: number | undefined;
+    let sizeY: number | undefined;
+    let spacing: number | undefined;
     let dpRight = true;
     let dpOn = false;
     let thickness: number | undefined;
     let space: number | undefined;
     let horzSpace: number | undefined;
     let vertSpace: number | undefined;
+    let shape: string | undefined;
+    let style: string | undefined;
+    let programmable = false;
+    let seg14 = false;
+    const masks = new Array<number>(16).fill(0x100);
     const lampNums = [-2, -2, -2, -2, -2];
+    let caption = '';
+    let ownFont: Partial<DfmFont> | null = null;
+    const fontOf = (): Partial<DfmFont> => (ownFont ??= {});
+    const discProps: Record<string, number> | undefined = cls === 'TDiscReel' ? {} : undefined;
+    const btnProps: Record<string, number | string | boolean> | undefined =
+      cls === 'TzcShapeBitColBtn' || cls === 'TzNWColorBtn' ? {} : undefined;
+    let alignment: string | undefined;
+    let textLayout: string | undefined;
+    let wordWrap: boolean | undefined;
+    let visible: boolean | undefined;
     while (b[p] !== 0) {
       const pn = sstr();
       const v = skipVal(bins, pn);
+      if (discProps && typeof v === 'number') discProps[pn] = v;
+      if (btnProps && v !== null && /^(MultipleLines|HorzAlign|HighLightColor|ShadowColor)$/.test(pn)) btnProps[pn] = v;
       if (typeof v === 'number' && pn in geom) geom[pn] = v;
+      else if ((typeof v === 'number' || typeof v === 'string') && pn === 'Colour1') colour1 = v;
+      else if ((typeof v === 'number' || typeof v === 'string') && pn === 'Colour2') colour2 = v;
+      else if (typeof v === 'string' && pn === 'Shape') shape = v;
+      else if (typeof v === 'string' && pn === 'Caption') caption = v;
+      else if (typeof v === 'string' && pn === 'Font.Name') fontOf().name = v;
+      else if (typeof v === 'number' && pn === 'Font.Height') fontOf().height = v;
+      else if ((typeof v === 'number' || typeof v === 'string') && pn === 'Font.Color') fontOf().color = v;
+      else if (typeof v === 'string' && pn === 'Font.Style') {
+        fontOf().style = (/\bfsBold\b/.test(v) ? 1 : 0) | (/\bfsItalic\b/.test(v) ? 2 : 0);
+      }
+      else if (pn.startsWith('Font.') || (pn === 'ParentFont' && v === false)) fontOf();
       else if (typeof v === 'number' && pn === 'Button') button = v;
       else if (typeof v === 'number' && pn === 'Tag') tag = v >>> 0;
       else if (typeof v === 'number' && pn === 'Offset') offset = v;
@@ -1422,12 +1593,20 @@ export function parseDfm(b: Uint8Array): Component[] {
       else if ((typeof v === 'number' || typeof v === 'string') && pn === 'Color') color = v;
       else if ((typeof v === 'number' || typeof v === 'string') && pn === 'Colour') colour = v;
       else if (typeof v === 'number' && pn === 'OffBrightness') offBrightness = v;
+      else if (typeof v === 'string' && pn === 'LEDColor') ledColor = v;
+      else if (typeof v === 'string' && pn === 'LedStyle') ledStyle = v;
+      else if (typeof v === 'number' && pn === 'SizeX') sizeX = v;
+      else if (typeof v === 'number' && pn === 'SizeY') sizeY = v;
+      else if (typeof v === 'number' && pn === 'Spacing') spacing = v;
       else if (typeof v === 'boolean' && pn === 'DPRight') dpRight = v;
       else if (typeof v === 'boolean' && pn === 'DPOn') dpOn = v;
       else if (typeof v === 'number' && pn === 'Thickness') thickness = v;
       else if (typeof v === 'number' && pn === 'Space') space = v;
       else if (typeof v === 'number' && pn === 'HorzSpace') horzSpace = v;
       else if (typeof v === 'number' && pn === 'VertSpace') vertSpace = v;
+      else if (typeof v === 'boolean' && pn === 'Programmable') programmable = v;
+      else if (typeof v === 'boolean' && pn === 'Seg14') seg14 = v;
+      else if (typeof v === 'number' && /^Mask(?:[0-9]|1[0-5])$/.test(pn)) masks[+pn.slice(4)] = v;
       else if (typeof v === 'boolean' && pn === 'WinLine') winLine = v;
       else if ((typeof v === 'number' || typeof v === 'string') && pn === 'BorderColor') borderColor = v;
       else if ((typeof v === 'number' || typeof v === 'string') && pn === 'BorderColour') borderColour = v;
@@ -1435,18 +1614,31 @@ export function parseDfm(b: Uint8Array): Component[] {
       else if (typeof v === 'number' && pn === 'TotalSteps') totalSteps = v;
       else if (typeof v === 'boolean' && pn === 'Vertical') vertical = v;
       else if (typeof v === 'boolean' && pn === 'Lamps') lamps = v;
+      else if (typeof v === 'number' && pn === 'Size') size = v;
+      else if (typeof v === 'string' && pn === 'Style') style = v;
+      else if (typeof v === 'boolean' && pn === 'Stretch') stretch = v;
+      else if (typeof v === 'boolean' && pn === 'Transparent') transparent = v;
+      else if (typeof v === 'string' && pn === 'Alignment') alignment = v;
+      else if (typeof v === 'string' && pn === 'Layout') textLayout = v;
+      else if (typeof v === 'boolean' && pn === 'WordWrap') wordWrap = v;
+      else if (typeof v === 'boolean' && pn === 'Visible') visible = v;
     }
     p++;
+    const font: DfmFont = ownFont ? { ...TFONT_DEFAULT, ...(ownFont as Partial<DfmFont>) } : parentFont;
     out.push({
       cls, left: geom.Left, top: geom.Top, width: geom.Width, height: geom.Height,
       rheight: geom.RHeight, stops: geom.Stops, reversed, trans, hint, button, tag, coin,
-      darkness: geom.Darkness, num: geom.Number, lampNums, onColor, offColor, color,
-      colour, offBrightness, dpRight, dpOn, bins, offset, horizontal,
-      thickness, space, horzSpace, vertSpace,
+      darkness: geom.Darkness,
+      num: cls === 'TDiscReel' ? reelFromTag(tag) : geom.Number,
+      lampNums, onColor, offColor, color,
+      colour, colour1, colour2, offBrightness, ledColor, ledStyle, sizeX, sizeY, spacing, dpRight, dpOn, bins, offset, horizontal,
+      thickness, space, horzSpace, vertSpace, programmable, seg14, masks,
       winLine, winLines: geom.WinLines, winLineWidth: geom.WinLineWidth, borderColor,
-      borderColour, borderWidth, totalSteps, vertical, lamps,
+      borderColour, borderWidth, totalSteps, vertical, lamps, shape, style, stretch, transparent,
+      caption, font, discProps, btnProps, alignment, textLayout, wordWrap, visible,
+      ...(size === undefined ? {} : { size }),
     });
-    while (b[p] !== 0) obj();
+    while (b[p] !== 0) obj(font);
     p++;
   };
 
@@ -1599,8 +1791,8 @@ function alignLampArt(lamps: CabLamp<ImageData>[], bg: ImageData): void {
   if (moved) console.log('[dat] lamp art realigned to the background: %d of %d', moved, lamps.length);
 }
 
-export async function extractCabinet(dat: Uint8Array): Promise<Cabinet<ImageData>> {
-  return extractCabinetFromPayload(readLayout(dat));
+export async function extractCabinet(dat: Uint8Array, system?: string): Promise<Cabinet<ImageData>> {
+  return extractCabinetFromPayload(readLayout(dat), system);
 }
 
 function winLinesOf(c: Component): WinLines {
@@ -1648,9 +1840,125 @@ function fitTopLeft(img: ImageData, w: number, h: number): ImageData {
   return out;
 }
 
-export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabinet<ImageData>> {
+export function bevelBitmaps(comps: readonly Component[]): CabBitmap<ImageData>[] {
+  const SHAPES = ['bsBox', 'bsFrame', 'bsTopLine', 'bsBottomLine', 'bsLeftLine', 'bsRightLine', 'bsSpacer'];
+  const frames = comps.filter((c) => c.cls === 'TFrame2' && c.width > 0 && c.height > 0);
+  const out: CabBitmap<ImageData>[] = [];
+  frames.forEach((c, i) => {
+    const img = bevelImage(c.width, c.height, Math.max(0, SHAPES.indexOf(c.shape ?? 'bsBox')),
+      c.style === 'bsRaised', false);
+    if (!img) return;
+    out.push({
+      left: c.left, top: c.top, width: c.width, height: c.height,
+      z: PASS.bevel + (frames.length - 1 - i),
+      image: img, overlay: null, stretch: 0, natural: true,
+    });
+  });
+  return out;
+}
+
+export function bevelImage(
+  W: number, H: number, shape: number, raised: boolean, v20Lines: boolean,
+): ImageData | null {
+  const SHADOW = 0xffa0a0a0, HIGHLIGHT = 0xffffffff;
+  if (shape < 0 || shape > 5 || W <= 0 || H <= 0) return null;
+  const c1 = raised ? HIGHLIGHT : SHADOW, c2 = raised ? SHADOW : HIGHLIGHT;
+  const img = newImageData(W, H);
+  const d = img.data;
+  const px = (x: number, y: number, argb: number): void => {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const k = (y * W + x) * 4;
+    d[k] = (argb >>> 16) & 255; d[k + 1] = (argb >>> 8) & 255; d[k + 2] = argb & 255; d[k + 3] = 255;
+  };
+  const line = (argb: number, x1: number, y1: number, x2: number, y2: number): void => {
+    const n = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+    const sx = Math.sign(x2 - x1), sy = Math.sign(y2 - y1);
+    for (let s = 0; s < n; s++) px(x1 + s * sx, y1 + s * sy, argb);
+  };
+  const rect = (l: number, t: number, r: number, b: number, a1: number, a2: number): void => {
+    line(a1, l, b, l, t); line(a1, l, t, r, t);
+    line(a2, r, t, r, b); line(a2, r, b, l, b);
+  };
+  const xe = v20Lines ? W - 1 : W, ye = v20Lines ? H - 1 : H;
+  switch (shape) {
+    case 0: rect(0, 0, W - 1, H - 1, c1, c2); break;
+    case 1: rect(1, 1, W - 1, H - 1, c2, c2); rect(0, 0, W - 2, H - 2, c1, c1); break;
+    case 2: line(c1, 0, 0, xe, 0); line(c2, 0, 1, xe, 1); break;
+    case 3: line(c1, 0, H - 2, xe, H - 2); line(c2, 0, H - 1, xe, H - 1); break;
+    case 4: line(c1, 0, 0, 0, ye); line(c2, 1, 0, 1, ye); break;
+    default: line(c1, W - 2, 0, W - 2, ye); line(c2, W - 1, 0, W - 1, ye); break;
+  }
+  return img;
+}
+
+function classicDiscReel(dfm: Uint8Array, c: Component, machineIndex: number): ReelBand<ImageData> | null {
+  const srcBin = c.bins['Source.Data'];
+  const face = srcBin ? bmpToImageData(dfm, srcBin.off, srcBin.len) : null;
+  if (!face || !face.width || !face.height) return null;
+  const keyTopLeft = (img: ImageData): ImageData => {
+    const d = img.data;
+    const r = d[0], g = d[1], b = d[2];
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] === r && d[i + 1] === g && d[i + 2] === b) d[i + 3] = 0;
+    }
+    return img;
+  };
+  keyTopLeft(face);
+  const ovBin = c.bins['Overlay.Data'];
+  const ovRaw = ovBin ? bmpToImageData(dfm, ovBin.off, ovBin.len) : null;
+  const overlay = ovRaw && ovRaw.width && ovRaw.height
+    ? fitTopLeft(keyTopLeft(ovRaw), face.width, face.height) : undefined;
+
+  const props = c.discProps ?? {};
+  const stops = props.Stops ?? 12;
+  const steps = props.Steps ?? 96;
+  const k = (255 * Math.max(0, Math.min(255, props.Darkness ?? 0xb0))) >> 8;
+  const pool = (f: number): number => Math.round(255 + ((f * 255) / 256 - 255) * k / 256);
+  const f0 = pool(0);
+  const maskBin = c.bins['LampMask.Data'];
+  const maskRaw = maskBin ? bmpToImageData(dfm, maskBin.off, maskBin.len) : null;
+  let mask: ImageData | undefined;
+  if (maskRaw && maskRaw.width && maskRaw.height) {
+    const d = maskRaw.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = pool(d[i]); d[i + 1] = pool(d[i + 1]); d[i + 2] = pool(d[i + 2]); d[i + 3] = 255;
+    }
+    mask = maskRaw;
+  }
+  const lampSize = props.Lampsize ?? 0;
+  const lamps: DiscLamps = {
+    count: stops,
+    offsetDeg: props.LampOffset ?? 0,
+    enabled: true,
+    outerH: props.OuterH ?? 0, outerL: props.OuterL ?? 0, outerSize: lampSize,
+    innerH: props.InnerH ?? 0, innerL: props.InnerL ?? 0, innerSize: lampSize,
+    floor: [f0, f0, f0],
+    classic: { outline: props.Outline ?? 0 },
+  };
+  const lampNums = Array.from({ length: 24 }, (_, i) => {
+    const n = props[`mask${i + 1}`] ?? 0x100;
+    return n >= 0 && n < 0x140 ? n : -2;
+  });
+  return {
+    left: c.left, top: c.top, width: c.width, height: c.height, canvas: face,
+    stops, rheight: c.height, reversed: false, offset: 0,
+    darkness: 0, lampNums, machineIndex, number: Math.max(0, c.num),
+    overlay,
+    disc: {
+      steps, offsetDeg: c.offset, reversed: false, lamps,
+      backing: [255, 255, 255], wholeDegrees: true,
+    },
+    discMask: mask,
+    discInnerMask: mask,
+  };
+}
+
+export async function extractCabinetFromPayload(
+  dfm: Uint8Array,
+  system?: string,
+): Promise<Cabinet<ImageData>> {
   if (isFmlLayout(dfm)) {
-    const cab = parseFmlLayout(dfm);
+    const cab = parseFmlLayout(dfm, system);
     if (cab) {
       console.log(
         '[dat] v9 layout: bg=%s canvas=%s reels=%d lamps=%d vfd=%o',
@@ -1662,12 +1970,13 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
       return cab;
     }
   }
-  const comps = parseDfm(dfm);
+  const comps = convertNwColorBtns(parseDfm(dfm));
   const tally: Record<string, number> = {};
   for (const c of comps) tally[c.cls] = (tally[c.cls] ?? 0) + 1;
   console.log('[dat] components=%d', comps.length, tally);
 
   const panel = comps.find((c) => c.cls === 'TCanvasPanel');
+  const backgroundColour = delphiColour(panel?.color, BTN_FACE);
   const bgBin = panel?.bins['Background.Data'];
   const background = bgBin ? bmpToImageData(dfm, bgBin.off, bgBin.len) : null;
   const backgroundRect: Rect = panel
@@ -1724,6 +2033,11 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
       });
     }
   }
+  for (const c of comps) {
+    if (c.cls !== 'TDiscReel') continue;
+    const disc = classicDiscReel(dfm, c, reelRank(c));
+    if (disc) reels.push(disc);
+  }
   reels.sort((a, b) => a.left - b.left);
 
   const bandReels: BandStrip<ImageData>[] = [];
@@ -1772,6 +2086,7 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
     const ltag = c.tag >>> 0;
     const coin = (ltag & 0x80000000) !== 0;
     const isControl = (ltag & 0x40000000) !== 0 && !coin;
+    const button = isControl && c.button === 0 ? ((ltag & 0xff00) >>> 8) & 0x7f : c.button;
     const nums = c.hint.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
     if (coin && !nums.length && (ltag & 0x20000)) {
       nums.push((ltag & 0xff) | ((ltag & 0x10000000) >>> 20));
@@ -1789,7 +2104,7 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
     lamps.push({
       left: c.left, top: c.top, width: c.width, height: c.height,
       states,
-      ...(isControl ? { button: c.button } : {}),
+      ...(isControl ? { button } : {}),
       ...(coin ? { acceptor: {} } : {}),
       ...(shortcutOf(c.tag) ? { shortcut: shortcutOf(c.tag) } : {}),
       ...(isControl ? { cap: true } : {}),
@@ -1817,19 +2132,61 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
     const offBin = c.bins['OffBitmap.Data'];
     const onImg = lamp >= 0 && onBin ? bmpToImageData(dfm, onBin.off, onBin.len) : null;
     const offImg = onImg && offBin ? bmpToImageData(dfm, offBin.off, offBin.len) : null;
+    const painted = !onBin && !offBin ? shapeBtnFaces(c, lamp) : null;
     lamps.push({
       left: c.left, top: c.top, width: c.width, height: c.height,
-      states: onImg ? [{ n: lamp, canvas: onImg }] : [],
+      states: onImg ? [{ n: lamp, canvas: onImg }] : painted ? painted.states : [],
       ...(offImg ? { offState: { nums: [lamp], canvas: offImg } } : {}),
+      ...(painted ? { offState: painted.offState, offUnder: true } : {}),
       ...(button !== undefined ? { button } : {}),
       ...(coin ? { acceptor: {} } : {}),
-      ...(onImg === null && lamp >= 0
-        ? { litFill: { n: lamp, colour: delphiColour(c.onColor, 0xffffff00) } }
-        : {}),
       ...(lamp >= 0 && (tag & LOCK) ? { enableLamp: lamp, enableLatched: true } : {}),
       ...(shortcutOf(tag) ? { shortcut: shortcutOf(tag) } : {}),
       label: coin ? str('dat.coin') : hint,
     });
+    const caption = painted ? shapeBtnCaption(c, button) : null;
+    if (caption) lamps.push(caption);
+  }
+
+  const TZLED_COLOURS = ['lctRed', 'lctBlue', 'lctGreen', 'lctyellow', 'lctMangenta', 'lctGrey', 'lctCyan', 'lctWhite', 'lctUser'];
+  const TZLED_ON = [0xffff0000, 0xff0000ff, 0xff00ff00, 0xffffff00, 0xffff00ff, 0xffc0c0c0, 0xff00ffff, 0xffffffff, 0xffff0000];
+  const TZLED_OFF = [0xff800000, 0xff000080, 0xff008000, 0xff808000, 0xff800080, 0xff000000, 0xff008080, 0xff808080, 0xff800000];
+  const TZLED_STYLES = ['lstRound', 'lstSquare', 'lstSimpleRound'];
+  const ledSlot = new Map<number, number>();
+  for (const c of comps) {
+    if (c.cls !== 'TzLed' || c.width <= 0 || c.height <= 0) continue;
+    const ci = Math.max(0, TZLED_COLOURS.indexOf(c.ledColor ?? 'lctRed'));
+    const si = Math.max(0, TZLED_STYLES.indexOf(c.ledStyle ?? 'lstRound'));
+    const style = { round: si !== 1, bezel: si === 0, noOutline: false, noShadow: false };
+    const on = ledFace(c.width, c.height, TZLED_ON[ci], style);
+    const off = ledFace(c.width, c.height, TZLED_OFF[ci], style);
+    const box = { left: c.left, top: c.top, width: c.width, height: c.height };
+    const tag = c.tag >>> 0;
+    if (tag & 0x1000) {
+      const n = (tag & 0xff) | ((tag & 0x10000000) >>> 20);
+      lamps.push({ ...box, states: [{ n, canvas: on }], offState: { nums: [n], canvas: off }, offUnder: true });
+      continue;
+    }
+    const digit = (tag & 0xff0) >>> 4, seg = tag & 0xf;
+    const slot = digit < 24 ? digit * 9 + seg : -1;
+    const lit = slot >= 0 && slot % 9 !== 8;
+    const prev = lit ? ledSlot.get(slot) : undefined;
+    if (prev !== undefined) {
+      const p = lamps[prev];
+      lamps[prev] = { ...p, states: [], offState: { nums: [], canvas: p.offState!.canvas }, offUnder: undefined, digitSeg: undefined };
+    }
+    if (!lit) {
+      lamps.push({ ...box, states: [], offState: { nums: [], canvas: off } });
+      continue;
+    }
+    ledSlot.set(slot, lamps.length);
+    lamps.push({
+      ...box, states: [{ n: -1, canvas: on }], offState: { nums: [-1], canvas: off }, offUnder: true,
+      digitSeg: { digit: Math.floor(slot / 9), seg: slot % 9 },
+    });
+  }
+  for (const c of comps) {
+    if (c.cls === 'TLamp') lamps.push(...classicLamp(c));
   }
 
   const readFrames = (c: Component, stops: number): ImageData[] => {
@@ -1883,24 +2240,30 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
   const segDisplays: SegDisplay[] = [];
   for (const c of comps) {
     if (c.cls !== 'TSevenSegment') continue;
-    const digit = parseInt(c.hint.trim(), 10);
-    if (isNaN(digit)) continue;
+    const tag = c.tag | 0;
+    if (!c.programmable && tag < 0) continue;
+    const lampDriven = c.programmable;
     segDisplays.push({
       left: c.left, top: c.top, width: c.width, height: c.height,
-      seg: [], digit,
+      ...(lampDriven
+        ? { seg: c.masks.slice(0, c.seg14 ? 16 : 8) }
+        : { seg: [], digit: tag % 40 }),
       on: delphiColour(c.onColor, 0xffff2020),
       off: delphiColour(c.offColor, 0xff303030),
       bg: delphiColour(c.color, 0xff000000),
-      dpRight: c.dpRight, dpOn: c.dpOn,
+      dpRight: c.dpRight, dpOn: c.dpOn && !c.seg14,
       metrics: {
         ...SEG_METRICS,
         thickness: c.thickness ?? SEG_METRICS.thickness,
         space: c.space ?? SEG_METRICS.space,
         hSpace: c.horzSpace ?? SEG_METRICS.hSpace,
         vSpace: c.vertSpace ?? SEG_METRICS.vSpace,
+        seg16: c.seg14,
       },
     });
   }
+
+  const bitmaps = datPictures(dfm, comps);
 
   const alpha = comps.find((c) => c.cls === 'TAlpha');
   let vfd: Rect | null = alpha
@@ -1921,8 +2284,30 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
   const vfdOffBrightness = alpha?.offBrightness ?? 80;
   const vfdReversed = alpha ? !!alpha.reversed : comps.some((c) => c.cls === 'TDotAlpha');
 
+  const dotMatrix = datDotMatrix(comps);
+  const bfmLedComp = comps.filter((c) => c.cls === 'TBFMLED').pop();
+  const bfmLeds: BfmLedPanel[] = [];
+  if (bfmLedComp) {
+    const X = Math.max(1, bfmLedComp.sizeX ?? 4);
+    const Y = Math.max(1, bfmLedComp.sizeY ?? 4);
+    const DS = Math.max(0, bfmLedComp.spacing ?? 4);
+    bfmLeds.push({
+      left: bfmLedComp.left, top: bfmLedComp.top,
+      width: (X * 5 + DS) * 4 + 23, height: Y * 8 + 14,
+      xSize: X, ySize: Y, digitSpacing: DS, ledSize: X,
+      on: delphiColour(bfmLedComp.colour, 0xffff0000),
+      off: 0xff000000, bg: 0xff000000, classic: true,
+    });
+  }
+
   const width = background?.width || backgroundRect.width || 0;
   const height = background?.height || backgroundRect.height || 0;
+
+  for (const c of comps) {
+    if (c.cls !== 'TLabel') continue;
+    const lp = datLabel(c, panel, Math.max(width, backgroundRect.width), Math.max(height, backgroundRect.height));
+    if (lp) lamps.push(lp);
+  }
 
   let x0 = width, y0 = height, x1 = 0, y1 = 0;
   const grow = (r: Rect) => {
@@ -1935,6 +2320,8 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
   if (vfd) grow(vfd);
   if (featureReel) grow(featureReel);
   for (const s of segDisplays) grow(s);
+  if (dotMatrix) grow(dotMatrix);
+  for (const b of bfmLeds) grow(b);
   const pad = 12;
   const parts: Rect = x1 > x0
     ? {
@@ -1959,6 +2346,8 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
     ...lamps.map((l) => asPart(l)),
     ...(vfd ? [asPart(vfd)] : []),
     ...segDisplays.map((s) => asPart(s)),
+    ...(dotMatrix ? [asPart(dotMatrix)] : []),
+    ...bfmLeds.map((b) => asPart(b)),
   ], background, backgroundRect.left);
   const colLeft = Math.max(parts.left, crop.left);
   const colRight = Math.min(parts.left + parts.width, crop.left + crop.width);
@@ -1966,7 +2355,94 @@ export async function extractCabinetFromPayload(dfm: Uint8Array): Promise<Cabine
     ? { left: colLeft, top: parts.top, width: colRight - colLeft, height: parts.height }
     : parts;
   const trimmed = flatTrim(content, column, background, backgroundRect.left, backgroundRect.top);
-  return { width, height, background, backgroundRect, reels, ...(bandReels.length ? { bandReels } : {}), lamps, vfd, vfdIsDots, vfdFont, vfdGlyphWidth, vfdInk, vfdOffBrightness, vfdReversed, content, column, trimmed, featureReel, frameReels, segDisplays };
+  bitmaps.unshift(...bevelBitmaps(comps));
+  return { width, height, background, backgroundRect, backgroundColour, reels, ...(bandReels.length ? { bandReels } : {}), ...(bitmaps.length ? { bitmaps } : {}), lamps, vfd, vfdIsDots, vfdFont, vfdGlyphWidth, vfdInk, vfdOffBrightness, vfdReversed, content, column, trimmed, featureReel, frameReels, segDisplays, ...(dotMatrix ? { dotMatrix } : {}), ...(bfmLeds.length ? { bfmLeds } : {}) };
+}
+
+function datDotMatrix(comps: readonly Component[]): DotMatrix | null {
+  const c = comps.find((k) => k.cls === 'TDotmatrix');
+  if (!c) return null;
+  const pitch = Math.max(1, c.size ?? 7);
+  const resized = c.size !== undefined && c.size !== 7;
+  const width = resized || c.width <= 0 ? pitch * 65 + 2 : c.width;
+  const height = resized || c.height <= 0 ? pitch * 21 + 2 : c.height;
+  return {
+    left: c.left, top: c.top, width, height,
+    cols: 65, rows: 21, pitch,
+    dot: Math.max(1, pitch - (pitch < 5 ? 1 : 2)),
+    stride: 9, lsbFirst: false,
+    on: 0xffff0000, off: 0xff000000, bg: 0xff000000,
+    flip180: false, vertical: false,
+  };
+}
+
+const TIMAGE_PICTURE = 0x10000;
+
+function datPictures(dfm: Uint8Array, comps: Component[]): CabBitmap<ImageData>[] {
+  const out: CabBitmap<ImageData>[] = [];
+  for (const c of comps) {
+    if (c.cls !== 'TImage' || c.tag !== TIMAGE_PICTURE || c.width <= 0 || c.height <= 0) continue;
+    const bin = c.bins['Picture.Data'];
+    if (!bin || bin.len < 9) continue;
+    const n = dfm[bin.off];
+    let cls = '';
+    for (let i = 0; i < n && i < 32; i++) cls += String.fromCharCode(dfm[bin.off + 1 + i]);
+    if (cls !== 'TBitmap') continue;
+    const image = bmpToImageData(dfm, bin.off + 1 + n, bin.len - 1 - n, c.transparent);
+    if (!image) continue;
+    out.push({
+      left: c.left, top: c.top, width: c.width, height: c.height,
+      image, overlay: null, stretch: 0,
+      ...(c.stretch ? {} : { natural: true }),
+    });
+  }
+  return out;
+}
+
+export function datLabel(
+  c: Component, panel: Component | undefined, panelW: number, panelH: number,
+): CabLamp<ImageData> | null {
+  if (c.width <= 0 || c.height <= 0) return null;
+  if (c.left >= panelW || c.top >= panelH || c.left + c.width <= 0 || c.top + c.height <= 0) return null;
+  const lamp = c.tag & 0x20000 ? ((c.tag & 0xff) | ((c.tag & 0x10000000) >>> 20)) : -1;
+  const visible = c.visible ?? true;
+  if (!visible && lamp < 0) return null;
+  const text = stripAccel(c.caption);
+  const fill = c.transparent ? undefined : sysColour(c.color ?? panel?.color, SYSTEM_COLOURS.clbtnface);
+  if (!text.trim() && fill === undefined) return null;
+  const align = c.alignment === 'taRightJustify' ? 'right' : c.alignment === 'taCenter' ? undefined : 'left';
+  const valign = c.textLayout === 'tlBottom' ? 'bottom' : c.textLayout === 'tlCenter' ? undefined : 'top';
+  return {
+    left: c.left, top: c.top, width: c.width, height: c.height,
+    states: [],
+    legend: {
+      ...(text.trim() ? { off: text } : {}),
+      colour: sysColour(c.font.color, SYSTEM_COLOURS.clwindowtext),
+      ...(fill !== undefined ? { fill } : {}),
+      face: c.font.name,
+      points: (Math.abs(c.font.height) * 72) / 96,
+      style: c.font.style,
+      lamp,
+      ...(lamp >= 0 ? { litOnly: true as const, wholeLitOnly: true as const } : {}),
+      ...(align ? { align } : {}),
+      ...(valign ? { valign } : {}),
+      ...(c.wordWrap ? {} : { nowrap: true as const }),
+    },
+  };
+}
+
+export function stripAccel(s: string): string {
+  return s.replace(/&(.)/gs, '$1').replace(/&$/, '');
+}
+
+const SYSTEM_COLOURS: Record<string, number> = {
+  clbtnface: 0xfff0f0f0, clwindowtext: 0xff000000, clbtntext: 0xff000000, clwindow: 0xffffffff,
+  clbtnshadow: 0xffa0a0a0, clbtnhighlight: 0xffffffff,
+};
+
+function sysColour(v: number | string | undefined, fallback: number): number {
+  if (typeof v === 'string' && SYSTEM_COLOURS[v.toLowerCase()] !== undefined) return SYSTEM_COLOURS[v.toLowerCase()] >>> 0;
+  return delphiColour(v, fallback);
 }
 
 const DELPHI_COLOURS: Record<string, number> = {
@@ -1981,11 +2457,140 @@ export function cssArgb(argb: number): string {
   return `rgba(${(argb >>> 16) & 0xff},${(argb >>> 8) & 0xff},${argb & 0xff},${a})`;
 }
 
+function shapeBtnFaces(c: Component, lamp: number):
+  { states: { n: number; canvas: ImageData; down: ImageData }[]; offState: { nums: number[]; canvas: ImageData; down: ImageData } } {
+  const p = c.btnProps ?? {};
+  const hi = btnColour(p.HighLightColor, SYSTEM_COLOURS.clbtnhighlight);
+  const sh = btnColour(p.ShadowColor, SYSTEM_COLOURS.clbtnshadow);
+  const on = btnColour(c.onColor, SYSTEM_COLOURS.clbtnface);
+  const off = btnColour(c.offColor, SYSTEM_COLOURS.clbtnface);
+  const face = (fill: number, down: boolean): ImageData => shapeBtnFace(c.width, c.height, fill, hi, sh, down);
+  const lamp2 = c.lampNums[1] > 0 ? c.lampNums[1] - 1 : -1;
+  const nums = [lamp, lamp2].filter((n) => n >= 0);
+  const onFace = nums.length ? face(on, false) : null;
+  const onDown = nums.length ? face(on, true) : null;
+  return {
+    states: nums.map((n) => ({ n, canvas: onFace!, down: onDown! })),
+    offState: { nums, canvas: face(off, false), down: face(off, true) },
+  };
+}
+
+export function shapeBtnFace(w: number, h: number, fill: number, hi: number, sh: number, down: boolean): ImageData {
+  const img = newImageData(Math.max(0, w), Math.max(0, h));
+  const d = img.data;
+  const put = (x: number, y: number, argb: number): void => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = (y * w + x) * 4;
+    d[i] = (argb >>> 16) & 0xff; d[i + 1] = (argb >>> 8) & 0xff; d[i + 2] = argb & 0xff; d[i + 3] = 0xff;
+  };
+  const col = (x: number, y0: number, y1: number, argb: number): void => { for (let y = y0; y <= y1; y++) put(x, y, argb); };
+  const row = (y: number, x0: number, x1: number, argb: number): void => { for (let x = x0; x <= x1; x++) put(x, y, argb); };
+  for (let y = 0; y < h - 2; y++) row(y, 0, w - 3, fill);
+  const black = 0xff000000;
+  col(0, 1, h - 1, sh); row(0, 0, w - 2, sh);
+  col(w - 2, 1, h - 3, sh); row(h - 2, 2, w - 2, sh);
+  col(1, 2, h - 2, down ? black : hi); row(1, 1, w - 3, down ? black : hi);
+  col(w - 1, 0, h - 2, down ? hi : black); row(h - 1, 1, w - 1, down ? hi : black);
+  return img;
+}
+
+function shapeBtnCaption(c: Component, button: number | undefined): CabLamp<ImageData> | null {
+  const w = c.width - 11;
+  const h = c.height - 11;
+  if (w <= 0 || h <= 0) return null;
+  const p = c.btnProps ?? {};
+  const multi = p.MultipleLines === true;
+  let text = stripAccel(c.caption);
+  if (!multi) text = text.replace(/[\r\n]/g, '');
+  if (!text.trim()) return null;
+  const align = c.alignment === 'taLeftJustify' ? 'left' : c.alignment === 'taRightJustify' ? 'right' : undefined;
+  const valign = multi ? 'top' : p.HorzAlign === 'zbha_Top' ? 'top' : p.HorzAlign === 'zbha_Bottom' ? 'bottom' : undefined;
+  return {
+    left: c.left + 5, top: c.top + 5, width: w, height: h,
+    states: [],
+    legend: {
+      off: text,
+      colour: sysColour(c.font.color, SYSTEM_COLOURS.clwindowtext),
+      face: c.font.name,
+      points: (Math.abs(c.font.height) * 72) / 96,
+      style: c.font.style,
+      lamp: -1,
+      ...(align ? { align } : {}),
+      ...(valign ? { valign } : {}),
+      ...(multi && c.wordWrap ? {} : { nowrap: true as const }),
+      ...(button !== undefined ? { input: button } : {}),
+    },
+  };
+}
+
+function btnColour(v: number | string | boolean | undefined, fallback: number): number {
+  if (typeof v === 'number' && v < 0) {
+    const sys = SYSTEM_BY_INDEX[v & 0xff];
+    return sys === undefined ? fallback : SYSTEM_COLOURS[sys] >>> 0;
+  }
+  return typeof v === 'boolean' ? fallback : sysColour(v, fallback);
+}
+
+const SYSTEM_BY_INDEX: Record<number, string> = {
+  5: 'clwindow', 8: 'clwindowtext', 15: 'clbtnface', 16: 'clbtnshadow', 18: 'clbtntext', 20: 'clbtnhighlight',
+};
+
+const VCL_SHAPES = ['stRectangle', 'stSquare', 'stRoundRect', 'stRoundSquare', 'stEllipse', 'stCircle'];
+const BTN_FACE = 0xfff0f0f0;
+
+function classicLamp(c: Component): CabLamp<ImageData>[] {
+  if (c.width <= 0 || c.height <= 0) return [];
+  const tag = c.tag >>> 0;
+  const coin = (tag & 0x80000000) !== 0;
+  const control = (tag & 0x40000000) !== 0 && !coin;
+  const lamp1 = (tag & 0xff) | ((tag & 0x10000000) >>> 20);
+  const lamp2 = (tag & 0x10000) ? ((tag & 0xff00) >>> 8) | ((tag & 0x20000000) >>> 21) : -1;
+  const shape = Math.max(0, VCL_SHAPES.indexOf(c.shape ?? 'stRectangle'));
+  const outline = (tag & 0x40000) ? undefined : 0xff000000;
+  const face = (argb: number): ImageData => {
+    const img = newImageData(c.width, c.height);
+    fillShape(img, 0, 0, c.width, c.height, argb, shape, outline, 0, { round: 5, vectors: 4 });
+    return img;
+  };
+  const nums = lamp2 >= 0 ? [lamp1, lamp2] : [lamp1];
+  const states = [{ n: lamp1, canvas: face(delphiColour(c.colour1, 0xff000000)) }];
+  if (lamp2 >= 0) states.push({ n: lamp2, canvas: face(delphiColour(c.colour2, 0xff000000)) });
+  const vk = (tag & 0x0ff00000) >>> 20;
+  const rect = { left: c.left, top: c.top, width: c.width, height: c.height };
+  const out: CabLamp<ImageData>[] = [{
+    ...rect,
+    states,
+    offState: { nums, canvas: face(BTN_FACE) },
+    ...(control ? { button: (tag >>> 8) & 0x7f, cap: true } : {}),
+    ...(control && c.caption.trim() ? { name: c.caption.replace(/\s+/g, ' ').trim() } : {}),
+    ...(coin ? { acceptor: {} } : {}),
+    ...(vk && shortcutKnown(vk) ? { shortcut: vk } : {}),
+  }];
+  if (c.caption) {
+    out.push({
+      ...rect,
+      states: [],
+      legend: {
+        off: c.caption,
+        on: c.caption,
+        colour: delphiColour(c.font.color, 0xff000000),
+        face: c.font.name,
+        points: (Math.abs(c.font.height) * 72) / 96,
+        style: c.font.style,
+        lamp: -1,
+      },
+    });
+  }
+  return out;
+}
+
 function delphiColour(v: number | string | undefined, fallback: number): number {
   if (typeof v === 'string') {
+    if (v.toLowerCase() === 'clbtnface') return BTN_FACE;
     const rgb = DELPHI_COLOURS[v.toLowerCase()];
     return rgb === undefined ? fallback : (0xff000000 | rgb) >>> 0;
   }
+  if (typeof v === 'number' && (v >>> 0) === 0x8000000f) return BTN_FACE;
   if (typeof v === 'number' && v >= 0) {
     const r = v & 0xff;
     const g = (v >> 8) & 0xff;

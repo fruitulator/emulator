@@ -2,10 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('fruitulator.theme');
+          if (t === 'cherry' || t === 'emerald' || t === 'ocean') document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title data-str="index.fruitulator">Fruitulator</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#0A0716" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='50' y='50' text-anchor='middle' dominant-baseline='central' font-size='80'%3E%F0%9F%8D%92%3C/text%3E%3C/svg%3E" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -20,55 +28,31 @@
       *, *::before, *::after {
         box-sizing: border-box;
       }
-      :focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
-      }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
           transition-duration: 0.01ms !important;
           animation-duration: 0.01ms !important;
           scroll-behavior: auto !important;
         }
-        .spinner {
-          animation-duration: 2s !important;
+        .nb-spinner {
+          animation-duration: 2.4s !important;
         }
       }
       html {
+        font-family: var(--nb-font-body);
         overscroll-behavior-x: none;
-        scrollbar-gutter: stable;
-        scrollbar-color: var(--surface-3) transparent;
-      }
-      * {
-        scrollbar-width: thin;
-      }
-      *::-webkit-scrollbar {
-        width: 9px;
-        height: 9px;
-      }
-      *::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      *::-webkit-scrollbar-thumb {
-        background: var(--surface-3);
-        border-radius: 5px;
-      }
-      *::-webkit-scrollbar-thumb:hover {
-        background: #4b4b4b;
-      }
-      *::-webkit-scrollbar-corner {
-        background: transparent;
       }
       body {
         margin: 0;
-        background: var(--shell);
-        color: var(--text);
-        font-family: var(--ui);
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 10px;
         padding: 8px 0;
+        min-height: 100dvh;
+      }
+      body.nb-page,
+      body.nb-play {
         min-height: 100dvh;
       }
       header,
@@ -86,7 +70,7 @@
         align-items: center;
         flex-wrap: wrap;
       }
-      h1 {
+      header h1 {
         margin: 0;
         aspect-ratio: var(--mark-ar);
         height: clamp(20px, 0.6vw + 17px, 28px);
@@ -122,23 +106,20 @@
       }
       body:has(#library:not([hidden])) header .tools {
         position: absolute;
-        top: calc(8px + env(safe-area-inset-top));
+        top: calc(22px + env(safe-area-inset-top));
         right: calc(12px + env(safe-area-inset-right));
         z-index: 7;
       }
       body:has(#library:not([hidden])) header .tools {
-        gap: 2px;
-      }
-      body:has(#library:not([hidden])) header .tools .iconbtn {
-        color: var(--muted);
-      }
-      body:has(#library:not([hidden])) header .tools .iconbtn:hover {
-        color: var(--text);
+        gap: 14px;
       }
       .tools {
         display: flex;
         gap: 12px;
         align-items: center;
+      }
+      header > .nb-topbar__spacer {
+        display: none;
       }
       .tagline {
         display: none;
@@ -159,11 +140,6 @@
       }
       body:not(.orbit-mode):has(#library:not([hidden])) h1 {
         cursor: pointer;
-      }
-      #status {
-        font-family: var(--readout);
-        font-size: 12px;
-        color: var(--muted-dim);
       }
       #stage {
         width: 100%;
@@ -191,47 +167,41 @@
         box-sizing: border-box;
       }
       .reel-band {
-        border-radius: 2px;
+        background: transparent;
+        border-radius: 12px;
       }
       .reel-bands-none,
       .reel-bands-note {
         display: flex;
         align-items: center;
         justify-content: center;
-        color: var(--muted);
-        font-family: var(--ui);
-        font-size: 15px;
-        letter-spacing: 0.02em;
-      }
-      .reel-bands-none {
-        border: 1px dashed var(--hairline);
-      }
-      .reel-bands-card {
-        background: var(--surface);
-        border-radius: 8px;
+        text-align: center;
+        color: var(--nb-text-3);
+        font-size: 14px;
       }
       .reel-bands-label {
         display: flex;
         align-items: center;
         justify-content: center;
-        color: var(--muted);
-        font-family: var(--ui);
-        font-size: 12px;
-        letter-spacing: 0.04em;
+        font: 700 12px/1 var(--nb-font-display);
+        letter-spacing: 0.16em;
         text-transform: uppercase;
+        color: var(--nb-text-3);
         white-space: nowrap;
-        overflow: hidden;
+      }
+      .nb-reels__window.no-left::before,
+      .nb-reels__window.no-right::after {
+        display: none;
       }
       .reel-bands-mark {
         width: 0;
         height: 0;
         border: 4px solid transparent;
-        opacity: 0.7;
       }
-      .reel-bands-mark.right { border-left: 6px solid var(--text); border-right-width: 0; transform: translate(-7px, -4px); }
-      .reel-bands-mark.left { border-right: 6px solid var(--text); border-left-width: 0; transform: translate(1px, -4px); }
-      .reel-bands-mark.down { border-top: 6px solid var(--text); border-bottom-width: 0; transform: translate(-4px, -7px); }
-      .reel-bands-mark.up { border-bottom: 6px solid var(--text); border-top-width: 0; transform: translate(-4px, 1px); }
+      .reel-bands-mark.right { border-left: 6px solid var(--nb-violet-hi); border-right-width: 0; transform: translate(-7px, -4px); }
+      .reel-bands-mark.left { border-right: 6px solid var(--nb-violet-hi); border-left-width: 0; transform: translate(1px, -4px); }
+      .reel-bands-mark.down { border-top: 6px solid var(--nb-violet-hi); border-bottom-width: 0; transform: translate(-4px, -7px); }
+      .reel-bands-mark.up { border-bottom: 6px solid var(--nb-violet-hi); border-top-width: 0; transform: translate(-4px, 1px); }
       canvas {
         background: var(--void);
         border-radius: 6px;
@@ -246,14 +216,11 @@
     </style>
     <style>@import "/web/ui/buttons.css";</style>
     <style>
-      .iconbtn.about {
-        color: var(--muted);
-      }
-      .iconbtn.about:hover {
-        color: var(--text);
-      }
     </style>
     <style>@import "/web/ui/dialog.css";</style>
+    <style>@import "/web/ui/pincard.css";</style>
+    <style>@import "/web/ui/kioskmode.css";</style>
+    <style>@import "/web/ui/langpick.css";</style>
     <style>@import "/web/ui/fontpick.css";</style>
     <style>
       #vfd-strip {
@@ -310,15 +277,6 @@
         font: 18px/24px var(--ui);
         cursor: pointer;
       }
-      #vfd-strip .vfd-note {
-        max-width: 240px;
-        margin-top: 4px;
-        color: var(--muted);
-        font: 11px/1.3 var(--ui);
-      }
-      #vfd-strip.bare .vfd-note {
-        display: none;
-      }
       #vfd-strip .vfd-flip {
         right: 30px;
         font-size: 15px;
@@ -335,10 +293,10 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 20px 20px 10px;
+        padding: 0;
       }
       .menu-brand .logo-img {
-        height: 40px;
+        height: 44px;
       }
       .menu-brand .tagline {
         font-size: 11px;
@@ -391,25 +349,12 @@
         letter-spacing: 0.01em;
         font-size: 13.5px;
       }
-      .ctl-group {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        align-items: center;
-        background: var(--surface);
-        padding: 8px 10px;
-        border-radius: 6px;
-      }
-      .ctl-title {
-        font-size: 12px;
-        color: var(--muted);
-        margin-right: 4px;
-        width: 100%;
-      }
     </style>
+    <style>@import "/web/ui/dip.css";</style>
+    <style>@import "/web/ui/schematic-diagram.css";</style>
     <style>@import "/web/ui/schematic.css";</style>
     <style>
-      button {
+      button:where(:not([class*="nb-"])) {
         background: var(--surface-2);
         color: var(--text);
         border: 1px solid var(--hairline);
@@ -423,7 +368,7 @@
         user-select: none;
         transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       }
-      button:hover {
+      button:where(:not([class*="nb-"])):hover {
         background: var(--surface-3);
       }
       button.cell {
@@ -451,6 +396,9 @@
         flex-direction: column;
         gap: 14px;
       }
+      body:not(.orbit-mode) #library {
+        margin-top: -10px;
+      }
     </style>
     <style>@import "/web/ui/search.css";</style>
     <style>
@@ -458,6 +406,14 @@
         display: flex;
         align-items: center;
         gap: 14px;
+        margin-bottom: 22px;
+      }
+      @media (max-width: 520px) {
+        #lib-meta {
+          flex-wrap: wrap;
+          row-gap: 12px;
+          margin-bottom: 14px;
+        }
       }
       #lib-actions {
         display: flex;
@@ -465,233 +421,99 @@
         align-items: center;
         margin-left: auto;
       }
-      #lib-actions .iconbtn {
-        background: var(--surface-2);
-        color: var(--text);
-      }
-      #lib-actions .iconbtn:hover {
-        background: var(--surface-3);
-      }
-      #sort-wrap {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        font-size: 11px;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
     </style>
     <style>@import "/web/ui/dropdown.css";</style>
+    <style>@import "/web/sources/sources.css";</style>
     <style>@import "/web/ui/coinsetup.css";</style>
     <style>
-      .rail-nav {
-        position: absolute;
-        top: 33%;
-        transform: translateY(-50%);
-        z-index: 10;
-        width: 68px;
-        height: 68px;
-        padding: 0;
-        border-radius: 50%;
-        background: transparent;
-        border: 1px solid transparent;
-        color: var(--text);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
-      }
-      .rail-nav svg {
-        width: 34px;
-        height: 34px;
-        stroke-width: 2;
-        filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.9));
-      }
-      .rail-nav:hover {
-        background: rgba(255, 255, 255, 0.92);
-        border-color: transparent;
-        color: #000;
-      }
-      .rail-nav:hover svg {
-        filter: none;
-      }
-      .rail-nav:disabled {
-        opacity: 0;
-        pointer-events: none;
-      }
       #tiles {
         position: relative;
         display: flex;
         flex-direction: column;
         gap: 16px;
       }
+      #tiles > .nb-section:not(:first-child) {
+        margin-top: 28px;
+      }
       #orbit-wrap {
+        --stage-h: 470px;
         position: relative;
         margin-inline: calc(-1 * var(--gutter));
       }
+      @media (max-width: 720px) {
+        #orbit-wrap {
+          --stage-h: 380px;
+        }
+      }
+      #orbit-wrap {
+        --fan-scale: 1;
+      }
       #orbit-stage {
-        --slotw: clamp(180px, 24vw, 260px);
-        --sloth: calc(var(--slotw) * 1.25);
-        position: relative;
-        height: calc(var(--sloth) + 86px);
-        perspective: 1500px;
-        perspective-origin: 50% 34%;
-        overflow: hidden;
+        height: calc(var(--stage-h) * var(--fan-scale));
+      }
+      #orbit-ring {
+        bottom: auto;
+        height: var(--stage-h);
+        transform: scale(var(--fan-scale));
+        transform-origin: 50% 0;
+      }
+      #orbit-stage {
         outline: none;
         cursor: grab;
         touch-action: pan-y;
       }
       #orbit-stage:focus-visible {
-        box-shadow: inset 0 0 0 1px rgba(225, 29, 42, 0.45);
+        box-shadow: var(--nb-focus);
       }
       #orbit-stage.dragging {
         cursor: grabbing;
       }
-      #orbit-stage::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: 120px;
-        z-index: 6;
-        pointer-events: none;
-        background: linear-gradient(180deg,
-          rgba(0, 0, 0, 0) 0%, var(--shell) 100%);
-      }
-      #orbit-ring {
-        position: absolute;
-        left: 50%;
-        top: 26px;
-        width: var(--slotw);
-        height: var(--sloth);
-        margin-left: calc(var(--slotw) / -2);
-        transform-style: preserve-3d;
-        transition: transform 0.6s cubic-bezier(0.22, 0.75, 0.3, 1);
-      }
-      #orbit-stage.dragging #orbit-ring {
+      #orbit-stage.dragging .nb-orbit__item,
+      #orbit-stage.placing .nb-orbit__item {
         transition: none;
       }
-      .orbit-card {
-        position: absolute;
-        inset: 0;
-        border-radius: var(--r-card);
-        overflow: hidden;
-        background: linear-gradient(180deg, #17171a 0%, #0d0d0f 42%, #050506 100%);
-        backface-visibility: hidden;
-        transition: filter 0.6s cubic-bezier(0.22, 0.75, 0.3, 1),
-          opacity 0.6s ease;
-        cursor: pointer;
-        -webkit-box-reflect: below 10px
-          linear-gradient(transparent 62%, rgba(255, 255, 255, 0.14));
-      }
-      #orbit-stage.dragging .orbit-card {
-        transition: none;
-      }
-      .orbit-card::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        z-index: 5;
-        pointer-events: none;
-        border-radius: inherit;
-        background: linear-gradient(180deg,
-          rgba(0, 0, 0, 0.26) 0%, rgba(0, 0, 0, 0) 10%,
-          rgba(0, 0, 0, 0) 80%, rgba(0, 0, 0, 0.38) 100%);
-      }
-      .orbit-card .art {
-        position: absolute;
-        inset: 0;
+      .orbit-card .nb-cab__glass {
         aspect-ratio: auto;
-        border-radius: var(--r-card);
+        min-height: 0;
+        cursor: inherit;
       }
-      .orbit-card.cannot-run .art-img,
-      .orbit-card.cannot-run .art-blur,
+      .orbit-card .art-blur {
+        display: none;
+      }
+      .orbit-card.cannot-run .nb-cab__glass .art-img,
       .orbit-card.cannot-run .art-placeholder {
         filter: grayscale(0.9) brightness(0.55);
       }
-      #orbit-floor {
-        position: absolute;
-        left: 50%;
-        bottom: -6px;
-        width: min(760px, 86%);
-        height: 130px;
-        transform: translateX(-50%);
-        background: radial-gradient(52% 100% at 50% 100%,
-          rgba(225, 29, 42, 0.12), transparent 72%);
-        pointer-events: none;
-      }
       #orbit-prev,
       #orbit-next {
-        top: 38%;
+        top: calc(var(--stage-h) * var(--fan-scale) / 2);
       }
-      #orbit-prev {
-        left: 8px;
+      #orbit-prev:active,
+      #orbit-next:active {
+        transform: translateY(-50%) scale(0.94);
       }
-      #orbit-next {
-        right: 8px;
+      #orbit-prev:disabled,
+      #orbit-next:disabled {
+        opacity: 0;
+        pointer-events: none;
       }
       #orbit-caption {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        padding: 4px var(--gutter) 6px;
-        text-align: center;
         position: relative;
         z-index: 1;
-        margin-top: -30px;
-      }
-      #orbit-cap-text {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        min-height: 54px;
-        transition: opacity 0.28s cubic-bezier(0.22, 0.75, 0.3, 1),
-          transform 0.32s cubic-bezier(0.22, 0.75, 0.3, 1);
-      }
-      #orbit-cap-text.out {
-        opacity: 0;
-        transform: translateY(8px);
-        transition: opacity 0.14s ease-in, transform 0.14s ease-in;
+        padding-inline: var(--gutter);
       }
       #orbit-title {
         margin: 0;
-        font-family: var(--display);
-        font-size: clamp(18px, 2.4vw, 26px);
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
       }
-      #orbit-sub {
-        margin: 0;
+      body.orbit-mode:has(#library:not([hidden]))::after {
+        background: var(--nb-nebula-strong);
       }
-      #orbit-chips:empty {
-        display: none;
+      body.orbit-mode:has(#library:not([hidden])) {
+        overflow-x: clip;
       }
-      #orbit-actions {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 2px;
-      }
-      #orbit-play {
-        background: var(--accent);
-        color: var(--on-accent);
-        transition: background 0.15s ease, box-shadow 0.2s ease;
-      }
-      #orbit-play:hover {
-        background: var(--accent-hot);
-        box-shadow: 0 0 18px rgba(225, 29, 42, 0.5);
-      }
-      #orbit-play.blocked {
-        background: var(--surface-3);
-        color: var(--muted);
-      }
-      #orbit-play.blocked:hover {
-        box-shadow: none;
+      #orbit-wrap.nb-orbit {
+        overflow: visible;
+        overflow-x: clip;
       }
       body.orbit-mode #search-wrap,
       body.orbit-mode #lib-meta {
@@ -699,10 +521,19 @@
       }
       body.orbit-mode:has(#library:not([hidden])) header {
         justify-content: center;
-        padding-top: clamp(30px, 4vh, 48px);
+        padding-top: clamp(30px, 7vh, 72px);
+        padding-bottom: 0;
+      }
+      @media (max-width: 900px) {
+        body.orbit-mode:has(#library:not([hidden])) header {
+          padding-top: max(clamp(30px, 7vh, 72px), calc(65px + env(safe-area-inset-top)));
+        }
       }
       body.orbit-mode:has(#library:not([hidden])) .brand {
-        --brand-w: clamp(260px, 34vw, 520px);
+        --brand-w: calc(clamp(56px, min(11vw, 13vh), 130px) * var(--mark-ar));
+      }
+      body.orbit-mode #orbit-wrap {
+        margin-top: calc(clamp(16px, 3.6vh, 36px) - 26px);
       }
       body.orbit-mode:has(#library:not([hidden])) #statusbar,
       body.orbit-mode:has(#library:not([hidden])) header #cacheNote,
@@ -729,17 +560,26 @@
       }
 
       body:not(.orbit-mode):has(#library:not([hidden])) header {
-        grid-template-columns: auto minmax(0, 1fr);
-        margin-top: 0;
+        display: flex;
+        margin-top: -8px;
+        box-sizing: border-box;
+        height: 88px;
+      }
+      body:not(.orbit-mode):has(#library:not([hidden])) header > .nb-topbar__spacer {
+        display: block;
+      }
+      body:not(.orbit-mode):has(#library:not([hidden])) header .tools {
+        position: static;
       }
       body:not(.orbit-mode):has(#library:not([hidden])) header .brand {
-        --brand-h: clamp(24px, 2vw, 28px);
-        --brand-w: min(calc(var(--brand-h) * var(--mark-ar)), calc(100vw - 2 * var(--gutter) - 90px));
-        --brand-pad: 8px;
-        grid-column: 1;
-        justify-self: start;
+        --brand-h: 36px;
+        --brand-w: min(calc(var(--brand-h) * var(--mark-ar)), calc(100vw - 2 * var(--gutter) - 180px));
         align-items: flex-start;
-        margin-top: var(--brand-pad);
+      }
+      @media (max-width: 720px) {
+        body:not(.orbit-mode):has(#library:not([hidden])) header .brand {
+          --brand-h: 28px;
+        }
       }
       @media (orientation: landscape) and (max-height: 560px) {
         .brand,
@@ -750,18 +590,12 @@
           padding-top: 2px;
           margin-block: 2px;
         }
-        #orbit-stage {
-          --slotw: min(24vw, clamp(96px, calc((100dvh - 194px) / 1.25), 260px));
-          height: calc(var(--sloth) + 60px);
-        }
-        #orbit-ring {
-          top: 8px;
-        }
         #orbit-caption {
           gap: 5px;
+          margin-top: 6px;
           padding-block: 2px 4px;
         }
-        #orbit-cap-text {
+        #orbit-wrap .nb-orbit__caption {
           min-height: 0;
           gap: 3px;
         }
@@ -772,64 +606,31 @@
           margin-top: 6px;
         }
         #orbit-play {
-          padding: 7px 18px;
-          font-size: 12px;
+          margin-top: 0;
+          padding: 8px 16px;
+          min-height: 36px;
+          font-size: 15px;
         }
       }
     </style>
     <style>@import "/web/ui/list.css";</style>
     <style>
-      .readout,
-      #lib-quota,
-      #status {
-        font-family: var(--readout);
-        font-size: 11px;
-        letter-spacing: 0.13em;
-        text-transform: uppercase;
-        color: var(--muted-dim);
-      }
       #statusbar {
-        position: sticky;
-        bottom: 0;
         z-index: 8;
         margin: auto 0 -8px;
-        padding-block: 10px;
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 6px 18px;
-        border-top: 1px solid var(--hairline);
-        background: var(--shell);
-        box-shadow: 0 0 0 100vmax var(--shell);
-        clip-path: inset(0 -100vmax);
       }
       body:has(#library:not([hidden])) header #cacheNote,
       body:has(#library:not([hidden])) header #offlineNote {
         display: none;
       }
-      #lib-offline {
-        font-family: var(--readout);
-        font-size: 11px;
-        letter-spacing: 0.13em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
       body:has(#cacheNote:not([hidden])) #statusbar::after {
         content: "saving to library…";
-        font-family: var(--readout);
-        font-size: 11px;
-        letter-spacing: 0.13em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      #statusbar .meter {
-        flex: none;
-        width: clamp(48px, 14vw, 220px);
+        color: var(--nb-violet-hi);
       }
       #lib-quota {
         white-space: nowrap;
       }
-      #lib-quota > span:not(.meter) {
+      #lib-quota > span {
         flex: none;
       }
       #lib-quota {
@@ -840,59 +641,12 @@
         gap: 9px;
         min-height: 14px;
         margin: 0;
-        padding: 0;
-        background: none;
-        border: 0;
-        cursor: pointer;
         text-align: left;
-        transition: color 0.18s;
-      }
-      #lib-quota:hover,
-      #lib-quota:focus-visible {
-        color: var(--muted);
+        text-transform: inherit;
+        letter-spacing: inherit;
       }
       #lib-quota:empty {
         cursor: default;
-      }
-      #lib-quota .more {
-        opacity: 0.6;
-      }
-      .meter {
-        flex: 1;
-        max-width: 220px;
-        height: 2px;
-        background: rgba(255, 255, 255, 0.08);
-        border-radius: 2px;
-        overflow: hidden;
-      }
-      .meter span {
-        display: block;
-        min-width: 6px;
-        height: 100%;
-        background: var(--accent);
-        box-shadow: 0 0 8px var(--accent-hot);
-      }
-      .ghost {
-        flex: 0 0 auto;
-        width: 40px;
-        height: 40px;
-        padding: 0;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        border: 1px solid var(--hairline);
-        background: transparent;
-        color: var(--muted);
-        opacity: 0.8;
-        transition: opacity 0.16s ease, background 0.15s ease, border-color 0.15s ease,
-          color 0.15s ease;
-      }
-      .ghost:hover {
-        opacity: 1;
-        color: var(--text);
-        background: var(--surface-2);
-        border-color: rgba(255, 255, 255, 0.28);
       }
     </style>
     <style>@import "/web/ui/empty.css";</style>
@@ -912,6 +666,8 @@
           flex-wrap: nowrap;
           align-items: center;
           gap: 6px;
+          height: auto;
+          padding-block: 10px;
         }
         #status {
           flex: none;
@@ -923,16 +679,19 @@
       body:has(#stage:not([hidden])) header #soundGroup {
         margin-left: auto;
       }
-      @media (pointer: coarse) {
+      @media (hover: none) and (pointer: coarse) {
         body:has(#stage:not([hidden])) header #burgerBtn {
           order: 1;
+        }
+        body.nb-play header .nb-play__menu {
+          left: auto;
+          right: 16px;
         }
         body:has(#stage:not([hidden])) #menu {
           left: auto;
           right: 0;
           transform: translateX(100%);
-          border-right: 0;
-          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: var(--nb-r-xl) 0 0 var(--nb-r-xl);
         }
         body:has(#stage:not([hidden])) #menu.open {
           transform: none;
@@ -948,6 +707,10 @@
         z-index: 5;
         flex-wrap: nowrap;
         pointer-events: none;
+      }
+      body:has(#stage:not([hidden])) header.nb-topbar {
+        padding-block: 0;
+        gap: 12px;
       }
       body:has(#stage:not([hidden])) header #burgerBtn,
       body:has(#stage:not([hidden])) header #soundGroup {
@@ -976,58 +739,10 @@
       body:has(#stage:not([hidden])) {
         padding-block: 0;
       }
-      body.dropping::after {
-        content: "Drop a game folder or a .zip to add it";
-        position: fixed;
-        inset: 10px;
-        z-index: 40;
-        border: 2px dashed var(--accent);
-        border-radius: var(--r-card);
-        background: rgba(225, 29, 42, 0.06);
-        color: var(--accent);
-        font-family: var(--display);
-        font-size: 18px;
-        font-weight: 600;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        pointer-events: none;
-      }
     </style>
     <style>@import "/web/ui/sheet.css";</style>
     <style>@import "/web/ui/avatar.css";</style>
     <style>@import "/web/ui/cropper.css";</style>
-    <style>
-      .toggle {
-        width: 42px;
-        height: 25px;
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.13);
-        position: relative;
-        flex: 0 0 auto;
-        margin-left: auto;
-        transition: background 0.18s;
-      }
-      .toggle::after {
-        content: "";
-        position: absolute;
-        top: 3px;
-        left: 3px;
-        width: 19px;
-        height: 19px;
-        border-radius: 50%;
-        background: #fff;
-        transition: left 0.18s;
-      }
-      .toggle[data-on="true"] {
-        background: var(--accent);
-      }
-      .toggle[data-on="true"]::after {
-        left: 20px;
-      }
-    </style>
     <style>@import "/web/ui/toast.css";</style>
     <style>@import "/web/ui/dock.css";</style>
     <style>@import "/web/ui/stars.css";</style>
@@ -1039,14 +754,9 @@
       [hidden] {
         display: none !important;
       }
-      #library,
-      #stage {
+      #library {
         transition: opacity 0.22s ease;
         opacity: 1;
-      }
-      #library.screen-out,
-      #stage.screen-out {
-        opacity: 0;
       }
       header {
         transition: opacity 0.22s ease;
@@ -1056,12 +766,7 @@
         opacity: 0;
       }
       #busy {
-        position: fixed;
-        inset: 0;
         z-index: 15;
-        background: rgba(0, 0, 0, 0.42);
-        -webkit-backdrop-filter: blur(18px) saturate(1.4);
-        backdrop-filter: blur(18px) saturate(1.4);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1078,121 +783,61 @@
         pointer-events: auto;
         transition: opacity 0.18s ease;
       }
-      #busyBox {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 14px;
-        box-sizing: border-box;
-        min-width: min(360px, 100%);
-        max-width: 100%;
-        padding: 28px 32px 24px;
-        border-radius: 16px;
-        background: rgba(20, 20, 20, 0.55);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-        transform: translateY(8px) scale(0.98);
-        transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+      #busy .nb-spinner {
+        animation-play-state: paused;
       }
-      #busy.show #busyBox {
-        transform: none;
+      #busy.show .nb-spinner {
+        animation-play-state: running;
+      }
+      #busyMsg > span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       html:has(#busy.show) {
         overflow: hidden;
       }
-      .spinner {
-        width: 44px;
-        height: 44px;
-        will-change: transform;
-        animation: spin 1s linear infinite;
-        animation-play-state: paused;
+      body.nb-play:is(:has(#stage:not([data-ready])), :has(#busy:not(.show))) #busy {
+        background: none;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
       }
-      #busy.show .spinner {
-        animation-play-state: running;
+      body.nb-play:has(#stage:not([data-ready])) #busy.show {
+        transition: opacity 0.18s ease 1s;
       }
-      .spinner circle {
-        fill: none;
-        stroke-width: 4;
+      body.nb-play:has(#stage:not([data-ready])) #busyBox,
+      body.nb-play #busy:not(.show) #busyBox {
+        width: auto;
+        padding: 0;
+        background: none;
+        box-shadow: none;
       }
-      .spinner .track {
-        stroke: var(--hairline);
+      body.nb-play:has(#stage:not([data-ready])) #busyBox > :not(.nb-spinner),
+      body.nb-play #busy:not(.show) #busyBox > :not(.nb-spinner) {
+        display: none;
       }
-      .spinner .arc {
-        stroke: var(--accent);
-        stroke-linecap: round;
-        stroke-dasharray: 30 90;
-      }
-      @keyframes spin {
-        to { transform: rotate(360deg); }
-      }
-      #busyMsg {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 2.8em;
-        color: var(--text);
-        font-size: 14px;
-        line-height: 1.4;
-        max-width: 46ch;
-        text-align: center;
-      }
-      #busyMsg > span {
-        display: -webkit-box;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 2;
-        overflow: hidden;
-        overflow-wrap: anywhere;
-      }
-      #busyBar {
-        width: min(320px, 70vw);
-        height: 4px;
-        border-radius: 2px;
-        background: var(--hairline);
-        overflow: hidden;
-      }
-      #busyBar i {
-        display: block;
-        width: 0;
-        height: 100%;
-        background: var(--accent);
-        transition: width 0.2s ease;
+      body.nb-play #busy .nb-spinner {
+        --s: 44px;
       }
       #cacheNote,
       #offlineNote {
         font-size: 11px;
         color: var(--muted);
       }
-      #errorAction {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: var(--on-text);
-      }
-      #errorAction:hover {
-        background: color-mix(in srgb, var(--accent) 82%, #000);
-      }
       #importReport {
-        position: fixed;
-        inset: 0;
         z-index: 30;
-        background: var(--scrim);
         display: flex;
         align-items: center;
         justify-content: center;
+        padding: 16px;
       }
       #importReportBox {
-        background: var(--surface);
-        border: 1px solid var(--hairline);
-        border-radius: 8px;
-        padding: 18px 20px;
-        width: min(460px, 88vw);
-        max-height: 80vh;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
+        max-height: calc(100dvh - 32px);
+        overflow-y: auto;
       }
-      #importReportTitle {
-        margin: 0;
-        font-size: 15px;
+      #importReportFailedHead.nb-neg {
+        color: var(--nb-cherry);
       }
       #importReportSummary {
         margin: 0;
@@ -1201,51 +846,18 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
-        font-size: 14px;
-        line-height: 1.45;
-      }
-      #importReportSummary .quiet {
-        color: var(--muted);
-      }
-      #importReportSummary .bad {
-        color: var(--danger);
-      }
-      #importReportFailedList {
-        margin: 0;
-        padding: 0 0 0 4px;
-        list-style: none;
-        max-height: 30vh;
-        overflow-y: auto;
-        font-size: 13px;
-        line-height: 1.5;
-        color: var(--muted);
-        overflow-wrap: anywhere;
       }
       #importReportOrphanNote {
         margin: 0;
-        font-size: 13px;
-        line-height: 1.45;
-        color: var(--muted);
       }
-      #importReportBtns {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-      }
-      #importReportOk {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: var(--on-text);
-      }
-      #importReportOk:hover {
-        background: color-mix(in srgb, var(--accent) 82%, #000);
+      #drop {
+        pointer-events: none;
       }
       #veil {
         position: fixed;
         inset: 0;
         z-index: 2000;
-        background: #000;
+        background: var(--nb-ink);
         pointer-events: none;
         animation: veil-failsafe 400ms ease 6s forwards;
       }
@@ -1259,103 +871,152 @@
         transition: opacity 700ms ease, visibility 0s 700ms;
       }
       body.boot-settled:not(.orbit-mode) #veil,
-      body:not(.orbit-return):has(#stage:not([hidden])) #veil {
+      body:has(#stage:not([hidden])) #veil {
         animation: none;
         opacity: 0;
         visibility: hidden;
         transition: none;
       }
-      body.orbit-return #veil {
-        animation: none;
-        opacity: 1;
-        visibility: visible;
-        transition: opacity 220ms ease;
-      }
       @media (prefers-reduced-motion: reduce) {
-        body.boot-settled #veil,
-        body.orbit-return #veil { transition: none; }
+        body.boot-settled #veil { transition: none; }
       }
     </style>
     <style>@import "/web/ui/extras.css";</style>
+    <style>@import "/web/ui/depth.css";</style>
+    <style>@import "/web/ui/nebula.css";</style>
+    <style>@import "/web/ui/nebula-controls.css";</style>
+    <style>@import "/web/ui/nebula-coins.css";</style>
+    <style>@import "/web/ui/nebula-theme.css";</style>
+    <style>@import "/web/ui/nebula-orbit.css";</style>
+    <style>@import "/web/ui/nebula-orbit-cabinet.css";</style>
+    <style>@import "/web/ui/nebula-orbit-motion.css";</style>
+    <style>@import "/web/ui/nebula-orbit-logo.css";</style>
   </head>
-  <body>
+  <body class="nb-page nb-stars">
     <div id="veil"></div>
-    <header>
-      <button id="burgerBtn" class="iconbtn" hidden aria-label="Engineer menu" data-str-aria-label="index.engineer_menu"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <div id="fade" class="nb-fade" aria-hidden="true"></div>
+    <div id="drop" class="nb-drop" hidden aria-hidden="true"><div class="nb-drop__panel"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10.5v6M9.5 14l2.5 2.5 2.5-2.5"/></svg><strong data-str="index.drop_a_game_folder_or_a_zip">Drop a game folder or a .zip to add it</strong></div></div>
+    <header class="nb-topbar">
+      <button id="burgerBtn" class="nb-icon-btn nb-play__menu" hidden aria-label="Engineer menu" data-str-aria-label="index.engineer_menu"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <div class="brand">
-        <h1><img class="logo-img" src="/icons/fruitulator-cherries.svg?v=1" alt="Fruitulator"  data-str-alt="index.fruitulator"/></h1>
+        <h1><svg class="logo-img nb-orbit__logo" xmlns="http://www.w3.org/2000/svg" viewBox="219 141 465 108" role="img" aria-label="Fruitulator" data-str-aria-label="index.fruitulator">
+  <g class="nb-logo__letters" fill="#fff7ea">
+    <path class="L" style="--i:0" data-letter="f" d="M232.17 243.17Q232.03 242.3 231.78 240.34Q231.53 238.39 231.21 235.68Q230.88 232.96 230.49 229.79Q230.1 226.61 229.73 223.3Q229.14 223.39 227.69 223.83Q226.24 224.27 224.81 224.77Q223.98 222.06 223.52 217.71Q223.06 213.37 223.06 209.32Q223.48 209.18 224.24 208.97Q225 208.77 225.85 208.54Q226.7 208.31 227.46 208.14Q228.22 207.98 228.63 207.89Q228.4 206.19 228.26 204.51Q228.12 202.83 228.12 201.18Q228.12 195.75 230.31 190.94Q232.49 186.13 236.96 183.1Q241.42 180.06 248.13 180.06Q252.14 180.06 254.9 180.75Q257.66 181.44 259.47 182.48Q261.29 183.51 262.39 184.64Q263.5 185.77 264.1 186.69Q262.9 188.94 261.13 191.93Q259.36 194.92 257.75 197.52Q256.14 200.12 255.4 201.18Q254.8 200.35 254.09 199.73Q253.38 199.11 252.64 198.67Q251.91 198.23 251.22 198Q250.53 197.77 249.88 197.77Q248.41 197.77 247.42 198.37Q246.43 198.97 245.95 200.05Q245.47 201.13 245.47 202.56Q245.47 203.2 245.53 203.84Q245.6 204.49 245.88 205.27Q247.26 205.27 249.33 205.36Q251.4 205.45 253.31 205.59Q255.22 205.73 256.09 205.87Q256.46 208.86 256.57 212.95Q256.69 217.05 256.69 220.31Q256.28 220.31 254.57 220.36Q252.87 220.4 250.94 220.47Q249.01 220.54 247.9 220.63Q248.09 221.65 248.48 223.95Q248.87 226.25 249.38 229.07Q249.88 231.9 250.36 234.66Q250.85 237.42 251.24 239.52Q251.63 241.61 251.77 242.3Q249.51 242.67 246.04 242.85Q242.57 243.04 238.84 243.1Q235.12 243.17 232.17 243.17Z"/>
+    <path class="L" style="--i:1" data-letter="r" d="M280.42 200.99Q281.25 199.06 283.13 197.2Q285.02 195.33 287.8 194.11Q290.59 192.9 293.99 192.9Q296.06 192.9 298.08 193.36Q300.11 193.82 300.94 194.46L297.39 212.68Q296.43 212.31 294.91 211.82Q293.39 211.34 291.64 211.34Q289.9 211.34 288.36 211.87Q286.81 212.4 285.5 213.41Q284.19 214.42 283 215.9Q283.36 218.24 283.89 222.01Q284.42 225.79 284.93 229.83Q285.43 233.88 285.78 237.17Q286.12 240.46 286.12 241.93Q282.03 242.48 276.88 242.67Q271.73 242.85 266.8 242.85Q266.8 239.26 266.6 234.23Q266.39 229.19 266.02 223.58Q265.65 217.97 265.17 212.58Q264.69 207.2 264.14 202.85Q263.58 198.51 263.03 196.07Q265.88 195.29 269.22 194.62Q272.55 193.95 275.18 193.54Q277.8 193.13 278.49 193.08Q279.04 194.23 279.73 196.74Q280.42 199.24 280.42 200.99Z"/>
+    <path class="L" style="--i:2" data-letter="u" d="M333 198.14Q334.48 197.63 337.17 197.36Q339.86 197.08 342.39 197.08Q344.5 197.08 347.06 197.27Q349.61 197.45 351.26 197.73Q351.73 200.95 351.96 204.14Q352.19 207.34 352.19 210.47Q352.19 217.69 350.92 224.01Q349.65 230.34 346.8 235.15Q343.95 239.95 339.24 242.69Q334.52 245.43 327.67 245.43Q320.44 245.43 315.75 242.6Q311.06 239.77 308.44 234.66Q305.82 229.56 304.76 222.66Q303.7 215.76 303.7 207.66Q303.7 204.86 303.82 201.93Q303.93 199.01 304.12 196.02Q305.63 195.89 308.05 195.77Q310.46 195.66 312.44 195.66Q315.34 195.66 318.26 195.93Q321.18 196.21 322.84 196.71Q322.61 199.2 322.38 202.53Q322.15 205.87 322.15 209.41Q322.15 214.1 322.58 218.49Q323.02 222.89 324.33 225.69Q325.64 228.5 328.26 228.5Q330.75 228.5 332.04 225.97Q333.32 223.44 333.78 219.51Q334.25 215.57 334.25 211.39Q334.25 207.43 333.88 203.84Q333.51 200.26 333 198.14Z"/>
+    <path class="L" style="--i:3" data-letter="i" d="M373.17 242.81Q371.7 242.81 368.61 242.67Q365.53 242.53 361.9 242.3Q358.26 242.07 355.04 241.89Q355.27 240.69 355.62 237.08Q355.96 233.47 356.36 228.52Q356.75 223.58 357.11 218.29Q357.48 213 357.76 208.37Q358.03 203.75 358.08 200.9Q359.09 200.81 361.37 200.74Q363.65 200.67 366.31 200.65Q368.98 200.62 371.24 200.6Q373.49 200.58 374.46 200.58Q374.46 203.25 374.41 206.97Q374.36 210.7 374.3 214.98Q374.23 219.25 374.13 223.55Q374.04 227.86 373.9 231.72Q373.77 235.58 373.58 238.48Q373.4 241.38 373.17 242.81Z"/>
+    <path class="L" style="--i:4" data-letter="t" d="M421.65 238.16Q420.64 239.49 418.5 241.08Q416.36 242.67 413.1 243.79Q409.83 244.92 405.46 244.92Q399.62 244.92 395.73 242.53Q391.85 240.14 389.91 236.09Q387.98 232.04 387.98 227.12Q387.98 224.41 388.05 221.69Q388.12 218.98 388.21 216.47Q388.3 213.96 388.42 211.78Q388.53 209.59 388.65 207.94Q388.76 206.28 388.81 205.27Q385.82 205.59 382.85 205.98Q379.89 206.37 378.55 206.65Q377.95 203.34 377.65 199.98Q377.36 196.62 377.24 194.21Q377.13 191.79 377.13 191.29Q379.84 190.96 382.62 190.76Q385.41 190.55 388.76 190.41Q388.67 189.77 388.56 187.63Q388.44 185.49 388.35 183.93Q388.3 182.36 388.17 180.73Q388.03 179.1 387.94 178.22L404.82 176.52Q404.77 176.98 404.75 178.64Q404.73 180.29 404.73 182.59Q404.73 184.02 404.77 185.81Q404.82 187.61 404.91 189.63Q406.52 189.54 408.57 189.42Q410.61 189.31 411.76 189.26Q413.56 189.12 414.82 189.08Q416.09 189.03 416.89 189.03Q417.7 189.03 418.02 189.03Q418.39 191.84 418.5 195.93Q418.62 200.03 418.62 203.29Q418.16 203.29 415.72 203.43Q413.28 203.57 410.98 203.71Q409.42 203.8 407.46 203.96Q405.51 204.12 404.59 204.21Q404.54 205.04 404.47 206.28Q404.4 207.52 404.36 209.06Q404.31 210.61 404.27 212.33Q404.22 214.06 404.2 215.78Q404.17 217.51 404.17 219.12Q404.17 222.24 404.43 224.5Q404.68 226.75 405.51 227.97Q406.34 229.19 408.08 229.19Q409.19 229.19 410.06 228.73Q410.94 228.27 411.63 227.6Q412.32 226.94 412.87 226.25Q413.6 227.35 414.89 229.1Q416.18 230.85 417.58 232.73Q418.99 234.62 420.11 236.11Q421.24 237.61 421.65 238.16Z"/>
+    <path class="L" style="--i:5" data-letter="u" d="M452.19 198.14Q453.66 197.63 456.35 197.36Q459.04 197.08 461.57 197.08Q463.69 197.08 466.24 197.27Q468.8 197.45 470.45 197.73Q470.91 200.95 471.14 204.14Q471.37 207.34 471.37 210.47Q471.37 217.69 470.11 224.01Q468.84 230.34 465.99 235.15Q463.14 239.95 458.42 242.69Q453.71 245.43 446.85 245.43Q439.63 245.43 434.94 242.6Q430.25 239.77 427.63 234.66Q425 229.56 423.95 222.66Q422.89 215.76 422.89 207.66Q422.89 204.86 423 201.93Q423.12 199.01 423.3 196.02Q424.82 195.89 427.24 195.77Q429.65 195.66 431.63 195.66Q434.53 195.66 437.45 195.93Q440.37 196.21 442.02 196.71Q441.79 199.2 441.56 202.53Q441.33 205.87 441.33 209.41Q441.33 214.1 441.77 218.49Q442.21 222.89 443.52 225.69Q444.83 228.5 447.45 228.5Q449.94 228.5 451.22 225.97Q452.51 223.44 452.97 219.51Q453.43 215.57 453.43 211.39Q453.43 207.43 453.06 203.84Q452.7 200.26 452.19 198.14Z"/>
+    <path class="L" style="--i:6" data-letter="l" d="M503.06 240.87Q501.59 242.12 497.54 243.29Q493.49 244.46 488.84 244.46Q482.96 244.46 479.83 241.93Q476.7 239.4 475.55 234.69Q474.4 229.97 474.4 223.53Q474.4 217.87 474.49 212.61Q474.58 207.34 474.75 202.46Q474.91 197.59 475.11 193.1Q475.32 188.62 475.55 184.52Q475.78 180.43 476.01 176.75Q480.1 176.47 483.51 176.47Q485.67 176.47 487.81 176.57Q489.95 176.66 492.62 176.89Q492.34 181.4 492.02 186.46Q491.7 191.52 491.42 196.53Q491.14 201.54 490.91 206.05Q490.68 210.56 490.55 213.99Q490.41 217.41 490.41 219.21Q490.41 221.83 490.62 223.95Q490.82 226.06 491.54 227.3Q492.25 228.55 493.67 228.55Q495.1 228.55 496.04 227.99Q496.99 227.44 497.58 226.52Q497.91 227.21 498.71 229.28Q499.52 231.35 500.46 233.84Q501.4 236.32 502.14 238.32Q502.87 240.32 503.06 240.87Z"/>
+    <path class="L" style="--i:7" data-letter="a" d="M522.99 243.17Q517.33 243.17 512.64 241.63Q507.94 240.09 505.14 236.6Q502.33 233.1 502.33 227.3Q502.33 221.37 505.69 217.9Q509.05 214.42 514.38 212.93Q519.72 211.43 525.61 211.43Q527.54 211.43 529.31 211.73Q531.08 212.03 532.46 212.51Q533.84 213 534.58 213.55Q534.58 212.58 534.12 211.39Q533.66 210.19 532.83 209.46Q531.68 208.4 529.98 207.62Q528.28 206.83 525.15 206.83Q522.16 206.83 519.63 208.26Q517.1 209.69 515.76 211.34L502.01 202.51Q504.13 199.66 507.78 197.52Q511.44 195.38 516.02 194.18Q520.6 192.99 525.52 192.99Q533.93 192.99 538.97 195.45Q544.01 197.91 546.54 202.74Q547.69 204.9 548.42 207.57Q549.16 210.24 549.53 213.37Q549.76 215.48 549.87 217.8Q549.99 220.13 549.99 222.66Q549.99 226.48 550.7 227.65Q551.41 228.82 552.66 228.82Q553.72 228.82 554.61 228.57Q555.51 228.32 555.88 227.95L560.89 239.95Q560.2 240.92 557.95 241.95Q555.69 242.99 551.88 242.99Q549.16 242.99 546.56 242.16Q543.96 241.33 542.19 239.79Q540.42 238.25 540.14 236.09Q539.55 237.88 537.38 239.52Q535.22 241.15 531.63 242.16Q528.05 243.17 522.99 243.17ZM526.99 229.97Q528.64 229.97 530.51 229.47Q532.37 228.96 533.89 228.27Q535.41 227.58 536 227.07Q535.87 226.57 535.75 225.53Q535.64 224.5 535.64 223.99Q534.81 223.62 532.62 223.32Q530.44 223.03 528.41 223.03Q526.53 223.03 524.67 223.3Q522.8 223.58 521.56 224.29Q520.32 225 520.32 226.38Q520.32 227.63 521.1 228.41Q521.88 229.19 523.38 229.58Q524.87 229.97 526.99 229.97Z"/>
+    <path class="L" style="--i:8" data-letter="t" d="M594.42 238.16Q593.41 239.49 591.27 241.08Q589.13 242.67 585.86 243.79Q582.6 244.92 578.23 244.92Q572.39 244.92 568.5 242.53Q564.61 240.14 562.68 236.09Q560.75 232.04 560.75 227.12Q560.75 224.41 560.82 221.69Q560.89 218.98 560.98 216.47Q561.07 213.96 561.18 211.78Q561.3 209.59 561.41 207.94Q561.53 206.28 561.58 205.27Q558.59 205.59 555.62 205.98Q552.65 206.37 551.32 206.65Q550.72 203.34 550.42 199.98Q550.12 196.62 550.01 194.21Q549.89 191.79 549.89 191.29Q552.61 190.96 555.39 190.76Q558.17 190.55 561.53 190.41Q561.44 189.77 561.32 187.63Q561.21 185.49 561.12 183.93Q561.07 182.36 560.93 180.73Q560.79 179.1 560.7 178.22L577.58 176.52Q577.54 176.98 577.51 178.64Q577.49 180.29 577.49 182.59Q577.49 184.02 577.54 185.81Q577.58 187.61 577.68 189.63Q579.29 189.54 581.33 189.42Q583.38 189.31 584.53 189.26Q586.32 189.12 587.59 189.08Q588.85 189.03 589.66 189.03Q590.46 189.03 590.79 189.03Q591.15 191.84 591.27 195.93Q591.38 200.03 591.38 203.29Q590.92 203.29 588.49 203.43Q586.05 203.57 583.75 203.71Q582.18 203.8 580.23 203.96Q578.27 204.12 577.35 204.21Q577.31 205.04 577.24 206.28Q577.17 207.52 577.12 209.06Q577.08 210.61 577.03 212.33Q576.99 214.06 576.96 215.78Q576.94 217.51 576.94 219.12Q576.94 222.24 577.19 224.5Q577.45 226.75 578.27 227.97Q579.1 229.19 580.85 229.19Q581.95 229.19 582.83 228.73Q583.7 228.27 584.39 227.6Q585.08 226.94 585.63 226.25Q586.37 227.35 587.66 229.1Q588.95 230.85 590.35 232.73Q591.75 234.62 592.88 236.11Q594.01 237.61 594.42 238.16Z"/>
+    <path class="L" style="--i:9" data-letter="o" d="M616.27 243.27Q603.99 243.27 597.53 236.94Q591.06 230.62 591.06 218.47Q591.06 210.1 594.38 204.65Q597.69 199.2 603.53 196.51Q609.37 193.82 617.01 193.82Q624.55 193.82 629.63 197.24Q634.72 200.67 637.29 206.67Q639.87 212.68 639.87 220.5Q639.87 227.4 637.16 232.5Q634.44 237.61 629.17 240.44Q623.91 243.27 616.27 243.27ZM615.67 226.75Q617.38 226.75 618.87 226.18Q620.37 225.6 621.49 224.45Q622.62 223.3 623.26 221.53Q623.91 219.76 623.91 217.41Q623.91 214.29 622.94 211.92Q621.98 209.55 620.23 208.24Q618.48 206.93 616.09 206.93Q613.19 206.93 611.46 208.49Q609.74 210.05 609 212.35Q608.27 214.65 608.27 216.86Q608.27 221.05 610.15 223.9Q612.04 226.75 615.67 226.75Z"/>
+    <path class="L" style="--i:10" data-letter="r" d="M659.42 200.99Q660.25 199.06 662.13 197.2Q664.02 195.33 666.8 194.11Q669.59 192.9 672.99 192.9Q675.06 192.9 677.08 193.36Q679.11 193.82 679.94 194.46L676.39 212.68Q675.43 212.31 673.91 211.82Q672.39 211.34 670.64 211.34Q668.9 211.34 667.36 211.87Q665.81 212.4 664.5 213.41Q663.19 214.42 662 215.9Q662.36 218.24 662.89 222.01Q663.42 225.79 663.93 229.83Q664.43 233.88 664.78 237.17Q665.12 240.46 665.12 241.93Q661.03 242.48 655.88 242.67Q650.73 242.85 645.8 242.85Q645.8 239.26 645.6 234.23Q645.39 229.19 645.02 223.58Q644.65 217.97 644.17 212.58Q643.69 207.2 643.14 202.85Q642.58 198.51 642.03 196.07Q644.88 195.29 648.22 194.62Q651.55 193.95 654.18 193.54Q656.8 193.13 657.49 193.08Q658.04 194.23 658.73 196.74Q659.42 199.24 659.42 200.99Z"/>
+  </g>
+  <g class="nb-logo__cher"><g transform="translate(328.578 142.688) scale(0.60784) translate(-4 0)"><defs>
+<radialGradient id="cr" cx=".38" cy=".35" r=".75"><stop offset="0" stop-color="#ff5a3c"></stop><stop offset=".55" stop-color="#e3201a"></stop><stop offset="1" stop-color="#a50f0c"></stop></radialGradient>
+</defs>
+<g stroke="#0a080c" stroke-linejoin="round" stroke-linecap="round">
+<path d="M36 50 C38 34 58 18 90 14" fill="none" stroke-width="10"></path>
+<path d="M60 58 C62 40 74 24 90 14" fill="none" stroke-width="10"></path>
+<path d="M86 48 C88 34 90 24 90 14" fill="none" stroke-width="10"></path>
+<path d="M36 50 C38 34 58 18 90 14" fill="none" stroke="#c8722e" stroke-width="5"></path>
+<path d="M60 58 C62 40 74 24 90 14" fill="none" stroke="#c8722e" stroke-width="5"></path>
+<path d="M86 48 C88 34 90 24 90 14" fill="none" stroke="#c8722e" stroke-width="5"></path>
+<path d="M90 14 C78 2 54 2 40 14 C56 22 76 22 90 14 Z" fill="#43b02a" stroke-width="3"></path>
+<path d="M88 14 C72 12 58 12 46 14" fill="none" stroke="#2a7a18" stroke-width="2"></path>
+<circle cx="34" cy="60" r="19" fill="url(#cr)" stroke-width="3.5"></circle>
+<circle cx="88" cy="58" r="19" fill="url(#cr)" stroke-width="3.5"></circle>
+<circle cx="61" cy="70" r="20" fill="url(#cr)" stroke-width="3.5"></circle>
+</g>
+<ellipse cx="27" cy="53" rx="5" ry="3.5" fill="#ffffff" opacity=".75"></ellipse>
+<ellipse cx="81" cy="51" rx="5" ry="3.5" fill="#ffffff" opacity=".75"></ellipse>
+<ellipse cx="54" cy="63" rx="5.5" ry="3.8" fill="#ffffff" opacity=".8"></ellipse>
+</g>
+</g>
+</svg></h1>
         <p class="tagline" data-str="index.fruit_machine_emulator">Fruit Machine Emulator</p>
       </div>
+      <span class="nb-topbar__spacer"></span>
       <div class="tools">
       <input id="zipfile" type="file" multiple />
       <input id="folder" type="file" webkitdirectory multiple />
       <span id="cacheNote" hidden data-str="index.saving_to_library">saving to library…</span>
       <span id="offlineNote" hidden></span>
-      <button id="to-library" class="iconbtn" type="button" aria-label="Open the library" data-str-aria-label="index.open_the_library"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16M8 8v12M12 6v14M16 6l4 14"/></svg></button>
-      <button id="to-orbit" class="iconbtn" type="button" hidden aria-label="Back to the carousel" data-str-aria-label="index.back_to_the_carousel"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></button>
-      <button id="aboutBtn" class="iconbtn upload about" aria-label="About Fruitulator" aria-haspopup="dialog" aria-expanded="false" data-str-aria-label="index.about_fruitulator"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 16.5v-5"/><path d="M12 7.8h.01"/></svg></button>
+      <button id="to-library" class="nb-icon-btn" type="button" aria-label="Open the library" data-str-aria-label="index.open_the_library"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16M8 8v12M12 6v14M16 6l4 14"/></svg></button>
+      <button id="to-orbit" class="nb-icon-btn" type="button" hidden aria-label="Back to the carousel" data-str-aria-label="index.back_to_the_carousel"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></button>
+      <button id="settingsBtn" class="nb-icon-btn upload" type="button" aria-label="Settings" aria-haspopup="true" aria-expanded="false" data-str-aria-label="ui.settings.settings"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
       <div class="game-only" id="soundGroup" hidden>
         <button id="schemBtn" class="iconbtn" hidden aria-label="System status" aria-pressed="false" data-str-aria-label="index.system_status"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.5 12h4.2l3-7.5 4.6 15 3-7.5h4.2"/></svg></button>
       </div>
     </header>
-    <div id="busy" role="dialog" aria-modal="true" aria-labelledby="busyMsg">
-      <div id="busyBox">
-        <svg class="spinner" viewBox="0 0 44 44" aria-hidden="true" focusable="false">
-          <circle class="track" cx="22" cy="22" r="19" />
-          <circle class="arc" cx="22" cy="22" r="19" />
-        </svg>
-        <div id="busyMsg"><span data-str="index.loading">loading…</span></div>
-        <div id="busyBar" hidden><i></i></div>
-        <button id="busyStop" hidden data-str="index.stop">Stop</button>
+    <div id="busy" class="nb-backdrop" role="dialog" aria-modal="true" aria-labelledby="busyMsg">
+      <div id="busyBox" class="nb-progress" role="status" aria-live="polite">
+        <span class="nb-spinner" aria-hidden="true"></span>
+        <div class="nb-progress__body">
+          <span id="busyMsg" class="nb-progress__label"><span data-str="index.loading">loading…</span></span>
+          <strong id="busyTitle" class="nb-progress__title" hidden></strong>
+          <div id="busyBar" class="nb-meter" hidden><span></span></div>
+        </div>
+        <button id="busyStop" class="nb-btn nb-btn--sm" type="button" hidden data-str="index.stop">Stop</button>
       </div>
     </div>
-    <div id="errorPopup" hidden>
-      <div id="errorBox">
-        <div id="errorMsg"></div>
-        <div id="errorHint" hidden></div>
-        <div id="errorBtns">
-          <button id="errorAction" hidden></button>
-          <button id="errorDismiss" data-str="index.dismiss">Dismiss</button>
+    <div id="errorPopup" class="nb-backdrop" hidden>
+      <div id="errorBox" class="nb-dialog nb-dialog--error" role="alertdialog" aria-modal="true" aria-labelledby="errorMsg">
+        <div class="nb-dialog__head"><span class="nb-dialog__icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M10.3 4.2 2.6 17.8A2 2 0 0 0 4.3 20.8h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.5M12 17.2h.01"/></svg></span></div>
+        <div class="nb-dialog__body">
+          <p id="errorMsg"></p>
+          <div id="errorHint" hidden></div>
+          <div id="errorBtns" class="nb-dialog__actions">
+            <button id="errorDismiss" class="nb-btn" type="button" data-str="index.dismiss">Dismiss</button>
+            <button id="errorAction" class="nb-btn nb-btn--primary" type="button" hidden></button>
+          </div>
         </div>
       </div>
     </div>
-    <div id="importReport" hidden role="dialog" aria-modal="true" aria-labelledby="importReportTitle">
-      <div id="importReportBox">
-        <h3 id="importReportTitle"></h3>
-        <ul id="importReportSummary"></ul>
-        <ul id="importReportFailedList" hidden></ul>
-        <p id="importReportOrphanNote" hidden></p>
-        <div id="importReportBtns">
-          <button id="importReportRemove" hidden data-str="index.remove_failed_imports">Remove failed imports</button>
-          <button id="importReportOk" data-str="index.ok">OK</button>
+    <div id="importReport" class="nb-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="importReportTitle">
+      <div id="importReportBox" class="nb-dialog">
+        <div class="nb-dialog__head"><h2 id="importReportTitle"></h2></div>
+        <div class="nb-dialog__body">
+          <div id="importReportSum" class="nb-report-sum"></div>
+          <ul id="importReportSummary"></ul>
+          <details id="importReportFailed" class="nb-report" open hidden>
+            <summary id="importReportFailedHead" class="nb-neg"></summary>
+            <ul id="importReportFailedList"></ul>
+          </details>
+          <p id="importReportOrphanNote" class="nb-meta" hidden></p>
+          <div id="importReportBtns" class="nb-dialog__actions">
+            <button id="importReportRemove" class="nb-btn" type="button" hidden data-str="index.remove_failed_imports">Remove failed imports</button>
+            <button id="importReportOk" class="nb-btn nb-btn--primary" type="button" data-str="index.ok">OK</button>
+          </div>
         </div>
       </div>
     </div>
-    <div id="menuBackdrop" hidden></div>
+    <div id="menuBackdrop" class="nb-backdrop" hidden></div>
     <div id="schemBackdrop" hidden></div>
     <div id="schemPanel" hidden role="dialog" aria-modal="true" aria-label="System status" data-str-aria-label="index.system_status"></div>
-    <nav id="menu" hidden>
+    <nav id="menu" class="nb-flyout" hidden>
       <div class="menu-brand"><img class="logo-img" src="/icons/fruitulator-cherries.svg?v=1" alt="Fruitulator"  data-str-alt="index.fruitulator"/><p class="tagline" data-str="index.fruit_machine_emulator">Fruit Machine Emulator</p></div>
+      <span id="menu-kiosk-pill" class="pl-pill"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg><span data-str="kioskmode.title">Kiosk mode</span></span>
       <input id="volSlider" type="range" min="0" max="100" value="80" aria-label="Volume"  data-str-aria-label="index.volume"/>
       <input id="brightSlider" type="range" min="40" max="160" value="100" aria-label="Brightness"  data-str-aria-label="index.brightness"/>
       <div id="menuBody"><div id="menuContent"></div><div id="menuSub"></div></div>
     </nav>
-    <div id="menuFly" aria-live="polite"></div>
+    <div id="menuFly" class="nb-panel" aria-live="polite"></div>
     <section id="library" hidden>
       <div id="search-wrap">
-        <div id="search-bar" role="search">
+        <div id="search-bar" class="nb-search" role="search">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
           <input id="lib-search" type="search" placeholder="Search your games…"
                  aria-label="Search your games" autocomplete="off" spellcheck="false"  data-str-aria-label="index.search_your_games_2" data-str-placeholder="index.search_your_games"/>
           <kbd id="search-kbd" aria-hidden="true"></kbd>
-          <button id="search-close" type="button" aria-label="Close search" data-str-aria-label="index.close_search"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+          <button id="search-close" class="nb-search__clear" type="button" aria-label="Close search" data-str-aria-label="index.close_search"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         </div>
       </div>
       <div id="lib-meta">
         <div id="sort-wrap">
-          <span id="sort-label" data-str="index.view">View</span>
-          <select id="lib-sort" aria-labelledby="sort-label">
+          <select id="lib-sort">
             <option value="played" data-str="index.played">Played</option>
             <option value="newest" data-str="index.newest">Newest</option>
             <option value="oldest" data-str="index.oldest">Oldest</option>
@@ -1365,62 +1026,65 @@
           </select>
         </div>
         <div id="lib-actions">
-          <button id="searchBtn" class="iconbtn upload" aria-label="Search your games" data-str-aria-label="index.search_your_games_2"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg></button>
-          <button id="addBtn" class="iconbtn upload" aria-label="Add games" aria-haspopup="dialog" data-str-aria-label="index.add_games"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button id="searchBtn" class="nb-icon-btn upload" aria-label="Search your games" data-str-aria-label="index.search_your_games_2"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg></button>
+          <button id="addBtn" class="nb-icon-btn nb-icon-btn--primary upload" aria-label="Add games" aria-haspopup="dialog" data-str-aria-label="index.add_games"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
       </div>
-      <div id="orbit-wrap" hidden>
-        <div id="orbit-stage" tabindex="0" aria-label="Game carousel - arrow keys turn, Enter plays" data-str-aria-label="index.game_carousel_arrow_keys_turn">
-          <div id="orbit-ring"></div>
-          <div id="orbit-floor"></div>
+      <div id="orbit-wrap" class="nb-orbit" hidden>
+        <div id="orbit-stage" class="nb-orbit__stage" tabindex="0" aria-label="Game carousel - arrow keys turn, Enter plays" data-str-aria-label="index.game_carousel_arrow_keys_turn">
+          <div id="orbit-ring" class="nb-orbit__track"></div>
         </div>
-        <button id="orbit-prev" class="rail-nav" type="button" aria-label="Previous game" data-str-aria-label="index.previous_game"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 5l-7 7 7 7"/></svg></button>
-        <button id="orbit-next" class="rail-nav" type="button" aria-label="Next game" data-str-aria-label="index.next_game"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5l7 7-7 7"/></svg></button>
-        <div id="orbit-caption">
-          <div id="orbit-cap-text">
-            <h2 id="orbit-title"></h2>
-            <div id="orbit-chips" class="chips"></div>
-            <p id="orbit-sub" class="readout"></p>
+        <button id="orbit-prev" class="nb-icon-btn nb-icon-btn--lg nb-orbit__prev" type="button" aria-label="Previous game" data-str-aria-label="index.previous_game"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <button id="orbit-next" class="nb-icon-btn nb-icon-btn--lg nb-orbit__next" type="button" aria-label="Next game" data-str-aria-label="index.next_game"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5l7 7-7 7"/></svg></button>
+        <div id="orbit-caption" class="nb-orbit__info">
+          <div id="orbit-cap-text" class="nb-orbit__caption" data-state="in">
+            <h2 id="orbit-title" class="nb-display nb-orbit__title"></h2>
+            <div id="orbit-chips" class="nb-orbit__chips"></div>
           </div>
           <div id="orbit-actions">
-            <button id="orbit-play" type="button" class="btn" data-str="index.play">Play</button>
+            <button id="orbit-play" type="button" class="nb-btn nb-btn--primary nb-btn--lg nb-orbit__cta"><span class="nb-orbit__cta-label" data-str="index.play">Play</span></button>
           </div>
         </div>
       </div>
       <div id="tiles"></div>
       <div id="lib-empty" hidden>
+        <span class="ui-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 4v16M8 8v12M12 6v14M16 6l4 14"/></svg></span>
         <p id="lib-empty-msg" data-str="index.no_games_yet">No games yet.</p>
         <div id="lib-empty-actions">
-          <button id="emptyAdd" type="button" class="btn" data-str="index.add_games">Add games</button>
+          <button id="emptyAdd" type="button" class="nb-btn nb-btn--primary nb-btn--lg" data-str="index.add_games">Add games</button>
         </div>
-        <p id="lib-empty-hint" data-str="index.or_drop_a_game_folder">…or drop a game folder, .zip or .punnet anywhere on this page.</p>
+        <p id="lib-empty-hint" class="nb-meta" data-str="index.or_drop_a_game_folder">…or drop a game folder, .zip or .punnet anywhere on this page.</p>
       </div>
       <p id="lib-saving" hidden data-str="index.saving_a_game_to_the">Saving a game to the library…</p>
     </section>
-    <footer id="statusbar">
+    <footer id="statusbar" class="nb-statusbar">
       <button id="lib-quota" type="button" aria-haspopup="dialog" title="Storage" data-str-title="index.storage"></button>
       <span id="status" data-str="index.no_game_loaded">no game loaded</span>
       <span id="lib-offline" hidden></span>
     </footer>
-    <div id="sheet-scrim" hidden></div>
-    <div id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-      <div class="grab"></div>
-      <h3 id="sheet-title"></h3>
+    <div id="sheet-scrim" class="nb-backdrop" hidden></div>
+    <div id="sheet" class="nb-bottom-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grab nb-bottom-sheet__grab"></div>
+      <div class="nb-sheet-head"><h2 id="sheet-title"></h2></div>
       <div id="sheet-rows"></div>
     </div>
-    <div id="stopnote" hidden role="status">
-      <span id="stopnote-icon" hidden></span>
-      <span id="stopnote-msg"></span>
-      <button id="stopnote-state" type="button" hidden data-str="index.download_state">Download State</button>
-      <button id="stopnote-more" type="button" data-str="index.system_status">System status</button>
-      <button id="stopnote-close" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss">×</button>
+    <div id="stopnote" class="nb-stopbar" hidden role="status">
+      <span id="stopnote-icon" class="nb-stopbar__icon" hidden></span>
+      <div class="nb-stopbar__text"><strong id="stopnote-msg"></strong></div>
+      <div class="nb-stopbar__actions">
+        <button id="stopnote-state" class="nb-btn nb-btn--sm" type="button" hidden data-str="index.download_state">Download State</button>
+        <button id="stopnote-more" class="nb-btn nb-btn--sm nb-btn--primary" type="button" data-str="index.system_status">System status</button>
+      </div>
+      <button id="stopnote-close" class="nb-icon-btn" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
-    <div id="soundnote" hidden role="status">
-      <span data-str="index.sound_is_paused_by_the">Sound is paused by the browser.</span>
-      <button id="soundnote-go" type="button" data-str="index.turn_sound_on">Turn sound on</button>
-      <button id="soundnote-close" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss">×</button>
+    <div id="soundnote" class="nb-stopbar" hidden role="status">
+      <div class="nb-stopbar__text"><strong data-str="index.sound_is_paused_by_the">Sound is paused by the browser.</strong></div>
+      <div class="nb-stopbar__actions">
+        <button id="soundnote-go" class="nb-btn nb-btn--sm nb-btn--primary" type="button" data-str="index.turn_sound_on">Turn sound on</button>
+      </div>
+      <button id="soundnote-close" class="nb-icon-btn" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
-    <div id="stage" hidden><canvas id="screen" width="800" height="480"></canvas></div>
+    <div id="stage" class="nb-play__machine" hidden><canvas id="screen" width="800" height="480"></canvas></div>
     <script type="module" src="/web/boot.ts"></script>
   </body>
 </html>

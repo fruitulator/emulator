@@ -13,6 +13,7 @@ export interface PlatformView {
   nonSwitchInputs?: readonly number[];
   acceptorLineIsButton?: boolean;
   acceptorLineIsNote?: boolean;
+  coinLineInputs?: readonly number[];
   coinRegister?: {
     maskRow: number;
     lineOfBit: Readonly<Record<number, readonly (number | null)[]>>;
@@ -443,6 +444,7 @@ const astra: PlatformView = {
   coinBit: 5,
   tokenBit: -1,
   acceptorLineIsNote: true,
+  coinLineInputs: [16, 17, 18, 19, 20],
   serialAcceptor: { parallelNote: true },
 };
 

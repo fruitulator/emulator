@@ -2,6 +2,7 @@
 import { makeLogo } from './ui/logo';
 import { BRAND_MARKS, UI_ICONS, brandMark, rowIcon } from './ui/icons';
 import { openDialog, type Dialog } from './ui/dialog';
+import { sectionHeading } from './ui/list';
 import { buildStamp } from './downloads';
 import { str } from './i18n';
 
@@ -130,7 +131,7 @@ export function renderAbout(build: string): HTMLElement {
   root.append(el('p', 'about-licence', str('about.free_software_under_the_gnu')));
 
   const thanks = el('section', 'about-sec');
-  thanks.append(el('h3', undefined, str('about.thanks')));
+  thanks.append(sectionHeading(str('about.thanks')));
   for (const c of CREDITS) {
     const row = el('div', 'about-row');
     const who = el('p', 'about-who');

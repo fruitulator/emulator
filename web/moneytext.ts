@@ -15,6 +15,20 @@ function join(cash: number, euro: number, coins: number): string {
   return parts.join(' + ');
 }
 
+export interface MoneyParts { head: string; sub: string | null }
+function parts(cash: number, euro: number, coins: number): MoneyParts {
+  const head: string[] = [];
+  if (cash || !euro) head.push(pounds(cash));
+  if (euro) head.push(euros(euro));
+  return { head: head.join(' + '), sub: coins ? `+ ${str('moneytext.n_coins_of_unknown_value', { n: coins })}` : null };
+}
+export function moneyInParts(t: Partial<CashLedger>): MoneyParts {
+  return parts(n(t.inPence), n(t.euroInCents), n(t.unpricedIn));
+}
+export function moneyOutParts(t: Partial<CashLedger>): MoneyParts {
+  return parts(n(t.outPence), n(t.euroOutCents), n(t.unpricedOut));
+}
+
 export function moneyInText(t: Partial<CashLedger>): string {
   return join(n(t.inPence), n(t.euroInCents), n(t.unpricedIn));
 }

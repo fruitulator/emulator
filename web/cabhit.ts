@@ -13,6 +13,7 @@ export interface HitPart {
   readonly acceptor?: unknown;
   readonly coinInput?: number;
   readonly angle?: number;
+  readonly hidden?: boolean;
 }
 
 function ownFrame(part: HitPart, x: number, y: number): { x: number; y: number } {
@@ -36,7 +37,7 @@ export function pickControl<T extends HitPart>(
   let exact: T | null = null;
   let exactArea = Infinity;
   for (const lp of parts) {
-    if (!clickable(lp)) continue;
+    if (lp.hidden || !clickable(lp)) continue;
     const p = ownFrame(lp, x, y);
     if (p.x < lp.left || p.x >= lp.left + lp.width) continue;
     if (p.y < lp.top || p.y >= lp.top + lp.height) continue;
@@ -52,7 +53,7 @@ export function pickControl<T extends HitPart>(
   let bestDist = Infinity;
   let bestArea = Infinity;
   for (const lp of parts) {
-    if (!clickable(lp)) continue;
+    if (lp.hidden || !clickable(lp)) continue;
     const slop = touchSlop(lp) / scale;
     const p = ownFrame(lp, x, y);
     const dx = Math.max(lp.left - p.x, 0, p.x - (lp.left + lp.width));

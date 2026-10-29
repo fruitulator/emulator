@@ -1,6 +1,8 @@
 import {
   classifyGame, linkedInstances, missingProgramRoms, platformFor, type Game,
 } from '../src/machine/registry';
+import { sources } from './sources/feature';
+import { addEnabled as addSourceEnabled } from './sources/flag';
 import { Presenter, planSize, uniformPlan } from './present';
 import { damagedRoms } from '../src/machine/textcopy';
 import { type FrameView } from '../src/machine/framestate';
@@ -13,7 +15,7 @@ import { HwBridge } from './hwbridge';
 import type { MachineInfo } from './emu-protocol';
 import { ledgerPayoutPercent, type CashLedger } from './emu-protocol';
 import { buildStamp, logInputLabels, saveBlob, saveFile } from './downloads';
-import { aboutOpen, openAbout as openAboutDialog } from './about';
+import { aboutOpen } from './about';
 import { DownloadMenu } from './panelmenu';
 import { bulbTab, logTab, matrixTab, optionsTab } from './paneltabs';
 import { bootValue, liveValue, setSwitch, urlValue, wasmOption } from './settings';
@@ -33,10 +35,11 @@ import {
 import { exportPunnet, punnetFileName } from './portable';
 import { openExportPicker, openPackTarget, packGames, packReport } from './punnetexport';
 import { openAlert } from './ui/dialog';
+import { mountSettings } from './ui/settings';
 import { pillButton } from './ui/list';
 import { BRIGHT_NEUTRAL, brightnessControl } from './ui/brightness';
 import { askClearRam } from './clearram';
-import { backRow, caption, card, checkRow, choreograph, menuRow, sliderRow, statRow } from './ui/rows';
+import { card, checkRow, choreograph, menuRow, sliderRow, setKvValue, statRow } from './ui/rows';
 import { enhanceSelect } from './ui/dropdown';
 import { MenuDrawer } from './ui/drawer';
 import { showSpeaker, speakerButton } from './ui/speaker';
@@ -44,9 +47,10 @@ import { fillKeyTable, type KeyTableRow } from './keytable';
 import { KeyHintLayer, canvasPlace } from './keyhints';
 import { PlayKeys, showKeysRow } from './play/keys';
 import { answers, CLICK_SLOP_PX, HeldButtons, PlayPointer } from './play/pointer';
+import { checkboxAt, SwitchLevels } from './checkbox';
 import { PlayAutosave } from './play/autosave';
 import { followGate, gatesOf, stampGates } from './play/gates';
-import { appendItems, menuItems, saveLog, saveState, stateDownload, type ActionId, type ActionSurface } from './play/actions';
+import { appendItems, appendMenuFoot, menuItems, saveLog, saveState, stateDownload, type ActionId, type ActionSurface } from './play/actions';
 import { machineCoins, restoreCabinetSounds } from './menupanels';
 import { mustName, readCoinAnswers, withCoinAnswer } from './coinask';
 import { namingSlots } from './coinslots';
@@ -70,8 +74,8 @@ import { localStateStore, type StateStore } from './statestore';
 import { currentLayoutProps, isPakBytes } from './gamepak';
 import {
   cancelPendingDelete, closeSheet, commitPendingDeletes, displayTitle, openAddSheet,
-  renderLibrary, showNotice, wireLibraryControls, type LibraryHandlers,
-  SCREEN_FADE_MS, afterFrames, prefersReducedMotion, settleArtwork,
+  libraryChooseOrbit, libraryToGrid, onBeforeOrbit, renderLibrary, showNotice, wireLibraryControls, type LibraryHandlers,
+  SCREEN_FADE_MS, prefersReducedMotion, settleArtwork,
 } from './library';
 import { deflateSync, strToU8 } from 'fflate';
 import { parseTitle } from './title';
@@ -82,16 +86,18 @@ import {
   reelEffectivePosition,
   reelWinLineRow,
   usableCabinet,
+  type CabCheckbox,
   type CabLamp,
   type Cabinet, type Rect,
 } from './dat';
 import { StoreConfirm, reelDriftFault } from './reeldrift';
 import { createCabinetPainter, DOT_OFF, DOT_ON } from './cabdraw';
-import { ensureLegendFonts, faceAvailable, facesToAsk } from './legendfonts';
-import { fontChoiceRows, openFontPicker } from './ui/fontpick';
+import { ensureLegendFonts, faceAvailable, facesToAsk, legendStandIn } from './legendfonts';
+import { openFontPicker } from './ui/fontpick';
 import { ReelPeek, reelAt } from './play/peek';
 import { reelPeekOn } from './peekpref';
 import { fillScreenOn } from './fillpref';
+import { cropViewOn } from './croppref';
 import { reelBandsOn } from './bandspref';
 import { bandsLayout, createReelBands } from './play/bands';
 import { chordCaps, primaryModifier } from './shortcuts';
@@ -118,7 +124,11 @@ import {
 } from './magnifier';
 import { platformReelOffsetSteps, platformRequiresReversal, reelIndex } from './render-index';
 import { str, applyStrings } from './i18n';
-import { moneyInText, moneyOutText } from './moneytext';
+import { fadeFromBlack, fadeToBlack } from './ui/fade';
+import { replayOrbitCaption } from './orbit';
+import { isLocked } from './kioskmode';
+import { mountKioskMode } from './kioskmodeui';
+import { moneyInParts, moneyOutParts } from './moneytext';
 
 applyStrings();
 
@@ -140,6 +150,7 @@ const painter = createCabinetPainter(canvas, {
   lampGate: (m, lp) => updateGate(m, lp),
   reelPeek: () => reelPeek.value(),
   onReelRow: (reel, row) => reelBands.row(reel, row),
+  checkboxTicked: (cb) => switchLevels.ticked(cb, emu.info?.switchPanel),
 });
 const reelBands = createReelBands(stage);
 const picker = document.getElementById('folder') as HTMLInputElement;
@@ -155,12 +166,14 @@ const menuContent = document.getElementById('menuContent') as HTMLElement;
 const menuSub = document.getElementById('menuSub') as HTMLElement;
 const schemPanelEl = document.getElementById('schemPanel') as HTMLElement;
 const schemBackdrop = document.getElementById('schemBackdrop') as HTMLElement;
-const aboutBtn = document.getElementById('aboutBtn') as HTMLButtonElement;
 const uploadLabels = [...document.querySelectorAll<HTMLElement>('.upload')];
 const busy = document.getElementById('busy') as HTMLElement;
 const busyMsg = document.getElementById('busyMsg') as HTMLElement;
-function setBusyMsg(msg: string): void {
+const busyTitle = document.getElementById('busyTitle') as HTMLElement;
+function setBusyMsg(msg: string, title?: string): void {
   (busyMsg.firstElementChild as HTMLElement).textContent = msg;
+  busyTitle.textContent = title ?? '';
+  busyTitle.hidden = !title;
 }
 const busyStop = document.getElementById('busyStop') as HTMLButtonElement;
 const busyBar = document.getElementById('busyBar') as HTMLElement;
@@ -174,6 +187,9 @@ const errorHint = document.getElementById('errorHint') as HTMLElement;
 const importReport = document.getElementById('importReport') as HTMLElement;
 const importReportTitle = document.getElementById('importReportTitle') as HTMLElement;
 const importReportSummary = document.getElementById('importReportSummary') as HTMLElement;
+const importReportSum = document.getElementById('importReportSum') as HTMLElement;
+const importReportFailed = document.getElementById('importReportFailed') as HTMLDetailsElement;
+const importReportFailedHead = document.getElementById('importReportFailedHead') as HTMLElement;
 const importReportFailedList = document.getElementById('importReportFailedList') as HTMLElement;
 const importReportOrphanNote = document.getElementById('importReportOrphanNote') as HTMLElement;
 const importReportRemove = document.getElementById('importReportRemove') as HTMLButtonElement;
@@ -187,9 +203,9 @@ const busyCovers = [
   document.getElementById('statusbar') as HTMLElement,
 ];
 
-function showBusy(msg: string): void {
+function showBusy(msg: string, title?: string): void {
   if (!errorPopup.hidden) return;
-  setBusyMsg(msg);
+  setBusyMsg(msg, title);
   busy.classList.add('show');
   for (const el of busyCovers) el.inert = true;
 }
@@ -247,6 +263,7 @@ function traceReset(): void {
 }
 function markImporting(name: string): void {
   try { sessionStorage.setItem(IMPORTING_KEY, name); } catch {  }
+  status.classList.add('nb-statusbar__busy');
 }
 function importing(): boolean {
   try { return sessionStorage.getItem(IMPORTING_KEY) !== null; } catch { return false; }
@@ -268,6 +285,7 @@ window.addEventListener('error', (ev) => {
 });
 function clearImporting(): void {
   try { sessionStorage.removeItem(IMPORTING_KEY); } catch {  }
+  status.classList.remove('nb-statusbar__busy');
 }
 const PICKER_KEY = 'fruitulator.picker-open';
 function markPickerOpen(open: boolean): void {
@@ -290,12 +308,11 @@ function reportInterruptedImport(): void {
     return;
   }
   if (!name) return;
-  let last = '';
   try {
     const e = JSON.parse(localStorage.getItem(LAST_ERROR_KEY) ?? 'null') as { msg: string; at: string } | null;
-    if (e) last = str('main.the_last_error_recorded_was', { 0: e.msg, 1: e.at });
+    if (e) console.warn(`import interrupted by a reload; last error: "${e.msg}" (${e.at})`);
   } catch {  }
-  showError(str('main.the_page_reloaded_while_n', { 0: name, 1: last }));
+  showError(str('main.the_page_reloaded_while_n', { 0: name }));
 }
 
 errorDismiss.addEventListener('click', () => {
@@ -317,6 +334,7 @@ const emu: Emu = bootValue('worker') ? new WorkerEmu() : new InlineEmu();
 const HW_URL = new URLSearchParams(location.search).get('hw');
 const hwBridge = HW_URL?.startsWith('ws') ? new HwBridge(emu, HW_URL) : null;
 let running = false;
+const switchLevels = new SwitchLevels();
 const stopWatch = new StopWatch();
 let quietIsWaiting = false;
 const stopNote = new StopNote(document, () => openSchematic('diagram'), () => void downloadSnapshot());
@@ -383,6 +401,7 @@ function startGame(
   effects.load(game);
   const booted = ++session.boot;
   session.framesDrawn = 0;
+  stage.removeAttribute('data-ready');
   fatal = '';
   running = false;
   stopWatch.reset(performance.now());
@@ -394,7 +413,7 @@ function startGame(
   }
   let machineUp = false;
   let cabinetSettled = false;
-  const settle = (): void => { if (machineUp && cabinetSettled) hideBusy(); };
+  const settle = (): void => { if (machineUp && cabinetSettled) { hideBusy(); machineShown(); } };
   onFirstFrameDrawn = () => {
     if (booted !== session.boot) return;
     session.paintedBoot = booted;
@@ -429,7 +448,7 @@ function startGame(
       machineRunning();
       if (pendingResetNotice) {
         pendingResetNotice = false;
-        showToast(str('main.this_update_had_to_reset'), { sticky: true });
+        showToast(str('main.this_update_had_to_reset'), { sticky: true, kind: 'warn' });
       }
       if (session.hash) startMoneyWatch(session.hash);
       stopParts = stopNoteParts(info.boardDefaults);
@@ -459,12 +478,13 @@ function startGame(
     });
   status.textContent = game.name;
   resetView();
-  showGame();
+  void showGame();
 
   awaitingCabinet = true;
   if (bulbLab.active) bulbLab.disable();
   if (cabinet) closeCabinet(cabinet);
   cabinet = null;
+  layoutBox = null;
   rebuildMenu = null;
   resetReelDrift();
   playKeys.reset();
@@ -501,9 +521,11 @@ function startGame(
       }
       const cabView = viewFor(game.system);
       capsAreSwitches(cab.lamps, cabView.nonSwitchInputs);
-      cab.content = playView(cab);
+      layoutBox = { ...cab.content };
+      cab.content = playView(cab, layoutBox);
       cabinet = cab;
-      void ensureLegendFonts(cab.lamps.map((l) => l.legend?.face)).then(() => { if (cabinet === cab) forceRedraw(); });
+      switchLevels.clear();
+      void ensureLegendFonts([...cab.lamps, ...(cab.checkboxes ?? [])].map((l) => l.legend?.face)).then(() => { if (cabinet === cab) forceRedraw(); });
       offerFontChoices(cab);
       stampCabinetCoins();
       refreshKeys?.();
@@ -840,6 +862,23 @@ function showImportReport(r: ImportReport): void {
   importReportTitle.textContent = r.stopped ? str('main.import_stopped')
     : r.quota ? str('main.import_stopped_library_full')
     : str('main.import_finished');
+  const stat = (n: number, label: string, cls = ''): HTMLElement => {
+    const s = document.createElement('div');
+    s.className = 'nb-stat';
+    const l = document.createElement('span');
+    l.className = 'nb-stat__label';
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.className = `nb-stat__value ${cls}`.trim();
+    v.textContent = String(n);
+    s.append(l, v);
+    return s;
+  };
+  importReportSum.replaceChildren(
+    stat(r.total, str('main.report_scanned', { n: r.total })),
+    stat(r.added, str('main.report_added'), r.added ? 'nb-pos' : ''),
+    stat(r.failed.length, str('main.report_failed'), r.failed.length ? 'nb-neg' : ''),
+  );
   const line = (text: string, cls?: string): void => {
     const li = document.createElement('li');
     li.textContent = text;
@@ -847,21 +886,23 @@ function showImportReport(r: ImportReport): void {
     importReportSummary.append(li);
   };
   importReportSummary.replaceChildren();
-  line(str('main.n_game_folders_scanned', { n: r.total }), 'quiet');
-  line(str('main.n_added', { 0: r.added }));
   if (r.unrunnable) line(str('main.n_on_boards_this_build', { 0: r.unrunnable }));
-  if (r.silent) line(str('main.n_missing_sound_roms_will', { 0: r.silent }), 'quiet');
-  if (r.known) line(str('main.n_already_in_the_library', { 0: r.known }), 'quiet');
-  if (r.quota) line(str('main.the_library_is_full_delete'), 'bad');
+  if (r.silent) line(str('main.n_missing_sound_roms_will', { 0: r.silent }), 'nb-meta');
+  if (r.known) line(str('main.n_already_in_the_library', { 0: r.known }), 'nb-meta');
+  if (r.quota) line(str('main.the_library_is_full_delete'), 'nb-neg');
+  importReportSummary.hidden = !importReportSummary.childElementCount;
   if (r.failed.length) {
-    line(str('main.n_failed_missing_roms_no', { 0: r.failed.length }), 'bad');
+    importReportFailedHead.textContent = str('main.n_failed_missing_roms_no', { 0: r.failed.length });
     importReportFailedList.replaceChildren(...r.failed.map((f) => {
       const li = document.createElement('li');
-      li.textContent = `${f.name} - ${f.reason}`;
+      const why = document.createElement('small');
+      why.textContent = f.reason;
+      li.append(f.name, why);
       return li;
     }));
+    importReportFailed.open = true;
   }
-  importReportFailedList.hidden = !r.failed.length;
+  importReportFailed.hidden = !r.failed.length;
   const removable = [...new Set([
     ...r.failed.flatMap((f) => (f.hash ? [f.hash] : [])),
     ...r.orphans,
@@ -1141,7 +1182,9 @@ function stampCabinetCoins(): void {
   const view = viewFor(game.system);
   const info = infoBoot === session.boot ? emu.info : null;
   const n = stampCoinInputs(cabinet.lamps, view, info?.coins ?? view.coins);
-  if (!info || n || noSlotCheckedBoot === session.boot) return;
+  const lines = view.coinLineInputs;
+  const onLine = lines ? cabinet.lamps.some((lp) => lp.button !== undefined && lines.includes(lp.button)) : false;
+  if (!info || n || onLine || noSlotCheckedBoot === session.boot) return;
   noSlotCheckedBoot = session.boot;
   if (machineCoins(info, view).length && !damagedRoms(game).length) showNotice(str('main.this_cabinet_s_layout_draws'));
 }
@@ -1154,6 +1197,7 @@ async function openFromLibrary(hash: string, resume: boolean, variant?: string):
   autosave.moment('switch');
   dismissError();
   status.textContent = str('main.opening');
+  await showGame();
   showBusy(str('main.opening_from_library'));
 
   let game: Game | null = null;
@@ -1397,36 +1441,44 @@ function inGameHistoryEntry(): boolean {
   return (history.state as { fruitulator?: string } | null)?.fruitulator === 'game';
 }
 
-function fadeOutScreen(el: HTMLElement): void {
-  if (el.hidden) return;
-  el.classList.add('screen-out');
-  window.setTimeout(() => {
-    if (el.classList.contains('screen-out')) {
-      el.hidden = true;
-      el.classList.remove('screen-out');
-    }
-  }, SCREEN_FADE_MS);
-}
-
-function fadeInScreen(el: HTMLElement): void {
-  el.classList.add('screen-out');
-  el.hidden = false;
-  requestAnimationFrame(() => requestAnimationFrame(() =>
-    el.classList.remove('screen-out')));
-}
+const fade = document.getElementById('fade') as HTMLElement;
 
 let libScrollY = 0;
 
-function showGame(): void {
+const onPlayScreen = (): boolean => document.body.classList.contains('nb-play');
+
+async function showGame(): Promise<void> {
+  if (onPlayScreen()) return;
+  await fadeToBlack(fade);
   libScrollY = window.scrollY;
-  fadeOutScreen(librarySection);
-  fadeInScreen(stage);
+  librarySection.hidden = true;
+  stage.removeAttribute('data-ready');
+  stage.hidden = false;
+  document.body.classList.remove('nb-page', 'nb-stars');
+  document.body.classList.add('nb-play');
+  wakePlayMenu();
   burgerBtn.hidden = false;
   soundGroup.hidden = false;
   for (const l of uploadLabels) l.hidden = true;
   if (!inGameHistoryEntry()) history.pushState(GAME_HISTORY_STATE, '');
-  window.setTimeout(() => { if (!stage.hidden) resetView(); }, SCREEN_FADE_MS + 20);
+  resetView();
+  fadeFromBlack(fade);
 }
+
+function machineShown(): void {
+  stage.setAttribute('data-ready', '');
+}
+
+const PLAY_IDLE_MS = 3000;
+let playIdleTimer = 0;
+function wakePlayMenu(): void {
+  document.body.removeAttribute('data-idle');
+  window.clearTimeout(playIdleTimer);
+  if (onPlayScreen()) {
+    playIdleTimer = window.setTimeout(() => document.body.setAttribute('data-idle', ''), PLAY_IDLE_MS);
+  }
+}
+window.addEventListener('pointermove', wakePlayMenu, { passive: true });
 
 async function showLibrary(): Promise<void> {
   if (document.fullscreenElement) {
@@ -1449,22 +1501,12 @@ async function showLibrary(): Promise<void> {
   if (bulbLab.active) bulbLab.disable();
   setVfdStrip(null);
   const toOrbit = document.body.classList.contains('orbit-mode');
-  if (toOrbit) {
-    document.body.classList.remove('boot-settled');
-    document.body.classList.add('orbit-return');
-    await new Promise((r) => { setTimeout(r, SCREEN_FADE_MS); });
-    stage.hidden = true;
-    stage.classList.remove('screen-out');
-    document.body.classList.remove('orbit-return');
-  } else {
-    document.body.classList.add('mode-fade');
-    if (!stage.hidden) {
-      stage.classList.add('screen-out');
-      await new Promise((r) => { setTimeout(r, prefersReducedMotion() ? 0 : SCREEN_FADE_MS); });
-      stage.hidden = true;
-      stage.classList.remove('screen-out');
-    }
-  }
+  await fadeToBlack(fade);
+  stage.hidden = true;
+  stage.removeAttribute('data-ready');
+  document.body.classList.remove('nb-play');
+  document.body.classList.add('nb-page', 'nb-stars');
+  wakePlayMenu();
   burgerBtn.hidden = true;
   soundGroup.hidden = true;
   magnifier.setActive(false);
@@ -1472,19 +1514,12 @@ async function showLibrary(): Promise<void> {
   if (errorPopup.hidden) {
     status.textContent = session.game ? str('main.paused_pick_a_game') : str('main.no_game_loaded');
   }
-  if (toOrbit) {
-    await renderLibrary(libraryHandlers);
-    fadeInScreen(librarySection);
-    window.scrollTo(0, libScrollY);
-    return;
-  }
-  librarySection.classList.remove('screen-out');
   librarySection.hidden = false;
   await renderLibrary(libraryHandlers);
   window.scrollTo(0, libScrollY);
-  await settleArtwork();
-  await afterFrames(2);
-  document.body.classList.remove('mode-fade');
+  if (toOrbit) replayOrbitCaption();
+  else await settleArtwork();
+  fadeFromBlack(fade);
 }
 
 function exitToLibrary(): void {
@@ -1587,19 +1622,11 @@ function toggleSchematic(): void {
   if (schemPanel.isOpen) schemPanel.close();
   else openSchematic();
 }
-function openAbout(): void {
-  aboutBtn.setAttribute('aria-expanded', 'true');
-  openAboutDialog({ onClose: () => aboutBtn.setAttribute('aria-expanded', 'false') });
-}
-
 function closeAbout(): void {
   aboutOpen()?.close();
 }
 
-aboutBtn.addEventListener('click', () => {
-  if (aboutOpen()) closeAbout();
-  else openAbout();
-});
+mountSettings(document.getElementById('settingsBtn') as HTMLButtonElement);
 
 function toggleMagnifier(): void {
   magnifier.setActive(!magnifier.active);
@@ -1684,6 +1711,7 @@ function throwPanelSwitch(
   sw: { id: number; label: string; bootOnly?: boolean }, on: boolean,
 ): string {
   emu.input(sw.id, on);
+  switchLevels.set(sw.id, on);
   if (session.game) savePanelSwitch(session.game, sw.id, on);
   const said = `${sw.label} ${on ? 'on' : 'off'}`;
   if (!sw.bootOnly) return said;
@@ -1691,6 +1719,11 @@ function throwPanelSwitch(
   stopWatch.reset(performance.now());
   stopNote.clear();
   return `${said} - machine rebooted`;
+}
+
+function throwSwitchFromPage(sw: { id: number; label: string; bootOnly?: boolean }, on: boolean): void {
+  const said = throwPanelSwitch(sw, on);
+  if (sw.bootOnly) status.textContent = said;
 }
 
 async function clearRamNow(): Promise<string | null> {
@@ -1732,6 +1765,7 @@ function buildMenu(info: MachineInfo): void {
   {
     const book = card();
     book.hidden = true;
+    coinMoney.hidden = true;
     const stat = (label: string): HTMLSpanElement => statRow(book, label);
     const inV = stat(str('main.money_in'));
     const outV = stat(str('main.money_out'));
@@ -1746,10 +1780,12 @@ function buildMenu(info: MachineInfo): void {
       void emu.ledger().then((l) => {
         if (!l) return;
         book.hidden = false;
+        coinMoney.hidden = false;
         const rec = moneyWatch.rec;
         const t = rec ? rec.total : l;
-        inV.textContent = moneyInText(t);
-        outV.textContent = moneyOutText(t);
+        const mIn = moneyInParts(t), mOut = moneyOutParts(t);
+        for (const v of [inV, coinInV]) setKvValue(v, mIn.head, mIn.sub);
+        for (const v of [outV, coinOutV]) setKvValue(v, mOut.head, mOut.sub);
         const tokParts: string[] = [];
         if (t.tokenOutPence) tokParts.push(money(t.tokenOutPence));
         if (t.unpricedTokenOut) {
@@ -1764,7 +1800,7 @@ function buildMenu(info: MachineInfo): void {
         tokInV.textContent = tokInParts.join(' + ');
         tokInRowEl.hidden = tokInParts.length === 0;
         const pct = ledgerPayoutPercent(t);
-        pctV.textContent = pct === null ? '-' : `${pct.toFixed(1)}%`;
+        pctV.textContent = pct === null ? '\u2014' : `${pct.toFixed(1)}%`;
       });
     };
     refreshMenuLive();
@@ -1780,12 +1816,7 @@ function buildMenu(info: MachineInfo): void {
   optionSwitchRows = info.switchPanel.filter((sw) => sw.option === true);
   appendItems(menuContent, menuItems(appActions, { info, view, system: session.game?.system }, APP_MENU), navRow);
 
-  {
-    const stamp = document.createElement('p');
-    stamp.className = 'menu-build';
-    stamp.textContent = buildStamp();
-    menuContent.append(stamp);
-  }
+  appendMenuFoot(menuContent);
 
   choreograph(menuContent, 90);
 }
@@ -1798,6 +1829,7 @@ function appOptionRows(info: MachineInfo): Node[] {
     const row = document.createElement('label');
     row.className = 'menu-row menu-key';
     const text = document.createElement('span');
+    text.className = 'row-label';
     text.textContent = k.label;
     const sel = document.createElement('select');
     sel.id = `option-key-${index}`;
@@ -1816,7 +1848,7 @@ function appOptionRows(info: MachineInfo): Node[] {
       status.textContent = str('main.n_refitted_machine_restarted', { 0: k.label });
     });
     row.append(text, sel);
-    enhanceSelect(sel);
+    enhanceSelect(sel, { small: true });
     rows.push(row);
   });
 
@@ -1825,6 +1857,7 @@ function appOptionRows(info: MachineInfo): Node[] {
     const row = document.createElement('label');
     row.className = 'menu-row menu-key';
     const text = document.createElement('span');
+    text.className = 'row-label';
     text.textContent = str('main.build');
     const sel = document.createElement('select');
     sel.id = 'build-select';
@@ -1859,7 +1892,7 @@ function appOptionRows(info: MachineInfo): Node[] {
       })();
     });
     row.append(text, sel);
-    const dd = enhanceSelect(sel);
+    const dd = enhanceSelect(sel, { small: true });
     rows.push(row);
   }
 
@@ -1897,6 +1930,7 @@ const appActions: ActionSurface = {
       });
     });
   },
+  coinMoney: () => coinMoney,
   coinNaming: {
     slots: () => namingSlots(cabinet?.lamps ?? [], viewFor(session.game?.system ?? ''), emu.info, session.coinAnswers),
     change: (line, at, done) => {
@@ -1907,10 +1941,7 @@ const appActions: ActionSurface = {
       });
     },
   },
-  throwSwitch: (sw, checked) => {
-    const said = throwPanelSwitch(sw, checked);
-    if (sw.bootOnly) status.textContent = said;
-  },
+  throwSwitch: (sw, checked) => throwSwitchFromPage(sw, checked),
   namedSwitch: (id, level) => emu.input(id, level),
   get effects() { return effects; },
   refit: () => { if (!stage.hidden) resetView(); },
@@ -1920,19 +1951,16 @@ const appActions: ActionSurface = {
     const faces = [...new Set(shownCaptionFaces(cab).filter((f) => !faceAvailable(f)))];
     if (!faces.length) return [];
     const row: HTMLButtonElement = menuRow(str('main.font'), '', () => {
-      const panel = document.createElement('div');
-      panel.className = 'menu-stack';
-      const fly = drawer.flyoutMode();
-      const back = backRow(str('play.actions.options'), () => drawer.openFlyout(str('play.actions.options'), options, back));
-      if (fly) panel.append(back);
-      for (const face of faces) {
-        const c = card();
-        c.append(...fontChoiceRows(face, () => { if (cabinet === cab) forceRedraw(); }));
-        panel.append(caption(face), c);
-      }
-      if (fly) drawer.openFlyout(str('main.font'), panel, row);
-      else drawer.openSubmenu(str('main.font'), panel, () => drawer.openSubmenu(str('play.actions.options'), options));
+      closeMenu();
+      pickFonts(cab, faces, showFont);
     }, true);
+    const meta = document.createElement('span');
+    meta.className = 'nb-meta row-meta';
+    const showFont = (): void => {
+      meta.textContent = [...new Set(faces.map((f) => legendStandIn(f)).filter(Boolean))].join(', ');
+    };
+    showFont();
+    row.querySelector('.row-chev')?.before(meta);
     return [row];
   },
   redraw: () => forceRedraw(),
@@ -1967,7 +1995,7 @@ function fillKeys(root: HTMLElement): void {
     { label: str('main.dump_reels_to_console'), chords: [alt('D')] },
     { label: str('main.bulb_lab'), chords: [alt('B')] },
   );
-  fillKeyTable(root, { own: { title: str('main.fruitulator'), rows: own } });
+  fillKeyTable(root, [{ title: str('main.fruitulator'), rows: own }]);
 }
 
 function navRow(label: string, icon: string, panel: HTMLElement): HTMLButtonElement {
@@ -1990,11 +2018,16 @@ const volSlider = document.getElementById('volSlider') as HTMLInputElement;
 const SOUND_KEY = 'fruitulator.sound';
 const VOLUME_KEY = 'fruitulator.volume';
 
+const coinMoney = card();
+coinMoney.hidden = true;
+const coinInV = statRow(coinMoney, str('main.money_in'));
+const coinOutV = statRow(coinMoney, str('main.money_out'));
+
 const soundBtn = speakerButton();
 soundBtn.id = 'soundBtn';
 
 function syncSoundButton(): void {
-  showSpeaker(soundBtn, audio.running);
+  showSpeaker(soundBtn, audio.running, Number(volSlider.value) === 0);
 }
 
 let soundSavedOn = false;
@@ -2039,6 +2072,7 @@ soundBtn.addEventListener('click', () => {
 
 volSlider.addEventListener('input', () => {
   audio.setVolume(+volSlider.value / 100);
+  syncSoundButton();
   try { localStorage.setItem(VOLUME_KEY, volSlider.value); } catch {  }
 });
 volSlider.addEventListener('change', () => {
@@ -2363,6 +2397,11 @@ if (import.meta.env.DEV) {
   });
 }
 
+if (import.meta.env.DEV) {
+  (window as unknown as { versionGroups: () => Promise<string> }).versionGroups =
+    () => import('./versionreport').then((m) => m.run());
+}
+
 if (import.meta.env.DEV && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.getRegistrations().then(async (regs) => {
     if (!regs.length) return;
@@ -2437,11 +2476,15 @@ function shownCaptionFaces(cab: Cabinet): string[] {
 }
 
 function offerFontChoices(cab: Cabinet): void {
-  const ask = facesToAsk(shownCaptionFaces(cab));
+  pickFonts(cab, facesToAsk(shownCaptionFaces(cab)));
+}
+
+function pickFonts(cab: Cabinet, faces: string[], picked?: () => void): void {
+  const ask = [...faces];
   const next = (): void => {
     const face = ask.shift();
     if (!face || cabinet !== cab) return;
-    openFontPicker({ face, onPick: () => { if (cabinet === cab) forceRedraw(); next(); }, onClose: next });
+    openFontPicker({ face, onPick: () => { picked?.(); if (cabinet === cab) forceRedraw(); }, onClose: next });
   };
   next();
 }
@@ -2593,6 +2636,12 @@ function releaseInput(pointerId: number): void {
   held.release(pointerId);
 }
 
+function checkboxHit(clientX: number, clientY: number): CabCheckbox | null {
+  if (!cabinet?.checkboxes || !running) return null;
+  const { x, y } = layoutPoint(screenFit(cabinet), clientX, clientY);
+  return checkboxAt(cabinet.checkboxes, x, y);
+}
+
 function cabinetHit(clientX: number, clientY: number): CabLamp | null {
   if (!cabinet) return null;
   const { x, y, scale } = layoutPoint(screenFit(cabinet), clientX, clientY);
@@ -2737,9 +2786,23 @@ function resetView(): void {
 
 const TOUCH_DEVICE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
-function playView(cab: Cabinet): Rect {
-  const box = cab.content;
-  if (TOUCH_DEVICE) return { ...(cab.column ?? box) };
+let layoutBox: Rect | null = null;
+
+function recropView(): void {
+  const cab = cabinet;
+  if (!cab || !layoutBox) return;
+  cab.content = playView(cab, layoutBox);
+  if (cab.content.width > 0 && cab.content.height > 0) {
+    canvas.width = cab.content.width;
+    canvas.height = cab.content.height;
+  }
+  forceRedraw();
+  if (!stage.hidden) resetView();
+}
+if (!TOUCH_DEVICE) appActions.recrop = recropView;
+
+function playView(cab: Cabinet, box: Rect): Rect {
+  if (TOUCH_DEVICE || cropViewOn()) return { ...(cab.column ?? box) };
   const base = cab.trimmed ?? box;
   let l = base.left;
   let t = base.top;
@@ -2747,7 +2810,7 @@ function playView(cab: Cabinet): Rect {
   let b = base.top + base.height;
   for (const lp of cab.lamps) {
     if (lp.button === undefined && !lp.acceptor) continue;
-    if (!(lp.width > 0 && lp.height > 0)) continue;
+    if (lp.hidden || !(lp.width > 0 && lp.height > 0)) continue;
     l = Math.min(l, Math.max(box.left, lp.left));
     t = Math.min(t, Math.max(box.top, lp.top));
     r = Math.max(r, Math.min(box.left + box.width, lp.left + lp.width));
@@ -2815,6 +2878,13 @@ const capPointer = new PlayPointer<CabLamp>({
 });
 pointerHost.addEventListener('pointerdown', (ev) => {
   if (ev.button !== 0) return;
+  const box = checkboxHit(ev.clientX, ev.clientY);
+  if (box) {
+    ev.preventDefault();
+    const row = emu.info?.switchPanel.find((sw) => sw.id === box.id);
+    throwSwitchFromPage(row ?? { id: box.id, label: box.legend.off ?? '' }, !switchLevels.ticked(box, emu.info?.switchPanel));
+    return;
+  }
   touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   if (!capPointer.down(ev)) {
     if (pinch) return;
@@ -3304,7 +3374,6 @@ let vfdStripLatest: {
   lcd: { width: number; height: number; bits: Uint8Array } | null;
 } | null = null;
 let vfdStripFlip: HTMLButtonElement | null = null;
-let vfdStripNote: HTMLElement | null = null;
 let vfdStripSeen = false;
 let vfdStripBox: HTMLInputElement | null = null;
 
@@ -3374,7 +3443,6 @@ function renderVfdStrip(): void {
   panel.hidden = false;
   const dpr = window.devicePixelRatio || 1;
   if (vfdStripFlip) vfdStripFlip.hidden = !!d.lcd;
-  if (vfdStripNote) vfdStripNote.hidden = !d.lcd;
   panel.classList.toggle('lcd', !!d.lcd);
   panel.classList.toggle('bare', !!vfdStripSpot?.bare);
   if (d.lcd) {
@@ -3528,13 +3596,8 @@ function createVfdStrip(): HTMLElement {
   flip.setAttribute('aria-label', str('main.reverse_virtual_display_text'));
   flip.addEventListener('pointerdown', (ev) => ev.stopPropagation());
   flip.addEventListener('click', () => setVfdReverse(!painter.vfdReversed));
-  const note = document.createElement('div');
-  note.className = 'vfd-note';
-  note.hidden = true;
-  note.textContent = str('main.this_game_s_layout_does');
-  panel.append(cv, note, flip, close);
+  panel.append(cv, flip, close);
   vfdStripFlip = flip;
-  vfdStripNote = note;
 
   let grab: { dx: number; dy: number; x: number; y: number; moved: boolean } | null = null;
   let lastTap = -Infinity;
@@ -3642,6 +3705,11 @@ Object.assign(window, {
 
 wireLibraryControls(libraryHandlers);
 
+mountKioskMode(() => {
+  libraryChooseOrbit();
+  if (!librarySection.hidden) void renderLibrary(libraryHandlers);
+});
+
 window.addEventListener('pagehide', () => commitPendingDeletes(libraryHandlers));
 
 function loadFromUrl(raw: string): void {
@@ -3675,7 +3743,7 @@ function loadFromUrl(raw: string): void {
 }
 
 const fromUrl = new URLSearchParams(location.search).get('fromUrl');
-if (fromUrl) loadFromUrl(fromUrl);
+if (fromUrl && !isLocked()) loadFromUrl(fromUrl);
 
 const addBtn = document.getElementById('addBtn') as HTMLButtonElement;
 function openPicker(which: 'folder' | 'files'): void {
@@ -3722,9 +3790,45 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) pickerLeft(); else pickerBack();
 });
 function openAdd(ev: Event): void {
-  void openAddSheet(ev.currentTarget as HTMLElement, openPicker);
+  if (isLocked()) return;
+  const returnTo = ev.currentTarget as HTMLElement;
+  const canAdd = addSourceEnabled();
+  if (canAdd && sources.inSource()) { sources.addSource(returnTo); return; }
+  void openAddSheet(returnTo, openPicker, canAdd ? [sources.addGamesRow(returnTo)] : []);
 }
 addBtn.addEventListener('click', openAdd);
+
+async function importFromSource(file: File, origin: string): Promise<string | null> {
+  if (/\.zip$/i.test(file.name)) {
+    try {
+      const meta = await importUpload({ zip: new Uint8Array(await file.arrayBuffer()) }, archiveStem(file.name), {}, true);
+      const now = await getMeta(meta.hash);
+      if (now) await putMeta({ ...now, origin });
+      return meta.hash;
+    } catch (e) {
+      trace(`source import fell back to a pick: ${(e as Error).message}`);
+    }
+  }
+  await importPicked([file]);
+  return null;
+}
+
+sources.mount({
+  importQuietly: importFromSource,
+  originsHeld: async () => new Map((await listGames()).filter((g) => g.origin).map((g) => [g.origin!, g.hash])),
+  play: (hash) => libraryHandlers.onOpen(hash, true),
+  backToLibrary: () => void renderLibrary(libraryHandlers),
+  toGrid: libraryToGrid,
+  returnTo: addBtn,
+  busy: (msg, fraction) => {
+    if (msg === null) { busyBar.hidden = true; hideBusy(); return; }
+    busyBar.hidden = fraction === undefined;
+    if (fraction !== undefined) busyFill.style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+    showBusy(msg);
+  },
+});
+onBeforeOrbit(() => sources.leave());
+if (!isLocked()) void sources.start();
 document.getElementById('emptyAdd')!.addEventListener('click', openAdd);
 
 let internalDrag = false;
@@ -3737,22 +3841,25 @@ function hasFiles(ev: DragEvent): boolean {
 }
 
 let dragDepth = 0;
+const showDrop = (on: boolean): void => { document.getElementById('drop')!.hidden = !on; };
 window.addEventListener('dragenter', (ev) => {
   if (!hasFiles(ev)) return;
+  if (isLocked()) { ev.preventDefault(); return; }
   ev.preventDefault();
-  if (dragDepth++ === 0) document.body.classList.add('dropping');
+  if (dragDepth++ === 0) showDrop(true);
 });
 window.addEventListener('dragover', (ev) => {
   if (hasFiles(ev)) ev.preventDefault();
 });
 window.addEventListener('dragleave', () => {
-  if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dropping'); }
+  if (--dragDepth <= 0) { dragDepth = 0; showDrop(false); }
 });
 window.addEventListener('drop', (ev) => {
   if (!hasFiles(ev)) return;
   ev.preventDefault();
   dragDepth = 0;
-  document.body.classList.remove('dropping');
+  showDrop(false);
+  if (isLocked()) return;
   if (!ev.dataTransfer) return;
   const entries = entriesFromDrop(ev.dataTransfer.items);
   if (entries.length === 0) return;

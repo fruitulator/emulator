@@ -139,9 +139,16 @@ export const PLAYING_PATH = 'playing';
 export const PLAYING_POLL_MS = 15_000;
 export interface MachinePlayer { machine: string; id: string; name: string; avatarAt?: number }
 export type PlayingReply = { ok: true; playing: MachinePlayer[] };
+export const LEADERS_PATH = 'leaders';
+export const LEADERS_SITE_PATH = '/v1/leaders';
+export interface LeaderRow {
+  id: string; name: string; avatarAt?: number; machine: string; value: number; sittings: number; at: number;
+  arcadeId?: string; arcadeName?: string;
+}
+export type LeadersReply = { ok: true; wins: LeaderRow[]; sessions: LeaderRow[]; regulars: LeaderRow[] };
 export const VIEW_KEY_HEADER = 'x-arcade-key';
 export const VIEW_TYPES = ['image/webp', 'image/jpeg'] as const;
-export const VIEW_LIMIT = 60 * 1024;
+export const VIEW_LIMIT = 192 * 1024;
 export type ViewReply = { ok: true; viewAt: number } | { ok: false; why: 'not-owner' | 'gone' | 'bad' };
 export type ArcadeListReply = { ok: true; arcades: ArcadeListing[] };
 export type ArcadeReply =
@@ -149,11 +156,15 @@ export type ArcadeReply =
   | { ok: false; why: 'gone' };
 
 export const ACCOUNT_PATH = '/v1/account';
-export const ACCOUNT_OPS = ['new-options', 'new', 'login-options', 'login', 'logout', 'passkey-options', 'passkey', 'name', 'delete',
+export const ACCOUNT_OPS = ['new-options', 'new', 'login-options', 'login', 'logout', 'passkey-options', 'passkey', 'name', 'theme', 'delete',
   'pair-start', 'pair-wait', 'pair-find', 'pair-approve'] as const;
 export type AccountOp = typeof ACCOUNT_OPS[number];
 export const PLAYER_NAME_MAX = 24;
-export interface AccountInfo { id: string; name: string; dev?: true; avatarAt?: number }
+export interface AccountInfo { id: string; name: string; dev?: true; avatarAt?: number; theme?: AccountTheme }
+export const ACCOUNT_THEMES = ['nebula', 'cherry', 'emerald', 'ocean'] as const;
+export type AccountTheme = typeof ACCOUNT_THEMES[number];
+export interface ThemeBody { theme: AccountTheme }
+export type ThemeReply = { ok: true; account: AccountInfo } | { ok: false; why: 'theme' | 'signed-out' };
 export interface NameBody { name: string }
 export type NameReply = { ok: true; account: AccountInfo } | { ok: false; why: 'name' | 'signed-out' };
 export interface DeleteAccountBody { confirm: true }

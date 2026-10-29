@@ -17,6 +17,8 @@ export interface DatReelWiring {
   tag: number;
   checked: boolean;
   caption: string;
+  programmable: boolean;
+  seg14: boolean;
 }
 
 export function opticWindowForFlag(flag: number): { start: number; width: number } {
@@ -171,6 +173,8 @@ export function reelsFromDfm(b: Uint8Array, classes: RegExp = REEL_CLASSES): Dat
     let tag = 0;
     let checked = false;
     let caption = '';
+    let programmable = false;
+    let seg14 = false;
     while (b[p] !== 0) {
       const pn = sstr();
       const v = skipVal();
@@ -190,12 +194,16 @@ export function reelsFromDfm(b: Uint8Array, classes: RegExp = REEL_CLASSES): Dat
       else if (typeof v === 'number' && pn === 'Tag') tag = v >>> 0;
       else if (typeof v === 'boolean' && pn === 'Checked') checked = v;
       else if (typeof v === 'string' && pn === 'Caption') caption = v;
+      else if (typeof v === 'boolean' && pn === 'Programmable') programmable = v;
+      else if (typeof v === 'boolean' && pn === 'Seg14') seg14 = v;
     }
     p++;
+    if (cls === 'TDiscReel') number = (tag & 7) | ((tag & 0x10000000) >>> 25);
     if (classes.test(cls)) {
       out.push({
         cls, number, flag, inverted, offset, position, reversed,
         stops, totalSteps, left, top, width, height, tag, checked, caption,
+        programmable, seg14,
       });
     }
     while (b[p] !== 0) obj();

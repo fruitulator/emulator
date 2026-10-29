@@ -39,11 +39,11 @@ async function decodeLayout(game: Game): Promise<{
 }> {
   if (!game.layout) return { cab: null, props: undefined };
   const payload = readLayout(game.layout);
-  const cab = usableCabinet(await extractCabinetFromPayload(payload));
+  const system = game.gam?.system ?? '';
+  const cab = usableCabinet(await extractCabinetFromPayload(payload, system));
   let props: LayoutProps | undefined;
   if (game.layoutName) {
     try {
-      const system = game.gam?.system ?? '';
       props = {
         layout: game.layoutName.toLowerCase(),
         reels: reelGeometryFromPayload(payload),

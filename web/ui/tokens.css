@@ -19,18 +19,58 @@
   --warn: #e0a526;
   --on-warn: #1b1300;
 
-  --display: 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif;
-  --ui: 'Roboto Condensed', system-ui, -apple-system, sans-serif;
+  --display: var(--nb-font-display);
+  --ui: var(--nb-font-body);
   --readout: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
 
-  --gutter: clamp(14px, 2.2vw, 32px);
+  --gutter: var(--nb-gutter);
   --page: 1600px;
-
-  --title-overlap: 34px;
 
   --r-card: 10px;
   --r-ctl: 2px;
   --r-chip: 2px;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/fonts/barlow-condensed-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/fonts/barlow-condensed-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/fonts/barlow-condensed-800.woff2') format('woff2');
+  font-weight: 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
 }
 @font-face {
   font-family: 'Roboto Condensed';

@@ -1,11 +1,13 @@
 import {
   bonusReelFrame, flipReelFace, paintBandStrip, paintBonusReel, paintFlip, reelBandMetrics, reelVisibleSymbols, segDigitGeometry, type SegDisplay,
-  type BandClassic, type BandStrip, type Cabinet, type CabBitmap, type CabLamp, type BonusReel, type FlipStrip, type FrameReel, type PrismLamp, type ReelBand, type Rect,
+  type BandClassic, type BandStrip, type Cabinet, type CabBitmap, type CabLamp, type LightSource, type BonusReel, type FlipStrip, type FrameReel, type PrismLamp, type ReelBand, type Rect,
 } from './dat';
 import { argbToCss } from './vfd';
 import { angledExtent, withAngle } from '../src/layout/compangle';
 import { SIDE_MARGIN } from './fmllayout';
 import { drawOrder } from './draworder';
+import { drawLightSource } from './lightsource';
+import { paintCheckBox } from './checkbox';
 
 export interface CabGeometry {
   width: number;
@@ -59,12 +61,15 @@ export interface CabGeometry {
   igtVfd?: Cabinet['igtVfd'];
   bfmLeds?: Cabinet['bfmLeds'];
   dotLcds?: Cabinet['dotLcds'];
+  coinmasterVideos?: Cabinet['coinmasterVideos'];
+  checkboxes?: Cabinet['checkboxes'];
   epochMatrix?: Cabinet['epochMatrix'];
   videoScreen?: Cabinet['videoScreen'];
   rgbLeds?: Cabinet['rgbLeds'];
   prismLamps?: (Omit<PrismLamp, 'off' | 'image1' | 'image2' | 'mask1' | 'mask2'>
     & { off?: number; image1?: number; image2?: number; mask1?: number; mask2?: number })[];
   bitmaps?: (Omit<CabBitmap, 'image' | 'overlay'> & { image?: number; overlay?: number })[];
+  lightSources?: (Omit<LightSource, 'face'> & { face: number })[];
 }
 
 function pixelsOf(img: unknown): { w: number; h: number; px: Uint8ClampedArray } | null {
@@ -233,6 +238,8 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     igtVfd: cab.igtVfd ?? null,
     bfmLeds: cab.bfmLeds ?? [],
     ...(cab.dotLcds?.length ? { dotLcds: cab.dotLcds } : {}),
+    ...(cab.coinmasterVideos?.length ? { coinmasterVideos: cab.coinmasterVideos } : {}),
+    ...(cab.checkboxes?.length ? { checkboxes: cab.checkboxes } : {}),
     epochMatrix: cab.epochMatrix ?? null,
     videoScreen: cab.videoScreen ?? null,
     rgbLeds: cab.rgbLeds ?? [],
@@ -249,6 +256,8 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
       image: b.image ? idFor(b.image) : undefined,
       overlay: b.overlay ? idFor(b.overlay) : undefined,
     })),
+    ...(cab.lightSources?.length
+      ? { lightSources: cab.lightSources.map((l) => ({ ...l, face: idFor(l.face) })) } : {}),
   };
   return { geo, assets };
 }
@@ -356,6 +365,8 @@ export function assembleCabinet<A>(
     igtVfd: geo.igtVfd ?? null,
     bfmLeds: geo.bfmLeds ?? [],
     ...(geo.dotLcds?.length ? { dotLcds: geo.dotLcds } : {}),
+    ...(geo.coinmasterVideos?.length ? { coinmasterVideos: geo.coinmasterVideos } : {}),
+    ...(geo.checkboxes?.length ? { checkboxes: geo.checkboxes } : {}),
     epochMatrix: geo.epochMatrix ?? null,
     videoScreen: geo.videoScreen ?? null,
     rgbLeds: geo.rgbLeds ?? [],
@@ -372,6 +383,8 @@ export function assembleCabinet<A>(
       image: b.image === undefined ? null : get(b.image),
       overlay: b.overlay === undefined ? null : get(b.overlay),
     })),
+    ...(geo.lightSources?.length
+      ? { lightSources: geo.lightSources.map((l) => ({ ...l, face: get(l.face) })) } : {}),
   };
 }
 
@@ -478,7 +491,7 @@ export function componentBounds(
     const e = angledExtent(p, p.angle);
     span(e.left, e.top, e.width, e.height);
   };
-  for (const lp of cab.lamps) spanR(lp);
+  for (const lp of cab.lamps) if (!lp.hidden) spanR(lp);
   for (const r of cab.reels) spanR(r);
   for (const r of cab.frameReels) spanR(r);
   if (cab.featureReel) {
@@ -501,6 +514,7 @@ export function componentBounds(
   }
   for (const d of cab.bfmLeds ?? []) spanR(d);
   for (const d of cab.dotLcds ?? []) spanR(d);
+  for (const d of cab.coinmasterVideos ?? []) spanR(d);
   if (cab.videoScreen) {
     const d = cab.videoScreen;
     spanR(d);
@@ -562,6 +576,11 @@ function stillReel(fx: Ctx, reel: ReelBand<AnyImage>): void {
     fx.beginPath();
     fx.rect(left, top, width, height);
     fx.clip();
+    if (reel.disc.backing) {
+      const b = reel.disc.backing;
+      fx.fillStyle = `rgb(${b[0]},${b[1]},${b[2]})`;
+      fx.fillRect(left, top, width, height);
+    }
     fx.translate(left + (width - 1) / 2, top + (height - 1) / 2);
     fx.rotate((-reel.disc.offsetDeg * Math.PI) / 180);
     fx.drawImage(drawable(reel.canvas), -(width - 1) / 2, -(height - 1) / 2, width, height);
@@ -705,8 +724,19 @@ export function drawCabinetStill(
       case 'panel': stillFace(fx, it.panel, (it.panel as { bg?: number | null }).bg); break;
       case 'bfmLed': stillFace(fx, it.panel, it.panel.bg); break;
       case 'dotLcd': stillFace(fx, it.panel, it.panel.bg); break;
+      case 'cmVideo': stillFace(fx, it.panel, 0xff000000); break;
       case 'video': stillFace(fx, it.screen, null); break;
+      case 'light': {
+        const ls = it.light;
+        withAngle(fx, ls, ls.angle, () => drawLightSource(fx, ls, drawable(ls.face)));
+        break;
+      }
       case 'rgbLed': case 'prism': case 'reelLight': break;
+      case 'checkbox': {
+        const cb = it.checkbox;
+        withAngle(fx, cb, cb.angle, () => paintCheckBox(fx, cb.left, cb.top, cb.height, cb.checked));
+        break;
+      }
     }
   }
 }
@@ -720,7 +750,8 @@ function stillBitmap(fx: Ctx, b: CabBitmap<AnyImage>): void {
     fx.clip();
     if (b.image) {
       fx.imageSmoothingEnabled = b.stretch !== 0;
-      fx.drawImage(drawable(b.image), b.left, b.top, b.width, b.height);
+      if (b.natural) fx.drawImage(drawable(b.image), b.left, b.top);
+      else fx.drawImage(drawable(b.image), b.left, b.top, b.width, b.height);
     }
     if (b.overlay) {
       fx.imageSmoothingEnabled = false;

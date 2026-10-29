@@ -5,6 +5,7 @@ import type {
   ImportErrorCode, ImportRequest, ImportResponse, ImportStage, VariantId,
 } from './import-protocol';
 import type { GameMeta } from './store';
+import { workerName } from './i18n';
 
 export class ImportError extends Error {
   constructor(
@@ -118,7 +119,7 @@ function dispatch(msg: ImportResponse): void {
 }
 
 function spawn(lane: Lane): Worker {
-  const worker = new Worker(new URL('./import.worker.ts', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./import.worker.ts', import.meta.url), { type: 'module', name: workerName('import') });
   lane.served = 0;
   lane.servedBytes = 0;
   worker.onmessage = (ev: MessageEvent<ImportResponse>) => dispatch(ev.data);

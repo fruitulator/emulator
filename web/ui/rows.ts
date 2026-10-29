@@ -3,7 +3,7 @@ import { str } from '../i18n';
 
 export function card(): HTMLElement {
   const el = document.createElement('div');
-  el.className = 'menu-card';
+  el.className = 'menu-card nb-group';
   return el;
 }
 
@@ -11,7 +11,7 @@ export function menuRow(
   label: string, icon: string, onClick: () => void, chevron: boolean,
 ): HTMLButtonElement {
   const b = document.createElement('button');
-  b.className = 'menu-row';
+  b.className = 'menu-row nb-menu-item';
   const l = document.createElement('span');
   l.className = 'row-label';
   l.textContent = label;
@@ -26,6 +26,7 @@ export function toggleInput(onChange?: (checked: boolean) => void): HTMLInputEle
   const box = document.createElement('input');
   box.type = 'checkbox';
   box.setAttribute('role', 'switch');
+  box.className = 'nb-toggle';
   if (onChange) box.addEventListener('change', () => onChange(box.checked));
   return box;
 }
@@ -34,7 +35,7 @@ export function checkRow(label: string, onChange: (checked: boolean) => void): {
   row: HTMLLabelElement; box: HTMLInputElement;
 } {
   const row = document.createElement('label');
-  row.className = 'menu-row menu-check';
+  row.className = 'menu-row menu-check nb-row-toggle';
   const text = document.createElement('span');
   text.className = 'row-label';
   text.textContent = label;
@@ -43,20 +44,57 @@ export function checkRow(label: string, onChange: (checked: boolean) => void): {
   return { row, box };
 }
 
-export function statRow(card: HTMLElement, label: string): HTMLSpanElement {
+export function setKvValue(v: HTMLElement, head: string, sub: string | null): void {
+  v.textContent = head;
+  let side = v.parentElement;
+  if (sub && side && !side.classList.contains('nb-kv__value')) {
+    const wrap = document.createElement('span');
+    wrap.className = 'nb-kv__value';
+    v.replaceWith(wrap);
+    wrap.append(v);
+    side = wrap;
+  }
+  let line = side?.classList.contains('nb-kv__value') ? side.querySelector<HTMLElement>('.nb-kv__sub') : null;
+  if (!sub) { line?.remove(); return; }
+  if (!line) {
+    line = document.createElement('span');
+    line.className = 'nb-kv__sub';
+    side!.append(line);
+  }
+  line.textContent = sub;
+}
+
+export function statRow(card: HTMLElement, label: string): HTMLElement {
   const r = document.createElement('div');
-  r.className = 'menu-row menu-stat';
+  r.className = 'menu-row menu-stat nb-kv';
   const l = document.createElement('span');
   l.className = 'row-label';
   l.textContent = label;
-  const v = document.createElement('span');
+  const v = document.createElement('b');
   v.className = 'row-value';
   r.append(l, v);
   card.append(r);
   return v;
 }
 
+export function rangeV(slider: HTMLInputElement): void {
+  const min = Number(slider.min || 0);
+  const max = Number(slider.max || 100);
+  const v = max > min ? ((Number(slider.value) - min) / (max - min)) * 100 : 0;
+  slider.style.setProperty('--v', String(Math.round(v * 10) / 10));
+}
+
+export function rangeFill(slider: HTMLInputElement): void {
+  slider.classList.add('nb-range');
+  rangeV(slider);
+  if (slider.dataset.nbRange) return;
+  slider.dataset.nbRange = '1';
+  slider.addEventListener('input', () => rangeV(slider));
+  slider.addEventListener('change', () => rangeV(slider));
+}
+
 export function sliderRow(button: HTMLElement, slider: HTMLInputElement, extra = ''): HTMLDivElement {
+  rangeFill(slider);
   const row = document.createElement('div');
   row.className = extra ? `menu-row menu-vol ${extra}` : 'menu-row menu-vol';
   row.append(button, slider);
@@ -94,6 +132,7 @@ export function resetSlider(o: {
   const sync = (): void => {
     const v = Number(slider.value);
     out.textContent = fmt(v);
+    rangeV(slider);
     const home = Math.abs(v - o.home) < o.step / 2;
     btn.classList.toggle('off-neutral', !home);
     btn.disabled = home;
@@ -114,26 +153,32 @@ export function resetSlider(o: {
   return { row, slider, set: (v) => { slider.value = String(v); sync(); } };
 }
 
-export function backRow(title: string, onBack: () => void): HTMLButtonElement {
+export function backRow(title: string, onBack: () => void): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'menu-back';
   const back = document.createElement('button');
-  back.className = 'menu-back';
-  const h = document.createElement('span');
-  h.textContent = title;
-  back.append(rowIcon(MENU_ICONS.chevLeft, 'row-chev', 16), h);
+  back.type = 'button';
+  back.className = 'nb-icon-btn';
+  back.setAttribute('aria-label', str('ui.rows.back'));
+  back.append(rowIcon(MENU_ICONS.chevLeft, 'row-chev', 20).firstElementChild!);
   back.addEventListener('click', onBack);
-  return back;
+  const h = document.createElement('h2');
+  h.className = 'menu-back-title';
+  h.textContent = title;
+  row.append(back, h);
+  return row;
 }
 
 export function caption(text: string): HTMLDivElement {
   const c = document.createElement('div');
-  c.className = 'menu-caption';
+  c.className = 'menu-caption nb-panel__title';
   c.textContent = text;
   return c;
 }
 
 export function choreograph(root: ParentNode, base = 0): void {
   let card = 0;
-  for (const group of root.querySelectorAll<HTMLElement>('.menu-card, .menu-grid')) {
+  for (const group of root.querySelectorAll<HTMLElement>('.menu-card, .menu-grid, .nb-coins')) {
     let row = 0;
     for (const el of group.querySelectorAll<HTMLElement>(':scope > .menu-row, :scope > button')) {
       el.style.setProperty('--d', `${base + Math.min(card * 60 + row * 26, 480)}ms`);

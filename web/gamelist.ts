@@ -1,11 +1,13 @@
 import { everPlayed, lastPlayed, type GameMeta } from './store';
 import { parseTitle } from './title';
+import { groupTitle, preferredOf, type Grouping } from './versions';
 import { libraryMaker } from './maker';
-import { enhanceSelect } from './ui/dropdown';
+import { enhanceSelect, type Dropdown } from './ui/dropdown';
 import { artwork, releaseArtwork } from './ui/art';
-import { chip, searchBar, sectionHeading, tileCard, tileGrid, type SearchBar } from './ui/list';
+import { actionButton, chip, searchBar, sectionHeading, tileCard, tileGrid, type SearchBar } from './ui/list';
 import { UI_ICONS } from './ui/icons';
 import { str } from './i18n';
+import { bubbleTip } from './ui/tip';
 
 export { everPlayed, lastPlayed };
 
@@ -27,6 +29,24 @@ export function systemLabel(system: string): string {
 }
 
 export type SortKey = 'played' | 'newest' | 'oldest' | 'name' | 'platform' | 'maker';
+
+export function viewDropdown(sel: HTMLSelectElement, extra?: HTMLElement[]): Dropdown {
+  return enhanceSelect(sel, { icon: 'M4 6h16M4 12h11M4 18h6', name: (c) => str('library.view_n', { 0: c }), extra });
+}
+
+export function groupVersionsRow(on: boolean, onChange: (on: boolean) => void): HTMLElement {
+  const row = document.createElement('label');
+  row.className = 'nb-row-toggle dd-toggle';
+  const text = document.createElement('span');
+  text.textContent = str('gamelist.group_versions');
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.className = 'nb-toggle';
+  toggle.checked = on;
+  toggle.addEventListener('change', () => onChange(toggle.checked));
+  row.append(text, toggle);
+  return row;
+}
 
 export const SORT_CHOICES: readonly { key: SortKey; label: string }[] = [
   { key: 'played', label: str('gamelist.played') },
@@ -159,7 +179,7 @@ const reveal = typeof IntersectionObserver === 'undefined' ? null
 
 const animated = new Set<string>();
 
-function played(ts: number): string {
+export function agoText(ts: number): string {
   const s = (Date.now() - ts) / 1000;
   if (s < 90) return str('gamelist.just_now');
   if (s < 3600) return str('gamelist.nm_ago', { 0: Math.round(s / 60) });
@@ -169,8 +189,8 @@ function played(ts: number): string {
 
 export function activity(g: GameMeta): string {
   const ts = lastPlayed(g);
-  if (ts === undefined) return `added ${played(g.addedAt)}`;
-  return `played ${played(ts)}`;
+  if (ts === undefined) return str('gamelist.added_n', { 0: agoText(g.addedAt) });
+  return str('gamelist.played_n', { 0: agoText(ts) });
 }
 
 export type Unplayable = (g: GameMeta) => { label: string; detail: string } | null;
@@ -181,11 +201,25 @@ interface CardOptions {
   activate(blocked: { label: string; detail: string } | null): void;
   more?: HTMLElement | null;
   lead?: HTMLElement[];
+  versions?: { count: number; open(): void };
+}
+
+export function versionsChip(count: number, open: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'nb-chip nb-chip--versions chip-btn';
+  const label = str('gamelist.n_versions', { n: count });
+  b.setAttribute('aria-label', label);
+  b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${UI_ICONS.stack}</svg>`;
+  b.append(label);
+  b.addEventListener('click', (ev) => { ev.stopPropagation(); open(); });
+  b.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.stopPropagation(); });
+  return b;
 }
 
 function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
   const parsed = parseTitle(g.sourceName ?? g.name);
-  const shown = displayTitle(g);
+  const shown = o.versions ? groupTitle(g) : displayTitle(g);
 
   const blocked = o.unplayable(g);
   const open = () => o.activate(blocked);
@@ -195,13 +229,14 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
   let flag: HTMLElement | null = null;
   if (blocked) {
     flag = document.createElement('span');
-    flag.className = 'card-flag';
+    flag.className = 'card-flag nb-chip nb-chip--cherry';
     flag.textContent = '!';
     flag.title = blocked.detail;
     flag.setAttribute('aria-hidden', 'true');
   }
 
   const plat: HTMLElement[] = [...(o.lead ?? []), chip(systemLabel(g.system), 'plat')];
+  if (o.versions) plat.push(versionsChip(o.versions.count, o.versions.open));
   if (blocked) {
     const badge = chip(blocked.label, 'warn');
     badge.title = blocked.detail;
@@ -214,10 +249,9 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
 
   const inner: HTMLElement[] = [];
 
-  if (parsed.chips.length || g.decodeStatus !== 'ok' || g.missingSound?.length) {
-    const chips = document.createElement('div');
-    chips.className = 'chips';
-    for (const c of parsed.chips) chips.append(chip(c));
+  const chips = document.createElement('div');
+  chips.className = 'chips panel-tags';
+  {
     if (g.missingSound?.length && !blocked) {
       const badge = chip(str('gamelist.no_sound'), 'warn');
       badge.title = str('gamelist.the_gam_names_sound_roms', { 0: g.missingSound.join(', ') });
@@ -235,12 +269,13 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
         : str('gamelist.some_layout_components_were_not');
       chips.append(badge);
     }
-    inner.push(chips);
   }
+  chips.append(...parsed.chips.map((t) => chip(t)));
+  if (chips.childElementCount) inner.push(chips);
 
   const sub = document.createElement('div');
-  sub.className = 'readout';
-  sub.textContent = `${activity(g)}${o.hasState ? ' · state saved' : ''}`;
+  sub.className = 'nb-meta panel-activity';
+  sub.textContent = [activity(g), ...(o.hasState ? [str('orbit.state_saved')] : [])].join(' · ');
   inner.push(sub);
 
   const el = tileCard({
@@ -248,6 +283,7 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
     art, flag, title: shown, titleTip: parsed.raw, chips: plat, body: inner, more: o.more ?? null,
   });
   if (blocked) el.classList.add('cannot-run');
+  if (o.versions) el.classList.add('nb-card--stack');
 
   el.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target === el) { ev.preventDefault(); open(); }
@@ -258,6 +294,39 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
   el.dataset.hash = g.hash;
   if (!animated.has(g.hash)) reveal?.observe(el);
   return el;
+}
+
+function featuredCard(
+  g: GameMeta, hasState: boolean, blocked: { label: string; detail: string } | null, open: () => void,
+): HTMLElement {
+  const title = displayTitle(g);
+  const box = document.createElement('article');
+  box.className = 'nb-glass nb-glass--hero lib-featured';
+  box.setAttribute('aria-label', title);
+  const art = artwork(g.hasThumb ? g.hash : null, title, open, g.hasThumb ? undefined : g.hash);
+  art.classList.add('lib-featured-art');
+  const body = document.createElement('div');
+  body.className = 'lib-featured-body';
+  const name = document.createElement('h3');
+  name.className = 'nb-display lib-featured-title';
+  name.textContent = title;
+  const chips = document.createElement('div');
+  chips.className = 'chips';
+  chips.append(chip(systemLabel(g.system), 'plat'), chip(activity(g)));
+  if (hasState) chips.append(chip(str('orbit.state_saved'), 'on'));
+  if (blocked) {
+    const tag = chip(blocked.label);
+    tag.title = blocked.detail;
+    chips.append(tag);
+  }
+  body.append(name, chips);
+  box.append(art, body);
+  if (!blocked) {
+    const go = actionButton(hasState ? str('orbit.resume') : str('orbit.play'), 'primary', open);
+    go.classList.add('lib-featured-go');
+    box.append(go);
+  }
+  return box;
 }
 
 function markChosen(card: HTMLElement, on: boolean): void {
@@ -282,7 +351,7 @@ function pickHeading(label: string, onToggle: () => void): HTMLElement {
   text.textContent = label;
   btn.append(tick, text);
   btn.addEventListener('click', onToggle);
-  head.append(btn);
+  head.querySelector('h2')!.append(btn);
   return head;
 }
 
@@ -321,7 +390,8 @@ interface CommonOptions {
 export interface BrowseOptions extends CommonOptions {
   mode: 'browse';
   onOpen(g: GameMeta, hasState: boolean, blocked: { label: string; detail: string } | null): void;
-  more(g: GameMeta, hasState: boolean): HTMLElement;
+  more(g: GameMeta, hasState: boolean, members?: GameMeta[]): HTMLElement;
+  versions?(members: GameMeta[], preferred: GameMeta): void;
 }
 
 export interface PickOptions extends CommonOptions {
@@ -345,7 +415,7 @@ export interface GameList {
   readonly sort: SortKey;
   setSort(k: SortKey): void;
   visible(all: GameMeta[]): GameMeta[];
-  draw(games: GameMeta[], saved?: ReadonlySet<string>): void;
+  draw(games: GameMeta[], saved?: ReadonlySet<string>, grouping?: Grouping | null): void;
   load(all: GameMeta[], saved?: ReadonlySet<string>): void;
   refresh(): void;
 }
@@ -372,13 +442,18 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     return flat ? kept : sortGames(kept, sort);
   };
 
+  let groupOf = new Map<string, GameMeta[]>();
+
   const cardFor = (g: GameMeta): HTMLElement => {
     const hasState = saved.has(g.hash);
     if (o.mode === 'browse') {
+      const members = groupOf.get(g.hash);
+      const pick = o.versions;
       return gameCard(g, {
         hasState, unplayable: o.unplayable,
-        activate: (blocked) => o.onOpen(g, hasState, blocked),
-        more: o.more(g, hasState),
+        activate: (blocked) => (members && pick ? pick(members, g) : o.onOpen(g, hasState, blocked)),
+        more: o.more(g, hasState, members),
+        ...(members && pick ? { versions: { count: members.length, open: () => pick(members, g) } } : {}),
       });
     }
     const fresh = !!o.fresh?.has(g.hash);
@@ -403,9 +478,24 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     return card;
   };
 
-  const draw = (games: GameMeta[], s: ReadonlySet<string> = saved): void => {
+  const draw = (games: GameMeta[], s: ReadonlySet<string> = saved, grouping?: Grouping | null): void => {
     saved = s;
-    let sections = flat ? [{ label: '', games }] : groupGames(games, sort);
+    groupOf = new Map();
+    let cards = games;
+    if (o.mode === 'browse' && grouping) {
+      const seen = new Set<GameMeta[]>();
+      cards = [];
+      for (const g of games) {
+        const members = grouping.members(g.hash);
+        if (members.length < 2) { cards.push(g); continue; }
+        if (seen.has(members)) continue;
+        seen.add(members);
+        const lead = preferredOf(members);
+        groupOf.set(lead.hash, members);
+        cards.push(lead);
+      }
+    }
+    let sections = flat ? [{ label: '', games: cards }] : groupGames(cards, sort);
     if (o.mode === 'pick' && !flat) {
       for (const f of root.querySelectorAll<HTMLElement>('.art')) releaseArtwork(f);
       const fresh = o.fresh;
@@ -422,6 +512,15 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     heads = [];
     for (const c of [...root.children]) if (c !== bar?.wrap) c.remove();
     if (bar && bar.wrap.parentNode !== root) root.prepend(bar.wrap);
+    if (o.mode === 'browse' && sort === 'played' && !search) {
+      const last = games.find((g) => lastPlayed(g) !== undefined);
+      if (last) {
+        const hasState = saved.has(last.hash);
+        const blocked = o.unplayable(last);
+        root.append(sectionHeading(str('gamelist.continue_playing')),
+          featuredCard(last, hasState, blocked, () => o.onOpen(last, hasState, blocked)));
+      }
+    }
     root.append(...sections.flatMap(({ label, games: gs }) => {
       if (flat) return [tileGrid(gs.map(cardFor))];
       let head: HTMLElement;
@@ -434,7 +533,7 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
         });
         heads.push({ head, games: gs });
       } else {
-        head = sectionHeading(label);
+        head = sectionHeading(label, chip(str('gamelist.n_games', { n: gs.length })));
       }
       return [head, tileGrid(gs.map(cardFor))];
     }));
@@ -452,9 +551,9 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     bar = sb;
     const find = document.createElement('button');
     find.type = 'button';
-    find.className = 'iconbtn';
+    find.className = 'nb-icon-btn';
     find.setAttribute('aria-label', str('gamelist.search_your_games_2'));
-    find.title = str('gamelist.search_your_games_2');
+    bubbleTip(find, str('gamelist.search_your_games_2'), str('gamelist.search_tip'));
     const glass = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     glass.setAttribute('viewBox', '0 0 24 24');
     glass.setAttribute('aria-hidden', 'true');
@@ -472,13 +571,8 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
   if (o.mode === 'pick' && !flat) {
     const wrap = document.createElement('div');
     wrap.className = 'ui-sort-wrap';
-    const lab = document.createElement('span');
-    lab.className = 'ui-sort-label';
-    lab.id = 'pick-sort-label';
-    lab.textContent = str('gamelist.view');
     sortSel = document.createElement('select');
     sortSel.id = 'pick-sort';
-    sortSel.setAttribute('aria-labelledby', lab.id);
     for (const c of SORT_CHOICES) {
       const opt = document.createElement('option');
       opt.value = c.key;
@@ -486,11 +580,11 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
       sortSel.append(opt);
     }
     sortSel.value = sort;
-    wrap.append(lab, sortSel);
+    wrap.append(sortSel);
     const sel = sortSel;
     sel.addEventListener('change', () => { sort = sel.value as SortKey; storeSort(sort); redraw(); });
     controls = wrap;
-    enhanceSelect(sel);
+    viewDropdown(sel);
   }
 
   const api: GameList = {

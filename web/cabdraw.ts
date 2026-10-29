@@ -20,10 +20,12 @@ import {
   segDigitGeometry,
   segLitMask,
   segPointLit,
+  segLampLit,
   SEG_METRICS,
   treelWinLinePitch,
   type BandStrip,
   type CabBitmap,
+  type CabCheckbox,
   type FeatureReel,
   type FrameReel,
   type CabLamp,
@@ -38,7 +40,7 @@ import {
   type SegDisplay,
   type WinLines,
 } from './dat';
-import { mfmeBandIndex } from './dat';
+import { mfmeBandIndex, classicBfmLedDots } from './dat';
 import {
   drumBandSlices, drumRowMap, drumScreenRadius, drumVisibleSymbols, wrapPieces,
 } from '../src/layout/reeldrum';
@@ -60,11 +62,13 @@ import {
   newSettleMemory, parkedForDraw, platformReelOffsetSteps, platformRequiresReversal,
   reelCentreRow, rgbLedFrameColour, type IndexedElement, type IntRect, reelIndex,
 } from './render-index';
-import { fancyReelPool, type FancyPool } from './reellight';
+import { fancyReelPool, keepOnlyColour, type FancyPool } from './reellight';
 import { PROCONN_LCD_FONT } from './proconnfont';
 import { proconnGlcdFit, proconnGlcdPixels } from './proconnglcd';
 import { EPOCH_DOT_FONT } from './epochdotfont';
 import { dotLcdPaint, dotLcdSize } from './dotlcd';
+import { drawLightSource } from './lightsource';
+import { paintCheckBox } from './checkbox';
 import { prismBothLitPlan } from './prismplan';
 import { peekable } from './play/peek';
 
@@ -169,6 +173,7 @@ export interface CabinetPainterOptions {
   lampGate?: (m: FrameView, lp: CabLamp) => void;
   reelPeek?: () => number;
   onReelRow?: (reel: object, row: number) => void;
+  checkboxTicked?: (cb: CabCheckbox) => boolean;
 }
 
 export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPainterOptions = {}) {
@@ -179,6 +184,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   const lampGate = opts.lampGate ?? ((): void => undefined);
   const reelPeek = opts.reelPeek ?? ((): number => 0);
   const onReelRow = opts.onReelRow ?? ((): void => undefined);
+  const checkboxTicked = opts.checkboxTicked ?? ((cb: CabCheckbox): boolean => cb.checked);
 
   let vfdAtlas: HTMLCanvasElement | null = null;
 
@@ -229,12 +235,13 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
           lightClusters.clusters.map((c) => ({ bbox: c.bbox, lamps: c.sites.map((s) => s.lamp) })),
           (input) => inputHeld(input),
           () => reelPeek(),
+          (cb) => checkboxTicked(cb),
         ),
         lastKeys: null,
         canvasW: 0,
         canvasH: 0,
       };
-      const fontWait = loadShippedFaces(cab.lamps);
+      const fontWait = loadShippedFaces([...cab.lamps, ...(cab.checkboxes ?? [])]);
       if (fontWait) {
         void fontWait.then(() => { if (renderIndex?.cab === cab) renderIndex.lastKeys = null; });
       }
@@ -479,6 +486,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         const text = lp.legend.litOnly && !lit ? ''
           : (lit ? lp.legend.on ?? lp.legend.off : lp.legend.off ?? lp.legend.on) ?? '';
         const nudge = lp.legend.input !== undefined && inputHeld(lp.legend.input) ? 1 : 0;
+        if (lp.legend.wholeLitOnly && !lit) return;
         if (lp.legend.fill !== undefined) {
           ctx.fillStyle = argbToCss(lp.legend.fill);
           ctx.fillRect(lp.left, lp.top, lp.width, lp.height);
@@ -540,11 +548,27 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         case 'panel': drawPanel(it.which); break;
         case 'bfmLed': { const bl = it.panel; withAngle(ctx, bl, bl.angle, () => drawBfmLed(m, bl)); break; }
         case 'dotLcd': { const dl = it.panel; withAngle(ctx, dl, dl.angle, () => drawDotLcd(dl)); break; }
+        case 'cmVideo': { const cv = it.panel; withAngle(ctx, cv, cv.angle, () => drawCoinmasterVideo(cv)); break; }
         case 'video': { const vs = it.screen; withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs)); break; }
+        case 'light': { const ls = it.light; withAngle(ctx, ls, ls.angle, () => drawLightSource(ctx, ls, ls.face)); break; }
+        case 'checkbox': drawCheckbox(it.checkbox); break;
       }
     }
     drawUnserved(m);
     ctx.restore();
+  }
+
+  function drawCheckbox(cb: CabCheckbox): void {
+    withAngle(ctx, cb, cb.angle, () => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cb.left, cb.top, cb.width, cb.height);
+      ctx.clip();
+      paintCheckBox(ctx, cb.left, cb.top, cb.height, checkboxTicked(cb));
+      ctx.restore();
+      const text = cb.legend.off ?? '';
+      if (text) drawLegend(ctx, text, cb.left, cb.top, cb.width, cb.height, cb.legend);
+    });
   }
 
   function drawBitmap(b: CabBitmap): void {
@@ -556,7 +580,8 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       if (b.image) {
         ctx.imageSmoothingEnabled = b.stretch !== 0;
         ctx.imageSmoothingQuality = b.stretch >= 4 ? 'high' : 'low';
-        ctx.drawImage(b.image, b.left, b.top, b.width, b.height);
+        if (b.natural) ctx.drawImage(b.image, b.left, b.top);
+        else ctx.drawImage(b.image, b.left, b.top, b.width, b.height);
       }
       if (b.overlay) {
         ctx.imageSmoothingEnabled = false;
@@ -593,16 +618,22 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     ctx.fillStyle = argbToCss(d.bg);
     ctx.fillRect(d.left, d.top, d.width, d.height);
     if (!dots?.length) return;
-    const rows = Math.min(d.rows, Math.floor(dots.length / d.stride));
-    const cols = Math.min(d.cols, d.stride * 8);
+    const gridCols = d.vertical ? d.rows : d.cols;
+    const gridRows = d.vertical ? d.cols : d.rows;
+    const rows = Math.min(gridRows, Math.floor(dots.length / d.stride));
+    const cols = Math.min(gridCols, d.stride * 8);
     const on = argbToCss(d.on);
     const off = argbToCss(d.off);
     for (let r = 0; r < rows; r++) {
       const base = r * d.stride;
       for (let c = 0; c < cols; c++) {
         const lit = (dots[base + (c >> 3)] >> (d.lsbFirst ? c & 7 : 7 - (c & 7))) & 1;
+        const x = d.flip180 ? gridCols - 1 - c : c;
+        const y = d.flip180 ? gridRows - 1 - r : r;
+        const px = d.vertical ? gridRows - 1 - y : x;
+        const py = d.vertical ? x : y;
         ctx.fillStyle = lit ? on : off;
-        ctx.fillRect(d.left + 2 + c * d.pitch, d.top + 2 + r * d.pitch, d.dot, d.dot);
+        ctx.fillRect(d.left + 2 + px * d.pitch, d.top + 2 + py * d.pitch, d.dot, d.dot);
       }
     }
   }
@@ -838,10 +869,23 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
 
   function drawBfmLed(m: FrameView, p: NonNullable<Cabinet['bfmLeds']>[number]): void {
     const X = p.xSize, Y = p.ySize, DS = p.digitSpacing;
-    const kx = p.width / ((X * 5 + DS) * 4 + 21);
+    const kx = p.width / ((X * 5 + DS) * 4 + (p.classic ? 23 : 21));
     const ky = p.height / (Y * 8 + 14);
     ctx.fillStyle = argbToCss(p.bg);
     ctx.fillRect(p.left, p.top, p.width, p.height);
+    if (p.classic) {
+      const on = argbToCss(p.on), off = argbToCss(p.off);
+      const bytes: number[] = [];
+      for (let i = 0; i < 20; i++) {
+        const cell = m.layoutDigit(i);
+        bytes.push(((cell << 1) | (cell >> 7)) & 0xff);
+      }
+      for (const d of classicBfmLedDots(p)) {
+        ctx.fillStyle = (bytes[d.col] >> d.bit) & 1 ? on : off;
+        ctx.fillRect(p.left + d.x * kx, p.top + d.y * ky, d.w * kx, d.h * ky);
+      }
+      return;
+    }
     const r = Math.max(0, (p.ledSize - 1) / 2);
     if (!(r > 0)) return;
     const clip = 2 * r > Math.min(X, Y);
@@ -878,6 +922,11 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.fillStyle = argbToCss(argb);
       ctx.fillRect(p.left + x * kx, p.top + y * ky, w * kx, h * ky);
     }, p, p);
+  }
+
+  function drawCoinmasterVideo(p: NonNullable<Cabinet['coinmasterVideos']>[number]): void {
+    ctx.fillStyle = argbToCss(0xff000000);
+    ctx.fillRect(p.left, p.top, p.width, p.height);
   }
 
   function drawMaygayMatrix(m: FrameView, p: NonNullable<Cabinet['maygayMatrix']>): void {
@@ -946,11 +995,14 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     const w = m.layout.videoWidth;
     const h = m.layout.videoHeight;
     if (!w || !h) return;
-    if (!videoCanvas || videoCanvas.width !== w || videoCanvas.height !== h) {
+    const turned = !!v.vertical;
+    const cw = turned ? h : w;
+    const ch = turned ? w : h;
+    if (!videoCanvas || videoCanvas.width !== cw || videoCanvas.height !== ch) {
       videoCanvas = document.createElement('canvas');
-      videoCanvas.width = w;
-      videoCanvas.height = h;
-      videoImage = new ImageData(w, h);
+      videoCanvas.width = cw;
+      videoCanvas.height = ch;
+      videoImage = new ImageData(cw, ch);
       videoKey = '';
     }
     const key = `${m.epoch}:${m.videoSerial}`;
@@ -958,15 +1010,36 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       videoKey = key;
       const src = m.videoRaw;
       const dst = videoImage!.data;
-      for (let i = 0; i < dst.length; i += 4) {
-        dst[i] = src[i + 2];
-        dst[i + 1] = src[i + 1];
-        dst[i + 2] = src[i];
-        dst[i + 3] = 255;
+      if (!turned) {
+        for (let i = 0; i < dst.length; i += 4) {
+          dst[i] = src[i + 2];
+          dst[i + 1] = src[i + 1];
+          dst[i + 2] = src[i];
+          dst[i + 3] = 255;
+        }
+      } else {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            const o = (x * cw + (h - 1 - y)) * 4;
+            dst[o] = src[i + 2];
+            dst[o + 1] = src[i + 1];
+            dst[o + 2] = src[i];
+            dst[o + 3] = 255;
+          }
+        }
       }
       videoCanvas.getContext('2d')!.putImageData(videoImage!, 0, 0);
     }
+    if (v.stretch === undefined) {
+      ctx.drawImage(videoCanvas, v.left, v.top, v.width, v.height);
+      return;
+    }
+    ctx.save();
+    ctx.imageSmoothingEnabled = v.stretch !== 0;
+    ctx.imageSmoothingQuality = 'low';
     ctx.drawImage(videoCanvas, v.left, v.top, v.width, v.height);
+    ctx.restore();
   }
 
   function drawLegend(
@@ -991,6 +1064,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     if (legend.points) {
       const wrap = (px: number): string[] => {
         ctx.font = font(px);
+        if (legend.nowrap) return [...paras];
         const out: string[] = [];
         for (const para of paras) {
           const words = para.split(' ').filter((t) => t.length);
@@ -1030,12 +1104,15 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     ctx.rect(clip.x, clip.y, clip.w, clip.h);
     ctx.clip();
     ctx.fillStyle = `rgba(${(argb >>> 16) & 0xff},${(argb >>> 8) & 0xff},${argb & 0xff},${((argb >>> 24) & 0xff) / 255})`;
-    ctx.textAlign = 'center';
+    ctx.textAlign = legend.align ?? 'center';
     ctx.textBaseline = 'middle';
     const lineH = size * 1.1;
-    const top = y + h / 2 - (lines.length - 1) * lineH / 2;
+    const top = legend.valign === 'top' ? y + lineH / 2
+      : legend.valign === 'bottom' ? y + h - (lines.length - 0.5) * lineH
+      : y + h / 2 - (lines.length - 1) * lineH / 2;
+    const tx = legend.align === 'left' ? x : legend.align === 'right' ? x + w : x + w / 2;
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i]) ctx.fillText(lines[i], x + w / 2, top + i * lineH);
+      if (lines[i]) ctx.fillText(lines[i], tx, top + i * lineH);
     }
     ctx.restore();
   }
@@ -1210,18 +1287,20 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const on = argbToCss(s.on);
       const off = argbToCss(s.off);
       const { segs: polys, dpX, dpY, dpR } = segDigitGeometry(s);
+      const clipTo = s.block ?? s;
       ctx.save();
       ctx.beginPath();
-      ctx.rect(s.left, s.top, s.width, s.height);
+      ctx.rect(clipTo.left, clipTo.top, clipTo.width, clipTo.height);
       ctx.clip();
       const metrics = s.metrics ?? SEG_METRICS;
       const mask = word >= 0 ? segLitMask(metrics, word) : 0;
+      const zero = s.zeroOn === true;
       const level = s.digit !== undefined ? m.layoutDigitLevel?.(s.digit) ?? 0xff : 0xff;
       const segLevel = (i: number): number =>
         s.digit !== undefined && i < 8 ? m.layoutDigitSegLevel(s.digit, i) : level;
       for (let i = 0; i < polys.length; i++) {
-        const lamp = s.seg[i];
-        const lit = word >= 0 ? ((mask >> i) & 1) !== 0 : i < 7 && lamp >= 0 && m.layoutLamp(lamp);
+        const lit = zero ? i < 6
+          : word >= 0 ? ((mask >> i) & 1) !== 0 : segLampLit(s, i, (n) => m.layoutLamp(n));
         const lv = metrics.seg16 ? level : segLevel(i);
         const p = polys[i];
         ctx.beginPath();
@@ -1444,7 +1523,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     return fl.canvas;
   }
 
-  function drawFancyLight(reel: ReelBand, lampLevel: (n: number) => number): void {
+  function drawFancyLight(reel: ReelBand, lampLevel: (n: number) => number): boolean {
     let fl = fancyLights.get(reel);
     if (fl === undefined) {
       const pool = fancyReelPool(reel);
@@ -1453,7 +1532,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       };
       fancyLights.set(reel, fl);
     }
-    if (!fl) return;
+    if (!fl) return false;
     const { floor, sites } = fl.pool;
     const levels = sites.map((s) => (s.lamp < 0 ? LAMP_FULL : lampLevel(s.lamp)));
     const key = levels.join(',');
@@ -1479,11 +1558,24 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       lx.globalAlpha = 1;
     }
     ctx.globalCompositeOperation = 'multiply';
-    const alpha = reel.lightAlpha ?? 255;
-    if (alpha < 255) ctx.globalAlpha = alpha / 255;
     ctx.drawImage(fl.canvas, floor.left, floor.top);
-    ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    return true;
+  }
+
+  const opaqueBackgrounds = new WeakMap<ReelBand, OffscreenCanvas>();
+  function opaqueBackground(reel: ReelBand, band: CanvasImageSource & { width: number; height: number }):
+    OffscreenCanvas {
+    let out = opaqueBackgrounds.get(reel);
+    if (out) return out;
+    out = new OffscreenCanvas(band.width, band.height);
+    const ox = out.getContext('2d')!;
+    ox.drawImage(band, 0, 0);
+    const img = ox.getImageData(0, 0, band.width, band.height);
+    keepOnlyColour(img, reel.opaqueKey!);
+    ox.putImageData(img, 0, 0);
+    opaqueBackgrounds.set(reel, out);
+    return out;
   }
 
   interface DiscScratch {
@@ -1521,6 +1613,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         }
         g.clip('evenodd');
         g.drawImage(sprite, w.rect.x, w.rect.y, w.rect.w, w.rect.h);
+        if (lamps.classic && lamps.floor) {
+          const f = lamps.floor;
+          g.strokeStyle = `rgb(${f[0]},${f[1]},${f[2]})`;
+          g.lineWidth = Math.max(1, lamps.classic.outline);
+          g.stroke();
+        }
         wedges.push({ slot: w.slot, x: w.rect.x, y: w.rect.y, canvas });
       }
     }
@@ -1532,12 +1630,18 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   function drawDiscReel(reel: ReelBand, position: number, stepsPerRev: number, m: FrameView): void {
     const { left, top, width, height, canvas: band, disc } = reel;
     if (!disc || width <= 0 || height <= 0) return;
-    const deg = discAngleDeg(m.layout.system, position, stepsPerRev, disc.offsetDeg, disc.reversed);
+    const deg = discAngleDeg(
+      m.layout.system, position, stepsPerRev, disc.offsetDeg, disc.reversed, disc.wholeDegrees,
+    );
     const s = discScratchFor(reel);
     const fx = s.face.getContext('2d')!;
     fx.save();
     fx.globalCompositeOperation = 'source-over';
     fx.clearRect(0, 0, width, height);
+    if (disc.backing) {
+      fx.fillStyle = `rgb(${disc.backing[0]},${disc.backing[1]},${disc.backing[2]})`;
+      fx.fillRect(0, 0, width, height);
+    }
     fx.translate((width - 1) / 2, (height - 1) / 2);
     fx.rotate((deg * Math.PI) / 180);
     fx.drawImage(band, -(width - 1) / 2, -(height - 1) / 2, width, height);
@@ -1560,6 +1664,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         const level = n === -2 ? 0 : n === -1 ? LAMP_FULL : m.layoutLampLevel(n);
         if (level <= 0) continue;
         px.globalAlpha = Math.min(1, level / LAMP_FULL);
+        px.globalCompositeOperation = lamps.classic ? 'lighten' : 'source-over';
         px.drawImage(w.canvas, w.x, w.y);
       }
       px.globalAlpha = 1;
@@ -1641,27 +1746,30 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         ctx.fillStyle = reel.fillColour ?? '#000';
         ctx.fillRect(left, top, width, height);
       }
-      if (horiz) {
-        const bandTop = top + wd;
-        const bandH = height - 2 * wd;
-        const stripLen = stops * nativeSymW;
-        const cols = Math.max(8, Math.min(64, Math.ceil(width / 4)));
-        for (let i = 0; i < cols; i++) {
-          const x0 = Math.round((i * width) / cols);
-          const x1 = Math.round(((i + 1) * width) / cols);
-          if (x1 <= x0) continue;
-          const len = (rowAt(x1) - rowAt(x0)) * nativeSymW;
-          if (!(len > 0)) continue;
-          const u = ((((centreRow + rowAt(x0)) * nativeSymW) % stripLen) + stripLen) % stripLen;
-          for (const p of wrapPieces(x0, x1, u, len, stripLen, nativeSymW)) {
-            ctx.drawImage(band, p.s, p.c * nativeSymH, p.sn, nativeSymH, left + p.d, bandTop, p.dn, bandH);
+      const blitBand = (img: CanvasImageSource): void => {
+        if (horiz) {
+          const bandTop = top + wd;
+          const bandH = height - 2 * wd;
+          const stripLen = stops * nativeSymW;
+          const cols = Math.max(8, Math.min(64, Math.ceil(width / 4)));
+          for (let i = 0; i < cols; i++) {
+            const x0 = Math.round((i * width) / cols);
+            const x1 = Math.round(((i + 1) * width) / cols);
+            if (x1 <= x0) continue;
+            const len = (rowAt(x1) - rowAt(x0)) * nativeSymW;
+            if (!(len > 0)) continue;
+            const u = ((((centreRow + rowAt(x0)) * nativeSymW) % stripLen) + stripLen) % stripLen;
+            for (const p of wrapPieces(x0, x1, u, len, stripLen, nativeSymW)) {
+              ctx.drawImage(img, p.s, p.c * nativeSymH, p.sn, nativeSymH, left + p.d, bandTop, p.dn, bandH);
+            }
           }
         }
-      }
-      const slices = horiz ? 0 : Math.max(8, Math.min(64, Math.ceil(height / 4)));
-      for (const p of drumBandSlices(height, slices, centreRow, rowAt, stops, nativeSymH)) {
-        ctx.drawImage(band, 0, p.sy, band.width, p.sh, bandLeft, top + p.dy, bandWidth, p.dh);
-      }
+        const slices = horiz ? 0 : Math.max(8, Math.min(64, Math.ceil(height / 4)));
+        for (const p of drumBandSlices(height, slices, centreRow, rowAt, stops, nativeSymH)) {
+          ctx.drawImage(img, 0, p.sy, band.width, p.sh, bandLeft, top + p.dy, bandWidth, p.dh);
+        }
+      };
+      blitBand(band);
       const zones = backlightSlots(reel);
       if (lit && reel.darkness > 0 && !poolPerZone(reel) && zones.length) {
         const zoneH = height / zones.length;
@@ -1672,7 +1780,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
           ctx.fillRect(bandLeft, top + row * zoneH, bandWidth, zoneH);
         });
       }
-      if (lampLevel) drawFancyLight(reel, lampLevel);
+      if (lampLevel && drawFancyLight(reel, lampLevel) && reel.opaqueKey) {
+        blitBand(opaqueBackground(reel, band));
+      }
       drawDrumShading(reel);
       const lineR = lineShift ? drumScreenRadius(height, drum, stops) : Infinity;
       const edgeShift = lineShift && Number.isFinite(lineR)

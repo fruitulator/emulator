@@ -18,13 +18,12 @@ import { DEFAULT_DECK, deckBand, lowerSplit } from './fold';
 import { cropOf, proposeFit, quadFrac, resolveFit, wholeTextureFit, type FitDetected, type ShellFit } from './fit';
 import { trimFor, type ArcadeMachine } from './machines';
 import { cacheKey, needsWrite, readRec, shapeIsCurrent, writeRec, type ArcadeRec } from './cache';
-import { cabLampLevel, cabLampLit, rgbLampFace } from '../web/render-index';
-import { bottomRow, isCoinSlot, mapMounts, pressButtons } from './mounts';
+import { isCoinSlot, type CoinEntry } from './coinentry';
 import { trimFromArt } from './trimcolour';
 import { boundsOf } from './quad';
-import type { MountArt, MountRig } from './mountrig';
 import { str } from '../web/i18n';
 import { followGate } from '../web/play/gates';
+import { SwitchLevels } from '../web/checkbox';
 
 export type GlassMode = 'loading' | 'front' | 'attract' | 'still' | 'dark' | 'live' | 'failed';
 
@@ -71,6 +70,8 @@ export class Glass {
   private player: TracePlayer | null = null;
   private texSize = TEX_ATTRACT;
   readonly heldInputs = new Set<number>();
+  readonly switchLevels = new SwitchLevels();
+  panelRows: () => readonly { id: number; on: boolean }[] | undefined = () => undefined;
   readonly gatedOff = new Set<CabLamp>();
   private readonly gateSeenLit = new Set<number>();
   onGateSeen: ((lamps: number[]) => void) | null = null;
@@ -80,13 +81,9 @@ export class Glass {
   private rec: ArcadeRec | null = null;
   private recRead = false;
   private shape: FrameLayout | null = null;
-  private rig: MountRig | null = null;
-  private rigModel = '';
-  mountLamps: (number | null)[] = [];
-  mountable: number[] = [];
+  private coinEntry = false;
   readonly replaced = new Set<CabLamp>();
-  mustCarry: () => number[] = () => [];
-  private blanks: (MountArt & { patch: HTMLCanvasElement | null })[] = [];
+  private blanks: { left: number; top: number; width: number; height: number; fill: string; patch: HTMLCanvasElement | null }[] = [];
   private blanking = true;
 
   private whole = false;
@@ -131,7 +128,6 @@ export class Glass {
     this.column = c;
     this.aspect = c.width / c.height;
     this.painter?.invalidate();
-    this.assignMounts();
     this.readTrim();
   }
 
@@ -151,53 +147,26 @@ export class Glass {
     this.derivedTrim = trimFromArt(t.img, boxes, band);
   }
 
-  get mountModel(): string { return this.rig ? this.rigModel : ''; }
-  get mountCount(): number { return this.rig?.count ?? 0; }
-
-  attachRig(rig: MountRig | null, modelId: string): void {
-    this.rig = rig;
-    this.rigModel = modelId;
-    this.assignMounts();
+  attachCoin(coin: CoinEntry | null): void {
+    this.coinEntry = !!coin?.nodes.length;
+    this.assignCoin();
   }
 
-  assignMounts(): void {
+  assignCoin(): void {
     this.replaced.clear();
     this.blanks = [];
-    this.mountLamps = [];
-    this.mountable = [];
-    const rig = this.rig;
     const cab = this.cab;
-    const det = this.detected;
-    if (!rig || !cab || !det || !this.game) {
-      rig?.assign([]);
-      return;
-    }
-    const f = resolveFit(this.machine.setup, det, true);
-    const regions = f.deck ? [f.deck] : f.buttons ? [f.buttons] : [];
-    this.mountable = pressButtons(cab.lamps, regions, viewFor(this.game.system).nonSwitchInputs);
-    const keepInputs = new Set(this.mustCarry().map((i) => cab.lamps[i]?.button));
-    const keep = this.mountable.filter((i) => keepInputs.has(cab.lamps[i].button));
-    this.mountLamps = mapMounts(this.mountable, rig.count, this.rigModel, this.machine.setup.mounts, keep,
-      bottomRow(cab.lamps, this.mountable));
-    for (const i of this.mountLamps) if (i !== null) this.replaced.add(cab.lamps[i]);
-    if (rig.coin.length) {
-      for (const lp of cab.lamps) if (isCoinSlot(lp)) this.replaced.add(lp);
-    }
-    const blocks = [...this.replaced].map((lp) => {
+    if (!this.coinEntry || !cab || !this.detected || !this.game) return;
+    for (const lp of cab.lamps) if (isCoinSlot(lp)) this.replaced.add(lp);
+    const blocks = [...this.replaced].filter((lp) => !lp.hidden).map((lp) => {
       const x = extentOf(lp);
       const pad = Math.max(BLANK_PAD, Math.round(BLANK_SHARE * Math.min(x.width, x.height)));
       return { left: x.left - pad, top: x.top - pad, width: x.width + 2 * pad, height: x.height + 2 * pad };
     });
-    const mountExtents = this.mountLamps.map((i) => (i === null ? null : extentOf(cab.lamps[i])));
-    const read = artReader(cab, [...blocks, ...mountExtents.filter((e): e is NonNullable<typeof e> => !!e)]);
-    const art: (MountArt | null)[] = mountExtents.map((x) => (x ? { ...x, fill: surround(read, x) } : null));
+    const read = artReader(cab, blocks);
     for (const e of blocks) this.blanks.push({ ...e, fill: surround(read, e), patch: patchOf(read, e) });
-    rig.assign(art);
     this.painter?.invalidate();
-    if (this.replaced.size) {
-      console.info(`[arcade] ${this.machine.name}: ${this.mountLamps.filter((i) => i !== null).length} of the layout's ${this.mountable.length} buttons on the lower glass go on the cabinet's ${rig.count} buttons`
-        + `${rig.coin.length ? '; its coin entry takes the coin' : ''}`);
-    }
+    if (this.replaced.size) console.info(`[arcade] ${this.machine.name}: the cabinet's coin entry takes the coin`);
   }
 
   shellFit(): ShellFit {
@@ -212,6 +181,7 @@ export class Glass {
       buttons: quadFrac(withDeck.buttons!, crop),
       deck: withDeck.deck ? quadFrac(withDeck.deck, crop) : null,
       glassOnly: quadFrac(resolveFit(set, det, false).glass, crop),
+      noLower: !!set.noLower,
     };
   }
 
@@ -326,12 +296,13 @@ export class Glass {
       this.paintCanvas = pc;
       this.painter = createCabinetPainter(pc, {
         inputHeld: (input) => this.heldInputs.has(input),
+        checkboxTicked: (cb) => this.switchLevels.ticked(cb, this.panelRows()),
         lampGate: (m, lp) => this.updateGate(m, lp),
         reelPeek: () => this.peek.value(),
       });
       this.painter.loadDisplay(cab, virtualDisplayReversed(game.system));
-      void ensureLegendFonts(cab.lamps.map((l) => l.legend?.face)).then(() => this.painter?.invalidate());
-      this.assignMounts();
+      void ensureLegendFonts([...cab.lamps, ...(cab.checkboxes ?? [])].map((l) => l.legend?.face)).then(() => this.painter?.invalidate());
+      this.assignCoin();
       lap('painter');
       const art = this.whole && this.showArt(TEX_WHOLE);
       if (this.machine.traceUrl) {
@@ -457,13 +428,6 @@ export class Glass {
     this.painter.advance(m, this.cab);
     const painted = this.painter.paint(m, this.cab);
     const t1 = performance.now();
-    if (this.rig && this.mountLamps.length) {
-      const lamps = this.cab.lamps;
-      const at = (i: number): CabLamp | null => { const n = this.mountLamps[i]; return n === null || n === undefined ? null : lamps[n]; };
-      this.rig.update(this.paintCanvas, this.cab.content,
-        (i) => { const lp = at(i); return lp ? capKey(m, lp, lp.button !== undefined && this.heldInputs.has(lp.button)) : ''; },
-        (i) => { const lp = at(i); return !!lp && lp.button !== undefined && this.heldInputs.has(lp.button); });
-    }
     if (this.overlaid && this.mode === 'live' && !this.whole) {
       if (!painted) return false;
       this.paints++;
@@ -519,6 +483,7 @@ export class Glass {
 
   resetGates(seen: readonly number[] = []): void {
     this.heldInputs.clear();
+    this.switchLevels.clear();
     this.gatedOff.clear();
     this.gateSeenLit.clear();
     for (const n of seen) this.gateSeenLit.add(n);
@@ -618,17 +583,6 @@ function patchOf(read: ArtRead, e: { left: number; top: number; width: number; h
   }
   g.putImageData(img, 0, 0);
   return cv;
-}
-
-function capKey(m: FrameView, lp: CabLamp, held: boolean): string {
-  let k = held ? 'h' : '';
-  for (const st of lp.states) k += `${cabLampLevel(m, lp, st.n)},`;
-  if (lp.offState) k += lp.offState.nums.some((n) => cabLampLit(m, lp, n)) ? 'o' : '-';
-  if (lp.rgb) k += `r${rgbLampFace(m, lp)}`;
-  if (lp.offDim) k += lp.offDim.nums.some((n) => cabLampLit(m, lp, n)) ? 'd' : '-';
-  if (lp.legend && lp.legend.lamp >= 0) k += m.layoutLamp(lp.legend.lamp) ? 'l' : '-';
-  if (lp.litFill) k += m.layoutLamp(lp.litFill.n) ? 'f' : '-';
-  return k;
 }
 
 function artPixels(cab: Cabinet, l: number, t: number, w: number, h: number): Uint8ClampedArray | null {

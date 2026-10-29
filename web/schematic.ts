@@ -307,6 +307,7 @@ class DiagramStage {
   private readonly pan: HTMLDivElement;
   private readonly sheet: HTMLElement;
   private readonly readout: HTMLButtonElement;
+  readonly zoom: HTMLDivElement;
   private scale = 1;
   private fitScale = 1;
   private tx = 0;
@@ -332,9 +333,11 @@ class DiagramStage {
     this.el.append(this.pan);
 
     const zoom = div('schem-zoom');
+    this.zoom = zoom;
     const step = (label: string, aria: string, fn: () => void): HTMLButtonElement => {
       const b = document.createElement('button');
       b.type = 'button';
+      b.className = 'nb-icon-btn';
       b.textContent = label;
       b.setAttribute('aria-label', aria);
       b.addEventListener('click', fn);
@@ -348,7 +351,6 @@ class DiagramStage {
       this.readout,
       step('+', str('schematic.zoom_in'), () => this.nudge(1.3)),
     );
-    this.el.append(zoom);
 
     this.el.addEventListener('wheel', (ev) => this.onWheel(ev), { passive: false });
     this.el.addEventListener('pointerdown', (ev) => this.onDown(ev));
@@ -534,6 +536,7 @@ export class SchematicPanel {
     private readonly poll: () => Promise<Record<string, number> | null>,
     private readonly stats: () => PanelStats,
   ) {
+    panel.classList.add('nb-sheet');
     backdrop.addEventListener('click', () => this.close());
   }
 
@@ -575,6 +578,8 @@ export class SchematicPanel {
     for (const [k, pane] of this.panes) pane.hidden = k !== id;
     for (const [k, btn] of this.rail) {
       btn.setAttribute('aria-selected', String(k === id));
+      if (k === id) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
       btn.tabIndex = k === id ? 0 : -1;
     }
     const tab = this.tabs.find((t) => t.id === id);
@@ -642,12 +647,23 @@ export class SchematicPanel {
     h.textContent = str('schematic.system');
     const set = document.createElement('span');
     set.className = 'schem-set';
-    set.textContent = schematic ? `${schematic.title} · ${setName}` : setName;
+    if (schematic) {
+      const chip = document.createElement('span');
+      chip.className = 'nb-chip';
+      chip.textContent = schematic.title;
+      set.append(chip);
+    }
+    const game = document.createElement('span');
+    game.className = 'nb-meta';
+    game.textContent = setName;
+    set.append(game);
     const close = document.createElement('button');
     close.type = 'button';
-    close.className = 'schem-close';
+    close.className = 'schem-close nb-icon-btn';
     close.setAttribute('aria-label', str('schematic.close'));
-    close.textContent = '×';
+    const cross = el('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    cross.append(el('path', { d: 'M6 6l12 12M18 6 6 18' }));
+    close.append(cross);
     close.addEventListener('click', () => this.close());
     bar.append(h, set);
     if (this.menu) bar.append(this.menu.button);
@@ -657,16 +673,26 @@ export class SchematicPanel {
     this.stage?.dispose();
     this.stage = null;
     this.view = null;
+    const paneHead = div('pane-head');
+    const paneTitle = div('pane-title');
+    const h3 = document.createElement('h3');
+    h3.textContent = str('schematic.diagram');
+    paneTitle.append(h3);
+    paneHead.append(paneTitle);
+    body.append(paneHead);
     if (schematic) {
       this.view = new SchematicView(schematic);
       this.stage = new DiagramStage(this.view.el, schematic.width, schematic.height);
+      const tools = div('pane-tools');
+      tools.append(this.stage.zoom);
+      paneHead.append(tools);
       body.append(this.stage.el);
     } else {
       body.append(noDiagram(this.tabs.length > 0));
     }
 
     const title = div('schem-title');
-    const id = div('schem-id');
+    const id = div('schem-id nb-meta');
     const board = schematic
       ? schematic.source.replace(/\s*[-·]\s*simplified board diagram$/i, '')
       : str('schematic.not_drawn_yet');
@@ -681,16 +707,18 @@ export class SchematicPanel {
     title.append(id);
     this.statEls = {};
     for (const [key, label] of STAT_ROWS) {
-      const cell = div('schem-stat');
+      const cell = div('schem-stat nb-stat');
       const value = document.createElement('b');
+      value.className = 'nb-stat__value';
       const name = document.createElement('span');
+      name.className = 'nb-stat__label';
       name.textContent = label;
-      cell.append(value, name);
+      cell.append(name, value);
       title.append(cell);
       this.statEls[key] = value;
     }
 
-    const foot = div('schem-foot');
+    const foot = div('schem-foot nb-meta');
     const cite = div('schem-cite');
     cite.textContent = schematic
       ? str('schematic.simplified_not_a_wiring_reference', { 0: this.stats().buildId })
@@ -712,8 +740,7 @@ export class SchematicPanel {
     }
     foot.append(cite);
     if (schematic) foot.append(legend);
-    title.append(foot);
-    body.append(title);
+    body.append(title, foot);
 
     this.panes.clear();
     this.rail.clear();

@@ -1,13 +1,16 @@
 import { discLampSlotCount, type DiscLamps } from './discreel';
 import {
-  bmpToImageData, cssArgb, newImageData,
+  bevelImage, bmpToImageData, cssArgb, newImageData,
   type BandStrip, type BonusReel, type FlipStrip, type Cabinet, type CabBitmap, type CabLamp, type DotMatrix, type PrismLamp,
   type ReelBand, type ReelBorder, type Rect,
-  type RgbLed,
+  type RgbLed, type LightSource, type SegDisplay,
   SEG_METRICS,
 } from './dat';
-import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, AstraLedPanel, BfmColourLedPanel, IgtVfdPanel, BfmLedPanel, DotLcdPanel, VideoScreen } from './dat';
+import { lightSourceFace } from './lightsource';
+import { CAPTION_DX } from './checkbox';
+import type { ProconnMatrix, EpochDotAlphaPanel, MaygayMatrixPanel, EpochMatrixPanel, PlasmaPanel, AstraLedPanel, BfmColourLedPanel, IgtVfdPanel, BfmLedPanel, DotLcdPanel, CoinmasterVideoPanel, VideoScreen, CabCheckbox } from './dat';
 import { applyOpaqueBand, reelLightFloor } from './reellight';
+import { boardFilledTray } from '../src/layout/boardreellamps';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
 import { drawnAngle } from '../src/layout/compangle';
@@ -171,8 +174,8 @@ export function sidewaysCrop(
 }
 
 const listIndex = new WeakMap<ParsedComponent, number>();
-function indexComps(comps: readonly ParsedComponent[]): void {
-  comps.forEach((c, i) => listIndex.set(c, i));
+function indexComps(comps: readonly ParsedComponent[], keep = false): void {
+  comps.forEach((c, i) => { if (!keep || !listIndex.has(c)) listIndex.set(c, i); });
 }
 function zOf(c: ParsedComponent, slot: 0 | 1 | 2 = 0): number {
   return zAt(listIndex.get(c)!, slot);
@@ -216,9 +219,95 @@ function bandReelBorder(
   };
 }
 
+export function digitBlock(c: ParsedComponent): SegDisplay[] {
+  if ((val(c, 'Segment14') ?? 0) !== 0) return [];
+  const signed32 = (v: number): number => v | 0;
+  const cols = Math.max(0, Math.min(48, val(c, 'Columns') ?? 1));
+  const rows = Math.max(0, Math.min(48, val(c, 'Rows') ?? 1));
+  const dw = val(c, 'DigitWidth') ?? 0x18;
+  const dh = val(c, 'DigitHeight') ?? 0x20;
+  const cs = signed32(val(c, 'ColumnSpacing') ?? 0);
+  const rs = signed32(val(c, 'RowSpacing') ?? 0);
+  const w = dw * cols + (cols - 1) * cs;
+  const h = dh * rows + (rows - 1) * rs;
+  const side = Math.trunc((Math.hypot(w / 2, h / 2) + 0.5) * 2);
+  if (!(w > 0) || !(h > 0) || !(side > 0)) return [];
+  const half = (n: number): number => Math.trunc(n / 2);
+  const gx = c.x + half(side) - half(w);
+  const gy = c.y + half(side) - half(h);
+  const raw = (name: string): Uint8Array | undefined => {
+    const r = c.raws?.get(name);
+    return r ? c.value.subarray(r.off, r.off + r.len) : undefined;
+  };
+  const flag = (bytes: Uint8Array | undefined, d: number, dflt: number): boolean =>
+    (bytes ? bytes[d] ?? dflt : dflt) !== 0;
+  const shown = raw('ShownDigits');
+  const programmable = raw('ProgrammableDigits');
+  const dpOnD = raw('DPOnDigits');
+  const autoD = raw('AutoDPDigits');
+  const zeroD = raw('ZeroOnDigits');
+  const dpOffD = raw('DPOffDigits');
+  const lampTable = raw('SegmentLamps');
+  const lampAt = (k: number): number => {
+    if (!lampTable || k * 4 + 4 > lampTable.length) return -1;
+    return new DataView(lampTable.buffer, lampTable.byteOffset + k * 4, 4).getInt32(0, true);
+  };
+  const wired = (c.subs ?? []).filter((n) => n !== -2);
+  const block = { left: c.x, top: c.y, width: side, height: side };
+  const metrics = {
+    thickness: val(c, 'Thickness') ?? 3,
+    space: val(c, 'Spacing') ?? 1,
+    hSpace: ((100 - signed32(val(c, 'HorizontalSizePercent') ?? 0x40)) * dw) / 100,
+    vSpace: ((100 - signed32(val(c, 'VerticalSizePercent') ?? 0x4e)) * dh) / 100,
+    chop: val(c, 'Chop') ?? 0x4b,
+    centre: val(c, 'Centre') ?? 0x32,
+    slant: signed32(val(c, 'Slant') ?? 6),
+    offset: signed32(val(c, 'Offset') ?? 0) / 10,
+    digitAngle: signed32(val(c, 'DigitAngle') ?? 0) / 10,
+    style: val(c, 'SelectedTypeId') ?? 0,
+    seg16: false,
+    alpha: false,
+  };
+  const out: SegDisplay[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let col = 0; col < cols; col++) {
+      const d = r * cols + col;
+      if (d >= 48 || !flag(shown, d, 1)) continue;
+      let seg: number[] = [];
+      let digit: number | undefined;
+      if (flag(programmable, d, 0)) {
+        for (let i = 0; i < 8; i++) {
+          const n = lampAt(d * 8 + i);
+          seg.push(n >= 0 && n < 0x270 ? n : -2);
+        }
+      } else {
+        const n = wired[d] ?? -1;
+        if (n >= 0 && n < 0x40) digit = n;
+      }
+      const dpOff = flag(dpOffD, d, 0);
+      out.push({
+        left: gx + col * (dw + cs), top: gy + r * (dh + rs), width: dw, height: dh, ...turn(c),
+        seg,
+        ...(digit !== undefined ? { digit } : {}),
+        on: val(c, 'OnColour') ?? 0xffff0000,
+        off: val(c, 'OffColour') ?? 0xff303030,
+        bg: val(c, 'BackColour') ?? 0xff000000,
+        dpRight: (val(c, 'DPRight') ?? 1) !== 0,
+        dpOn: flag(dpOnD, d, 0) && !dpOff,
+        ...(flag(autoD, d, 0) ? { autoDp: true } : {}),
+        ...(dpOff ? { dpOff: true } : {}),
+        ...(flag(zeroD, d, 0) ? { zeroOn: true } : {}),
+        metrics,
+        block,
+      });
+    }
+  }
+  return out;
+}
+
 const enum Type {
   Background = 0x01, Reel = 0x03, Lamp = 0x04, Button = 0x05,
-  Alpha = 0x07, SevenSeg = 0x0e, BFMAlpha = 0x0c, DotMatrix = 0x0d, DotAlpha = 0x13, AlphaNew = 0x19,
+  Alpha = 0x07, SevenSeg = 0x0e, SevenSegBlock = 0x1c, BFMAlpha = 0x0c, DotMatrix = 0x0d, DotAlpha = 0x13, AlphaNew = 0x19,
   AlphaStrip = 0x1a, Led = 0x12, Anim = 0x08,
   AceMatrix = 0x10,
   ProconnMatrix = 0x11,
@@ -231,14 +320,19 @@ const enum Type {
   EpochMatrix = 0x22,
   BfmLed = 0x15,
   DotLcd = 0x25,
+  CoinmasterVideo = 0x2f,
+  LightSource = 0x2b,
   Disc = 0x06,
   RgbLed = 0x26,
   BFMVideo = 0x1f,
   BarcrestVideo = 0x0f,
   AceVideo = 0x21,
+  MaygayVideo = 0x28,
 }
 
 const TypeBitmap = 0x0b;
+const TypeBorder = 0x1b;
+const TypeFrame = 0x09;
 
 const u32 = (d: Uint8Array, o: number): number =>
   (d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24)) >>> 0;
@@ -272,7 +366,7 @@ function inputGates(
   return out;
 }
 
-interface ShapeParams { round?: number; vectors?: number }
+export interface ShapeParams { round?: number; vectors?: number }
 
 const shapeParams = (c: ParsedComponent): ShapeParams => ({
   round: val(c, 'Roundness'), vectors: val(c, 'ShapeParameter'),
@@ -321,9 +415,9 @@ function insideShape(
   }
 }
 
-function ledFace(
+export function ledFace(
   w: number, h: number, colour: number,
-  st: { round: boolean; noOutline: boolean; noShadow: boolean },
+  st: { round: boolean; noOutline: boolean; noShadow: boolean; bezel?: boolean },
 ): ImageData {
   const img = newImageData(w, h);
   const d = img.data;
@@ -337,21 +431,33 @@ function ledFace(
   const BLACK = 0xff000000, GREY = 0xff808080, WHITE = 0xffffffff, SILVER = 0xffc0c0c0;
   if (st.round) {
     fillShape(img, 0, 0, w, h, colour, 5, st.noOutline ? undefined : BLACK);
+    const arcAt = (inset: number, pen: number, x3: number, y3: number, x4: number, y4: number, argb: number): void => {
+      const cx = w / 2, cy = h / 2, rx = (w - 2 * inset) / 2, ry = (h - 2 * inset) / 2;
+      if (rx <= 0 || ry <= 0) return;
+      const ang = (x: number, y: number): number => Math.atan2(-(y - cy), x - cx);
+      let a0 = ang(x3, y3), a1 = ang(x4, y4);
+      if (a1 <= a0) a1 += 2 * Math.PI;
+      const steps = Math.max(16, Math.ceil((a1 - a0) * Math.max(rx, ry) * 2));
+      for (let i = 0; i <= steps; i++) {
+        const a = a0 + ((a1 - a0) * i) / steps;
+        const px = cx + Math.cos(a) * rx - 0.5, py = cy - Math.sin(a) * ry - 0.5;
+        for (let k = 0; k < pen; k++) put(px - Math.cos(a) * k, py + Math.sin(a) * k, argb);
+      }
+    };
+    if (st.bezel) {
+      const hw = Math.trunc(w / 2), hh = Math.trunc(h / 2);
+      if (w > 2 * u && h > 2 * u) fillShape(img, u, u, w - 2 * u, h - 2 * u, colour, 5, SILVER);
+      arcAt(u, u, u, h - u, w - u, u, GREY);
+      if (w > 4 * u && h > 4 * u) fillShape(img, 2 * u, 2 * u, w - 4 * u, h - 4 * u, colour, 5, BLACK);
+      arcAt(u, u, hw + 3 * u, u, hw - 3 * u, u, BLACK);
+      arcAt(u, u, hw - 3 * u, h - u, hw + 3 * u, h - u, BLACK);
+      arcAt(u, u, u, hh - 3 * u, u, hh + 3 * u, BLACK);
+      arcAt(u, u, w - u, hh + 3 * u, w - u, hh - 3 * u, BLACK);
+    }
     if (!st.noShadow) {
       const pen = Math.max(1, u >> 1);
-      const arc = (x3: number, y3: number, x4: number, y4: number, argb: number): void => {
-        const cx = w / 2, cy = h / 2, rx = (w - 8 * u) / 2, ry = (h - 8 * u) / 2;
-        if (rx <= 0 || ry <= 0) return;
-        const ang = (x: number, y: number): number => Math.atan2(-(y - cy), x - cx);
-        let a0 = ang(x3, y3), a1 = ang(x4, y4);
-        if (a1 <= a0) a1 += 2 * Math.PI;
-        const steps = Math.max(16, Math.ceil((a1 - a0) * Math.max(rx, ry) * 2));
-        for (let i = 0; i <= steps; i++) {
-          const a = a0 + ((a1 - a0) * i) / steps;
-          const px = cx + Math.cos(a) * rx - 0.5, py = cy - Math.sin(a) * ry - 0.5;
-          for (let k = 0; k < pen; k++) put(px - Math.cos(a) * k, py + Math.sin(a) * k, argb);
-        }
-      };
+      const arc = (x3: number, y3: number, x4: number, y4: number, argb: number): void =>
+        arcAt(4 * u, pen, x3, y3, x4, y4, argb);
       arc(w - 4 * u, h - 2 * u, w - 4 * u, h - 9 * u, GREY);
       arc(8 * u, 0, 7 * u, 9 * u, WHITE);
       arc(8 * u, 0, 7 * u, 8 * u, SILVER);
@@ -385,7 +491,7 @@ function ledFace(
   return img;
 }
 
-function fillShape(
+export function fillShape(
   dst: ImageData, x: number, y: number, w: number, h: number, argb: number, shape: number,
   border?: number, angle = 0, params: ShapeParams = {},
 ): void {
@@ -703,9 +809,15 @@ const i32b = (d: Uint8Array, o: number): number => u32(d, o) | 0;
 export function buildBitmaps(
   comps: ParsedComponent[], backdrop: ParsedComponent | null,
 ): CabBitmap<ImageData>[] {
-  indexComps(comps);
+  indexComps(comps, true);
   const out: CabBitmap<ImageData>[] = [];
   for (const c of comps) {
+    if (c.type === TypeBorder && c.width > 0 && c.height > 0) { out.push(border(c)); continue; }
+    if (c.type === TypeFrame && c.width > 0 && c.height > 0) {
+      const f = frame(c);
+      if (f) out.push(f);
+      continue;
+    }
     if (c.type !== TypeBitmap || c === backdrop || c.width <= 0 || c.height <= 0) continue;
     const transparent = (val(c, 'Transparent') ?? 0) !== 0;
     const img = image(c, 'Image', false, transparent);
@@ -714,6 +826,119 @@ export function buildBitmaps(
     out.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       image: img, overlay, stretch: val(c, 'StretchMode') ?? 2,
+    });
+  }
+  return out;
+}
+
+function border(c: ParsedComponent): CabBitmap<ImageData> {
+  return {
+    left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+    image: image(c, 'Border', false, true) ?? borderFrame(c.width, c.height, 0xff000000),
+    overlay: image(c, 'Overlay', false, true), stretch: 0, natural: true,
+  };
+}
+
+function frame(c: ParsedComponent): CabBitmap<ImageData> | null {
+  const img = bevelImage(c.width, c.height, val(c, 'ShapeIndex') ?? 0, (val(c, 'BevelIndex') ?? 0) !== 0, true);
+  const overlay = image(c, 'Overlay', false, true);
+  if (!img && !overlay) return null;
+  return {
+    left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+    image: img, overlay, stretch: 0, natural: true,
+  };
+}
+
+function fontInk(c: ParsedComponent): number {
+  return c.values.get('FontColour') ?? 0xff000000;
+}
+
+const TypeCheckbox = 0x14;
+export function unshownParts(comps: readonly ParsedComponent[]): Set<ParsedComponent> {
+  return new Set(comps.filter((c) => c.shown === false && c.type !== TypeCheckbox));
+}
+
+function hiddenInput(c: ParsedComponent): boolean {
+  return (c.type === Type.Lamp || c.type === Type.Button)
+    && (inputId(c) !== undefined || isAcceptor(c.values));
+}
+
+function hideUnshown(
+  unshown: ReadonlySet<ParsedComponent>, lamps: CabLamp<ImageData>[], legends: CabLamp<ImageData>[],
+): void {
+  if (!unshown.size) return;
+  const at = new Set<number>();
+  for (const c of unshown) {
+    const i = listIndex.get(c);
+    if (i !== undefined) at.add(i);
+  }
+  const fromUnshown = (r: { z?: number }): boolean => r.z !== undefined && at.has(Math.floor(r.z / 4));
+  const isInput = (lp: CabLamp<ImageData>): boolean =>
+    lp.button !== undefined || lp.acceptor !== undefined || lp.coinInput !== undefined;
+  const keep = (list: CabLamp<ImageData>[], inputs: boolean): void => {
+    let n = 0;
+    for (const lp of list) {
+      if (fromUnshown(lp)) {
+        if (!inputs || !isInput(lp)) continue;
+        lp.hidden = true;
+      }
+      list[n++] = lp;
+    }
+    list.length = n;
+  };
+  keep(lamps, true);
+  keep(legends, false);
+}
+
+const V20_FONT_FACE = 'Tahoma';
+
+function shownCheckboxes(comps: readonly ParsedComponent[]): CabCheckbox[] {
+  const out: CabCheckbox[] = [];
+  for (const c of comps) {
+    if (c.type !== TypeCheckbox || !c.shown || c.width <= 0 || c.height <= 0) continue;
+    out.push({
+      left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      id: c.number,
+      checked: !!c.values.get('Checked'),
+      legend: {
+        off: c.texts.get('Label') || undefined,
+        colour: fontInk(c),
+        face: c.texts.get('FontFace') ?? V20_FONT_FACE,
+        points: c.values.get('FontSize'),
+        style: c.values.get('FontStyle'),
+        dx: CAPTION_DX,
+        lamp: -1,
+      },
+    });
+  }
+  return out;
+}
+
+export function borderFrame(w: number, h: number, argb: number): ImageData {
+  const img = newImageData(w, h);
+  const px = [(argb >>> 16) & 0xff, (argb >>> 8) & 0xff, argb & 0xff, argb >>> 24];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (y !== 0 && y !== h - 1 && x !== 0 && x !== w - 1) continue;
+      img.data.set(px, (y * w + x) * 4);
+    }
+  }
+  return img;
+}
+
+export function buildLightSources(comps: ParsedComponent[]): LightSource<ImageData>[] {
+  indexComps(comps, true);
+  const out: LightSource<ImageData>[] = [];
+  for (const c of comps) {
+    if (c.type !== Type.LightSource || c.width <= 0 || c.height <= 0) continue;
+    const pic = image(c, 'Image', false, true);
+    const overlay = image(c, 'Overlay', false, true);
+    if (!pic && !overlay) continue;
+    const sized = pic && (pic.width !== c.width || pic.height !== c.height)
+      ? resampleLinear(pic, c.width, c.height) : pic;
+    out.push({
+      left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      face: lightSourceFace(c.width, c.height, sized, overlay, newImageData),
     });
   }
   return out;
@@ -911,11 +1136,18 @@ function acceptorEffect(c: ParsedComponent): { effect?: number } {
   return effect ? { effect } : {};
 }
 
-export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
-  const comps = parseLayout(payload);
-  if (!comps.length) return null;
-  dropShapeLampPictures(comps);
-  indexComps(comps);
+export function parseFmlLayout(
+  payload: Uint8Array,
+  system?: string,
+): Cabinet<ImageData> | null {
+  const listed = parseLayout(payload);
+  if (!listed.length) return null;
+  dropShapeLampPictures(listed);
+  indexComps(listed);
+  const unshown = unshownParts(listed);
+  const comps = unshown.size
+    ? listed.filter((c) => !unshown.has(c) || hiddenInput(c))
+    : listed;
   const literalOffsetSign = (mfmeMajor(payload) ?? Infinity) < 6;
 
   let background: ImageData | null = null;
@@ -970,7 +1202,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const legendLamp = isLabelComp ? (labelLit ? val(c, 'Lamp')! : -1) : c.number;
     if (!off && !on && fill === undefined) continue;
     if (c.width <= 0 || c.height <= 0) continue;
-    const colour = c.values.get('FontColour') ?? 0xff000000;
+    const colour = fontInk(c);
     legends.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
       z: zOf(c, 2),
@@ -1005,7 +1237,12 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     const band = reelBand(c, horizontal);
     if (!band) continue;
     const reelHeight = c.values.get('ReelHeight') || c.height;
-    const lampNums = [1, 2, 3].map((i) => c.subs?.[i] ?? -2);
+    const tray = boardFilledTray(
+      c.subs ?? [], c.number, system,
+      !!(c.values.get('LampsEnabled') ?? c.defaults.get('LampsEnabled')),
+      !!(c.values.get('CustomEnabled') ?? c.defaults.get('CustomEnabled')),
+    );
+    const lampNums = [1, 2, 3].map((i) => tray[i] ?? -2);
     const masksRaw = [image(c, 'LampMasks1'), image(c, 'LampMasks2'), image(c, 'LampMasks3')];
     const mask = usefulMask(masksRaw[0]);
     const lightFloor = reelLightFloor(
@@ -1014,17 +1251,17 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       masksRaw,
     );
     const opaqueBand = !!c.values.get('OpaqueBand');
-    const lightAlpha = opaqueBand ? applyOpaqueBand(band.canvas, lightFloor) : undefined;
+    const opaqueKey = opaqueBand ? applyOpaqueBand(band.canvas, lightFloor) : undefined;
     reels.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c), canvas: band.canvas,
       stops: band.stops, rheight: reelHeight, reversed: !!c.values.get('Reversed'),
       horizontal,
       stripHorizontal: band.stripHorizontal,
       darkness: 0, lampNums, machineIndex: reelIndex.get(c.number) ?? 0, number: c.number,
-      lampTray: Array.from({ length: 15 }, (_, i) => c.subs?.[i] ?? -2),
+      lampTray: Array.from({ length: 15 }, (_, i) => tray[i] ?? -2),
       lampsEnabled: !!(c.values.get('LampsEnabled') ?? c.defaults.get('LampsEnabled')),
       lightFloor,
-      ...(lightAlpha !== undefined ? { lightAlpha } : {}),
+      ...(opaqueKey ? { opaqueKey } : {}),
       mask2: usefulMask(masksRaw[1]),
       mask3: usefulMask(masksRaw[2]),
       bandOffset: val(c, 'BandOffset') ?? 0,
@@ -1466,7 +1703,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
   }
 
   const signed32 = (v: number): number => v | 0;
-  const segDisplays = comps
+  const segDisplays: SegDisplay[] = comps
     .filter((c) => c.type === Type.SevenSeg && c.width > 0 && c.height > 0)
     .map((c) => {
       const seg = (c.subs ?? []).slice(0, 8);
@@ -1497,6 +1734,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
         },
       };
     });
+  for (const c of comps) if (c.type === Type.SevenSegBlock) segDisplays.push(...digitBlock(c));
 
   const matrix = comps.find((c) => c.type === Type.AceMatrix && c.width > 0 && c.height > 0);
   let dotMatrix: DotMatrix | null = null;
@@ -1624,6 +1862,16 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
       bg: val(c, 'BackgroundColour') ?? 0xff95ca56,
     }));
 
+  const checkboxes = shownCheckboxes(comps);
+
+  const coinmasterVideos: CoinmasterVideoPanel[] = comps
+    .filter((c) => c.type === Type.CoinmasterVideo && c.width > 0 && c.height > 0)
+    .map((c) => ({
+      left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
+      vertical: !!val(c, 'Vertical'),
+      quality: val(c, 'Quality') ?? 0,
+    }));
+
   const emx = comps.find((c) => c.type === Type.EpochMatrix && c.width > 0 && c.height > 0);
   const epochMatrix: EpochMatrixPanel | null = emx
     ? {
@@ -1639,9 +1887,15 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
 
   const bfmv = comps.find((c) => c.type === Type.BFMVideo && c.number === 0 && c.width > 0 && c.height > 0)
     ?? comps.find((c) => c.type === Type.BarcrestVideo && c.width > 0 && c.height > 0)
-    ?? comps.find((c) => c.type === Type.AceVideo && c.width > 0 && c.height > 0);
+    ?? comps.find((c) => c.type === Type.AceVideo && c.width > 0 && c.height > 0)
+    ?? comps.find((c) => c.type === Type.MaygayVideo && c.width > 0 && c.height > 0);
   const videoScreen: VideoScreen | null = bfmv
-    ? { left: bfmv.x, top: bfmv.y, width: bfmv.width, height: bfmv.height, ...turn(bfmv), chip: 0 }
+    ? {
+        left: bfmv.x, top: bfmv.y, width: bfmv.width, height: bfmv.height, ...turn(bfmv), chip: 0,
+        ...(bfmv.type === Type.MaygayVideo
+          ? { stretch: val(bfmv, 'Quality') ?? 0, vertical: (val(bfmv, 'Vertical') ?? 0) !== 0 }
+          : {}),
+      }
     : null;
 
   const dmd = comps.find((c) => c.type === Type.DotMatrix && c.width > 0 && c.height > 0);
@@ -1803,11 +2057,14 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     });
   }
 
+  const lightSources = buildLightSources(comps);
+
+  hideUnshown(unshown, lamps, legends);
   const content: Rect = { left: 0, top: 0, width, height };
   const asPart = (r: Rect, reel = false) => ({ x: r.left, y: r.top, width: r.width, height: r.height, reel });
   const column = sidewaysCrop(width, height, [
     ...reels.map((r) => asPart(r, true)),
-    ...[...lamps, ...legends, ...segDisplays, ...rgbLeds, ...prismLamps,
+    ...[...lamps.filter((lp) => !lp.hidden), ...legends, ...segDisplays, ...rgbLeds, ...prismLamps,
     ...(vfd ? [vfd] : []), ...(dotMatrix ? [dotMatrix] : []),
     ...(proconnMatrix ? [proconnMatrix] : []),
     ...(epochDotAlpha ? [epochDotAlpha] : []),
@@ -1819,6 +2076,7 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     ...(igtVfd ? [igtVfd] : []),
     ...bfmLeds,
     ...dotLcds,
+    ...coinmasterVideos,
     ...(videoScreen ? [videoScreen] : []),
     ].map((r) => asPart(r)),
   ], measured, backgroundOffset.x);
@@ -1843,11 +2101,14 @@ export function parseFmlLayout(payload: Uint8Array): Cabinet<ImageData> | null {
     igtVfd,
     bfmLeds,
     ...(dotLcds.length ? { dotLcds } : {}),
+    ...(coinmasterVideos.length ? { coinmasterVideos } : {}),
+    ...(lightSources.length ? { lightSources } : {}),
+    ...(checkboxes.length ? { checkboxes } : {}),
     videoScreen,
     rgbLeds,
     prismLamps,
     bitmaps,
-    decode: { clean: comps.filter((c) => c.clean).length, total: comps.length },
+    decode: { clean: listed.filter((c) => c.clean).length, total: listed.length },
   };
 }
 

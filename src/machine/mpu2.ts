@@ -153,6 +153,7 @@ export class Mpu2 implements Bus, Machine {
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
 
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
 
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
 

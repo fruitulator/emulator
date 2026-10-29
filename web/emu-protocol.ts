@@ -43,6 +43,7 @@ export interface MachineInfo {
   coinPort?: { compare: number; lines: { bit: number; mask: number }[] };
   unnamedCoins?: number[];
   uncountedCoins?: number[];
+  unpricedPayouts?: number[];
   namesCoins?: boolean;
   coinTable?: CoinLineTable;
   coinTableRefusal?: string;

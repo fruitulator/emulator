@@ -6,9 +6,9 @@ import type { DiagEntry } from '../diaglog';
 import type { Game } from '../../src/machine/registry';
 import { card, menuRow } from '../ui/rows';
 import { MENU_ICONS } from '../ui/icons';
-import { cabinetSoundsRow, coinsPanel, fillScreenRow, reelBandsRow, reelBounceRow, reelPeekRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
+import { cabinetSoundsRow, coinsPanel, cropRow, fillScreenRow, reelBandsRow, reelBounceRow, reelPeekRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
 import { downloadRow, uploadRow, type PanelDownload, type PanelUpload } from '../panelmenu';
-import { saveDiagLog, saveSnapshot } from '../downloads';
+import { buildStamp, saveDiagLog, saveSnapshot } from '../downloads';
 import { UNBUILT_NOTE_TEXT, stopNoteParts } from '../stopnote';
 import { statusRow } from '../ui/status';
 import { str } from '../i18n';
@@ -25,11 +25,13 @@ export interface ActionSurface {
   coin(c: CoinChoice): void;
   coinList?(): OwnCoins | null;
   readonly coinNaming?: CoinNaming;
+  coinMoney?(): HTMLElement | null;
   throwSwitch(sw: PanelSwitch, on: boolean): void;
   namedSwitch(id: number, level: boolean): void;
   readonly effects: CabinetEffects;
   redraw(): void;
   refit?(): void;
+  recrop?(): void;
   fontRows?(options: HTMLElement): Node[];
   optionRows?(m: MenuMachine): Node[];
   fillKeys(root: HTMLElement): void;
@@ -111,7 +113,7 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
   for (const id of ids) {
     switch (id) {
       case 'coins':
-        nav('coins', coinsPanel(m.info, m.view, m.system, (c) => s.coin(c), s.coinList ? () => s.coinList!() : undefined, s.coinNaming));
+        nav('coins', coinsPanel(m.info, m.view, m.system, (c) => s.coin(c), s.coinList ? () => s.coinList!() : undefined, s.coinNaming, s.coinMoney?.() ?? null));
         break;
       case 'switches':
         for (const p of switchPanels(m.info, m.view, (sw, on) => s.throwSwitch(sw, on),
@@ -120,23 +122,31 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
         }
         break;
       case 'options': {
+        const panel = document.createElement('div');
+        panel.className = 'menu-stack menu-options';
+        const keys = card();
         const opts = card();
-        for (const r of s.optionRows?.(m) ?? []) opts.append(r);
+        for (const r of s.optionRows?.(m) ?? []) {
+          ((r as Partial<Element>).classList?.contains('menu-key') ? keys : opts).append(r);
+        }
+        if (keys.childElementCount) panel.append(keys);
+        panel.append(opts);
         opts.append(cabinetSoundsRow(s.effects));
         opts.append(reelBounceRow(() => s.redraw()));
         opts.append(reelPeekRow());
         if (s.refit) {
           const refit = s.refit.bind(s);
           opts.append(reelBandsRow(refit));
+          if (s.recrop) opts.append(cropRow(s.recrop.bind(s)));
           opts.append(fillScreenRow(refit));
         }
-        for (const r of s.fontRows?.(opts) ?? []) opts.append(r);
-        nav('options', opts);
+        for (const r of s.fontRows?.(panel) ?? []) opts.append(r);
+        nav('options', panel);
         break;
       }
       case 'keyboard': {
         const keys = document.createElement('div');
-        keys.className = 'menu-stack';
+        keys.className = 'menu-stack menu-keys';
         s.fillKeys(keys);
         nav('keyboard', keys);
         break;
@@ -208,6 +218,7 @@ export function appendItems(
         content.append(navCard);
       }
       const b = navRow(it.label, it.icon, it.panel);
+      b.dataset.action = it.id;
       if (it.disabled) disable(b);
       navCard.append(b);
       continue;
@@ -215,6 +226,7 @@ export function appendItems(
     navCard = null;
     const c = card();
     const r = menuRow(it.label, it.icon, it.run, false);
+    r.dataset.action = it.id;
     if (it.sub) {
       const sub = document.createElement('span');
       sub.className = 'row-sub';
@@ -225,4 +237,16 @@ export function appendItems(
     c.append(r);
     content.append(c);
   }
+}
+
+export function appendMenuFoot(content: HTMLElement): void {
+  const foot = document.createElement('div');
+  foot.className = 'menu-foot';
+  const out = content.lastElementChild;
+  if (out) foot.append(out);
+  const stamp = document.createElement('p');
+  stamp.className = 'menu-build nb-build';
+  stamp.textContent = buildStamp();
+  foot.append(stamp);
+  content.append(foot);
 }

@@ -1,7 +1,7 @@
 #lib-empty,
 #lib-saving,
 .ui-empty {
-  color: var(--muted);
+  color: var(--nb-text-2);
   font-size: 14px;
 }
 #lib-empty,
@@ -23,11 +23,24 @@
 }
 #lib-empty.welcome #lib-empty-msg,
 .ui-empty.welcome .ui-empty-msg {
-  font-family: var(--display);
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text);
+  font: 800 28px/1.1 var(--nb-font-display);
+  color: #fff;
+}
+.ui-empty-icon {
+  display: flex;
+  color: var(--nb-violet-hi);
+}
+.ui-empty-icon svg {
+  width: 56px;
+  height: 56px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#lib-empty:not(.welcome) .ui-empty-icon {
+  display: none;
 }
 #lib-empty-actions,
 .ui-empty-actions {
@@ -39,8 +52,6 @@
 #lib-empty-hint,
 .ui-empty-hint {
   margin: 0;
-  font-size: 13px;
-  color: var(--muted-dim);
 }
 @media (hover: none) {
   #lib-empty-hint {

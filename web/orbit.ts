@@ -1,6 +1,7 @@
 import type { GameMeta } from './store';
 import type { LibraryHandlers } from './library';
 import { str } from './i18n';
+import { createOrbitCaption, type OrbitCaption } from './ui/orbit-caption.js';
 
 export interface OrbitDeps {
   h: LibraryHandlers;
@@ -9,12 +10,26 @@ export interface OrbitDeps {
   activity(g: GameMeta): string;
   fillArtwork(frame: HTMLElement): Promise<void>;
   clearArtwork(frame: HTMLElement): void;
-  chip(label: string, kind?: 'plat' | 'warn'): HTMLElement;
+  chip(label: string, kind?: 'plat' | 'warn' | 'on'): HTMLElement;
 }
 
 const SLOT_MAX = 12;
 
-const VISIBLE_DEG = 112;
+type Pose = { x: number; turn: number; scale: number; opacity: number; w: number; h: number };
+const WIDE: readonly Pose[] = [
+  { x: 0, turn: 0, scale: 1, opacity: 1, w: 330, h: 430 },
+  { x: 270, turn: 34, scale: 0.88, opacity: 0.75, w: 250, h: 340 },
+  { x: 470, turn: 48, scale: 0.72, opacity: 0.35, w: 250, h: 340 },
+  { x: 470, turn: 48, scale: 0.72, opacity: 0, w: 250, h: 340 },
+];
+const NARROW: readonly Pose[] = [
+  { x: 0, turn: 0, scale: 1, opacity: 1, w: 250, h: 330 },
+  { x: 170, turn: 34, scale: 0.75, opacity: 0.75, w: 250, h: 340 },
+  { x: 470, turn: 48, scale: 0.72, opacity: 0, w: 250, h: 340 },
+  { x: 470, turn: 48, scale: 0.72, opacity: 0, w: 250, h: 340 },
+];
+const narrowQuery = typeof matchMedia === 'function' ? matchMedia('(max-width: 720px)') : null;
+const poses = (): readonly Pose[] => (narrowQuery?.matches ? NARROW : WIDE);
 
 let games: GameMeta[] = [];
 let saved = new Set<string>();
@@ -24,7 +39,6 @@ let focusHash: string | null = null;
 
 let pos = 0;
 let slotCount = 0;
-let radius = 0;
 let slots: HTMLElement[] = [];
 let wired = false;
 
@@ -62,40 +76,64 @@ export function renderOrbit(g: GameMeta[], s: Set<string>, d: OrbitDeps): void {
 
   slots = Array.from({ length: slotCount }, () => {
     const el = document.createElement('article');
-    el.className = 'orbit-card';
+    el.className = 'orbit-card nb-orbit__item';
     return el;
   });
   ring.replaceChildren(...slots);
 
-  layout();
-  applyRotation(false);
+  const stage = stageEl();
+  stage.classList.add('placing');
   assign();
-  updateDepth();
+  applyPoses(false);
+  void stage.offsetHeight;
+  stage.classList.remove('placing');
+  fitToHeight();
   updateCaption();
 }
 
-function layout(): void {
-  const ring = ringEl();
-  const w = ring.offsetWidth || 220;
-  const step = 360 / slotCount;
-  radius = Math.max(
-    Math.round((w * 1.16) / (2 * Math.tan(Math.PI / slotCount))),
-    Math.round(w * 0.72),
-  );
-  for (let i = 0; i < slots.length; i++) {
-    slots[i].style.transform = `rotateY(${i * step}deg) translateZ(${radius}px)`;
-  }
+function poseAt(o: number): Pose {
+  const P = poses();
+  const d = Math.min(Math.abs(o), P.length - 1);
+  const i = Math.min(Math.floor(d), P.length - 2);
+  const t = d - i;
+  const mix = (k: keyof Pose): number => P[i][k] + (P[i + 1][k] - P[i][k]) * t;
+  const left = o < 0;
+  return {
+    x: (left ? -1 : 1) * mix('x'), turn: (left ? 1 : -1) * mix('turn'),
+    scale: mix('scale'), opacity: mix('opacity'), w: mix('w'), h: mix('h'),
+  };
 }
 
-function applyRotation(animate: boolean): void {
-  const ring = ringEl();
-  const step = 360 / slotCount;
-  if (!animate) {
-    ring.style.transition = 'none';
-    void ring.offsetHeight;
+function fitToHeight(): void {
+  const wrap = wrapEl();
+  const cap = document.getElementById('orbit-caption');
+  if (!cap || !onScreen(wrap)) return;
+  const base = narrowQuery?.matches ? 380 : 470;
+  const top = stageEl().getBoundingClientRect().top + window.scrollY;
+  const capH = cap.offsetHeight + parseFloat(getComputedStyle(cap).marginTop || '0');
+  const k = Math.max(0.45, Math.min(1, (window.innerHeight - top - capH) / base));
+  wrap.style.setProperty('--fan-scale', k.toFixed(3));
+}
+
+function applyPoses(held: boolean): void {
+  for (const el of slots) {
+    const o = Number(el.dataset.k) - pos;
+    const at = Math.round(o);
+    el.dataset.pos = String(at);
+    if (at === 0) el.setAttribute('aria-current', 'true');
+    else el.removeAttribute('aria-current');
+    if (held) {
+      const p = poseAt(o);
+      el.style.width = `${p.w.toFixed(1)}px`;
+      el.style.height = `${p.h.toFixed(1)}px`;
+      el.style.marginTop = `${(-p.h / 2).toFixed(1)}px`;
+      el.style.marginLeft = `${(-p.w / 2).toFixed(1)}px`;
+      el.style.transform = `translateX(${p.x.toFixed(1)}px) rotateY(${p.turn.toFixed(2)}deg) scale(${p.scale.toFixed(3)})`;
+      el.style.opacity = p.opacity.toFixed(3);
+    } else {
+      for (const k of ['width', 'height', 'marginTop', 'marginLeft', 'transform', 'opacity'] as const) el.style[k] = '';
+    }
   }
-  ring.style.transform = `translateZ(${-radius}px) rotateY(${-pos * step}deg)`;
-  if (!animate) ring.style.transition = '';
 }
 
 function assign(): void {
@@ -105,6 +143,7 @@ function assign(): void {
   for (let o = lo; o < lo + slotCount; o++) {
     const slot = slots[mod(base + o, slotCount)];
     const gi = mod(base + o, n);
+    slot.dataset.k = String(base + o);
     if (slot.dataset.gi === String(gi)) continue;
     slot.dataset.gi = String(gi);
     fillSlot(slot, games[gi]);
@@ -119,25 +158,28 @@ function fillSlot(slot: HTMLElement, g: GameMeta): void {
   slot.dataset.hash = g.hash;
 
   const frame = document.createElement('div');
-  frame.className = 'art';
+  frame.className = 'art nb-cab__glass';
+  frame.dataset.hash = g.hash;
+  frame.dataset.alt = d.displayTitle(g);
   if (g.hasThumb) {
-    frame.dataset.hash = g.hash;
-    frame.dataset.alt = d.displayTitle(g);
     void d.fillArtwork(frame);
   } else {
     const ph = document.createElement('div');
     ph.className = 'art-placeholder';
     frame.append(ph);
-    frame.dataset.hash = g.hash;
-    frame.dataset.alt = d.displayTitle(g);
   }
-  slot.append(frame);
+  const deck = document.createElement('div');
+  deck.className = 'nb-cab__deck';
+  const cab = document.createElement('div');
+  cab.className = 'nb-cab';
+  cab.append(frame, deck);
+  slot.append(cab);
 
   const blocked = d.h.unplayable(g);
   slot.classList.toggle('cannot-run', !!blocked);
   if (blocked) {
     const flag = document.createElement('span');
-    flag.className = 'card-flag';
+    flag.className = 'card-flag nb-chip nb-chip--cherry';
     flag.textContent = '!';
     flag.title = blocked.detail;
     flag.setAttribute('aria-hidden', 'true');
@@ -145,61 +187,68 @@ function fillSlot(slot: HTMLElement, g: GameMeta): void {
   }
 }
 
-function updateDepth(): void {
-  const step = 360 / slotCount;
-  const rot = -pos * step;
-  for (let i = 0; i < slots.length; i++) {
-    let a = mod(i * step + rot, 360);
-    if (a >= 180) a -= 360;
-    const c = Math.cos((a * Math.PI) / 180);
-    const el = slots[i];
-    el.style.opacity = Math.abs(a) < VISIBLE_DEG ? '1' : '0';
-    el.style.filter = `brightness(${(0.42 + 0.58 * Math.max(0, c)).toFixed(3)})`;
-    el.classList.toggle('focused', Math.abs(a) < step / 2);
-  }
+let caption: OrbitCaption | null = null;
+const captionCtl = (): OrbitCaption => (caption ??= createOrbitCaption(wrapEl()));
+
+const SETTLE_MS = 450;
+let settleTimer = 0;
+let spinTimers: number[] = [];
+
+let settleSeq = 0;
+
+function moved(): void {
+  captionCtl().moving(true);
+  window.clearTimeout(settleTimer);
+  const seq = ++settleSeq;
+  const front = slots.find((el) => el.dataset.pos === '0') ?? null;
+  const done = (): void => {
+    if (seq !== settleSeq) return;
+    window.clearTimeout(settleTimer);
+    front?.removeEventListener('transitionend', onEnd);
+    captionCtl().moving(false);
+  };
+  const onEnd = (e: TransitionEvent): void => { if (e.target === front && e.propertyName === 'transform') done(); };
+  front?.addEventListener('transitionend', onEnd);
+  settleTimer = window.setTimeout(done, SETTLE_MS + 100);
 }
 
-let captionSeq = 0;
+function stopSpin(): void {
+  for (const t of spinTimers) window.clearTimeout(t);
+  spinTimers = [];
+}
 
-const CAPTION_OUT_MS = 140;
+export function replayOrbitCaption(): void {
+  if (!games.length || !onScreen(wrapEl())) return;
+  caption = null;
+  updateCaption();
+}
 
 function updateCaption(): void {
   if (!games.length) return;
-  const g = focused();
-  focusHash = g.hash;
-  const text = document.getElementById('orbit-cap-text')!;
-  if (text.dataset.hash === g.hash) return;
-  const seq = ++captionSeq;
-  if (!text.dataset.hash) { setCaption(g); return; }
-  text.classList.add('out');
-  window.setTimeout(() => {
-    if (seq !== captionSeq) return;
-    setCaption(g);
-    text.classList.remove('out');
-  }, CAPTION_OUT_MS);
+  showCaption(focused());
 }
 
-function setCaption(g: GameMeta): void {
+function showCaption(g: GameMeta): void {
   const d = deps!;
-  const text = document.getElementById('orbit-cap-text')!;
-  const title = document.getElementById('orbit-title')!;
-  const chips = document.getElementById('orbit-chips')!;
-  const sub = document.getElementById('orbit-sub')!;
-  const play = document.getElementById('orbit-play') as HTMLButtonElement;
-
-  text.dataset.hash = g.hash;
-  title.textContent = d.displayTitle(g);
+  focusHash = g.hash;
   const blocked = d.h.unplayable(g);
-  chips.replaceChildren();
+  const hasState = saved.has(g.hash);
+  const chips: HTMLElement[] = [];
   if (blocked) {
     const warn = d.chip(blocked.label, 'warn');
     warn.title = blocked.detail;
-    chips.append(warn);
+    chips.push(warn);
   }
-  const hasState = saved.has(g.hash);
-  sub.textContent = `${d.activity(g)}${hasState ? ' · state saved' : ''}`;
-  play.textContent = hasState ? str('orbit.resume') : str('orbit.play');
+  chips.push(d.chip(d.systemLabel(g.system), 'plat'), d.chip(d.activity(g)));
+  if (hasState) chips.push(d.chip(str('orbit.state_saved'), 'on'));
+  const play = document.getElementById('orbit-play') as HTMLButtonElement;
   play.classList.toggle('blocked', !!blocked);
+  play.classList.toggle('nb-btn--primary', !blocked);
+  captionCtl().update({
+    title: d.displayTitle(g),
+    chipsHtml: chips.map((c) => c.outerHTML).join(''),
+    ctaLabel: hasState ? str('orbit.resume') : str('orbit.play'),
+  });
 }
 
 function openFocused(): void {
@@ -208,16 +257,24 @@ function openFocused(): void {
   const g = focused();
   const blocked = d.h.unplayable(g);
   if (blocked) d.h.onUnplayable(d.displayTitle(g), blocked.detail);
-  else d.h.onOpen(g.hash, saved.has(g.hash));
+  else d.h.onOpen(g.hash, true);
 }
 
 function setFocus(target: number): void {
   if (!games.length) return;
+  stopSpin();
+  const from = Math.round(pos);
   pos = target;
   assign();
-  applyRotation(true);
-  updateDepth();
-  updateCaption();
+  applyPoses(false);
+  moved();
+  const steps = Math.round(target) - from;
+  if (Math.abs(steps) <= 1) { updateCaption(); return; }
+  const gap = Math.min(120, SETTLE_MS / Math.abs(steps));
+  for (let i = 1; i <= Math.abs(steps); i++) {
+    const gi = mod(from + Math.sign(steps) * i, games.length);
+    spinTimers.push(window.setTimeout(() => showCaption(games[gi]), (i - 1) * gap));
+  }
 }
 
 function wireOnce(): void {
@@ -269,11 +326,12 @@ function wireOnce(): void {
   let vel = 0;
   let downTarget: HTMLElement | null = null;
 
-  const posPerPx = () => 1 / ((ringEl().offsetWidth || 220) * 0.9);
+  const posPerPx = () => 1 / poses()[1].x;
 
   stage.addEventListener('pointerdown', (ev) => {
     if (!games.length || ev.button !== 0) return;
     dragging = true;
+    wrapEl().setAttribute('data-dragging', '');
     moved = false;
     downTarget = ev.target as HTMLElement;
     startX = lastX = ev.clientX;
@@ -288,18 +346,24 @@ function wireOnce(): void {
     if (Math.abs(dx) > 6) moved = true;
     if (!moved) return;
     stage.classList.add('dragging');
+    stopSpin();
+    captionCtl().moving(true);
+    settleSeq++;
+    window.clearTimeout(settleTimer);
     const now = performance.now();
     if (now > lastT) vel = (ev.clientX - lastX) / (now - lastT);
     lastX = ev.clientX;
     lastT = now;
+    const was = Math.round(pos);
     pos = startPos - dx * posPerPx();
     assign();
-    applyRotation(false);
-    updateDepth();
+    applyPoses(true);
+    if (Math.round(pos) !== was) updateCaption();
   });
   const release = (_ev: PointerEvent) => {
     if (!dragging) return;
     dragging = false;
+    wrapEl().removeAttribute('data-dragging');
     stage.classList.remove('dragging');
     if (moved) {
       const fling = Math.max(-3, Math.min(3, Math.round(-vel * 150 * posPerPx())));
@@ -322,9 +386,9 @@ function wireOnce(): void {
     release(ev);
   });
 
+  window.addEventListener('resize', fitToHeight);
   new ResizeObserver(() => {
     if (!slots.length) return;
-    layout();
-    applyRotation(false);
+    if (!stage.classList.contains('dragging')) applyPoses(false);
   }).observe(stage);
 }

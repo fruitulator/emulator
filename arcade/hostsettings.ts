@@ -1,13 +1,14 @@
 import { openAlert, openDialog, type Dialog } from '../web/ui/dialog';
-import { UI_ICONS } from '../web/ui/icons';
+import { UI_ICONS, rowIcon } from '../web/ui/icons';
 import { pillButton } from '../web/ui/list';
-import { caption, card, checkRow, menuRow } from '../web/ui/rows';
-import { standing, type ArcadeDoc, type DocMachine } from './doc';
+import { card, checkRow, menuRow } from '../web/ui/rows';
+import { standing, unsourcedMachines, type ArcadeDoc, type DocMachine } from './doc';
 import { serverMoney, statsMoney } from './moneyrecord';
 import { ARCADE_NAME_MAX, cleanName } from './machines';
 import { moneyTrust } from './moneygate';
 import { showToast } from '../web/ui/toast';
 import { str } from '../web/i18n';
+import { textField } from '../web/ui/field';
 
 export interface SettingsHooks {
   doc: ArcadeDoc;
@@ -92,24 +93,10 @@ export function arcadeSettingsParts(h: SettingsHooks, onGone?: () => void): Sett
   const body: Node[] = [];
   let gone = false;
 
-  const nameCard = card();
-  const nameRow = document.createElement('label');
-  nameRow.className = 'menu-row host-set-name';
-  const field = document.createElement('input');
-  field.type = 'text';
-  field.className = 'host-set-field';
-  field.value = d.name;
-  field.maxLength = ARCADE_NAME_MAX;
+  const nameField = textField({ label: str('arcade.hostsettings.name'), value: d.name, maxLength: ARCADE_NAME_MAX, autocomplete: 'off' });
+  const field = nameField.input;
   field.setAttribute('aria-label', str('arcade.hostsettings.arcade_name'));
-  field.autocomplete = 'off';
-  field.spellcheck = false;
-  nameRow.append(field);
-  nameCard.append(nameRow);
-  const nameErr = document.createElement('div');
-  nameErr.className = 'host-set-note name-error';
-  nameErr.setAttribute('role', 'alert');
-  nameErr.hidden = true;
-  const sayName = (t: string): void => { nameErr.textContent = t; nameErr.hidden = !t; field.setAttribute('aria-invalid', t ? 'true' : 'false'); };
+  const sayName = nameField.error;
   let asking: { n: string; p: Promise<string | null> } | null = null;
   const keepName = async (): Promise<string | null> => {
     if (gone) return null;
@@ -136,23 +123,24 @@ export function arcadeSettingsParts(h: SettingsHooks, onGone?: () => void): Sett
   field.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); field.blur(); }
   });
-  body.push(caption(str('arcade.hostsettings.name')), nameCard, nameErr);
-
-  const s = h.share;
-  if (s) {
-    const visitCard = card();
-    const { row: pubRow, note } = publicSwitch(s);
-    const link = menuRow(str('arcade.hostsettings.share_link'), UI_ICONS.share, () => { void s.shareLink(); }, false);
-    link.classList.add('host-set-share');
-    visitCard.append(pubRow, link);
-    body.push(caption(str('arcade.hostsettings.visitors')), visitCard, note);
-  }
+  body.push(nameField.el);
 
   const delCard = card();
   const del = menuRow(str('arcade.hostsettings.delete_arcade'), UI_ICONS.trash, () => confirmDelete(h, () => { gone = true; onGone?.(); }), false);
-  del.classList.add('host-set-delete');
+  del.classList.add('host-set-delete', 'nb-menu-item--danger');
   delCard.append(del);
   return { top: body, danger: [delCard], keepName };
+}
+
+export function darkNote(d: ArcadeDoc, cls: string, icon: string = UI_ICONS.warn): HTMLElement | null {
+  const n = unsourcedMachines(d).length;
+  if (!n) return null;
+  const p = document.createElement('p');
+  p.className = `${cls} host-caveat`;
+  const text = document.createElement('span');
+  text.textContent = str('arcade.host.n_dark_for_visitors', { n });
+  p.append(rowIcon(icon, 'host-caveat-icon', 14), text);
+  return p;
 }
 
 export function publicSwitch(s: ShareHooks, onChange?: (on: boolean) => void, label: (on: boolean) => string = () => str('arcade.hostsettings.public')): {
@@ -207,8 +195,9 @@ function confirmDelete(h: SettingsHooks, going: () => void): void {
   const d = h.doc;
   const keep = pillButton(str('arcade.hostsettings.keep_it'), () => undefined);
   const yes = pillButton(str('arcade.hostsettings.yes_delete_it'), () => undefined);
-  yes.classList.add('host-set-yes');
+  yes.classList.add('nb-btn--danger');
   openAlert({
+    info: true,
     message: str('arcade.hostsettings.delete_n', { 0: d.name || str('arcade.hostsettings.this_arcade') }),
     lines: deleteLines(d, !!h.share?.shared()),
     buttons: [

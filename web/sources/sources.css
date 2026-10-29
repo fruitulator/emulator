@@ -1,0 +1,65 @@
+#category-wrap {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+#source-wrap[hidden],
+#category-wrap[hidden],
+#source-more[hidden],
+#source-search[hidden],
+#source-search-wrap[hidden],
+#source-tiles[hidden] {
+  display: none;
+}
+body.source-view #tiles,
+body.source-view #orbit-wrap,
+body.source-view #lib-empty,
+body.source-view #lib-saving,
+body.source-view #sort-wrap,
+body.source-view #searchBtn,
+body.source-view #search-wrap {
+  display: none !important;
+}
+.source-banner {
+  margin: 0 0 14px;
+}
+.source-banner[hidden] {
+  display: none;
+}
+.source-banner-text {
+  flex: 1;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
+}
+.source-banner .nb-btn,
+.source-banner-x {
+  flex: none;
+}
+#source-tiles .source-notice {
+  padding: 56px 16px;
+  text-align: center;
+  color: var(--nb-text-2);
+}
+#source-tiles .source-notice .nb-btn {
+  margin-top: 14px;
+}
+#source-tiles .source-end {
+  min-height: 48px;
+  padding: 14px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--nb-text-3);
+}
+#source-tiles .card.source-locked .art {
+  opacity: 0.5;
+}
+#source-tiles .card:not(.chosen) .card-tick {
+  display: none;
+}
+
+.sheet-line.source-terms {
+  white-space: pre-line;
+  max-height: 50vh;
+  overflow-y: auto;
+}

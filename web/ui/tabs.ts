@@ -5,10 +5,10 @@ export interface TabBar<T extends string> {
 }
 
 export function tabBar<T extends string>(o: {
-  label: string; tabs: { id: T; label: string }[]; value: T; onChange: (id: T) => void;
+  label: string; tabs: { id: T; label: string; n?: number }[]; value: T; onChange: (id: T) => void;
 }): TabBar<T> {
   const el = document.createElement('div');
-  el.className = 'ui-tabs';
+  el.className = 'nb-tabs ui-tabs';
   el.setAttribute('role', 'tablist');
   el.setAttribute('aria-label', o.label);
   let value = o.value;
@@ -18,13 +18,19 @@ export function tabBar<T extends string>(o: {
     b.className = 'ui-tab';
     b.setAttribute('role', 'tab');
     b.textContent = t.label;
+    if (t.n !== undefined) {
+      const n = document.createElement('span');
+      n.className = 'nb-tabs__n';
+      n.textContent = String(t.n);
+      b.append(n);
+      b.classList.toggle('is-empty', t.n === 0);
+    }
     b.dataset.id = t.id;
     return b;
   });
   const show = (): void => {
     for (const b of buttons) {
       const on = b.dataset.id === value;
-      b.classList.toggle('on', on);
       b.setAttribute('aria-selected', String(on));
       b.tabIndex = on ? 0 : -1;
     }

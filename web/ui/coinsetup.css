@@ -1,36 +1,5 @@
 .coin-ticks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 12px 12px;
-}
-.coin-tick {
-  min-width: 52px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-ctl);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
-  color: var(--muted);
-  font-family: var(--ui);
-  font-size: 13.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 150ms ease, background 150ms ease, color 150ms ease, box-shadow 200ms ease;
-}
-.coin-tick:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  color: var(--text);
-}
-.coin-tick[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--text);
-  background: linear-gradient(180deg, rgba(225, 29, 42, 0.32), rgba(225, 29, 42, 0.14));
-  box-shadow: 0 0 0 1px rgba(225, 29, 42, 0.35), 0 0 14px rgba(225, 29, 42, 0.22);
-}
-.coin-tick:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  padding: 10px 16px 14px;
 }
 .coin-token {
   display: inline-flex;
@@ -39,13 +8,6 @@
 }
 .coin-token .dd[hidden] {
   display: none;
-}
-.coin-token .dd-btn {
-  height: 34px;
-  font-family: var(--ui);
-  font-size: 13.5px;
-  letter-spacing: 0;
-  text-transform: none;
 }
 .dd-list.coin-menu {
   min-width: 120px;
@@ -57,19 +19,11 @@
   animation: none !important;
   justify-content: space-between;
   gap: 16px;
-  min-height: 40px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-}
-.coin-menu .dd-opt.active {
-  transform: none;
-  background: rgba(225, 29, 42, 0.28);
 }
 .coin-menu-sub {
   font-size: 12px;
   font-weight: 500;
-  color: var(--muted);
+  color: var(--nb-text-3);
 }
 .coin-menu:focus-visible {
   outline: none;
@@ -83,22 +37,22 @@
   white-space: nowrap;
 }
 .coin-slot + .coin-slot {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 .coin-slot-head {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 12px 0;
+  padding: 14px 16px 0;
 }
-.coin-slot-head .row-sub {
-  font-size: 12.5px;
-  color: var(--muted);
+.coin-slot-head .row-label {
+  font-weight: 600;
+  color: #fff;
 }
 .coin-mark-pick {
   padding: 10px 12px 0;
 }
-.coin-slot > .ui-btn.tertiary {
+.coin-slot > .nb-link-btn {
   margin: 0 12px 10px;
 }
 .coin-slot-add {
@@ -116,10 +70,10 @@
 .coin-slot-note {
   font-size: 12.5px;
   line-height: 1.35;
-  color: var(--muted);
+  color: var(--nb-text-3);
 }
 .coin-slot-note.warn {
-  color: var(--warn);
+  color: var(--nb-gold);
 }
 .coin-slot-lead {
   margin: 0;
@@ -158,11 +112,11 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 .wz-slot-mark.on {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 14px rgba(225, 29, 42, 0.7);
+  border-color: var(--nb-violet-hi);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), var(--nb-glow-violet);
 }
 .wz-slot-mark.on::before {
-  background: var(--accent);
+  background: var(--nb-grad-primary);
   color: #fff;
 }
 button.coin-name-row {

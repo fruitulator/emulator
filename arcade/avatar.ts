@@ -1,12 +1,21 @@
+import { smallSpinner } from '../web/ui/progress';
 import { Avatar, avatarFace } from '../web/ui/avatar';
-import { closeSheet, escapeCloses, sheetRow, showSheet } from '../web/ui/sheet';
+import { dangerRow, closeSheet, escapeCloses, sheetRow, showSheet } from '../web/ui/sheet';
 import { type Cropper, openCropper } from '../web/ui/cropper';
-import { avatarUrl, currentAccount, deleteAccount, logOut, openApprove, openLogin, putAvatar, setPlayerName } from './account';
+import { avatarUrl, currentAccount, deleteAccount, logOut, openApprove, openLogin, putAvatar, setAccountTheme, setPlayerName } from './account';
 import { devPlayer, serverFlag, walletServer } from './remote';
 import { formatBalance, type Balance, type Wallet } from './wallet';
-import { AVATAR_LIMIT, AVATAR_SIZE, PLAYER_NAME_MAX, type AccountInfo, type WalletPayDay } from './serverwire';
+import { ACCOUNT_THEMES, AVATAR_LIMIT, AVATAR_SIZE, PLAYER_NAME_MAX, type AccountInfo, type AccountTheme, type WalletPayDay } from './serverwire';
+import { THEMES, setTheme, storedTheme, type Theme } from '../web/ui/theme';
+import { themeRow } from '../web/ui/themepick';
 import { str } from '../web/i18n';
+import { textField } from '../web/ui/field';
 import { openPrivacy } from './privacy';
+import { languageRow } from '../web/ui/langpick';
+
+const _themesKept: readonly Theme[] = ACCOUNT_THEMES;
+const _themesShown: readonly AccountTheme[] = THEMES;
+void _themesKept; void _themesShown;
 
 const money = (pence: number): string => formatBalance({ cashPence: pence, tokenPence: 0 });
 
@@ -49,18 +58,21 @@ export async function mountAvatar(at: HTMLElement, o: AvatarOptions = {}): Promi
     return avatar;
   }
   show(account);
+  const mine = storedTheme();
+  if (!mine) { if (account.theme) setTheme(account.theme); }
+  else if (!account.dev && account.theme !== mine) void setAccountTheme(server, mine).catch((e) => console.warn('[arcade] the theme could not be kept', e));
   const wallet = o.wallet;
   if (wallet) {
     const show = (): void => {
       const b = wallet.shown();
-      avatar.pill(b ? money(b.cashPence) : null);
+      avatar.pill(b ? money(b.cashPence) : null, true);
       if (sheetOpen) fillBalances(b);
     };
     wallet.onChange = show;
     show();
   } else {
     void walletServer(server, devPlayer()).balance().then((b) => {
-      avatar.pill(money(b.cashPence));
+      avatar.pill(money(b.cashPence), true);
     }).catch((e) => {
       console.warn('[arcade] the balance could not be read', e);
     });
@@ -74,23 +86,22 @@ function fillBalances(b: Balance | null): void {
   const at = sheetOpen;
   if (!at) return;
   const rows: HTMLElement[] = [];
-  if (!b) rows.push(figureRow(str('arcade.avatar.cash'), '…'));
+  if (!b) rows.push(figureRow(str('arcade.avatar.cash'), '…', true));
   else {
-    rows.push(figureRow(str('arcade.avatar.cash'), money(b.cashPence)));
+    rows.push(figureRow(str('arcade.avatar.cash'), money(b.cashPence), true));
     if (b.tokenPence) rows.push(figureRow(str('arcade.avatar.tokens'), money(b.tokenPence)));
     if (b.payDay) rows.push(figureRow(str('arcade.avatar.pay_day'), payDayText(b.payDay)));
   }
   at.replaceChildren(...rows);
 }
 
-function figureRow(label: string, amount: string): HTMLElement {
-  const r = sheetRow(label, '');
-  r.classList.add('inert');
-  r.tabIndex = -1;
-  const a = document.createElement('span');
-  a.className = 'sheet-amount';
+function figureRow(label: string, amount: string, cash = false): HTMLElement {
+  const r = document.createElement('div');
+  r.className = 'nb-kv';
+  const a = document.createElement('b');
+  if (cash) a.className = 'nb-money';
   a.textContent = amount;
-  r.append(a);
+  r.append(label, a);
   return r;
 }
 
@@ -98,8 +109,7 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
   beforeDelete?: () => Promise<void>): void {
   let a = first;
   const balances = document.createElement('div');
-  balances.className = 'avatar-balances';
-  balances.style.display = 'contents';
+  balances.className = 'nb-group avatar-balances';
   sheetOpen = balances;
   fillBalances(wallet?.shown() ?? null);
   if (!wallet) {
@@ -107,13 +117,13 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
       if (sheetOpen === balances) fillBalances(b);
     }).catch((e) => {
       console.warn('[arcade] the balance could not be read', e);
-      if (sheetOpen === balances) balances.replaceChildren(figureRow(str('arcade.avatar.cash'), str('arcade.avatar.not_available_just_now')));
+      if (sheetOpen === balances) balances.replaceChildren(figureRow(str('arcade.avatar.cash'), str('arcade.avatar.not_available_just_now'), true));
     });
   }
   const title = (): string => a.dev ? str('arcade.avatar.test_player_n', { 0: a.name }) : a.name;
   const open = (rows: HTMLElement[]): void => {
     showSheet(title(), rows, avatar.el);
-    document.getElementById('sheet-title')?.prepend(avatarFace(a.name, a.dev ? null : avatarUrl(server, a), 44));
+    document.getElementById('sheet-title')?.before(avatarFace(a.name, a.dev ? null : avatarUrl(server, a), 40));
   };
 
   const noteRow = (): { row: HTMLElement; say(text: string): void } => {
@@ -127,6 +137,10 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
   const options = (): void => {
     const rows: HTMLElement[] = [balances];
     let out: HTMLButtonElement | null = null;
+    const theme = themeRow({ returnTo: avatar.el, picked: (t) => {
+      if (!a.dev) void setAccountTheme(server, t).catch((e) => console.warn('[arcade] the theme could not be kept', e));
+    } });
+    const language = languageRow({ returnTo: avatar.el, back: options });
     if (!a.dev) {
       const edit = sheetRow(str('arcade.avatar.edit_name'), '');
       edit.addEventListener('click', () => nameField());
@@ -136,7 +150,7 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
       out = sheetRow(str('arcade.avatar.log_out'), '');
       out.addEventListener('click', () => { closeSheet(); void logOut(server); });
       const del = sheetRow(str('arcade.avatar.delete_my_account'), '');
-      del.classList.add('destructive');
+      dangerRow(del);
       del.addEventListener('click', () => confirmDelete());
       const pair = sheetRow(str('arcade.avatar.log_in_another_device'), '');
       pair.addEventListener('click', () => { closeSheet(); void openApprove(server); });
@@ -144,25 +158,17 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
       priv.addEventListener('click', () => { closeSheet(); openPrivacy(); });
       const guide = sheetRow(str('arcade.guide.how_the_arcade_works'), '');
       guide.addEventListener('click', () => { closeSheet(); void import('./guide').then((m) => m.openGuide()); });
-      rows.push(edit, pic, note.row, pair, guide, priv, out, del);
-    }
+      rows.push(edit, pic, note.row, theme, language, pair, guide, priv, out, del);
+    } else rows.push(theme, language);
     open(rows);
     out?.focus();
   };
 
   const nameField = (): void => {
-    const row = document.createElement('div');
-    row.className = 'sheet-row sheet-field';
-    const cap = document.createElement('span');
-    cap.textContent = str('arcade.account.player_name');
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = a.name;
-    input.maxLength = PLAYER_NAME_MAX;
-    input.setAttribute('aria-label', str('arcade.account.player_name'));
-    input.setAttribute('autocomplete', 'nickname');
-    input.spellcheck = false;
-    row.append(cap, input);
+    const f = textField({ label: str('arcade.account.player_name'), value: a.name, maxLength: PLAYER_NAME_MAX, autocomplete: 'nickname' });
+    const row = f.el;
+    row.classList.add('sheet-field');
+    const input = f.input;
     const note = noteRow();
     const save = sheetRow(str('arcade.avatar.save'), '');
     const cancel = sheetRow(str('arcade.avatar.cancel'), '');
@@ -219,7 +225,7 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
     if (!wallet) void walletServer(server, devPlayer()).balance().then(sayCash).catch(() => undefined);
     const note = noteRow();
     const yes = sheetRow(str('arcade.avatar.delete_my_account'), '');
-    yes.classList.add('destructive');
+    dangerRow(yes);
     const cancel = sheetRow(str('arcade.avatar.cancel'), '');
     const busy = (on: boolean): void => { yes.disabled = on; cancel.disabled = on; };
     yes.addEventListener('click', () => {
@@ -296,7 +302,7 @@ function openOptions(avatar: Avatar, first: AccountInfo, server: string, wallet:
     const was = label.textContent;
     say('');
     busy(true);
-    label.textContent = str('arcade.avatar.uploading');
+    label.replaceChildren(smallSpinner(), str('arcade.avatar.uploading'));
     try {
       let pic: { bytes: Uint8Array; type: string };
       try {

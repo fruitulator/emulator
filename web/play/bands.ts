@@ -15,6 +15,9 @@ const WHOLE_PAD = 16;
 const CELL_GAP = 3;
 const WHOLE_MARGIN_Y = 12;
 const SHRINK = 0.1;
+const PANEL_MIN = 150;
+const GLASS_GAP = 24;
+const EDGE = 16;
 
 export interface Box { left: number; top: number; width: number; height: number }
 
@@ -63,6 +66,10 @@ export function bandsLayout(
   const colTop = whole ? WHOLE_MARGIN_Y + pad / 2 + LABEL_H : pad;
   const colH = whole ? sh - WHOLE_MARGIN_Y - pad / 2 - colTop : sh - pad - colTop;
   const max = whole ? Math.max(BAND_MIN, Math.min(WHOLE_MAX, Math.floor(wholeCap?.(colH) ?? WHOLE_MAX))) : BAND_MAX;
+  if (whole && !fill) {
+    const beside = besideGlass(sw, sh, layout, k0, count, max, wholeCap);
+    if (beside) return beside;
+  }
   const fitted = lengthFor(need, sw - layout.width * k0, layout.width * k0, max);
   if (!fitted) {
     const w = layout.width * k0;
@@ -94,6 +101,34 @@ export function bandsLayout(
   return {
     mode, screen, boxes, labels,
     card: { left: x0, top: WHOLE_MARGIN_Y, width: x1 - x0, height: sh - 2 * WHOLE_MARGIN_Y },
+  };
+}
+
+function besideGlass(
+  sw: number, sh: number, layout: { width: number; height: number }, k0: number,
+  count: number, max: number, wholeCap?: (colH: number) => number,
+): BandsLayout | null {
+  const w = layout.width * k0;
+  const h = layout.height * k0;
+  const left = (sw - w) / 2;
+  const room = sw - (left + w) - GLASS_GAP - EDGE;
+  if (room < PANEL_MIN) return null;
+  const pad = WHOLE_PAD;
+  const gap = WHOLE_GAP;
+  const colTop = WHOLE_MARGIN_Y + pad / 2 + LABEL_H;
+  const colH = sh - WHOLE_MARGIN_Y - pad / 2 - colTop;
+  const cap = Math.max(BAND_MIN, Math.min(max, Math.floor(wholeCap?.(colH) ?? max)));
+  const size = Math.min(cap, Math.floor((room - pad - (count - 1) * gap) / count));
+  if (size < BAND_MIN) return null;
+  const x0 = left + w + GLASS_GAP + pad / 2;
+  const boxes = Array.from({ length: count }, (_, i) => ({ left: x0 + i * (size + gap), top: colTop, width: size, height: colH }));
+  const labels = boxes.map((b) => ({ left: b.left, top: colTop - LABEL_H, width: b.width, height: LABEL_H }));
+  const cardW = count * size + (count - 1) * gap + pad;
+  return {
+    mode: 'whole',
+    screen: { left, top: (sh - h) / 2, width: w, height: h },
+    boxes, labels,
+    card: { left: x0 - pad / 2, top: WHOLE_MARGIN_Y, width: cardW, height: sh - 2 * WHOLE_MARGIN_Y },
   };
 }
 
@@ -227,8 +262,9 @@ function fromFrames(fr: FrameReel<unknown>): BandSource | NoBand {
 
 const wrap = (k: number, n: number): number => ((k % n) + n) % n;
 
-const DIM_LIGHT = 0.4;
+const DIM_LIGHT = 0.75;
 const DIM_SATURATE = 0;
+const READABLE = 40;
 export const DIM_OUTSIDE = true;
 
 function naturalPitch(src: BandSource, mode: BandMode, w: number, h: number): number {
@@ -237,9 +273,9 @@ function naturalPitch(src: BandSource, mode: BandMode, w: number, h: number): nu
     : Math.max(w * 0.5, Math.min(w * 1.6, w / src.aspect));
 }
 
-export function sharedPitch(srcs: readonly BandSource[], mode: BandMode, w: number, h: number): number | undefined {
+export function sharedPitch(srcs: readonly BandSource[], mode: BandMode, w: number, h: number, floor = 0): number | undefined {
   if (srcs.length === 0) return undefined;
-  if (mode === 'whole') return Math.min(...srcs.map((s) => Math.min(naturalPitch(s, mode, w, h), h / s.stops)));
+  if (mode === 'whole') return Math.min(...srcs.map((s) => Math.min(naturalPitch(s, mode, w, h), Math.max(h / s.stops, floor))));
   const main = srcs.reduce((a, b) => (b.window > a.window ? b : a));
   return naturalPitch(main, mode, w, h);
 }
@@ -303,7 +339,7 @@ export function paintBand(
   w: number, h: number, pitch?: number, dimOutside = DIM_OUTSIDE, badges = false, scroll = false,
 ): void {
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#1d1d1d';
+  ctx.fillStyle = '#07050D';
   ctx.fillRect(0, 0, w, h);
   const n = src.stops;
   const win = Math.min(src.window, n);
@@ -316,6 +352,7 @@ export function paintBand(
       cell(ctx, src, wrap(k, n), cx + (k - row) * cw - cw / 2, 0, cw, h, badges);
     }
     for (const [a, b] of outside(0, w, [[cx - (win * cw) / 2, cx + (win * cw) / 2]])) if (dimOutside) dim(ctx, a, 0, b - a, h);
+    drum(ctx, 0, 0, w, h, false);
     return;
   }
   if (mode === 'columns') {
@@ -327,9 +364,10 @@ export function paintBand(
       cell(ctx, src, wrap(k, n), 0, cy + (k - row) * ch - ch / 2, w, ch, badges);
     }
     for (const [a, b] of outside(0, h, [[cy - (win * ch) / 2, cy + (win * ch) / 2]])) if (dimOutside) dim(ctx, 0, a, w, b - a);
+    drum(ctx, 0, 0, w, h, true);
     return;
   }
-  const size = Math.min(pitch ?? naturalPitch(src, mode, w, h), h / n);
+  const size = pitch ?? Math.min(naturalPitch(src, mode, w, h), h / n);
   const cw = Math.min(w, size * src.aspect);
   const x0 = (w - cw) / 2;
   const y0 = (h - n * size) / 2;
@@ -347,6 +385,7 @@ export function paintBand(
     ctx.restore();
     const half = (win * size) / 2;
     for (const [a, b] of outside(y0, y0 + n * size, [[cy - half, cy + half]])) if (dimOutside) dim(ctx, x0, a, cw, b - a);
+    drum(ctx, x0, Math.max(0, y0), cw, Math.min(h, n * size), true);
     return;
   }
   for (let k = 0; k < n; k++) src.draw(ctx, k, x0, y0 + k * size + CELL_GAP / 2, cw, inner);
@@ -354,6 +393,29 @@ export function paintBand(
   const keep = [-n * size, 0, n * size].map((off): [number, number] => [top + off, top + off + win * size]);
   for (const [a, b] of outside(y0, y0 + n * size, keep)) if (dimOutside) dim(ctx, x0, a, cw, b - a);
   if (badges) for (let k = 0; k < n; k++) stopBadge(ctx, k + 1, x0 + cw, y0 + k * size + CELL_GAP / 2, Math.min(cw, inner));
+}
+
+function drum(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, vertical: boolean): void {
+  if (!(w > 0 && h > 0)) return;
+  ctx.save();
+  const ends = vertical ? ctx.createLinearGradient(0, y, 0, y + h) : ctx.createLinearGradient(x, 0, x + w, 0);
+  ends.addColorStop(0, 'rgba(0,0,0,0)');
+  ends.addColorStop(0.08, 'rgba(0,0,0,1)');
+  ends.addColorStop(0.92, 'rgba(0,0,0,1)');
+  ends.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = ends;
+  ctx.fillRect(x, y, w, h);
+  const sides = vertical ? ctx.createLinearGradient(x, 0, x + w, 0) : ctx.createLinearGradient(0, y, 0, y + h);
+  sides.addColorStop(0, 'rgba(0,0,0,0.45)');
+  sides.addColorStop(0.22, 'rgba(0,0,0,0)');
+  sides.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+  sides.addColorStop(0.78, 'rgba(0,0,0,0)');
+  sides.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = sides;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
 }
 
 export interface ReelBands {
@@ -466,16 +528,17 @@ export function createReelBands(stage: HTMLElement): ReelBands {
       const dpr = typeof devicePixelRatio === 'number' && devicePixelRatio > 0 ? devicePixelRatio : 1;
       if (layout.card) {
         const cardEl = document.createElement('div');
-        cardEl.className = 'reel-bands-card';
+        cardEl.className = 'reel-bands-card nb-reels';
         at(cardEl, layout.card);
         root.append(cardEl);
       }
+      const short = (layout.card?.width ?? 0) < 260 || (layout.boxes[0]?.width ?? 0) < 60;
       layout.labels?.forEach((b, i) => {
         const src = sources[i];
         if (!src) return;
         const label = document.createElement('div');
         label.className = 'reel-bands-label';
-        label.textContent = str('play.bands.reel_n', { 0: src.reel });
+        label.textContent = short ? str('play.bands.r_n', { 0: src.reel }) : str('play.bands.reel_n', { 0: src.reel });
         at(label, b);
         root.append(label);
       });
@@ -502,13 +565,33 @@ export function createReelBands(stage: HTMLElement): ReelBands {
       });
       const first = shown[0];
       if (first) {
-        const pitch = sharedPitch(shown.map((s) => s.src), layout.mode, first.canvas.width, first.canvas.height);
+        const pitch = sharedPitch(shown.map((s) => s.src), layout.mode, first.canvas.width, first.canvas.height, READABLE * dpr);
         for (const s of shown) s.pitch = pitch;
       }
-      {
-        const marks = layout.mode === 'whole'
-          ? winLineMarks(layout.boxes, 'columns', WHOLE_GAP)
-          : winLineMarks(layout.boxes, layout.mode);
+      if (layout.mode === 'whole') {
+        const wins = shown.map((s) => {
+          const n = s.src.stops;
+          const size = (s.pitch ?? Math.min(naturalPitch(s.src, 'whole', s.canvas.width, s.canvas.height), s.canvas.height / n)) / dpr;
+          const cw = Math.min(s.canvas.width / dpr, size * s.src.aspect);
+          const box = layout.boxes[sources.indexOf(s.src)];
+          const half = (Math.min(s.src.window, n) * size) / 2;
+          return { left: box.left + (box.width - cw) / 2, right: box.left + (box.width + cw) / 2, top: box.top + box.height / 2 - half, height: half * 2, window: s.src.window };
+        });
+        const frame = (b: Box, cls: string): void => {
+          const f = document.createElement('div');
+          f.className = `nb-reels__window ${cls}`.trim();
+          at(f, { left: b.left - 4, top: b.top, width: b.width + 8, height: b.height });
+          root.append(f);
+        };
+        if (wins.length && wins.every((w) => w.window === wins[0].window)) {
+          const top = Math.min(...wins.map((w) => w.top));
+          frame({ left: wins[0].left, top, width: wins[wins.length - 1].right - wins[0].left, height: Math.max(...wins.map((w) => w.height)) }, '');
+        } else {
+          wins.forEach((w, i) => frame({ left: w.left, top: w.top, width: w.right - w.left, height: w.height },
+            `${i > 0 ? 'no-left' : ''} ${i < wins.length - 1 ? 'no-right' : ''}`));
+        }
+      } else {
+        const marks = winLineMarks(layout.boxes, layout.mode);
         for (const m of marks) {
           const mark = document.createElement('div');
           mark.className = `reel-bands-mark ${m.dir}`;
@@ -531,7 +614,7 @@ export function createReelBands(stage: HTMLElement): ReelBands {
       }
     },
     wholeCap(colH) {
-      const caps = sources.flatMap((s) => ('none' in s ? [] : [(colH / s.stops) * s.aspect]));
+      const caps = sources.flatMap((s) => ('none' in s ? [] : [Math.max(colH / s.stops, READABLE) * s.aspect]));
       return caps.length ? Math.min(...caps) : WHOLE_MAX;
     },
   };

@@ -2,10 +2,8 @@ import * as THREE from 'three';
 import type { CabinetShell } from './cabinets';
 import type { Glass } from './glass';
 import { applyH, faceToQuad, quadToFace, type Quad } from './quad';
-import { MountRig } from './mountrig';
-import type { CabLamp } from '../web/dat';
 
-export interface GlassHit { x: number; y: number; scale: number; lamp?: CabLamp; coin?: boolean }
+export interface GlassHit { x: number; y: number; scale: number; coin?: boolean }
 
 export function glassWorld(holder: THREE.Object3D, shell: CabinetShell): THREE.Vector3 {
   return holder.localToWorld(shell.glassCentre.clone());
@@ -18,21 +16,17 @@ export function glassPointAt(
   const cab = glass.cab;
   if (!cab) return null;
   raycaster.setFromCamera(ndc, camera);
-  const rig = shell.rig;
-  if (rig?.targets.length) {
-    const hits = raycaster.intersectObjects([...shell.glassMeshes, ...rig.targets], true).filter((h) => shown(h.object));
+  const coin = shell.coin;
+  if (coin?.nodes.length) {
     const box = new THREE.Box3();
     const into = new THREE.Vector3();
-    const coinAt = rig.coin.reduce((d, n) => {
+    const coinAt = coin.nodes.filter(shown).reduce((d, n) => {
       const at = raycaster.ray.intersectBox(box.setFromObject(n), into);
       return at ? Math.min(d, raycaster.ray.origin.distanceTo(at)) : d;
     }, Infinity);
-    const first = hits[0] && hits[0].distance <= coinAt ? hits[0].object : null;
-    const on = first ? MountRig.hitOf(first) : coinAt < Infinity ? { coin: true as const } : null;
-    if (on && 'coin' in on) return { x: 0, y: 0, scale: 0, coin: true };
-    if (on) {
-      const n = glass.mountLamps[on.mount];
-      return n === null || n === undefined ? null : { x: 0, y: 0, scale: 0, lamp: cab.lamps[n] };
+    if (coinAt < Infinity) {
+      const onGlass = raycaster.intersectObjects(shell.glassMeshes, false).filter((h) => shown(h.object))[0];
+      if (!onGlass || onGlass.distance > coinAt) return { x: 0, y: 0, scale: 0, coin: true };
     }
   }
   const hit = raycaster.intersectObjects(shell.glassMeshes, false)[0];
@@ -162,6 +156,30 @@ export function glassWorldPoint(shell: CabinetShell, glass: Glass, x: number, y:
     if (!local) continue;
     m.updateWorldMatrix(true, false);
     return local.applyMatrix4(m.matrixWorld);
+  }
+  return null;
+}
+
+export function planePointAtUv(geo: THREE.BufferGeometry, u: number, v: number): THREE.Vector3 | null {
+  const pos = geo.getAttribute('position');
+  const uv = geo.getAttribute('uv');
+  if (!pos || !uv) return null;
+  const index = geo.getIndex();
+  const n = index ? index.count : pos.count;
+  for (let t = 0; t + 2 < n; t += 3) {
+    const [a, b, c] = [t, t + 1, t + 2].map((k) => (index ? index.getX(k) : k));
+    const ax = uv.getX(a), ay = uv.getY(a);
+    const bx = uv.getX(b) - ax, by = uv.getY(b) - ay;
+    const cx = uv.getX(c) - ax, cy = uv.getY(c) - ay;
+    const d = bx * cy - by * cx;
+    if (Math.abs(d) < 1e-9) continue;
+    const px = u - ax, py = v - ay;
+    const s = (px * cy - py * cx) / d;
+    const r = (bx * py - by * px) / d;
+    const pa = new THREE.Vector3().fromBufferAttribute(pos, a);
+    const pb = new THREE.Vector3().fromBufferAttribute(pos, b).sub(pa);
+    const pc = new THREE.Vector3().fromBufferAttribute(pos, c).sub(pa);
+    return pa.add(pb.multiplyScalar(s)).add(pc.multiplyScalar(r));
   }
   return null;
 }

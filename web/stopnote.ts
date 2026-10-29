@@ -1,7 +1,7 @@
 import { unbuiltParts } from '../src/machine/boarddefaults';
 import type { UnbuiltPart } from '../src/machine/boarddefaults';
 import { str } from './i18n';
-import { rowIcon } from './ui/icons';
+import { UI_ICONS, rowIcon } from './ui/icons';
 
 export interface StopSample {
   lampsRaw: Uint8Array;
@@ -135,6 +135,8 @@ export function stopNoteParts(
   return unbuiltParts(boardDefaults ?? []);
 }
 
+const HALT_ICON = { paths: UI_ICONS.warn, label: '' };
+
 const HIDE_MS = 240;
 
 export class StopNote {
@@ -184,7 +186,7 @@ export class StopNote {
   }
 
   update(reason: NoteReason | null, text: string, offerState = false): string | null {
-    if (reason !== null) this.setIcon(null);
+    if (reason !== null) { this.setIcon(reason === 'stopped' ? HALT_ICON : null); this.setKind(reason === 'stopped' ? 'halt' : null); }
     if (reason !== 'stopped') this.dismissed.delete('stopped');
     if (!reason || this.dismissed.has(reason)) {
       if (this.shown && !this.passing) this.hide();
@@ -211,6 +213,7 @@ export class StopNote {
   ): void {
     this.reason = null;
     this.setIcon(icon ?? null);
+    this.setKind(icon ? 'wait' : null);
     this.closeRun = onClose ?? null;
     if (this.hideTimer !== null) { clearTimeout(this.hideTimer); this.hideTimer = null; }
     if (this.closeBtn) this.closeBtn.hidden = hideAfterMs !== undefined || fixed;
@@ -257,8 +260,17 @@ export class StopNote {
     if (!el) return;
     el.hidden = !icon;
     if (!icon) { el.replaceChildren(); el.removeAttribute('aria-label'); return; }
-    el.setAttribute('aria-label', icon.label);
+    if (icon.label) el.setAttribute('aria-label', icon.label);
+    else el.removeAttribute('aria-label');
     el.replaceChildren(rowIcon(icon.paths, 'stopnote-icon-svg', 22));
+  }
+
+  private setKind(kind: 'halt' | 'wait' | null): void {
+    const el = this.el;
+    if (!el) return;
+    el.classList.remove('nb-stopbar--halt');
+    el.classList.remove('nb-stopbar--wait');
+    if (kind) el.classList.add(`nb-stopbar--${kind}`);
   }
 
   private show(text: string, passing = false): void {

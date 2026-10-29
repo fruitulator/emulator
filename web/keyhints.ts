@@ -40,7 +40,7 @@ function placement(
 ): CabLamp<unknown> | null {
   let best: CabLamp<unknown> | null = null;
   for (const lp of lamps) {
-    if (!onCabinet(lp, content)) continue;
+    if (lp.hidden || !onCabinet(lp, content)) continue;
     if (!best) { best = lp; continue; }
     const hid = underDisplay(lp, vfd), bestHid = underDisplay(best, vfd);
     if (hid !== bestHid) { if (!hid) best = lp; continue; }
@@ -147,7 +147,7 @@ export class KeyHintLayer {
         continue;
       }
       const tag = document.createElement('span');
-      tag.className = 'key-hint';
+      tag.className = 'nb-key key-hint';
       fillKeys(tag, h.keys);
       this.el.append(tag);
       placed.push({ tag, x: at.x - host.left, y: at.y - host.top });
@@ -165,7 +165,7 @@ export class KeyHintLayer {
         const l = document.createElement('span');
         l.textContent = h.label;
         const k = document.createElement('span');
-        k.className = 'key-hint inline';
+        k.className = 'nb-key key-hint inline';
         fillKeys(k, h.keys);
         r.append(l, k);
         box.append(r);

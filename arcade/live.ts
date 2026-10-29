@@ -18,6 +18,7 @@ import { CabinetEffects } from '../web/effects';
 import { restoreCabinetSounds } from '../web/menupanels';
 import type { FrameView } from '../src/machine/framestate';
 import { pickControl } from '../web/cabhit';
+import { checkboxAt } from '../web/checkbox';
 import { PlayKeys, type KeySurface } from '../web/play/keys';
 import { answers, HeldButtons } from '../web/play/pointer';
 import { PlayAutosave, type AutosaveSurface, type SaveMoment } from '../web/play/autosave';
@@ -35,7 +36,8 @@ import type { CheckResult } from '../web/relay';
 import type { Glass } from './glass';
 import type { ClaimEvents, ClaimResult, MoneyHooks, SlotKeyframe, StateSlot, Visit, WatchHandle } from './machines';
 import type { RelayBatch } from './serverwire';
-import { isToken, payForCoin, penceOf, type Wallet } from './wallet';
+import { isToken, payForCoin, penceOf, unpriced, type Wallet } from './wallet';
+import { unknownMoneyMoved } from './moneygate';
 import { attractBudgetS, BootDoor, BootWatch } from './bootdoor';
 import type { CashLedger, CoinChute } from '../src/machine/machine';
 import type { MachineInfo } from '../web/emu-protocol';
@@ -85,6 +87,10 @@ const NO_COIN_WITHIN_BALANCE_TEXT = str('arcade.live.no_coin_within_balance');
 const NOT_TAKING_COINS_TEXT = str('arcade.live.not_taking_coins_now');
 const NOT_ENOUGH_MONEY_MS = 2500;
 export const TOKENS_UNCOUNTED_TEXT = str('arcade.live.this_machine_does_not_count');
+
+export const COIN_VALUE_UNKNOWN_TEXT = str('arcade.live.coin_value_not_set');
+
+export const PAYOUT_VALUE_UNKNOWN_TEXT = str('arcade.live.payout_value_not_set');
 
 export function watcherLine(w: { free: boolean; paused: boolean }): 'free' | typeof PLAYER_PAUSED_TEXT | typeof WATCHING_TEXT {
   if (w.free) return 'free';
@@ -206,6 +212,7 @@ export class Live {
   readonly claimStats = { claims: 0, lost: 0, moved: 0, idleAsked: 0, idleReleased: 0 };
 
   private coinsStoppedNow = false;
+  private ledgerAtStart: CashLedger | null = null;
   private coinsNoteAway = false;
   onCoinsStopped: ((stopped: boolean) => void) | null = null;
   onWalkAway: (() => void) | null = null;
@@ -317,6 +324,7 @@ export class Live {
     void this.emu.ledger().then((l) => {
       if (this.moneyWatch !== w || seq !== this.loadSeq) return;
       hooks?.start(l);
+      this.ledgerAtStart = l;
       this.credit.mark(l);
       w.pose = reelPose(this.emu.latestFrame()?.reels ?? []);
       w.timer = setInterval(() => {
@@ -328,7 +336,7 @@ export class Live {
           const pose = v ? reelPose(v.reels) : w.pose;
           if (pose !== w.pose) { w.pose = pose; this.credit.mark(r); } else this.credit.reading(r);
           hooks?.reading(r);
-          this.checkWiring();
+          this.checkWiring(r);
         }, () => undefined).finally(() => { w.busy = false; });
       }, MONEY_WATCH_MS);
     }, () => undefined);
@@ -497,6 +505,7 @@ export class Live {
     this.glass = glass;
     this.startOpts = o;
     glass.resetGates();
+    glass.panelRows = () => (this.glass === glass ? this.emu.info?.switchPanel : undefined);
     glass.mode = 'live';
     const seq = ++this.loadSeq;
     this.error = '';
@@ -591,6 +600,7 @@ export class Live {
       this.quietIsWaiting = false;
       this.updatedNote = updated;
       this.setCoinsStopped(false);
+      this.ledgerAtStart = null;
       this.coinsNoteAway = false;
       if (updated) this.stopNote?.notice(MACHINE_UPDATED_TEXT, undefined, undefined, undefined, UPDATED_HOURGLASS, true);
       const relay = (this.claimed === slot || visit) && slot?.relay ? { at: Date.now() } : undefined;
@@ -682,6 +692,11 @@ export class Live {
       this.showCoinsStopped();
       return false;
     }
+    if (this.wallet && this.emu.info?.unpricedPayouts?.length) {
+      this.wallet.turnedAway();
+      this.stopNote?.notice(PAYOUT_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
+      return false;
+    }
     const g = this.glass;
     if (chosen) return this.pays({ label: chosen.label, bit: line, pence: chosen.pence, token: chosen.token });
     const w = this.coinWiring();
@@ -705,7 +720,7 @@ export class Live {
 
   private pays(coin: Parameters<Wallet['pay']>[0]): boolean {
     if (payForCoin(this.wallet, coin)) return true;
-    if (this.wallet?.tokenUncounted(coin)) this.stopNote?.notice(TOKENS_UNCOUNTED_TEXT, undefined, undefined, 6000);
+    if (this.wallet && unpriced(coin)) this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
     else this.sayNotEnough(isToken(coin));
     return false;
   }
@@ -739,6 +754,7 @@ export class Live {
     if (coinWiring) this.emu.setCoinWiring(coinWiring);
     for (const [line, coin] of Object.entries(namedCoins)) this.emu.nameCoin(Number(line), coin);
     this.setCoinsStopped(false);
+    void this.emu.ledger().then((l) => { if (this.running) this.ledgerAtStart = l; }, () => undefined);
     this.stampCoins();
   }
 
@@ -750,10 +766,12 @@ export class Live {
     stampCoinInputs(g.cab.lamps, view, [...(info.coins ?? view.coins), ...markedChutes(this.coinWiring(), info)]);
   }
 
-  private checkWiring(): void {
+  private checkWiring(r?: CashLedger | null): void {
     if (this.watching) return;
     const s = this.emu.coinWiringStatus;
-    this.setCoinsStopped(s?.state === 'disagrees');
+    const unknown = !!this.wallet && unknownMoneyMoved(this.ledgerAtStart, r ?? null);
+    if (unknown && !this.coinsStoppedNow) console.warn('[arcade] the machine booked money of no known value; it takes no more coins');
+    this.setCoinsStopped(s?.state === 'disagrees' || unknown);
   }
 
   private setCoinsStopped(on: boolean): void {
@@ -763,7 +781,7 @@ export class Live {
     }
     this.coinsStoppedNow = on;
     if (on) {
-      console.warn('[arcade] the machine has stopped recording money: two coins disagreed with its meters; it takes no more coins');
+      console.warn('[arcade] the machine has stopped recording money; it takes no more coins');
       this.showCoinsStopped();
     }
     this.onCoinsStopped?.(on);
@@ -793,7 +811,9 @@ export class Live {
     };
     if (!choices.length) {
       const wired = slot.coins.filter((c) => c.line !== null);
-      if (balance && wired.length) this.sayNotEnough(wired.every((c) => isTokenCoin(c.coin)));
+      if (balance && wired.length && wired.every((c) => slotCoinPence(c.coin) === null)) {
+        this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
+      } else if (balance && wired.length) this.sayNotEnough(wired.every((c) => isTokenCoin(c.coin)));
       this.effects.coin(acceptor, 'refused');
       return true;
     }
@@ -1403,19 +1423,28 @@ export class Live {
   press(pointerId: number, x: number, y: number, scale: number, skip?: ReadonlySet<CabLamp>): CabLamp | null {
     const g = this.glass;
     if (!this.running || !g?.cab) return null;
+    const box = checkboxAt(g.cab.checkboxes, x, y);
+    if (box) {
+      if (!this.hostNow()) {
+        const row = this.emu.info?.switchPanel.find((sw) => sw.id === box.id);
+        this.throwSwitch(row ?? { id: box.id }, !g.switchLevels.ticked(box, this.emu.info?.switchPanel));
+      }
+      return null;
+    }
     const lp = pickControl(g.cab.lamps, x, y, scale, (p) => this.clickable(p) && this.hostCan(p) && !skip?.has(p));
     if (lp) this.activate(lp, pointerId);
     return lp;
   }
 
-  pressHit(pointerId: number, hit: { x: number; y: number; scale: number; lamp?: CabLamp; coin?: boolean }): CabLamp | null {
+  throwSwitch(sw: { id: number; bootOnly?: boolean }, on: boolean): void {
+    this.emu.input(sw.id, on);
+    this.glass?.switchLevels.set(sw.id, on);
+    if (sw.bootOnly) this.powerCycle();
+  }
+
+  pressHit(pointerId: number, hit: { x: number; y: number; scale: number; coin?: boolean }): CabLamp | null {
     if (!this.running || !this.glass?.cab) return null;
     if (hit.coin) return this.coinEntry(pointerId);
-    if (hit.lamp) {
-      if (!this.clickable(hit.lamp) || !this.hostCan(hit.lamp)) return null;
-      this.activate(hit.lamp, pointerId);
-      return hit.lamp;
-    }
     return this.press(pointerId, hit.x, hit.y, hit.scale, this.glass.replaced);
   }
 

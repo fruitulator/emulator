@@ -7,7 +7,7 @@ import { SRU_BASS_FREQ } from '../hw/blipleak';
 import { AY_RATE } from '../hw/ay8910';
 import { Mixer } from '../hw/mixer';
 import { newCashLedger, type CashLedger, type CabinetSwitch, type CoinChute, type NamedCoin } from './machine';
-import { CoinBook, type BookedCoin } from './coinbook';
+import { CoinBook, namedBooking, type BookedCoin } from './coinbook';
 import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import type { SlideEffect } from '../layout/fmlconfig';
 
@@ -22,6 +22,8 @@ const CHANGE_GAP = SRU_CLOCK;
 const inRam = (a: number) => (a >= 0x0c00 && a < 0x1000) || (a >= 0x1400 && a < 0x1800);
 
 export type SruCoin = BookedCoin;
+
+const unstated = (c: SruCoin): boolean => c === null || c === 'token';
 
 export const SRU_COIN_ROW = 2;
 
@@ -304,7 +306,7 @@ export class Sru extends Sys80 {
 
   override get unnamedCoinLines(): readonly number[] {
     const out: number[] = [];
-    for (let i = 0; i < 4; i++) if (this.fitted[i] && this.layoutCoinPence[i] === null) out.push(20 + i);
+    for (let i = 0; i < 4; i++) if (this.fitted[i] && unstated(this.layoutCoinPence[i])) out.push(20 + i);
     return out;
   }
 
@@ -314,12 +316,14 @@ export class Sru extends Sys80 {
     this.chuteCache = null;
   }
 
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+
   nameCoin(line: number, coin: NamedCoin): void {
     const i = line - 20;
-    if (i < 0 || i > 3 || !this.fitted[i] || this.layoutCoinPence[i] !== null) return;
-    if (coin === 'token') this.coinPence[i] = 'token';
-    else if (Number.isInteger(coin) && coin > 0) this.coinPence[i] = coin;
-    else return;
+    if (i < 0 || i > 3 || !this.fitted[i] || !unstated(this.layoutCoinPence[i])) return;
+    const c = namedBooking(coin);
+    if (c === null) return;
+    this.coinPence[i] = c;
     this.chuteCache = null;
   }
 
@@ -330,7 +334,8 @@ export class Sru extends Sys80 {
       if (!this.fitted[i]) return [];
       const bit = 20 + i;
       if (typeof p === 'number') return [{ label: coinName(p), bit, pence: p }];
-      if (p === 'token' || (p && typeof p === 'object')) return [{ label: 'Token', bit, pence: null, token: true }];
+      if (p && typeof p === 'object') return [{ label: `${coinName(p.token)} token`, bit, pence: p.token, token: true }];
+      if (p === 'token') return [{ label: 'Token', bit, pence: null, token: true }];
       return [{ label: `Coin line ${bit - 16}`, bit }];
     });
     return this.chuteCache;

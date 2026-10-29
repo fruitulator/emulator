@@ -26,6 +26,7 @@ export interface FitSet {
   buttons?: Quad;
   deck?: Quad;
   noDeck?: boolean;
+  noLower?: boolean;
 }
 
 export function readFitSet<T extends FitSet>(s: T): T {
@@ -230,7 +231,10 @@ export function uvOf(f: Frac): [number, number, number, number] {
   return [f.x, 1 - (f.y + f.h), f.x + f.w, 1 - f.y];
 }
 
-export interface ShellFit { aspect: number; glass: Quad; buttons: Quad; deck: Quad | null; glassOnly: Quad }
+export interface ShellFit {
+  aspect: number; glass: Quad; buttons: Quad; deck: Quad | null; glassOnly: Quad;
+  noLower?: boolean;
+}
 
 export function fracToUnits(q: Quad, cropAspect: number): Quad {
   return q.map((p) => ({ x: p.x * cropAspect, y: p.y })) as Quad;

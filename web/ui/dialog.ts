@@ -11,20 +11,22 @@ export function openDialog(o: {
   title: string; body: Node[]; onClose?: () => void; frost?: boolean; actions?: HTMLElement[];
 }): Dialog {
   const backdrop = document.createElement('div');
-  backdrop.className = o.frost ? 'ui-dialog-backdrop ui-dialog-frost' : 'ui-dialog-backdrop';
+  backdrop.className = o.frost ? 'ui-dialog-backdrop nb-backdrop ui-dialog-frost' : 'ui-dialog-backdrop nb-backdrop';
   const panel = document.createElement('div');
   panel.className = 'ui-dialog';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
+  const card = document.createElement('div');
+  card.className = 'nb-dialog ui-dialog-card';
   const bar = document.createElement('div');
-  bar.className = 'about-bar';
+  bar.className = 'nb-dialog__head about-bar';
   const h = document.createElement('h2');
   h.textContent = o.title;
   h.id = `ui-dialog-${Math.random().toString(36).slice(2, 8)}`;
   panel.setAttribute('aria-labelledby', h.id);
   const x = document.createElement('button');
   x.type = 'button';
-  x.className = 'iconbtn';
+  x.className = 'nb-icon-btn';
   x.setAttribute('aria-label', str('ui.dialog.close'));
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
@@ -38,10 +40,11 @@ export function openDialog(o: {
   const scroll = document.createElement('div');
   scroll.className = 'ui-dialog-scroll';
   const body = document.createElement('div');
-  body.className = 'ui-dialog-body';
+  body.className = 'nb-dialog__body ui-dialog-body';
   body.append(...o.body);
   scroll.append(body);
-  panel.append(bar, scroll);
+  card.append(bar, scroll);
+  panel.append(card);
   const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } };
   const close = (): void => {
     backdrop.remove();
@@ -62,34 +65,51 @@ export interface Alert {
   close(): void;
 }
 
+export function alertIcon(): HTMLElement {
+  const tile = document.createElement('span');
+  tile.className = 'nb-dialog__icon';
+  tile.setAttribute('aria-hidden', 'true');
+  tile.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${UI_ICONS.warn}</svg>`;
+  return tile;
+}
+
 export function openAlert(o: {
   message: string; lines?: string[]; buttons: { button: HTMLButtonElement; run: () => void }[]; onClose?: () => void;
+  info?: boolean;
   keysThrough?: boolean;
 }): Alert {
   const root = document.createElement('div');
-  root.className = 'ui-alert';
+  root.className = 'ui-alert nb-backdrop';
   const box = document.createElement('div');
-  box.className = 'ui-alert-box';
+  box.className = o.info ? 'ui-alert-box nb-dialog' : 'ui-alert-box nb-dialog nb-dialog--error';
   box.setAttribute('role', 'alertdialog');
   box.setAttribute('aria-modal', 'true');
-  const msg = document.createElement('div');
+  const body = document.createElement('div');
+  body.className = 'nb-dialog__body';
+  const msg = document.createElement('p');
   msg.className = 'ui-alert-msg';
   msg.textContent = o.message;
   msg.id = `ui-alert-${Math.random().toString(36).slice(2, 8)}`;
   box.setAttribute('aria-labelledby', msg.id);
-  box.append(msg);
+  body.append(msg);
+  if (!o.info) {
+    const head = document.createElement('div');
+    head.className = 'nb-dialog__head';
+    head.append(alertIcon());
+    box.append(head);
+  }
   if (o.lines?.length) {
     const hint = document.createElement('div');
     hint.className = 'ui-alert-hint';
     for (const l of o.lines) {
-      const d = document.createElement('div');
+      const d = document.createElement('p');
       d.textContent = l;
       hint.append(d);
     }
-    box.append(hint);
+    body.append(hint);
   }
   const btns = document.createElement('div');
-  btns.className = 'ui-alert-btns';
+  btns.className = 'ui-alert-btns nb-dialog__actions';
   let closed = false;
   const onKey = (ev: KeyboardEvent): void => {
     if (ev.key === 'Escape') { ev.stopPropagation(); close(); return; }
@@ -110,10 +130,11 @@ export function openAlert(o: {
     b.button.addEventListener('click', () => { remove(); b.run(); });
     btns.append(b.button);
   }
-  box.append(btns);
+  body.append(btns);
+  box.append(body);
   root.append(box);
   document.addEventListener('keydown', onKey, true);
   document.body.append(root);
-  o.buttons[0]?.button.focus({ preventScroll: true });
+  (o.buttons.find((b) => b.button.classList.contains('nb-btn--primary')) ?? o.buttons[0])?.button.focus({ preventScroll: true });
   return { root, close };
 }

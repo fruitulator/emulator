@@ -18,8 +18,11 @@ export interface FitViewOptions {
   onChange: (name: PanelName, q: Quad, done: boolean) => boolean;
   onReset: (name: PanelName | 'all') => void;
   onDeck: (on: boolean) => void;
+  onLower: (on: boolean) => void;
+  noLower: () => boolean;
   canAddDeck: () => boolean;
   accepts: (name: PanelName, q: Quad) => boolean;
+  onActive?: (name: PanelName) => void;
 }
 
 const GRIPS: Grip[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -39,7 +42,12 @@ export class FitView {
   private readonly stage = el('div', null, { class: 'fit-stage', 'data-fit': 'stage' });
   private readonly pic = el('canvas', null, { class: 'fit-pic', 'aria-hidden': 'true' });
   private readonly boxEls = new Map<PanelName, HTMLElement>();
-  private readonly marks = el('div', null, { class: 'fit-marks', 'aria-hidden': 'true' });
+  private readonly dim = document.createElementNS(SVG, 'svg');
+  private readonly dimPath = document.createElementNS(SVG, 'path');
+  private active: PanelName = NAMES[0];
+  private readonly hints = new Map<PanelName, HTMLElement>();
+  private readonly tags = new Map<PanelName, HTMLElement>();
+  private readonly nudges = new Map<PanelName, NudgeRun>();
   private readonly notes = new Map<PanelName, HTMLElement>();
   private readonly resets = new Map<PanelName, HTMLButtonElement>();
   private readonly squares = new Map<PanelName, HTMLButtonElement>();
@@ -51,6 +59,8 @@ export class FitView {
   private readonly rows = new Map<PanelName, HTMLElement>();
   private readonly deckAdd: HTMLButtonElement;
   private readonly deckRemove: HTMLButtonElement;
+  private readonly lowerAdd: HTMLButtonElement;
+  private readonly lowerRemove: HTMLButtonElement;
   private panels: CabinetPanels | null = null;
   private drag: { name: PanelName; grip: Grip; x: number; y: number; start: Quad; id: number; moving: boolean } | null = null;
   private pan: { id: number; x: number; y: number; sx: number; sy: number } | null = null;
@@ -63,9 +73,15 @@ export class FitView {
     this.root = el('div', null, { class: 'fit-view', 'data-fit': 'view' });
     this.stageRoot.append(this.stage);
     this.stage.append(this.pic);
+    this.dim.setAttribute('class', 'fit-dim');
+    this.dim.setAttribute('preserveAspectRatio', 'none');
+    this.dim.setAttribute('aria-hidden', 'true');
+    this.dimPath.setAttribute('fill-rule', 'evenodd');
+    this.dim.append(this.dimPath);
+    this.stage.append(this.dim);
     for (const name of NAMES) {
       const b = el('div', null, {
-        class: `fit-box fit-${name}`, 'data-fit': name, tabindex: '0', role: 'group',
+        class: `fit-box fit-${name}`, 'data-fit': name, tabindex: '-1', role: 'group',
         'aria-label': str('arcade.fitview.n_box_drag_to_move', { 0: PANEL_LABEL[name] }),
       });
       const svg = document.createElementNS(SVG, 'svg');
@@ -89,29 +105,36 @@ export class FitView {
       this.polys.set(name, poly);
       this.edges.set(name, lines);
       this.picked.set(name, 'move');
-      b.append(el('span', PANEL_LABEL[name], { class: 'fit-tag' }));
+      const tag = el('span', PANEL_LABEL[name], { class: 'fit-tag' });
+      this.tags.set(name, tag);
+      b.append(tag);
       for (const g of GRIPS) b.append(el('span', null, { class: `fit-grip fit-grip-${g}`, 'data-grip': g }));
       this.wire(b, name);
       this.boxEls.set(name, b);
       this.stage.append(b);
     }
-    this.stage.append(this.marks);
     this.wireZoom();
     const list = card();
     list.classList.add('fit-rows');
     for (const name of NAMES) {
-      const row = el('div', null, { class: 'menu-row fit-row', 'data-fit-row': name });
+      const row = el('div', null, { class: `menu-row nb-kv fit-row fit-key-${name}`, 'data-fit-row': name });
       const text = el('div', null, { class: 'fit-row-text' });
       const note = el('span', '', { class: 'row-sub fit-note' });
-      text.append(el('span', PANEL_LABEL[name], { class: `row-label fit-row-label fit-key-${name}` }), note);
+      const hint = el('span', str('arcade.fitview.drag_the_box_or_its'), { class: 'row-sub fit-hint' });
+      hint.hidden = true;
+      this.hints.set(name, hint);
+      const label = el('span', null, { class: `row-label fit-row-label fit-key-${name}` });
+      label.append(el('span', null, { class: 'nb-dot', 'aria-hidden': 'true' }), PANEL_LABEL[name]);
+      text.append(label, hint, note);
+      row.addEventListener('click', () => this.setActive(name));
       const square = iconButton(SQUARE_ICON, str('arcade.fitview.square_it_up_the_n', { 0: PANEL_LABEL[name].toLowerCase() }), () => {
         const q = this.current(name);
         if (q && !isRectQuad(q)) { o.onChange(name, roundQuad(squareUp(q)), true); this.sync(); }
       });
-      square.className = 'ui-reset fit-square';
+      square.className = 'nb-mini-btn fit-square';
       square.setAttribute('data-fit-square', name);
       const reset = iconButton(UI_ICONS.reset, str('arcade.fitview.reset_the_n_box', { 0: PANEL_LABEL[name].toLowerCase() }), () => o.onReset(name));
-      reset.className = 'ui-reset';
+      reset.className = 'nb-mini-btn fit-reset';
       row.append(text, square, reset);
       this.rows.set(name, row);
       this.squares.set(name, square);
@@ -119,15 +142,22 @@ export class FitView {
       this.resets.set(name, reset);
       list.append(row);
     }
-    this.resetAll = actionButton(str('arcade.fitview.reset_all'), 'tertiary', () => o.onReset('all'), UI_ICONS.reset);
-    this.resetAll.classList.add('fit-reset-all');
+    this.resetAll = actionButton(str('arcade.fitview.reset_all'), 'secondary', () => o.onReset('all'), UI_ICONS.reset);
+    this.resetAll.classList.add('fit-reset-all', 'nb-btn--sm');
     this.deckAdd = iconButton(UI_ICONS.plus, str('arcade.fitview.add_a_buttons_panel'), () => { o.onDeck(true); this.sync(); });
-    this.deckAdd.className = 'ui-reset fit-deck-add';
+    this.deckAdd.className = 'nb-mini-btn fit-deck-add';
     this.deckAdd.setAttribute('data-fit-deck', 'add');
     this.deckRemove = iconButton(UI_ICONS.trash, str('arcade.fitview.remove_the_buttons_panel'), () => { o.onDeck(false); this.sync(); });
-    this.deckRemove.className = 'ui-reset fit-deck-remove';
+    this.deckRemove.className = 'nb-mini-btn nb-mini-btn--danger fit-deck-remove';
     this.deckRemove.setAttribute('data-fit-deck', 'remove');
     this.rows.get('deck')!.append(this.deckRemove, this.deckAdd);
+    this.lowerAdd = iconButton(UI_ICONS.plus, str('arcade.fitview.add_the_lower_glass'), () => { o.onLower(true); this.sync(); });
+    this.lowerAdd.className = 'nb-mini-btn fit-lower-add';
+    this.lowerAdd.setAttribute('data-fit-lower', 'add');
+    this.lowerRemove = iconButton(UI_ICONS.trash, str('arcade.fitview.remove_the_lower_glass'), () => { o.onLower(false); this.sync(); });
+    this.lowerRemove.className = 'nb-mini-btn nb-mini-btn--danger fit-lower-remove';
+    this.lowerRemove.setAttribute('data-fit-lower', 'remove');
+    this.rows.get('buttons')!.append(this.lowerRemove, this.lowerAdd);
     const foot = el('div', null, { class: 'fit-foot' });
     foot.append(this.resetAll);
     this.root.append(list, foot);
@@ -137,6 +167,23 @@ export class FitView {
     this.ro?.observe(this.stageRoot);
     this.sync();
   }
+
+  private shown(): PanelName[] {
+    const boxes = this.o.boxes(this.hasLower());
+    return NAMES.filter((n) => !!boxes[n]);
+  }
+
+  setActive(name: PanelName, focus = false): void {
+    if (this.drag) return;
+    this.nudges.get(this.active)?.up();
+    this.active = name;
+    this.sync();
+    if (focus) this.boxEls.get(this.active)?.focus({ preventScroll: true });
+  }
+
+  private told: PanelName | null = null;
+
+  get activeName(): PanelName { return this.active; }
 
   setPanels(p: CabinetPanels | null): void {
     this.panels = p;
@@ -153,7 +200,7 @@ export class FitView {
     const W0 = this.stageRoot.clientWidth;
     const H0 = this.stageRoot.clientHeight;
     if (!W0 || !H0) return;
-    const tools = this.stageRoot.parentElement?.querySelector('.wz-tools');
+    const tools = this.stageRoot.parentElement?.querySelector(':scope > .wz-tools, :scope > .wz-half-label');
     const box = this.stageRoot.getBoundingClientRect();
     const t = tools?.getBoundingClientRect();
     const down = t && t.height ? t.bottom - box.top : 0;
@@ -201,7 +248,7 @@ export class FitView {
   }
 
   private hasLower(): boolean {
-    return this.panels ? this.panels.buttons !== null : true;
+    return !this.o.noLower() && (this.panels ? this.panels.buttons !== null : true);
   }
 
   sync(): void {
@@ -209,6 +256,8 @@ export class FitView {
     const c = this.o.content;
     const hasButtons = this.hasLower();
     const boxes = this.o.boxes(hasButtons);
+    if (!boxes[this.active]) this.active = NAMES.find((n) => !!boxes[n]) ?? NAMES[0];
+    if (this.active !== this.told) { this.told = this.active; this.o.onActive?.(this.active); }
     const pct = (x: number, y: number): [string, string] => [
       `${((x - c.left) / c.width) * 100}%`, `${((y - c.top) / c.height) * 100}%`,
     ];
@@ -216,6 +265,14 @@ export class FitView {
       const b = this.boxEls.get(name)!;
       const q = boxes[name];
       b.hidden = !q;
+      const on = name === this.active;
+      b.classList.toggle('fit-active', on);
+      b.tabIndex = on ? 0 : -1;
+      this.tags.get(name)!.textContent = on ? str('arcade.fitview.n_editing', { 0: PANEL_LABEL[name] }) : PANEL_LABEL[name];
+      const row = this.rows.get(name)!;
+      row.classList.toggle('fit-row-active', on && !!q);
+      if (on && q) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current');
+      this.hints.get(name)!.hidden = !(on && q);
       if (q) {
         this.svgs.get(name)!.setAttribute('viewBox', `${c.left} ${c.top} ${c.width} ${c.height}`);
         this.polys.get(name)!.setAttribute('points', q.map((p) => `${p.x},${p.y}`).join(' '));
@@ -241,6 +298,7 @@ export class FitView {
         const tag = b.querySelector<HTMLElement>('.fit-tag')!;
         [tag.style.left, tag.style.top] = pct(q.reduce((t, p) => t + p.x, 0) / 4, q.reduce((t, p) => t + p.y, 0) / 4);
       }
+      if (name === 'buttons') this.rows.get(name)!.classList.toggle('fit-row-off', !q);
       if (name === 'deck') {
         this.rows.get(name)!.hidden = !q && !this.hasLower();
         this.rows.get(name)!.classList.toggle('fit-row-off', !q);
@@ -250,41 +308,31 @@ export class FitView {
       ne.textContent = note;
       ne.hidden = !note;
       const reset = this.resets.get(name)!;
-      const on = this.o.isSet(name);
-      reset.disabled = !on;
-      reset.hidden = name === 'deck' && !q;
-      reset.classList.toggle('off-neutral', on);
+      const isSet = this.o.isSet(name);
+      reset.disabled = !isSet;
+      reset.hidden = (name === 'deck' || name === 'buttons') && !q;
+      reset.classList.toggle('off-neutral', isSet);
       const sq = this.squares.get(name)!;
       const skew = !!q && !isRectQuad(q);
       sq.hidden = !q;
       sq.disabled = !skew;
       sq.classList.toggle('off-neutral', skew);
     }
+    const c0 = this.o.content;
+    this.dim.setAttribute('viewBox', `${c0.left} ${c0.top} ${c0.width} ${c0.height}`);
+    const aq = boxes[this.active];
+    const ring = (pts: { x: number; y: number }[]): string => 'M' + pts.map((p) => [p.x, p.y].join(' ')).join('L') + 'Z';
+    const whole = ring([
+      { x: c0.left, y: c0.top }, { x: c0.left + c0.width, y: c0.top },
+      { x: c0.left + c0.width, y: c0.top + c0.height }, { x: c0.left, y: c0.top + c0.height },
+    ]);
+    this.dimPath.setAttribute('d', aq ? whole + ring(aq) : whole);
     this.resetAll.disabled = !NAMES.some((n) => this.o.isSet(n));
     this.deckAdd.hidden = !!boxes.deck || !hasButtons || !this.o.canAddDeck();
     this.deckRemove.hidden = !boxes.deck;
+    this.lowerRemove.hidden = !boxes.buttons;
+    this.lowerAdd.hidden = !!boxes.buttons || !this.o.noLower();
     this.logFit(boxes);
-  }
-
-  setMarks(marks: { n: number; rect: Rect }[], on: number | null = null): void {
-    const c = this.o.content;
-    const pc = (v: number, o: number, w: number): string => `${((v - o) / w) * 100}%`;
-    this.marks.replaceChildren();
-    for (const m of marks) {
-      const r = m.rect;
-      if (m.n === on) {
-        const ring = el('span', null, { class: 'fit-mark-cap' });
-        ring.style.left = pc(r.left, c.left, c.width);
-        ring.style.top = pc(r.top, c.top, c.height);
-        ring.style.width = `${(r.width / c.width) * 100}%`;
-        ring.style.height = `${(r.height / c.height) * 100}%`;
-        this.marks.append(ring);
-      }
-      const b = el('span', String(m.n + 1), { class: `fit-mark${m.n === on ? ' on' : ''}`, 'data-mount': String(m.n) });
-      b.style.left = pc(r.left + r.width / 2, c.left, c.width);
-      b.style.top = pc(r.top + r.height / 2, c.top, c.height);
-      this.marks.append(b);
-    }
   }
 
   private note(name: PanelName): string {
@@ -303,6 +351,7 @@ export class FitView {
       if (!p.fixed) return `${name}: cabinet built to the box${straight}`;
       const aspect = name === 'glass' ? p.glass : name === 'buttons' ? p.buttons : p.deck;
       if (!aspect) return `${name}: no panel`;
+      if (name === 'deck') return `${name}: fitted inside its panel, its own shape kept${straight}`;
       const s = stretchOf(rectifiedSize(q), aspect);
       return `${name}: stretched ${s.across.toFixed(2)} across, ${s.down.toFixed(2)} down${straight}`;
     }).join('; ') + (this.o.isSet('buttons') ? '' : `; lower glass top found by ${this.o.split}`);
@@ -329,7 +378,6 @@ export class FitView {
       const grip = gripAt(this.stage, this.o.content, start, ev.clientX, ev.clientY);
       (ev.target as Element).setPointerCapture?.(ev.pointerId);
       b.focus({ preventScroll: true });
-      this.raise(name);
       this.picked.set(name, grip);
       this.drag = { name, grip, x: ev.clientX, y: ev.clientY, start, id: ev.pointerId, moving: false };
       this.sync();
@@ -371,7 +419,16 @@ export class FitView {
       if (q) this.o.onChange(name, q, true);
       this.sync();
     });
+    this.nudges.set(name, nudges);
     b.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Tab' && !ev.altKey && !ev.ctrlKey && !ev.metaKey) {
+        const list = this.shown();
+        const to = list[list.indexOf(name) + (ev.shiftKey ? -1 : 1)];
+        if (!to || this.drag) return;
+        ev.preventDefault();
+        this.setActive(to, true);
+        return;
+      }
       if (ev.key === 'Escape' && this.picked.get(name) !== 'move') {
         ev.preventDefault();
         ev.stopPropagation();
@@ -420,8 +477,11 @@ export class FitView {
     const stage = this.stage;
     stage.addEventListener('pointerdown', (ev) => {
       if (ev.button !== 0 && ev.pointerType === 'mouse') return;
-      if (this.zoom <= 1 || this.drag || this.pan) return;
+      if (this.drag || this.pan) return;
       if (ev.target !== stage && ev.target !== this.pic) return;
+      const hit = this.boxAt(ev.clientX, ev.clientY);
+      if (hit) { ev.preventDefault(); this.setActive(hit, true); return; }
+      if (this.zoom <= 1) return;
       ev.preventDefault();
       stage.setPointerCapture?.(ev.pointerId);
       this.pan = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, sx: wrap.scrollLeft, sy: wrap.scrollTop };
@@ -461,8 +521,18 @@ export class FitView {
     this.sync();
   }
 
-  private raise(name: PanelName): void {
-    for (const [n, e] of this.boxEls) e.classList.toggle('fit-top', n === name);
+  private boxAt(x: number, y: number): PanelName | null {
+    const r = this.stage.getBoundingClientRect();
+    const c = this.o.content;
+    if (!r.width || !r.height) return null;
+    const p = { x: c.left + ((x - r.left) / r.width) * c.width, y: c.top + ((y - r.top) / r.height) * c.height };
+    const boxes = this.o.boxes(this.hasLower());
+    let hit: PanelName | null = null;
+    for (const n of NAMES) {
+      const q = boxes[n];
+      if (n !== this.active && q && inQuad(q, p)) hit = n;
+    }
+    return hit;
   }
 }
 
@@ -496,4 +566,17 @@ function gripAt(stage: HTMLElement, c: Rect, q: Quad, x: number, y: number): Gri
     if (d < bestD) { bestD = d; best = g; }
   }
   return best;
+}
+
+function inQuad(q: Quad, p: { x: number; y: number }): boolean {
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i];
+    const b = q[(i + 1) % 4];
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (cross === 0) continue;
+    const s = Math.sign(cross);
+    if (sign === 0) sign = s; else if (s !== sign) return false;
+  }
+  return true;
 }

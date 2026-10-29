@@ -24,6 +24,9 @@ export class AceSpReelController {
 
   private readonly remaining: Int32Array;
   private readonly countdown: Int32Array;
+  private readonly dirs: Int32Array;
+  private readonly symbols: Int32Array;
+  private readonly stopPhase: Int32Array;
 
   private framing = false;
   private pendingLow = -1;
@@ -42,6 +45,9 @@ export class AceSpReelController {
     this.positions = new Int32Array(this.count);
     this.remaining = new Int32Array(this.count);
     this.countdown = new Int32Array(this.count);
+    this.dirs = new Int32Array(this.count).fill(1);
+    this.symbols = new Int32Array(this.count).fill(16);
+    this.stopPhase = new Int32Array(this.count);
   }
 
   fit(reels: number): void {
@@ -52,6 +58,9 @@ export class AceSpReelController {
     this.positions.fill(0);
     this.remaining.fill(0);
     this.countdown.fill(0);
+    this.dirs.fill(1);
+    this.symbols.fill(16);
+    this.stopPhase.fill(0);
     this.framing = false;
     this.pendingLow = -1;
     this.request = [];
@@ -150,8 +159,14 @@ export class AceSpReelController {
       case 0x88:
         this.move(payload, true);
         return [];
+      case 0x21:
+        this.setSymbols(payload);
+        return [];
       case 0x40:
         return this.stepPositions();
+      case 0xc4:
+        this.stopAtSymbol(payload);
+        return [];
       case 0x70:
         return [0x00];
       case 0x90:
@@ -169,11 +184,31 @@ export class AceSpReelController {
       if (absolute) {
         const target = ((word % (HALF_STEPS / 2)) * 2) % HALF_STEPS;
         this.remaining[i] = (target - this.positions[i] + HALF_STEPS) % HALF_STEPS;
+        this.dirs[i] = 1;
+        this.stopPhase[i] = target % (HALF_STEPS / this.symbols[i]);
       } else {
         const steps = (word & 0x7fff) * 2;
         this.remaining[i] = word & 0x8000 ? -steps : steps;
+        if (steps) this.dirs[i] = word & 0x8000 ? -1 : 1;
       }
       this.countdown[i] = this.ticksPerHalfStep;
+    }
+  }
+
+  private setSymbols(payload: number[]): void {
+    for (let i = 0; i < this.count; i++) this.symbols[i] = 16;
+    if (this.count > 3) this.symbols[3] = payload[0] === 0x62 ? 12 : 16;
+  }
+
+  private stopAtSymbol(payload: number[]): void {
+    const mask = payload[0] ?? 0;
+    const n = ((payload[1] ?? 0) * 2) & 0xff;
+    if (n === 0) return;
+    for (let i = 0; i < this.count; i++) {
+      if (!(mask & (1 << i))) continue;
+      const from = (this.positions[i] - this.stopPhase[i] + HALF_STEPS) % HALF_STEPS;
+      const dist = (n - (from % n)) % n;
+      this.remaining[i] = dist * this.dirs[i];
     }
   }
 }

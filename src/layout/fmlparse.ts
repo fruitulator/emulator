@@ -390,14 +390,14 @@ const SEVENSEGBLOCK = m({ ...BASE_TAGS }, m({
   0x05: ['color', 'BackColour'], 0x06: ['color', 'OnColour'], 0x07: ['color', 'OffColour'],
   0x1c: ['u32', 'Offset'], 0x12: ['u32', 'DigitAngle'], 0x0c: ['u32', 'Slant'],
   0x0e: ['u32', 'Chop'], 0x0f: ['u32', 'Centre'],
-  0x0b: ['raw48', ''], 0x1b: ['raw1536', ''],
-  0x09: ['raw48', ''], 0x0d: ['raw48', ''], 0x11: ['raw48', ''],
-  0x13: ['raw48', ''], 0x1d: ['raw48', ''],
+  0x0b: ['raw48', 'ProgrammableDigits'], 0x1b: ['raw1536', 'SegmentLamps'],
+  0x09: ['raw48', 'DPOnDigits'], 0x0d: ['raw48', 'ZeroOnDigits'], 0x11: ['raw48', 'AutoDPDigits'],
+  0x13: ['raw48', 'ShownDigits'], 0x1d: ['raw48', 'DPOffDigits'],
   0x36: ['bitmap', 'Overlay'],
 }), undefined, {
   Columns: 1, Rows: 1, DigitWidth: 0x18, DigitHeight: 0x20, DPRight: 1,
   Thickness: 3, Spacing: 1, HorizontalSizePercent: 0x40, VerticalSizePercent: 0x4e,
-  BackColour: 0xffff0000, OnColour: 0xff0000ff, OffColour: 0xff00ff00,
+  BackColour: 0xff000000, OnColour: 0xffff0000, OffColour: 0xff303030,
   Slant: 6, Chop: 0x4b, Centre: 0x32,
 });
 SEVENSEGBLOCK.second = SEVENSEGBLOCK.nested;
@@ -663,9 +663,11 @@ export interface ParsedComponent {
   texts: Map<string, string>;
   subs?: number[];
   orientation?: number;
+  raws?: Map<string, { off: number; len: number }>;
   value: Uint8Array;
   stop?: { off: number; tag: number };
   clean: boolean;
+  shown?: boolean;
 }
 
 function isWireAngle(d: Uint8Array, o: number): boolean {
@@ -689,6 +691,7 @@ function parseGeometry(d: Uint8Array, c: ParsedComponent, rewriteDelta: number, 
     pos += 5;
   }
   if (pos + 7 > d.length || d[pos] !== 0x07) return pos;
+  c.shown = d[pos + 1] !== 0;
   if (isWireAngle(d, pos + 1)) {
     const v = (d[pos + 3] | (d[pos + 4] << 8)) << 16 >> 16;
     c.angle = v / 2;
@@ -812,6 +815,8 @@ function walkTags(
     const key = name || `#${b.toString(16)}`;
     if (role === 'bitmap') {
       if (name && !c.images.has(name)) c.images.set(name, { off: o, len });
+    } else if (role === 'raw48' || role === 'raw1536') {
+      if (name) (c.raws ??= new Map()).set(name, { off: o, len });
     } else if (role === 'u32' || role === 'i32' || role === 'bool' || role === 'byte') {
       c.values.set(key, role === 'i32' ? i32(d, o) : role === 'u32' ? u32(d, o) : d[o]);
     } else if (role === 'u16') {

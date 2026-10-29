@@ -41,6 +41,7 @@ export class BulbLab {
   private panel: HTMLElement | null = null;
   private host: HTMLElement | null = null;
   private status: HTMLElement | null = null;
+  private statusTiles: { pos: HTMLElement; state: HTMLElement }[] = [];
   private windowButtons: { lamp: number; el: HTMLButtonElement }[] = [];
   private windows: LabWindow[] = [];
   private tray = new Set<number>();
@@ -181,92 +182,115 @@ export class BulbLab {
     this.panel?.remove();
     const p = document.createElement('div');
     p.id = 'bulbLab';
-    if (this.host) {
-      p.style.cssText = 'display:flex;flex-direction:column;gap:10px';
-    } else {
-      p.style.cssText = [
-        'position:fixed', 'right:12px', 'top:56px', 'z-index:50', 'width:300px',
-        'max-height:calc(100vh - 70px)', 'overflow:auto', 'display:flex',
-        'flex-direction:column', 'gap:8px', 'padding:10px', 'border-radius:8px',
-        'background:color-mix(in srgb, var(--surface, #16161f) 92%, #000)',
-        'border:1px solid var(--hairline, #333)', 'font-family:var(--ui, system-ui)',
-        'font-size:12px', 'color:var(--text, #eee)', 'box-shadow:0 8px 30px #000a',
-      ].join(';');
+    p.className = 'bulb-lab';
+    if (!this.host) {
+      p.classList.add('nb-panel', 'bulb-lab--float');
+      p.style.cssText = 'right:12px;top:56px;z-index:50';
       const title = document.createElement('div');
-      title.style.cssText = 'display:flex;justify-content:space-between;align-items:center;font-weight:700';
-      title.textContent = str('bulblab.bulb_lab_renderer_only_no');
-      const close = this.btn('×', () => this.disable());
-      close.style.padding = '2px 8px';
-      title.append(close);
+      title.className = 'bulb-float-head';
+      const name = document.createElement('h3');
+      name.className = 'nb-panel__title';
+      name.textContent = str('bulblab.bulb_lab_renderer_only_no');
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'nb-mini-btn';
+      close.textContent = '×';
+      close.addEventListener('click', () => this.disable());
+      title.append(name, close);
       p.append(title);
     }
 
     this.windowButtons = [];
-    const grid = this.group(str('bulblab.backlights_click_a_bulb_windows'));
-    grid.style.display = 'grid';
-    grid.style.gridTemplateColumns = `repeat(${this.windows.length}, 1fr)`;
+    const lights = this.group(str('bulblab.backlights_click_a_bulb_windows'));
+    lights.classList.add('bulb-lights');
+    const grid = document.createElement('div');
+    grid.className = 'bulb-grid';
+    grid.style.gridTemplateColumns = `repeat(${this.windows.length}, minmax(0, 1fr))`;
     for (let row = 0; row < 3; row++) {
       for (const w of this.windows) {
         const n = w.lampNums[row] ?? -2;
-        const b = this.btn(n >= 0 ? String(n) : '-', () => this.setBulb(n, !this.on.has(n)));
-        b.classList.add('cell');
-        b.style.padding = '8px 0';
-        b.style.fontSize = '11px';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'bulb-cell';
+        const num = document.createElement('span');
+        num.className = 'bulb-n';
+        num.textContent = n >= 0 ? String(n) : '-';
+        b.append(num);
+        b.addEventListener('click', () => this.setBulb(n, !this.on.has(n)));
         b.title = str('bulblab.window_x_n_machine_reel', { 0: w.left, 1: w.machineIndex, 2: row });
         if (n < 0) b.disabled = true;
         else this.windowButtons.push({ lamp: n, el: b });
         grid.append(b);
       }
     }
-    p.append(grid);
+    lights.append(grid);
 
     const rows = this.group(str('bulblab.rows_presets'));
+    rows.classList.add('bulb-presets');
+    const pills = document.createElement('div');
+    pills.className = 'bulb-pills';
+    const pill = (label: string, run: () => void): void => {
+      const b = this.btn(label, run);
+      b.className = 'pane-pill';
+      pills.append(b);
+    };
     for (const [label, row] of [[str('bulblab.top'), 0], [str('bulblab.middle'), 1], [str('bulblab.bottom'), 2]] as const) {
-      rows.append(this.btn(str('bulblab.n_on', { 0: label }), () => this.setRow(row, true)));
-      rows.append(this.btn(str('bulblab.n_off', { 0: label }), () => this.setRow(row, false)));
+      pill(str('bulblab.n_on', { 0: label }), () => this.setRow(row, true));
+      pill(str('bulblab.n_off', { 0: label }), () => this.setRow(row, false));
     }
-    rows.append(this.btn(str('bulblab.all_on'), () => this.setAll(true)));
-    rows.append(this.btn(str('bulblab.all_off'), () => this.setAll(false)));
-    rows.append(this.btn(str('bulblab.held_middle_only'), () => this.held()));
-    p.append(rows);
+    pill(str('bulblab.all_on'), () => this.setAll(true));
+    pill(str('bulblab.all_off'), () => this.setAll(false));
+    pill(str('bulblab.held_middle_only'), () => this.held());
+    rows.append(pills);
 
     const chase = this.group(str('bulblab.firmware_spin_chase_c0_30'));
-    const chaseBtn = this.btn(str('bulblab.chase'), () => { this.chase = !this.chase; chaseBtn.classList.toggle('on', this.chase); });
-    chase.append(chaseBtn);
-    chase.append(this.num(str('bulblab.ms_phase'), this.chaseMs, 10, 1000, (v) => { this.chaseMs = v; }));
-    const onlySpin = this.check(str('bulblab.spinning_windows_only'), this.chaseSpinningOnly, (v) => { this.chaseSpinningOnly = v; });
-    chase.append(onlySpin);
-    p.append(chase);
+    const chaseLine = this.line();
+    const chaseBtn = this.btn(str('bulblab.chase'), () => { this.chase = !this.chase; chaseBtn.classList.toggle('on', this.chase); }, true);
+    chaseLine.append(chaseBtn, this.num(str('bulblab.ms_phase'), this.chaseMs, 10, 1000, (v) => { this.chaseMs = v; }));
+    chase.append(chaseLine);
+    chase.append(this.check(str('bulblab.spinning_windows_only'), this.chaseSpinningOnly, (v) => { this.chaseSpinningOnly = v; }));
+
+    const misc = this.group(str('bulblab.everything_else'));
+    misc.append(this.check(str('bulblab.cabinet_lamps_from_the_emulator'), this.cabinetFromEmulator, (v) => { this.cabinetFromEmulator = v; }));
 
     const spin = this.group(str('bulblab.reels'));
+    spin.classList.add('bulb-reels');
+    const spinLine = this.line();
     const spinBtn = this.btn(str('bulblab.spin_all'), () => {
       const any = this.drives.some((d) => d.spinning);
       this.spin('all', !any);
-    });
+    }, true);
     spinBtn.dataset.role = 'spinAll';
-    spin.append(spinBtn);
-    spin.append(this.num(str('bulblab.half_steps_s'), this.speed, 1, 2000, (v) => { this.speed = v; }));
-    const dir = this.btn(str('bulblab.direction'), () => { this.direction = -this.direction; });
-    spin.append(dir);
-    spin.append(this.btn(str('bulblab.step_1'), () => this.step('all', -1)));
-    spin.append(this.btn(str('bulblab.step_1_2'), () => this.step('all', 1)));
-    spin.append(this.btn(str('bulblab.step_6_a_symbol'), () => this.step('all', 6)));
+    spinLine.append(spinBtn);
+    spinLine.append(this.num(str('bulblab.half_steps_s'), this.speed, 1, 2000, (v) => { this.speed = v; }));
+    spinLine.append(this.btn(str('bulblab.direction'), () => { this.direction = -this.direction; }));
+    spinLine.append(this.btn(str('bulblab.step_1'), () => this.step('all', -1)));
+    spinLine.append(this.btn(str('bulblab.step_1_2'), () => this.step('all', 1)));
+    spinLine.append(this.btn(str('bulblab.step_6_a_symbol'), () => this.step('all', 6)));
+    spin.append(spinLine);
+    const reelLine = this.line();
     for (const w of this.windows) {
       const b = this.btn(str('bulblab.reel_n_xn', { 0: w.machineIndex, 1: w.left }), () => {
         this.spin(w.machineIndex, !this.drives[w.machineIndex]?.spinning);
       });
       b.dataset.reel = String(w.machineIndex);
-      spin.append(b);
+      reelLine.append(b);
     }
-    p.append(spin);
-
-    const misc = this.group(str('bulblab.everything_else'));
-    misc.append(this.check(str('bulblab.cabinet_lamps_from_the_emulator'), this.cabinetFromEmulator, (v) => { this.cabinetFromEmulator = v; }));
-    p.append(misc);
-
     this.status = document.createElement('div');
-    this.status.style.cssText = 'font-family:monospace;font-size:11px;color:var(--muted,#999);white-space:pre';
-    p.append(this.status);
+    this.status.className = 'bulb-pos';
+    this.statusTiles = [];
+    spin.append(reelLine, this.status);
+
+    const left = document.createElement('div');
+    left.className = 'bulb-col bulb-col--main';
+    left.append(lights, rows);
+    const right = document.createElement('div');
+    right.className = 'bulb-col';
+    right.append(chase, misc);
+    const top = document.createElement('div');
+    top.className = 'bulb-top';
+    top.append(left, right);
+    p.append(top, spin);
 
     (this.host ?? document.body).append(p);
     this.panel = p;
@@ -284,52 +308,77 @@ export class BulbLab {
 
   private refreshStatus(): void {
     if (!this.status) return;
-    this.status.textContent = this.drives
-      .map((d, i) => `reel ${i}: pos ${d.pos.toFixed(1).padStart(5)}  ${d.spinning ? 'turning' : 'still'}`)
-      .join('\n');
+    if (this.statusTiles.length !== this.drives.length) {
+      const tiles = this.drives.map((_, i) => {
+        const tile = document.createElement('div');
+        tile.className = 'bulb-pos-tile';
+        const label = document.createElement('span');
+        label.className = 'nb-field__label';
+        label.textContent = str('bulblab.reel_n_pos', { 0: i });
+        const pos = document.createElement('b');
+        const state = document.createElement('span');
+        state.className = 'nb-meta';
+        tile.append(label, pos, state);
+        return { tile, pos, state };
+      });
+      this.statusTiles = tiles.map(({ pos, state }) => ({ pos, state }));
+      this.status.replaceChildren(...tiles.map((t) => t.tile));
+    }
+    this.drives.forEach((d, i) => {
+      const t = this.statusTiles[i];
+      const pos = d.pos.toFixed(1);
+      if (t.pos.textContent !== pos) t.pos.textContent = pos;
+      const state = d.spinning ? 'turning' : 'still';
+      if (t.state.textContent !== state) t.state.textContent = state;
+    });
   }
 
   private group(title: string): HTMLElement {
     const g = document.createElement('div');
-    g.className = 'ctl-group';
+    g.className = 'bulb-group nb-group';
     const h = document.createElement('span');
-    h.className = 'ctl-title';
+    h.className = 'nb-field__label';
     h.textContent = title;
-    h.style.gridColumn = '1 / -1';
     g.append(h);
     return g;
   }
-  private btn(label: string, onClick: () => void): HTMLButtonElement {
+  private line(): HTMLElement {
+    const d = document.createElement('div');
+    d.className = 'bulb-line';
+    return d;
+  }
+  private btn(label: string, onClick: () => void, main = false): HTMLButtonElement {
     const b = document.createElement('button');
     b.type = 'button';
+    b.className = main ? 'nb-btn nb-btn--primary nb-btn--sm' : 'nb-btn nb-btn--sm';
     b.textContent = label;
-    b.style.padding = '5px 9px';
-    b.style.fontSize = '11px';
     b.addEventListener('click', onClick);
     return b;
   }
   private num(label: string, value: number, min: number, max: number, set: (v: number) => void): HTMLElement {
     const l = document.createElement('label');
-    l.style.cssText = 'display:inline-flex;gap:6px;align-items:center';
+    l.className = 'bulb-num';
     l.append(label);
     const i = document.createElement('input');
     i.type = 'number';
+    i.className = 'nb-input';
     i.min = String(min); i.max = String(max); i.value = String(value);
-    i.style.width = '64px';
     i.addEventListener('input', () => { const v = Number(i.value); if (v >= min && v <= max) set(v); });
     l.append(i);
     return l;
   }
   private check(label: string, value: boolean, set: (v: boolean) => void): HTMLElement {
     const l = document.createElement('label');
-    l.className = 'menu-check';
-    l.style.cssText = 'display:inline-flex;gap:8px;align-items:center;cursor:pointer';
+    l.className = 'bulb-check';
+    const text = document.createElement('span');
+    text.textContent = label;
     const i = document.createElement('input');
     i.type = 'checkbox';
+    i.className = 'nb-toggle';
     i.setAttribute('role', 'switch');
     i.checked = value;
     i.addEventListener('change', () => set(i.checked));
-    l.append(i, label);
+    l.append(text, i);
     return l;
   }
 }

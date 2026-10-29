@@ -1,10 +1,9 @@
 import { readFitSet, type Quad } from './fit';
-import { readMountMap } from './mounts';
 import { listGames, type GameMeta, type StateRec } from '../web/store';
 import { machineTitle } from './machinelist';
 import {
   ARCADE_MAX_MACHINES, fromBase64, fromMachineState, onFloor, toMachineState, traceId, turnOf,
-  type ArcadeDoc, type MachineConfig, type MachineSetup, type Place,
+  type ArcadeDoc, type MachineConfig, type MachineSetup, type MachineSource, type Place,
 } from './doc';
 import { currentArcade, getArcade, getMachineState, putMachineState, updateMachineMoney, updateMachineStats } from './docstore';
 import { addLost, addReading, readCredit, readMoneyRecord, sameRun, startingRecord, type MoneyRecord } from './moneyrecord';
@@ -202,6 +201,7 @@ export interface ArcadeMachine {
   installing?: boolean;
   otherVersion?: boolean;
   outOfService?: boolean;
+  source?: MachineSource;
   place?: Place;
 }
 
@@ -246,6 +246,7 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
       outOfService: !!m.outOfService,
       installing: m.status !== 'installed',
       ...(!mine && m.programHash && programs.has(m.programHash) ? { otherVersion: true } : {}),
+      ...(m.source ? { source: m.source } : {}),
       setup: readSetup(m.setup ?? {}),
       config: m.config ?? {},
       slot: server
@@ -267,8 +268,7 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
 
 function readSetup(s: MachineSetup): MachineSetup {
   const out = readFitSet(s);
-  const mounts = readMountMap(s.mounts);
-  if (mounts) out.mounts = mounts; else delete out.mounts;
+  delete (out as { mounts?: unknown }).mounts;
   return out;
 }
 

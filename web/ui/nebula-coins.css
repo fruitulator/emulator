@@ -1,0 +1,30 @@
+.nb-coin {
+  --mid: #F2C232; --lo: #D99A00;
+  --ink: #8A5F06; --engrave-lo: rgba(255,248,214,.85); --engrave-hi: rgba(70,45,0,.55);
+  position: relative; isolation: isolate; aspect-ratio: 1; border: 0; border-radius: 50%; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; container-type: inline-size;
+  font: 700 clamp(18px, 27cqi, 32px)/1 var(--nb-font-display); color: var(--ink);
+  text-shadow: 0 1px 0 var(--engrave-lo), 0 -1px 0 var(--engrave-hi);
+  background:
+    radial-gradient(closest-side, transparent 0 84%, var(--lo) 85% 87%, transparent 88%),
+    linear-gradient(125deg, transparent 0 30%, rgba(255,255,255,.35) 30% 38%, transparent 38% 44%, rgba(255,255,255,.22) 44% 47%, transparent 47%),
+    var(--mid);
+  box-shadow: inset 0 0 0 4px var(--lo), 0 8px 16px -6px rgba(0,0,0,.6);
+  transition: transform .1s, filter .1s;
+}
+.nb-coin::before { content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none; opacity: .5;
+  background: repeating-conic-gradient(var(--lo) 0 2deg, transparent 2deg 5deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 0 89%, #000 90% 96%, transparent 97%);
+          mask: radial-gradient(closest-side, transparent 0 89%, #000 90% 96%, transparent 97%); }
+.nb-coin--silver { --mid: #D6DBE4; --lo: #A2AAB9; --ink: #59616F; --engrave-lo: rgba(255,255,255,.9); --engrave-hi: rgba(30,36,48,.45); }
+.nb-coin--token  { --mid: #A27BFF; --lo: #6E3CF0; --ink: #F4EEFF; --engrave-lo: rgba(40,10,110,.6); --engrave-hi: rgba(255,255,255,.35); font-size: clamp(14px, 20cqi, 22px); }
+.nb-coin:hover { filter: brightness(1.08); box-shadow: inset 0 0 0 4px var(--lo), 0 0 22px rgba(255,201,61,.45), 0 8px 16px -6px rgba(0,0,0,.6); }
+.nb-coin--token:hover { box-shadow: inset 0 0 0 4px var(--lo), 0 0 22px color-mix(in srgb, var(--nb-accent) 55%, transparent), 0 8px 16px -6px rgba(0,0,0,.6); }
+.nb-coin:active { transform: scale(.94); }
+.nb-coin:focus-visible { outline: none; box-shadow: inset 0 0 0 4px var(--lo), var(--nb-focus); }
+.nb-coin { flex-direction: column; gap: 2px; text-align: center; }
+.nb-coin__v { font-size: clamp(16px, 24cqi, 28px); line-height: 1; }
+.nb-coin__w { font: 700 clamp(9px, 11cqi, 12px)/1 var(--nb-font-body); letter-spacing: .12em; text-transform: uppercase; opacity: .85; }
+.nb-coin--token { font-size: clamp(16px, 24cqi, 28px); }
+.nb-coin > * { max-width: 78%; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .nb-coin { transition: none; } }

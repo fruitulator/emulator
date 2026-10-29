@@ -5,15 +5,16 @@ import { UI_ICONS } from '../web/ui/icons';
 import { card, checkRow } from '../web/ui/rows';
 import { openAlert, type Alert } from '../web/ui/dialog';
 import { actionButton, chip } from '../web/ui/list';
-import { statusIcon, statusRow, MARK_LABEL, type Mark } from '../web/ui/status';
+import { dipPackage, type OptionSwitchRow } from '../web/paneltabs';
+import { checkItem, checklist, statusIcon, MARK_LABEL, type Mark } from '../web/ui/status';
 import { stepHeader, type StepHeader } from '../web/ui/steps';
 import { expandSection } from '../web/ui/section';
 import { enhanceSelect } from '../web/ui/dropdown';
 import type { ArcadeMachine } from './machines';
 import { machineTitle } from './machinelist';
 import { cabinetModels, styleModel } from './cabinets';
-import { reassign } from './mounts';
-import { controlName, controlNaming } from '../web/controlname';
+import { CABINET_STYLES, cabinetStyle, DEFAULT_STYLE } from './cabinet-default';
+import { controlNaming } from '../web/controlname';
 import { viewFor } from '../web/platform';
 import { invalidateRec } from './cache';
 import {
@@ -29,9 +30,9 @@ import { TRACE_FPS } from './trace';
 import { COINS_STOPPED_HOST_TEXT, el, exitButton, iconButton } from './host';
 import { serverMoney } from './moneyrecord';
 import { DressPreview, type GlassPlay } from './dresspreview';
-import { extentOf, TEX_WHOLE } from './glass';
+import { TEX_WHOLE } from './glass';
 import { FitView } from './fitview';
-import { settleLook } from './looksettle';
+import { LiveLook, settleLook } from './looksettle';
 import { addDeck, hasDeck, isSetBox, readFitSet, removeDeck, resetBox, resolveFit, withBox, type FitSet, type PanelName } from './fit';
 import { clampQuad, isConvexQuad, quadOfRect, type Quad } from './quad';
 import { listGames } from '../web/store';
@@ -84,12 +85,12 @@ export async function openWizard(
 ): Promise<void> {
   const row = machineById(doc, id);
   root.replaceChildren();
-  root.classList.add('host-wz');
-  const top = el('div', null, { class: 'wz-head' });
-  const heading = el('h1', mode === 'edit' ? str('arcade.wizard.edit_machine') : str('arcade.wizard.install_machine'), { class: 'wz-heading' });
+  root.classList.add('host-wz', 'nb-wizard');
+  const top = el('div', null, { class: 'wz-head nb-wizard__head' });
+  const heading = el('h2', mode === 'edit' ? str('arcade.wizard.edit_machine') : str('arcade.wizard.install_machine'), { class: 'wz-heading' });
   const title = el('div', row ? machineTitle(row.name, null) : str('arcade.wizard.this_machine_is_not_in'), { class: 'wz-title' });
   if (row) title.title = row.name;
-  const sub = el('div', null, { class: 'wz-sub' });
+  const sub = el('p', null, { class: 'wz-sub' });
   sub.append(title);
   if (row) sub.append(chip(row.board, 'plat'));
   const name = el('div', null, { class: 'wz-name' });
@@ -144,12 +145,32 @@ export async function openWizard(
 type RecState = 'waiting' | 'looking' | 'recording' | 'done' | 'needs' | 'broken';
 
 type ViewMode = 'flat' | '3d';
+type LookMode = 'fit' | 'cabinet';
+const LOOK_LABEL: Record<LookMode, string> = { fit: str('arcade.wizard.fit_glass'), cabinet: str('arcade.wizard.cabinet') };
+const LOOK_MODE_KEY = 'fruitulator.arcade.wizard.look';
+const SIDE_W = 900;
+const SIDE_H = 520;
+const COLLAPSE_ICON = '<path d="M6 12h12"/>';
 const VIEW_LABEL: Record<ViewMode, string> = { flat: str('arcade.wizard.flat'), '3d': '3D' };
 
 const NEEDS_TEXT = str('arcade.wizard.the_machine_is_waiting_for');
 const NEEDS_STATE = str('arcade.wizard.waiting_for_your_input');
 const NEEDS_TEXT_LOOK = str('arcade.wizard.the_machine_isn_t_showing_look');
 const NEEDS_STATE_LOOK = str('arcade.wizard.not_at_attract_yet');
+
+const ATTRACT_HINT_S = 30;
+
+function oneCheck(mark: Mark, title: string, note?: string | null): HTMLElement {
+  const ul = checklist();
+  ul.append(checkItem(mark, title, note));
+  return ul;
+}
+
+function wizSection(name: string, body: HTMLElement): HTMLElement {
+  const w = el('div', null, { class: 'wz-group nb-wizard__section' });
+  w.append(el('span', name, { class: 'nb-field__label' }), body);
+  return w;
+}
 
 class Wizard {
   private readonly wm: WizardMachine;
@@ -159,10 +180,36 @@ class Wizard {
   private readonly flatWait = el('div', null, { class: 'wz-wait', 'aria-hidden': 'true' });
   private readonly slotMarks = el('div', null, { class: 'wz-slot-marks', 'aria-hidden': 'true' });
   private readonly tools = el('div', null, { class: 'wz-tools' });
-  private readonly viewSwitch = el('div', null, { class: 'wz-seg', role: 'group', 'aria-label': str('arcade.wizard.view'), 'data-wz': 'switch' });
+  private readonly viewSwitch = el('div', null, { class: 'wz-seg nb-tabs', role: 'tablist', 'aria-label': str('arcade.wizard.view'), 'data-wz': 'switch' });
   private readonly segBtns = new Map<ViewMode, HTMLButtonElement>();
-  private readonly viewOn: Record<typeof LOOK | typeof FINISH, ViewMode> = { [LOOK]: 'flat', [FINISH]: '3d' };
-  private readonly strip = el('div', null, { class: 'wz-strip', 'data-wz': 'strip', role: 'status' });
+  private finishView: ViewMode = '3d';
+  private readonly lookSwitch = el('div', null, { class: 'wz-seg nb-tabs', role: 'tablist', 'aria-label': str('arcade.wizard.view'), 'data-wz': 'look-switch' });
+  private readonly lookBtns = new Map<LookMode, HTMLButtonElement>();
+  private lookMode: LookMode = (() => {
+    try { return localStorage.getItem(LOOK_MODE_KEY) === 'cabinet' ? 'cabinet' : 'fit'; } catch { return 'fit'; }
+  })();
+  private side = false;
+  private readonly split = el('div', null, { class: 'wz-split', 'data-wz': 'split' });
+  private readonly flatHalf = el('div', null, { class: 'wz-half wz-half-flat' });
+  private readonly d3Half = el('div', null, { class: 'wz-half wz-half-3d' });
+  private readonly flatLabel = el('span', str('arcade.wizard.flat'), { class: 'nb-field__label wz-half-label' });
+  private readonly d3Label = el('span', VIEW_LABEL['3d'], { class: 'nb-field__label wz-half-label' });
+  private readonly liveCard = el('div', null, { class: 'wz-live', 'data-wz': 'live' });
+  private readonly liveView = el('div', null, { class: 'wz-live-view' });
+  private readonly liveChip = el('button', VIEW_LABEL['3d'], { type: 'button', class: 'wz-live-chip', 'aria-expanded': 'false', 'data-wz': 'live-chip' });
+  private liveOpen = true;
+  private lookLaid = '';
+  private lookArt: HTMLElement | null = null;
+  private cabGroup: HTMLElement | null = null;
+  private fitGroup: HTMLElement | null = null;
+  private lookActive: PanelName = 'glass';
+  private readonly live3d = new LiveLook(() => {
+    if (this.gone() || this.step !== LOOK) return;
+    this.applyLook();
+    if (this.trimInput && !this.m.setup.trim) this.trimInput.value = this.wm.glass.trim;
+    void this.preview?.rebuild();
+  });
+  private readonly strip = el('div', null, { class: 'wz-strip nb-wizard__status', 'data-wz': 'strip', role: 'status' });
   private readonly stateText = el('span', '', { class: 'wz-strip-text' });
   private stateMark: Mark = 'running';
   private readonly stripState = (() => {
@@ -181,10 +228,10 @@ class Wizard {
   private stripMark: Mark | null = null;
   private stripIcon: HTMLElement | null = null;
   private readonly stripText = el('span', '', { class: 'wz-strip-text' });
-  private readonly panelTitle = el('h2', '', { class: 'wz-panel-title', 'data-wz': 'title' });
+  private readonly panelTitle = el('h3', '', { class: 'wz-panel-title', 'data-wz': 'title' });
   private readonly panelDesc = el('p', '', { class: 'wz-panel-desc' });
   private readonly panel = el('div', null, { class: 'wz-panel-body' });
-  private readonly backBtn = actionButton(str('arcade.wizard.back'), 'tertiary', (ev) => { if (ev.detail > 1) return; if (this.step > this.first) this.goTo(this.step - 1); }, UI_ICONS.chevLeft);
+  private readonly backBtn = actionButton(str('arcade.wizard.back'), 'secondary', (ev) => { if (ev.detail > 1) return; if (this.step > this.first) this.goTo(this.step - 1); }, UI_ICONS.chevLeft);
   private readonly nextBtn = actionButton(str('arcade.wizard.next'), 'primary', (ev) => { if (ev.detail > 1) return; this.onNext(); });
   private onNext: () => void = () => undefined;
   private navLabel = '';
@@ -227,10 +274,6 @@ class Wizard {
     this.wm.live.gateHost(() => this.hands());
     this.wm.live.onCoinsStopped = () => { if (!this.gone() && this.step === FILL) this.render(); };
     this.offs.push(() => { this.wm.live.onCoinsStopped = null; });
-    this.wm.glass.mustCarry = () => {
-      const cab = this.wm.glass.cab;
-      return cab ? this.wm.startCaps().map((c) => cab.lamps.indexOf(c.lp)) : [];
-    };
     this.canvas.className = 'glass';
     this.step = mode === 'edit' ? 1 : 0;
     this.draft = cloneConfig(m.config);
@@ -255,6 +298,7 @@ class Wizard {
     a?.close();
     this.wm.stopWatch();
     this.wm.live.stop();
+    this.live3d.cancel();
     this.preview?.dispose();
     this.preview = null;
     this.fitView?.dispose();
@@ -295,9 +339,9 @@ class Wizard {
     if (!this.needHost || this.gone() || (!force && (this.needsShown || this.alert || this.step === LOOK))) return;
     this.needsShown = true;
     this.showAlert(this.needsLook ? NEEDS_TEXT_LOOK : NEEDS_TEXT, [], [
-      { label: str('arcade.wizard.ok'), kind: 'primary', run: () => undefined },
       ...(this.needsLook ? [{ label: str('arcade.wizard.it_shows_an_alarm'), kind: 'secondary' as const, run: () => this.hostAlarm() }] : []),
       { label: str('arcade.wizard.install_without_attract'), kind: 'secondary', run: () => this.skipAttract() },
+      { label: str('arcade.wizard.ok'), kind: 'primary', run: () => undefined },
     ], true, true);
     this.needsAlert = this.alert;
   }
@@ -335,30 +379,54 @@ class Wizard {
     window.addEventListener('pageshow', shown);
     this.offs.push(() => window.removeEventListener('pageshow', shown));
     this.steps = stepHeader(STEPS, (i) => this.goTo(i));
-    const wrap = el('div', null, { class: 'wz-body' });
+    const wrap = el('div', null, { class: 'wz-body nb-wizard__body' });
     this.flat.append(this.canvas, this.slotMarks);
     this.stage.append(this.flat);
     for (const v of ['flat', '3d'] as ViewMode[]) {
-      const b = el('button', VIEW_LABEL[v], { type: 'button', class: 'wz-seg-btn', 'data-view': v, 'aria-pressed': 'false' });
+      const b = el('button', VIEW_LABEL[v], { type: 'button', class: 'wz-seg-btn', role: 'tab', 'data-view': v, 'aria-selected': 'false' });
       b.addEventListener('click', () => this.setView(v));
       this.segBtns.set(v, b);
       this.viewSwitch.append(b);
     }
     this.tools.append(this.viewSwitch);
-    const left = el('div', null, { class: 'wz-left' });
+    for (const v of ['fit', 'cabinet'] as LookMode[]) {
+      const b = el('button', LOOK_LABEL[v], { type: 'button', class: 'wz-seg-btn', role: 'tab', 'data-look': v, 'aria-selected': 'false' });
+      b.addEventListener('click', () => this.setLookMode(v));
+      this.lookBtns.set(v, b);
+      this.lookSwitch.append(b);
+    }
+    this.flatHalf.append(this.flatLabel);
+    this.d3Half.append(this.d3Label);
+    this.split.append(this.flatHalf, this.d3Half);
+    const liveCap = el('div', null, { class: 'wz-live-cap' });
+    const collapse = iconButton(COLLAPSE_ICON, str('arcade.wizard.live_3d'), () => this.setLiveOpen(false));
+    collapse.className = 'nb-mini-btn wz-live-collapse';
+    collapse.setAttribute('aria-expanded', 'true');
+    liveCap.append(el('span', str('arcade.wizard.live_3d'), { class: 'wz-live-name' }), collapse);
+    this.liveCard.append(this.liveView, liveCap);
+    this.liveChip.setAttribute('aria-label', str('arcade.wizard.live_3d'));
+    this.liveChip.addEventListener('click', () => this.setLiveOpen(true));
+    if (typeof ResizeObserver === 'function') {
+      let raf = 0;
+      const ro = new ResizeObserver(() => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => { if (!this.gone()) this.measureSide(); });
+      });
+      ro.observe(this.stage);
+      this.offs.push(() => { ro.disconnect(); cancelAnimationFrame(raf); });
+    }
+    const left = el('div', null, { class: 'wz-left nb-wizard__preview' });
     left.append(this.stage, this.strip);
-    const panel = el('section', null, { class: 'wz-panel', 'aria-labelledby': 'wzPanelTitle' });
+    const panel = el('section', null, { class: 'wz-panel nb-wizard__side', 'aria-labelledby': 'wzPanelTitle' });
     this.panelTitle.id = 'wzPanelTitle';
-    const head = el('header', null, { class: 'wz-panel-head' });
-    head.append(this.panelTitle, this.panelDesc);
-    const foot = el('footer', null, { class: 'wz-foot' });
+    const foot = el('footer', null, { class: 'wz-foot nb-wizard__foot' });
     this.backBtn.setAttribute('data-wz', 'back');
     this.nextBtn.setAttribute('data-wz', 'next');
     foot.append(this.backBtn, this.nextBtn);
-    panel.append(head, this.panel, foot);
+    panel.append(this.panelTitle, this.panelDesc, this.panel, foot);
     wrap.append(left, panel);
     const top = this.root.querySelector('.wz-head');
-    if (top) top.insertBefore(this.steps.root, top.querySelector('.wz-exit'));
+    if (top) top.after(this.steps.root);
     else this.root.append(this.steps.root);
     this.root.append(wrap);
     this.render();
@@ -436,7 +504,7 @@ class Wizard {
       (i) => !this.moving && this.canGo(i) && (i < this.step || this.done(i)));
     this.panel.replaceChildren();
     if (this.step !== FILL) this.slotMarks.replaceChildren();
-    if (this.step !== LOOK) { this.fitView?.dispose(); this.fitView = null; this.dressSeq++; this.markOn = null; this.syncMarks(); }
+    if (this.step !== LOOK) { this.fitView?.dispose(); this.fitView = null; this.dressSeq++; this.live3d.cancel(); }
     this.panelTitle.textContent = STEPS[this.step];
     this.panelDesc.textContent = STEP_DESC[this.step];
     this.nav();
@@ -477,25 +545,55 @@ class Wizard {
   }
 
   private setView(v: ViewMode): void {
-    const at = this.switchStep;
-    if (at === null || this.viewOn[at] === v) return;
-    this.viewOn[at] = v;
+    if (this.step !== FINISH || this.finishView === v) return;
+    this.finishView = v;
     this.showView();
+  }
+
+  private setLookMode(v: LookMode): void {
+    if (this.lookMode === v) return;
+    this.lookMode = v;
+    try { localStorage.setItem(LOOK_MODE_KEY, v); } catch {  }
+    this.syncLookPanel();
+    this.showView();
+  }
+
+  private setLiveOpen(on: boolean): void {
+    if (this.liveOpen === on) return;
+    this.liveOpen = on;
+    this.showView();
+    (on ? this.liveCard.querySelector<HTMLElement>('.wz-live-collapse') : this.liveChip)?.focus({ preventScroll: true });
+  }
+
+  private measureSide(): void {
+    const side = this.stage.clientWidth >= SIDE_W && this.stage.clientHeight >= SIDE_H;
+    if (side === this.side) return;
+    this.side = side;
+    if (this.step !== LOOK) return;
+    this.syncLookPanel();
+    this.showView();
+  }
+
+  private syncLookPanel(): void {
+    const mode = this.side ? null : this.lookMode;
+    this.cabGroup?.classList.toggle('wz-off', mode === 'fit');
+    this.fitGroup?.classList.toggle('wz-off', mode === 'cabinet');
   }
 
   private showView(): void {
     const at = this.switchStep;
-    const mode = at === null ? 'flat' : this.viewOn[at];
+    const mode = at === FINISH ? this.finishView : 'flat';
     for (const [v, b] of this.segBtns) {
-      b.setAttribute('aria-pressed', String(v === mode));
+      b.setAttribute('aria-selected', String(v === mode));
       b.classList.toggle('on', v === mode);
     }
     if (at !== null) this.ensurePreview();
     this.preview?.play(at === FINISH ? this.glassPlay : null);
+    if (at === LOOK) { this.showLook(); return; }
+    this.lookLaid = '';
+    if (this.viewSwitch.parentElement !== this.tools) this.tools.replaceChildren(this.viewSwitch);
     let view: HTMLElement;
     if (at !== null && mode === '3d') view = this.preview!.root;
-    else if (at === LOOK && this.fitView) view = this.fitView.stageRoot;
-    else if (at === LOOK) view = this.lookWait;
     else view = this.flat;
     const waiting = view === this.flat && !this.flat.classList.contains('shown');
     this.wm.glass.setBlanking(view !== this.flat);
@@ -511,6 +609,44 @@ class Wizard {
     const shown3d = view === this.preview?.root && this.stage.firstElementChild !== view;
     this.stage.replaceChildren(...want);
     if (shown3d) void this.preview!.rebuild();
+  }
+
+  private showLook(): void {
+    const p = this.preview!;
+    this.wm.glass.setBlanking(true);
+    this.wm.glass.setWhole(false);
+    for (const [v, b] of this.lookBtns) {
+      b.setAttribute('aria-selected', String(v === this.lookMode));
+      b.classList.toggle('on', v === this.lookMode);
+    }
+    const art = this.fitView?.stageRoot ?? this.lookWait;
+    const mode = this.side ? 'side' : this.lookMode;
+    const key = `${mode}|${this.liveOpen}`;
+    if (key === this.lookLaid && art === this.lookArt && art.isConnected) return;
+    const was3d = p.root.parentElement;
+    let want: HTMLElement[];
+    if (mode === 'side') {
+      this.flatHalf.replaceChildren(art, this.flatLabel);
+      this.d3Half.replaceChildren(p.root, p.resetBtn, this.d3Label);
+      want = [this.split];
+    } else if (mode === 'cabinet') {
+      this.tools.replaceChildren(p.resetBtn, this.lookSwitch);
+      want = [p.root, this.tools];
+    } else {
+      this.tools.replaceChildren(this.lookSwitch);
+      if (this.liveOpen) {
+        this.liveView.replaceChildren(p.root);
+        want = [art, this.liveCard, this.tools];
+      } else {
+        p.root.remove();
+        want = [art, this.liveChip, this.tools];
+      }
+    }
+    this.stage.replaceChildren(...want);
+    this.lookLaid = key;
+    this.lookArt = art;
+    if (p.root.isConnected && p.root.parentElement !== was3d) void p.rebuild();
+    requestAnimationFrame(() => { if (this.step === LOOK) this.fitView?.sync(); });
   }
 
   private readonly glassPlay: GlassPlay = {
@@ -530,7 +666,6 @@ class Wizard {
     this.preview = new DressPreview(this.wm.glass);
     this.preview.onBuilt = (panels) => {
       this.fitView?.setPanels(panels);
-      if (this.step === LOOK) this.renderMounts();
     };
     void this.preview.rebuild();
   }
@@ -601,7 +736,7 @@ class Wizard {
   }
 
   private checkList(ids: { id: string; name: string }[], running: string | null): HTMLElement {
-    const box = card();
+    const box = checklist();
     box.classList.add('wiz-checks');
     this.checkRows(box, ids, running);
     return box;
@@ -612,7 +747,7 @@ class Wizard {
       const r = this.result(c.id);
       const mark: Mark = r?.pass === true ? 'pass' : r?.pass === false ? 'fail' : running === c.id ? 'running' : 'pending';
       const note = r?.note || (mark === 'running' ? this.runNote : mark === 'pending' ? pendingNote : null);
-      const row = statusRow(mark, c.name, note || null);
+      const row = checkItem(mark, c.name, note || null);
       row.classList.add('wiz-check');
       if (mark === 'fail') this.reopens(row, BOOT_CHECKS.some((b) => b.id === c.id) ? 'boot' : 'test');
       box.append(row);
@@ -678,11 +813,10 @@ class Wizard {
     this.alert = null;
     old?.close();
     const a = openAlert({
-      message, lines, keysThrough,
+      message, lines, keysThrough, info,
       buttons: buttons.map((b) => ({ button: actionButton(b.label, b.kind, () => undefined), run: () => { this.alert = null; b.run(); } })),
       onClose: () => { this.alert = null; this.render(); },
     });
-    if (info) a.root.querySelector('.ui-alert-msg')?.classList.add('ui-alert-info');
     this.alert = a;
   }
 
@@ -777,7 +911,12 @@ class Wizard {
       const t0 = performance.now();
       const waiting = (): boolean => {
         if (!this.needHost) {
-          this.say(str('arcade.wizard.waiting_for_attract_n_s', { 0: Math.round((performance.now() - t0) / 1000) }));
+          const s = Math.round((performance.now() - t0) / 1000);
+          this.say(str('arcade.wizard.waiting_for_attract_n_s', { 0: s }));
+          if (s >= ATTRACT_HINT_S && !this.runNote) {
+            this.runNote = str('arcade.wizard.ensure_no_credit');
+            this.render();
+          }
         }
         return wm.attract() || this.attractSkipped || this.hostSawAlarm;
       };
@@ -840,31 +979,49 @@ class Wizard {
     cfg.panelSwitches ??= {};
     let sections = 0;
     if (info.optionKeys.length) {
-      const body = el('div');
+      const body = el('div', null, { class: 'wz-keys' });
       info.optionKeys.forEach((k, i) => {
         const row = el('label', null, { class: 'menu-row menu-key' });
         const sel = el('select', null, { id: `wizKey${i}`, 'aria-label': k.label });
         k.positions.forEach((p, j) => sel.append(el('option', p, { value: String(j) })));
         sel.value = String(cfg.optionKeys![k.label] ?? k.position);
         sel.addEventListener('change', () => { cfg.optionKeys![k.label] = Number(sel.value); this.nav(); });
-        row.append(el('span', k.label), sel);
+        row.append(el('span', k.label, { class: 'row-label' }), sel);
         body.append(row);
-        enhanceSelect(sel);
+        enhanceSelect(sel, { small: true, popover: { align: 'end', within: () => this.root, minWidth: 180, maxHeight: 280 } });
       });
       this.panel.append(expandSection(str('arcade.wizard.option_keys'), UI_ICONS.options, body, true).root);
       sections++;
     }
     const groups = new Map<string, HTMLElement>();
+    const packages = new Map<string, OptionSwitchRow[]>();
     for (const sw of info.switchPanel.filter((s) => s.option)) {
       const name = sw.group || str('arcade.wizard.option_switches');
       let body = groups.get(name);
-      if (!body) { body = el('div'); groups.set(name, body); }
-      const { row, box } = checkRow(sw.label, (on) => { cfg.panelSwitches![String(sw.id)] = on; this.nav(); });
-      box.checked = cfg.panelSwitches![String(sw.id)] ?? sw.on;
+      if (!body) { body = el('div', null, { class: 'wz-dips' }); groups.set(name, body); }
+      const on = cfg.panelSwitches![String(sw.id)] ?? sw.on;
+      if (sw.dil) {
+        const key = `${name}\u0000${sw.dil.bank}`;
+        let pkg = packages.get(key);
+        if (!pkg) {
+          pkg = [];
+          packages.set(key, pkg);
+          body.append(el('div', null, { class: 'dip', 'data-pkg': key }));
+        }
+        pkg.push({ ...sw, on });
+        continue;
+      }
+      const { row, box } = checkRow(sw.label, (v) => { cfg.panelSwitches![String(sw.id)] = v; this.nav(); });
+      box.checked = on;
       body.append(row);
     }
+    for (const body of groups.values()) {
+      for (const slot of body.querySelectorAll<HTMLElement>('.dip')) {
+        dipPackage(slot, packages.get(slot.dataset.pkg!)!, (row, v) => { cfg.panelSwitches![String(row.id)] = v; this.nav(); });
+      }
+    }
     for (const [name, body] of groups) {
-      this.panel.append(expandSection(name, /dil/i.test(name) ? UI_ICONS.dil : UI_ICONS.switches, body).root);
+      this.panel.append(expandSection(name, /dil/i.test(name) ? UI_ICONS.dil : UI_ICONS.switches, body, true).root);
       sections++;
     }
     if (!sections) this.panel.append(el('p', str('arcade.wizard.this_machine_has_no_settings'), { class: 'host-note' }));
@@ -950,7 +1107,8 @@ class Wizard {
     const text = needs ? (this.needsLook ? NEEDS_STATE_LOOK : NEEDS_STATE) : this.stateText.textContent ?? '';
     const state = this.stripState;
     if (this.stripMark !== mark) {
-      const icon = statusIcon(mark, str('arcade.wizard.machine_n', { 0: MARK_LABEL[mark] }), 12);
+      const icon = mark === 'running' ? el('span', null, { class: 'nb-spinner', style: '--s: 18px', role: 'img', 'aria-label': str('arcade.wizard.machine_n', { 0: MARK_LABEL[mark] }) })
+        : statusIcon(mark, str('arcade.wizard.machine_n', { 0: MARK_LABEL[mark] }));
       if (this.stripIcon) this.stripIcon.replaceWith(icon); else state.prepend(icon);
       this.stripIcon = icon;
       this.stripMark = mark;
@@ -997,8 +1155,8 @@ class Wizard {
   }
 
   private readonly readyBar = (() => {
-    const track = el('div', null, { class: 'wz-ready', 'data-wz': 'ready', role: 'progressbar', 'aria-label': str('arcade.wizard.getting_the_machine_ready'), 'aria-valuemin': '0', 'aria-valuemax': '100' });
-    track.append(el('div', null, { class: 'wz-ready-fill' }));
+    const track = el('div', null, { class: 'wz-ready nb-meter', 'data-wz': 'ready', role: 'progressbar', 'aria-label': str('arcade.wizard.getting_the_machine_ready'), 'aria-valuemin': '0', 'aria-valuemax': '100' });
+    track.append(el('span', null, { class: 'wz-ready-fill' }));
     return track;
   })();
   private testFrom: number | null = null;
@@ -1100,11 +1258,7 @@ class Wizard {
     const det = g.detected;
     const box = card();
     box.classList.add('wiz-dress');
-    const group = (name: string, body: HTMLElement): HTMLElement => {
-      const g = el('div', null, { class: 'wz-group' });
-      g.append(el('h3', name, { class: 'ui-subhead' }), body);
-      return g;
-    };
+    const group = wizSection;
     const changed = async (): Promise<void> => {
       this.applyLook();
       await this.preview?.rebuild();
@@ -1113,23 +1267,31 @@ class Wizard {
     const set = this.m.setup;
     const models = await cabinetModels().catch(() => []);
     if (this.step !== LOOK || seq !== this.dressSeq) return;
-    const cabRow = el('label', null, { class: 'menu-row menu-key' });
+    const cabRow = el('label', null, { class: 'menu-row menu-key nb-kv wz-look-row' });
     const cab = el('select', null, { id: 'wizCabinet', 'aria-label': str('arcade.wizard.cabinet') });
     cab.append(el('option', str('arcade.wizard.default_cabinet'), { value: 'default' }));
+    const styleNames: Record<string, string> = {
+      cove: str('arcade.wizard.cabinet_style.cove'),
+      topbox: str('arcade.wizard.cabinet_style.topbox'),
+      wedge: str('arcade.wizard.cabinet_style.wedge'),
+      classic: str('arcade.wizard.cabinet_style.classic'),
+      arch: str('arcade.wizard.cabinet_style.arch'),
+    };
+    for (const s of CABINET_STYLES) if (s !== DEFAULT_STYLE) cab.append(el('option', styleNames[s.id] ?? s.id, { value: s.id }));
     for (const mdl of models) cab.append(el('option', mdl.id, { value: mdl.id }));
     if (set.cabinet === undefined) {
       set.cabinet = styleModel(models, g.cabinetStyle)?.id ?? 'default';
       void this.save();
     }
-    cab.value = models.some((mdl) => mdl.id === set.cabinet) ? set.cabinet : 'default';
+    cab.value = models.some((mdl) => mdl.id === set.cabinet) || (cabinetStyle(set.cabinet) && cabinetStyle(set.cabinet) !== DEFAULT_STYLE) ? set.cabinet : 'default';
     cab.addEventListener('change', () => {
       set.cabinet = cab.value;
       void changed();
     });
-    cabRow.append(el('span', str('arcade.wizard.model'), { class: 'row-label ui-slider-label' }), cab);
+    cabRow.append(el('span', str('arcade.wizard.model'), { class: 'row-label' }), cab);
     box.append(cabRow);
-    enhanceSelect(cab);
-    const trimRow = el('div', null, { class: 'menu-row menu-vol ui-slider' });
+    enhanceSelect(cab, { small: true });
+    const trimRow = el('div', null, { class: 'menu-row nb-kv wz-look-row' });
     const trim = el('input', null, { type: 'color', 'aria-label': str('arcade.wizard.trim_colour'), class: 'wiz-colour' });
     trim.value = g.trim;
     this.trimInput = trim;
@@ -1139,7 +1301,7 @@ class Wizard {
       syncTrim();
       void changed();
     });
-    trimReset.className = 'ui-reset';
+    trimReset.className = 'nb-mini-btn wz-trim-reset';
     const syncTrim = (): void => {
       const off = !!set.trim;
       trimReset.classList.toggle('off-neutral', off);
@@ -1148,24 +1310,24 @@ class Wizard {
     trim.addEventListener('input', () => {
       set.trim = trim.value;
       syncTrim();
-      if (this.stage.firstElementChild === this.preview?.root) void this.preview?.rebuild();
+      if (this.preview?.root.isConnected) void this.preview?.rebuild();
     });
     trim.addEventListener('change', () => {
       set.trim = trim.value;
       syncTrim();
-      if (this.stage.firstElementChild === this.preview?.root) void this.preview?.rebuild();
+      if (this.preview?.root.isConnected) void this.preview?.rebuild();
       void this.save();
     });
-    trimRow.append(el('span', str('arcade.wizard.trim_colour'), { class: 'row-label ui-slider-label' }), trimReset, trim);
+    const trimEnd = el('span', null, { class: 'wz-trim' });
+    trimEnd.append(trimReset, trim);
+    trimRow.append(el('span', str('arcade.wizard.trim_colour'), { class: 'row-label' }), trimEnd);
     syncTrim();
     box.append(trimRow);
-    this.panel.append(group(str('arcade.wizard.cabinet'), box));
-    this.mountBox = el('div', null, { class: 'wz-mounts', 'data-wz': 'mounts' });
-    this.mountGroup = group(str('arcade.wizard.cabinet_buttons'), this.mountBox);
-    this.panel.append(this.mountGroup);
-    this.renderMounts();
+    this.cabGroup = group(str('arcade.wizard.cabinet'), box);
+    this.panel.append(this.cabGroup);
     this.fitView?.dispose();
     this.fitView = null;
+    this.fitGroup = null;
     if (det && g.cab) {
       const content = g.cab.content;
       const next = (name: PanelName, q: Quad): Partial<Record<PanelName, Quad>> | null => {
@@ -1182,14 +1344,16 @@ class Wizard {
         this.lookChanged(done);
         return true;
       };
+      const wasActive = this.lookActive;
       const fit = new FitView({
         content,
         source: () => g.layoutCanvas,
-        boxes: (hasButtons) => resolveFit(set, det, hasButtons),
+        boxes: (hasButtons) => resolveFit(set, det, hasButtons && !set.noLower),
         isSet: (name) => isSetBox(set, det, name),
         split: det.split,
         onChange: (name, q, done) => setBox(name, q, done),
         accepts: (name, q) => !!next(name, q),
+        onActive: (name) => { this.lookActive = name; },
         onReset: (name) => {
           const names: PanelName[] = name === 'all' ? ['glass', 'buttons', 'deck'] : [name];
           let s2: FitSet = { glass: set.glass, buttons: set.buttons, deck: set.deck, noDeck: set.noDeck };
@@ -1199,6 +1363,11 @@ class Wizard {
           fit.sync();
         },
         canAddDeck: () => !!addDeck({ ...set, deck: undefined }, det),
+        noLower: () => !!set.noLower,
+        onLower: (on) => {
+          if (on) delete set.noLower; else set.noLower = true;
+          this.lookChanged(true);
+        },
         onDeck: (on) => {
           if (on) {
             delete set.noDeck;
@@ -1216,92 +1385,14 @@ class Wizard {
         },
       });
       fit.setPanels(this.preview?.panels ?? null);
+      fit.setActive(wasActive);
       this.fitView = fit;
-      this.syncMarks();
-      this.panel.append(group(str('arcade.wizard.fit'), fit.root));
+      this.fitGroup = group(str('arcade.wizard.fit'), fit.root);
+      this.panel.append(this.fitGroup);
     }
+    this.side = this.stage.clientWidth >= SIDE_W && this.stage.clientHeight >= SIDE_H;
+    this.syncLookPanel();
     this.showView();
-  }
-
-  private mountBox: HTMLElement | null = null;
-  private mountGroup: HTMLElement | null = null;
-
-  private renderMounts(): void {
-    const box = this.mountBox;
-    const grp = this.mountGroup;
-    if (!box || !grp) return;
-    const g = this.wm.glass;
-    const cab = g.cab;
-    const n = g.mountCount;
-    grp.style.display = !n || !cab ? 'none' : '';
-    box.replaceChildren();
-    this.syncMarks();
-    if (!n || !cab) return;
-    const set = this.m.setup;
-    const model = g.mountModel;
-    const info = this.wm.live.emu.info;
-    const view = g.game ? viewFor(g.game.system) : null;
-    const nameOf = (i: number, k: number): string => {
-      const lp = cab.lamps[i];
-      const named = info && view
-        ? controlName(lp, view, info.coins ?? view.coins, info.capNames, info.coinPort)
-        : (lp.name ?? lp.label ?? lp.legend?.off ?? lp.legend?.on ?? '').trim();
-      return named ? `${named} (${k + 1} from the left)` : str('arcade.wizard.button_n_from_the_left', { 0: k + 1 });
-    };
-    const apply = (): void => {
-      g.assignMounts();
-      this.renderMounts();
-      void this.save();
-    };
-    for (let m = 0; m < n; m++) {
-      const row = el('label', null, { class: 'menu-row menu-key' });
-      const sel = el('select', null, { 'aria-label': str('arcade.wizard.cabinet_button_n', { 0: m + 1 }), 'data-mount': String(m) });
-      sel.append(el('option', str('arcade.wizard.nothing'), { value: '' }));
-      g.mountable.forEach((i, k) => sel.append(el('option', nameOf(i, k), { value: String(i) })));
-      const now = g.mountLamps[m];
-      sel.value = now === null || now === undefined ? '' : String(now);
-      sel.addEventListener('change', () => {
-        set.mounts = reassign(g.mountLamps, m, sel.value === '' ? null : Number(sel.value), model);
-        apply();
-      });
-      row.append(el('span', str('arcade.wizard.button_n', { 0: m + 1 }), { class: 'row-label ui-slider-label' }), sel);
-      row.dataset.mount = String(m);
-      const hl = (on: boolean): void => {
-        if (on) this.markOn = m;
-        else if (this.markOn === m && !row.contains(document.activeElement)) this.markOn = null;
-        this.syncMarks();
-      };
-      row.addEventListener('pointerenter', () => hl(true));
-      row.addEventListener('pointerleave', () => hl(false));
-      row.addEventListener('focusin', () => hl(true));
-      row.addEventListener('focusout', () => { window.setTimeout(() => hl(false)); });
-      box.append(row);
-      enhanceSelect(sel);
-    }
-    const own = !!set.mounts && set.mounts.model === model;
-    const reset = actionButton(str('arcade.wizard.reset_to_the_layout_s'), 'tertiary', () => {
-      delete set.mounts;
-      apply();
-    });
-    reset.disabled = !own;
-    reset.dataset.wz = 'mounts-reset';
-    box.append(reset);
-  }
-
-  private markOn: number | null = null;
-
-  private syncMarks(): void {
-    const g = this.wm.glass;
-    const cab = g.cab;
-    const n = this.step === LOOK && cab ? g.mountCount : 0;
-    if (this.markOn !== null && this.markOn >= n) this.markOn = null;
-    this.preview?.showMarks(0, null);
-    const marks: { n: number; rect: { left: number; top: number; width: number; height: number } }[] = [];
-    if (n && cab) {
-      g.mountLamps.forEach((i, m) => { if (i !== null && i !== undefined && cab.lamps[i]) marks.push({ n: m, rect: extentOf(cab.lamps[i]) }); });
-    }
-    this.fitView?.setMarks(marks, this.markOn);
-    this.mountBox?.querySelectorAll<HTMLElement>('.menu-row[data-mount]').forEach((r) => r.classList.toggle('on', Number(r.dataset.mount) === this.markOn));
   }
 
   private fitView: FitView | null = null;
@@ -1309,6 +1400,8 @@ class Wizard {
   private trimInput: HTMLInputElement | null = null;
 
   private lookChanged(done: boolean): void {
+    if (done) this.live3d.cancel();
+    else if (this.preview?.root.isConnected) this.live3d.move();
     settleLook(done, {
       apply: () => this.applyLook(),
       showTrim: () => { if (this.trimInput && !this.m.setup.trim) this.trimInput.value = this.wm.glass.trim; },
@@ -1329,12 +1422,12 @@ class Wizard {
 
   private renderFill(): void {
     const v = moneyTrust(this.m.board);
-    const money = card();
+    const money = checklist();
     money.append(v.trust === 'billable'
-      ? statusRow('pass', str('arcade.wizard.money_in_and_out_are'))
-      : v.trust === 'untrusted' ? statusRow('warn', PAYOUT_UNVERIFIED)
-        : statusRow('warn', NO_BOOKKEEPING));
-    if (this.unpriced) money.append(statusRow('warn', str('arcade.wizard.some_payouts_cannot_be_counted')));
+      ? checkItem('pass', str('arcade.wizard.money_in_and_out_are'))
+      : v.trust === 'untrusted' ? checkItem('warn', PAYOUT_UNVERIFIED)
+        : checkItem('warn', NO_BOOKKEEPING));
+    if (this.unpriced) money.append(checkItem('warn', str('arcade.wizard.some_payouts_cannot_be_counted')));
     const fill = card();
     const refill = this.wm.live.running ? this.wm.refillSwitch() : null;
     if (refill) {
@@ -1342,11 +1435,7 @@ class Wizard {
       box.checked = this.refillOn;
       fill.append(r);
     }
-    const g = (name: string, body: HTMLElement): HTMLElement => {
-      const w = el('div', null, { class: 'wz-group' });
-      w.append(el('h3', name, { class: 'ui-subhead' }), body);
-      return w;
-    };
+    const g = wizSection;
     this.panel.append(g(str('arcade.wizard.money'), money));
     if (fill.childElementCount) this.panel.append(g(str('arcade.wizard.fill'), fill));
     this.slotMarks.replaceChildren();
@@ -1460,7 +1549,7 @@ class Wizard {
     if (this.wiringRun === 'no') { queueMicrotask(() => { void this.findWiring(); }); }
     const box = card();
     if (this.wiringRun !== 'done') {
-      box.append(statusRow('running', str('arcade.wizard.checking_which_coins_the_machine')));
+      box.append(oneCheck('running', str('arcade.wizard.checking_which_coins_the_machine')));
       return box;
     }
     const w = this.wiring();
@@ -1472,7 +1561,7 @@ class Wizard {
         if (this.step === FILL) this.render();
       });
     }
-    if (this.serverCoinsStopped || this.wm.live.coinsStopped || this.wm.coinsStopped()) box.append(statusRow('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE_WIZARD));
+    if (this.serverCoinsStopped || this.wm.live.coinsStopped || this.wm.coinsStopped()) box.append(oneCheck('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE_WIZARD));
     slots.forEach((slot, i) => {
       const name = slots.length === 1 ? str('arcade.wizard.coin_slot') : str('arcade.wizard.coin_slot_n', { 0: i + 1 });
       const now = w[String(slot.line)];
@@ -1482,7 +1571,7 @@ class Wizard {
         el('span', name, { class: 'row-label' }),
         el('span', found
           ? str('arcade.wizard.found_on_the_machine_n', { 0: now.coins.map((c) => slotCoinLabel(c.coin)).join(', ') })
-          : str('arcade.wizard.which_coins_does_this_slot'), { class: 'row-sub' }),
+          : str('arcade.wizard.which_coins_does_this_slot'), { class: 'nb-meta' }),
       );
       const ticks = coinTicks({
         label: name,
@@ -1665,7 +1754,7 @@ class Wizard {
       });
       const pick = el('div', null, { class: 'coin-mark-pick' });
       pick.append(sel);
-      enhanceSelect(sel);
+      enhanceSelect(sel, { small: true });
       const ticks = coinTicks({
         label: name, single: true, noUnused: true,
         start: r.coin === null ? [] : [r.coin],
@@ -1685,10 +1774,10 @@ class Wizard {
       });
       const row = el('div', null, { class: 'coin-slot' });
       row.append(head, pick, ticks.root);
-      if (check === 'running') row.append(statusRow('running', str('arcade.wizard.mark_checking')));
-      else if (check === 'counted') row.append(statusRow('pass', str('arcade.wizard.mark_counted')));
-      else if (check === 'not-counted') row.append(statusRow('fail', str('arcade.wizard.mark_not_counted')));
-      else if (check === 'unmeasured') row.append(statusRow('fail', str('arcade.wizard.mark_unmeasured')));
+      if (check === 'running') row.append(oneCheck('running', str('arcade.wizard.mark_checking')));
+      else if (check === 'counted') row.append(oneCheck('pass', str('arcade.wizard.mark_counted')));
+      else if (check === 'not-counted') row.append(oneCheck('fail', str('arcade.wizard.mark_not_counted')));
+      else if (check === 'unmeasured') row.append(oneCheck('fail', str('arcade.wizard.mark_unmeasured')));
       row.append(remove);
       box.append(row);
       const mark = r.line === null ? undefined : marks.get(r.line);
@@ -1920,9 +2009,9 @@ class Wizard {
   }
 
   private renderFinish(): void {
-    const sum = card();
+    const sum = checklist();
     sum.classList.add('wiz-checks');
-    const line = (mark: Mark, text: string): void => { sum.append(statusRow(mark, text)); };
+    const line = (mark: Mark, text: string): void => { sum.append(checkItem(mark, text)); };
     line(this.booted || this.bootPassedBefore() ? 'pass' : 'fail', str('arcade.wizard.boots_into_attract_with_no'));
     line(this.settled || this.mode === 'edit' ? 'pass' : 'pending', str('arcade.wizard.settings_chosen'));
     const tm = moneyTrust(this.m.board);
@@ -1966,9 +2055,6 @@ class Wizard {
         deck: g.detected ? quadOfRect(g.detected.deck) : undefined,
         cabinetStyle: g.cabinetStyle,
       };
-      if (g.mountModel && m.setup.mounts?.model !== g.mountModel) {
-        m.setup.mounts = { model: g.mountModel, lamps: [...g.mountLamps] };
-      }
       m.balance.push({ at: Date.now(), kind: m.balance.some((b) => b.kind === 'float') ? 'reading' : 'float', ledger: reading });
       this.finishValidation();
       await this.save();

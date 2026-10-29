@@ -12,7 +12,7 @@ async function serverCheck(): Promise<void> {
   if (await serverReachable()) return;
   const { showToast } = await import('../web/ui/toast');
   showToast(str('arcade.main.server_not_reachable'), {
-    sticky: true,
+    error: true,
     action: { label: str('arcade.landing.try_again'), run: () => location.reload() },
   });
 }

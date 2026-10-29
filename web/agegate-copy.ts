@@ -2,6 +2,7 @@ export type GateRun = string | { text: string; href: string } | { strong: string
 export type GatePara = string | GateRun[];
 
 export interface GateCopy {
+  wordmarkAlt: string;
   markAlt: string;
   heading: string;
   paras: GatePara[];
@@ -20,6 +21,7 @@ const HELP: GateRun[] = [
 ];
 
 export const GATE_COPY: GateCopy = {
+  wordmarkAlt: 'Fruitulator',
   markAlt: '18+',
   heading: '18+ · Simulated gambling',
   paras: [

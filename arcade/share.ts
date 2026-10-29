@@ -1,9 +1,9 @@
 import {
-  ARCADES_PATH, arcadeNameKey, PLAYING_PATH, RATING_PATH, VIEW_KEY_HEADER, VIEW_LIMIT, VISIT_PATH,
-  type ArcadeSort, type ArcadeVisitReply, type PlayingReply, type RatingReply,
+  ARCADES_PATH, arcadeNameKey, LEADERS_PATH, LEADERS_SITE_PATH, PLAYING_PATH, RATING_PATH, VIEW_KEY_HEADER, VIEW_LIMIT, VISIT_PATH,
+  type ArcadeSort, type ArcadeVisitReply, type LeadersReply, type PlayingReply, type RatingReply,
   type ArcadeListReply, type ArcadeListing, type ArcadeReply, type DeleteReply, type PublishBody, type PublishReply,
 } from './serverwire';
-import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, type ArcadeDoc, type DocMachine } from './doc';
+import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, readMachineSource, type ArcadeDoc, type DocMachine } from './doc';
 import { getArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
 import { readRoomLook } from './roomlook';
 import { readProps } from './proplist';
@@ -23,6 +23,7 @@ export function roomDoc(d: ArcadeDoc): ArcadeDoc {
     if (m.money !== undefined) out.money = m.money;
     if (m.outOfService) out.outOfService = true;
     if (m.programHash) out.programHash = m.programHash;
+    if (m.source) out.source = m.source;
     return out;
   };
   const out: ArcadeDoc = {
@@ -47,7 +48,7 @@ export function readRoomDoc(v: unknown, id: string): ArcadeDoc | null {
     format: ARCADE_FORMAT, version: ARCADE_DOC_VERSION, id, name: typeof d.name === 'string' ? d.name : '',
     createdAt: Number(d.createdAt) || 0, updatedAt: Number(d.updatedAt) || 0,
     machines: machines.map((m) => ({ ...m, config: m.config ?? {}, setup: m.setup ?? {}, balance: [], trace: m.trace ?? null, state: null, stats: null,
-      programHash: typeof m.programHash === 'string' ? m.programHash : undefined })),
+      programHash: typeof m.programHash === 'string' ? m.programHash : undefined, source: readMachineSource(m.source) })),
     ...(room ? { room } : {}),
     ...(props?.length ? { props } : {}),
   };
@@ -87,7 +88,7 @@ export async function offerLink(title: string, url: string): Promise<void> {
   }
   try {
     await navigator.clipboard.writeText(url);
-    showToast(str('arcade.host.link_copied'));
+    showToast(str('arcade.host.link_copied'), { kind: 'ok' });
   } catch {
     showToast(url);
   }
@@ -155,6 +156,17 @@ export class ArcadeServer {
     return this.call<PlayingReply>(`/${encodeURIComponent(id)}/${PLAYING_PATH}`, 'GET');
   }
 
+  leaders(id: string, machine?: string): Promise<LeadersReply> {
+    const q = machine ? `?machine=${encodeURIComponent(machine)}` : '';
+    return this.call<LeadersReply>(`/${encodeURIComponent(id)}/${LEADERS_PATH}${q}`, 'GET');
+  }
+
+  async siteLeaders(): Promise<LeadersReply> {
+    const res = await this.f(`${this.base}${LEADERS_SITE_PATH}`, { method: 'GET', ...asPlayer(this.player, {}) });
+    if (res.status !== 200) throw new Error(`the arcade server answered ${res.status}`);
+    return (await res.json()) as LeadersReply;
+  }
+
   rate(id: string, stars: number): Promise<RatingReply> {
     return this.call<RatingReply>(`/${encodeURIComponent(id)}/${RATING_PATH}`, 'PUT', { stars });
   }
@@ -198,11 +210,11 @@ export class ArcadeServer {
     return `${this.base}${ARCADES_PATH}/${encodeURIComponent(id)}/view?v=${viewAt}`;
   }
 
-  sendView(d: ArcadeDoc, view: { bytes: Uint8Array; type: string }): void {
-    if (!d.hostKey || view.bytes.length > VIEW_LIMIT) return;
+  sendView(d: ArcadeDoc, view: { bytes: Uint8Array; type: string }, leaving: boolean): void {
+    if (!d.hostKey || view.bytes.length > (leaving ? KEEPALIVE_LIMIT : VIEW_LIMIT)) return;
     const init = asPlayer(this.player, { 'content-type': view.type, [VIEW_KEY_HEADER]: d.hostKey });
     void this.f(`${this.base}${ARCADES_PATH}/${encodeURIComponent(d.id)}/view`, {
-      ...init, method: 'PUT', body: view.bytes as BodyInit, keepalive: true,
+      ...init, method: 'PUT', body: view.bytes as BodyInit, keepalive: leaving,
     }).catch((e) => { console.warn('[arcade] could not send the arcade\'s picture', e); });
   }
 
@@ -211,6 +223,8 @@ export class ArcadeServer {
     return this.call<DeleteReply>(`/${encodeURIComponent(d.id)}`, 'DELETE', { key: d.hostKey });
   }
 }
+
+export const KEEPALIVE_LIMIT = 60 * 1024;
 
 export async function arcadeServer(): Promise<ArcadeServer | null> {
   const base = serverFlag();

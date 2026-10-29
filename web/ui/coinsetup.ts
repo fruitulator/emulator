@@ -16,7 +16,7 @@ export function coinTicks(o: {
   noUnused?: boolean;
 }): CoinTicks {
   const root = document.createElement('div');
-  root.className = 'coin-ticks';
+  root.className = 'coin-ticks nb-choices';
   root.setAttribute('role', 'group');
   root.setAttribute('aria-label', o.label);
   const cash = new Set<number>(o.start.filter((c): c is number => typeof c === 'number'));
@@ -34,7 +34,7 @@ export function coinTicks(o: {
   const tick = (label: string, on: boolean, flip: (on: boolean) => void): HTMLButtonElement => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'coin-tick';
+    b.className = 'coin-tick nb-choice';
     b.textContent = label;
     b.setAttribute('aria-pressed', String(on));
     b.addEventListener('click', () => {
@@ -86,7 +86,7 @@ export function coinTicks(o: {
   tokenWrap.className = 'coin-token';
   tokenWrap.append(tokenTick, worth);
   root.append(tokenWrap);
-  const dd = enhanceSelect(worth);
+  const dd = enhanceSelect(worth, { small: true });
   dd.root.hidden = !token;
 
   if (o.single && !o.noUnused) root.append(tick(str('coinsetup.not_used'), unused, (on) => { unused = on; }));

@@ -1,13 +1,31 @@
 import { decryptFml, isEncryptedFml } from './fml';
+import { datComponents } from './datreels';
 import { hasTagMap, parseLayout, type ParsedComponent } from './fmlparse';
 
 export const UNDRAWN_TYPES: ReadonlyMap<number, string> = new Map([
-  [0x1b, 'border'],
-  [0x1c, 'digit block'],
-  [0x28, 'Maygay video'],
-  [0x2b, 'light source'],
-  [0x2f, 'Coinmaster video'],
 ]);
+
+export const UNDRAWN_DAT_PARTS: ReadonlyMap<string, string> = new Map([
+  ['TImage reel', 'TImage (reel)'],
+  ['TImage symbol', 'TImage (reel symbol)'],
+]);
+
+export function timageRole(tag: number): string | undefined {
+  if (tag === 0x10000) return undefined;
+  return (tag & 0x1ffff) < 0xff ? 'TImage reel' : 'TImage symbol';
+}
+
+function undrawnDatParts(layout: Uint8Array | undefined): string[] | null {
+  const comps = datComponents(layout, /./);
+  if (!comps.length) return null;
+  const out: string[] = [];
+  for (const c of comps) {
+    const key = c.cls === 'TImage' ? timageRole(c.tag) : c.cls;
+    const label = key === undefined ? undefined : UNDRAWN_DAT_PARTS.get(key);
+    if (label) out.push(label);
+  }
+  return out;
+}
 
 const LINE_MAX_TYPES = 4;
 
@@ -69,9 +87,12 @@ export function undrawnLayoutNotes(layout: Uint8Array | undefined): string[] {
   const counts = new Map<string, number>();
   const add = (label: string): void => { counts.set(label, (counts.get(label) ?? 0) + 1); };
   let blankCaps = 0;
-  for (const c of components(layout)) {
+  const dat = undrawnDatParts(layout);
+  for (const label of dat ?? []) add(label);
+  for (const c of dat ? [] : components(layout)) {
     if (capPaintsNothing(c)) blankCaps++;
-    const named = UNDRAWN_TYPES.get(c.type);
+    const named = UNDRAWN_TYPES.get(c.type)
+      ?? (c.type === 0x1c && (c.values.get('Segment14') ?? 0) !== 0 ? 'digit block' : undefined);
     if (named) add(`${named} (0x${c.type.toString(16)})`);
     else if (!hasTagMap(c.type)) add(`unknown (0x${c.type.toString(16)})`);
   }

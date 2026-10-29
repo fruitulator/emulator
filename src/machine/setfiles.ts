@@ -40,7 +40,7 @@ export function hasGameFile(files: readonly { name: string }[]): boolean {
 }
 
 export const NO_GAME_FILE =
-  'ROMs only, no game file: there is no .gam or layout here, so nothing says which machine these ROMs are for';
+  'no game file: there are ROMs but no .gam or layout';
 
 export const NO_MANIFEST =
-  'no .gam file: the layout is here but the .gam that says which board this machine is on is not, so it cannot be started';
+  'no .gam file: the layout needs its .gam to start';

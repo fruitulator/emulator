@@ -1,11 +1,10 @@
 import type { CoinWiring } from '../web/coinask';
 import type { RoomLook } from './roomlook';
-import { footprintAt, newPropId, posterArt, PROP_WALL_GAP, propFootprint, propKind, propOnWall, PROPS_MAX, wallHalfWidth, type PosterArt, type Prop, type PropKind } from './proplist';
+import { footprintAt, newPropId, posterArt, PROP_WALL_GAP, propFootprint, propKind, propOnWall, PROPS_MAX, readProps, wallHalfWidth, type PosterArt, type Prop, type PropKind } from './proplist';
 import type { CashLedger } from '../src/machine/machine';
 import type { GameConfig } from '../src/machine/registry';
 import type { StateRec } from '../web/store';
 import type { MachineLook } from './machines';
-import type { MountMap } from './mounts';
 import type { MoneyRecord } from './moneyrecord';
 import type { CreditSince } from './serverwire';
 import { str } from '../web/i18n';
@@ -49,8 +48,8 @@ export interface MachineConfig {
 
 export interface MachineSetup extends Partial<MachineLook> {
   cabinet?: string;
-  mounts?: MountMap;
   noDeck?: boolean;
+  noLower?: boolean;
 }
 
 export interface MachineDetected {
@@ -130,12 +129,23 @@ export interface MachineStats {
   ledgerAt?: number;
 }
 
+export interface MachineSource { key: string; item: string; name: string }
+
+export function readMachineSource(v: unknown): MachineSource | undefined {
+  const o = v as Partial<MachineSource> | null;
+  if (!o || typeof o.key !== 'string' || typeof o.item !== 'string' || typeof o.name !== 'string') return undefined;
+  if (!/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])[^#\s]+#[^#\s]+$/.test(o.key)) return undefined;
+  if (!o.item || o.item.length > 200 || o.name.length > 120) return undefined;
+  return { key: o.key, item: o.item, name: o.name.trim() };
+}
+
 export interface DocMachine {
   id: string;
   contentHash: string;
   contentRule: number;
   hash?: string;
   programHash?: string;
+  source?: MachineSource;
   name: string;
   board: string;
   status: MachineStatus;
@@ -409,6 +419,10 @@ export function placeAll(doc: ArcadeDoc): boolean {
     doc.grid = FLOOR_STEP;
     changed = true;
   }
+  if (doc.props) {
+    const props = readProps(doc.props) ?? [];
+    if (props.length !== doc.props.length) { doc.props = props; changed = true; }
+  }
   for (const m of doc.machines) {
     const old = m.place as unknown as { col?: unknown; aisle?: unknown; slot?: unknown; at?: unknown; turn?: unknown } | null | undefined;
     if (old && old.col === undefined && Number.isInteger(old.aisle)) {
@@ -453,6 +467,31 @@ export function fillProgramHashes(
   return changed;
 }
 
+export function fillSources(
+  doc: ArcadeDoc, library: readonly { hash: string; contentHash?: string }[],
+  sourceOf: (g: { hash: string; contentHash?: string }) => MachineSource | undefined,
+): boolean {
+  const byContent = new Map<string, MachineSource>();
+  const byKey = new Map<string, MachineSource>();
+  for (const g of library) {
+    const s = sourceOf(g);
+    if (!s) continue;
+    if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, s);
+    byKey.set(g.hash, s);
+  }
+  let changed = false;
+  for (const m of doc.machines) {
+    if (m.source) continue;
+    const s = byContent.get(m.contentHash) ?? (m.hash ? byKey.get(m.hash) : undefined);
+    if (s) { m.source = s; changed = true; }
+  }
+  return changed;
+}
+
+export function unsourcedMachines(doc: ArcadeDoc): DocMachine[] {
+  return doc.machines.filter((m) => !m.source);
+}
+
 export function addMachine(
   doc: ArcadeDoc, m: Omit<DocMachine, 'id' | 'status' | 'config' | 'setup' | 'balance' | 'trace' | 'place'>, place?: Place | null,
 ): DocMachine {
@@ -480,6 +519,7 @@ export function duplicateMachine(doc: ArcadeDoc, id: string, place?: Place | nul
   if (src.state) copy.state = { ...src.state };
   if (src.hash !== undefined) copy.hash = src.hash;
   if (src.programHash !== undefined) copy.programHash = src.programHash;
+  if (src.source !== undefined) copy.source = { ...src.source };
   if (src.gameConfig !== undefined) copy.gameConfig = structuredClone(src.gameConfig);
   if (src.detected !== undefined) copy.detected = structuredClone(src.detected);
   if (src.money !== undefined) copy.money = src.money;
@@ -504,11 +544,197 @@ export function moveMachine(doc: ArcadeDoc, id: string, to: Place): boolean {
   return true;
 }
 
+export interface FloorGroup { machines: ReadonlySet<string>; props: ReadonlySet<string> }
+
+export function groupMoved(doc: ArcadeDoc, g: FloorGroup, dcol: number, drow: number): ArcadeDoc | null {
+  if (!Number.isInteger(dcol) || !Number.isInteger(drow)) return null;
+  const dx = dcol * FLOOR_GEOM.cell, dz = drow * FLOOR_GEOM.cell;
+  const next: ArcadeDoc = {
+    ...doc,
+    machines: doc.machines.map((m) => (g.machines.has(m.id) && m.place
+      ? { ...m, place: { ...m.place, col: m.place.col + dcol, row: m.place.row + drow } } : m)),
+    props: (doc.props ?? []).map((p) => (g.props.has(p.id) ? { ...p, x: p.x + dx, z: p.z + dz } : p)),
+  };
+  for (const m of next.machines) if (g.machines.has(m.id) && m.place && !fits(next, m.place, m.id)) return null;
+  for (const p of next.props ?? []) if (g.props.has(p.id) && !propFits(next, p)) return null;
+  return next;
+}
+
+export function moveGroup(doc: ArcadeDoc, g: FloorGroup, dcol: number, drow: number): boolean {
+  if (!dcol && !drow) return false;
+  const next = groupMoved(doc, g, dcol, drow);
+  if (!next) return false;
+  for (const m of doc.machines) if (g.machines.has(m.id) && m.place) m.place = next.machines.find((x) => x.id === m.id)!.place;
+  for (const p of doc.props ?? []) {
+    if (!g.props.has(p.id)) continue;
+    const q = next.props!.find((x) => x.id === p.id)!;
+    p.x = q.x;
+    p.z = q.z;
+  }
+  return true;
+}
+
 export function turnMachine(doc: ArcadeDoc, id: string, quarters: number): boolean {
   const m = machineById(doc, id);
   if (!m || !inFloor(m.place) || !Number.isInteger(quarters)) return false;
   const turn = ((((turnOf(m.place) + quarters) % 4) + 4) % 4) as Turn;
   return moveMachine(doc, id, { col: m.place.col, row: m.place.row, turn });
+}
+
+export type ArrangeTarget = { machine: string; place: Place } | { prop: string; x: number; z: number; yaw: number };
+
+export interface Arranged { moved: number; skipped: number }
+
+const ARRANGE_REACH = 2 * FLOOR_STEP;
+
+function nearestFirst(reach: number): { dc: number; dr: number }[] {
+  const out: { dc: number; dr: number; d: number }[] = [];
+  for (let dc = -reach; dc <= reach; dc++) for (let dr = -reach; dr <= reach; dr++) out.push({ dc, dr, d: Math.hypot(dc, dr) });
+  return out.sort((a, b) => a.d - b.d || a.dr - b.dr || a.dc - b.dc);
+}
+
+export function arrangeable(doc: ArcadeDoc, g: FloorGroup): { machines: (DocMachine & { place: Place })[]; props: Prop[] } {
+  return {
+    machines: doc.machines.filter((m): m is DocMachine & { place: Place } => g.machines.has(m.id) && inFloor(m.place)),
+    props: (doc.props ?? []).filter((p) => g.props.has(p.id) && !propKind(p.kind).wall),
+  };
+}
+
+const machineFloor = (p: { col: number; row: number }): Rect => machineRect(p);
+const propFloor = (p: Prop): Rect => propRect(p) ?? { minX: FLOOR_CENTRE.x + p.x, maxX: FLOOR_CENTRE.x + p.x, minZ: FLOOR_CENTRE.z + p.z, maxZ: FLOOR_CENTRE.z + p.z };
+
+export function arrange(doc: ArcadeDoc, targets: ArrangeTarget[]): Arranged {
+  const mIds = new Set(targets.flatMap((t) => ('machine' in t ? [t.machine] : [])));
+  const pIds = new Set(targets.flatMap((t) => ('prop' in t ? [t.prop] : [])));
+  const was = {
+    machines: new Map(doc.machines.filter((m) => mIds.has(m.id)).map((m) => [m.id, m.place ? { ...m.place } : null])),
+    props: new Map((doc.props ?? []).filter((p) => pIds.has(p.id)).map((p) => [p.id, { ...p }])),
+  };
+  const held = (doc.props ?? []).filter((p) => pIds.has(p.id));
+  doc.props = (doc.props ?? []).filter((p) => !pIds.has(p.id));
+  for (const m of doc.machines) if (mIds.has(m.id)) m.place = null;
+  let moved = 0;
+  const skippedM: string[] = [];
+  const skippedP: Prop[] = [];
+  const offsets = nearestFirst(ARRANGE_REACH);
+  for (const t of targets) {
+    if ('machine' in t) {
+      const m = doc.machines.find((x) => x.id === t.machine);
+      if (!m) continue;
+      const turn = turnOf(t.place);
+      const at = offsets.map((o) => ({ col: t.place.col + o.dc, row: t.place.row + o.dr })).find((c) => fits(doc, c, m.id));
+      if (!at) { skippedM.push(m.id); continue; }
+      m.place = turn ? { col: at.col, row: at.row, turn } : { col: at.col, row: at.row };
+      const w = was.machines.get(m.id);
+      if (!w || w.col !== at.col || w.row !== at.row || turnOf(w) !== turn) moved++;
+    } else {
+      const p = held.find((x) => x.id === t.prop);
+      if (!p) continue;
+      const tries = offsets.map((o) => snapProp(FLOOR_CENTRE.x + t.x + o.dc * FLOOR_GEOM.cell, FLOOR_CENTRE.z + t.z + o.dr * FLOOR_GEOM.cell, { ...p, yaw: t.yaw }));
+      const at = tries.find((c) => propFits(doc, { ...p, x: c.x, z: c.z, yaw: t.yaw }));
+      if (!at) { skippedP.push(p); continue; }
+      const w = was.props.get(p.id)!;
+      p.x = at.x;
+      p.z = at.z;
+      p.yaw = t.yaw;
+      if (w.x !== p.x || w.z !== p.z || w.yaw !== p.yaw) moved++;
+      doc.props = [...(doc.props ?? []), p];
+    }
+  }
+  for (const id of skippedM) {
+    const m = doc.machines.find((x) => x.id === id)!;
+    const w = was.machines.get(id) ?? null;
+    if (!w) continue;
+    const at = nearestFirst(FLOOR_COLS).map((o) => ({ col: w.col + o.dc, row: w.row + o.dr })).find((c) => fits(doc, c, id)) ?? w;
+    m.place = turnOf(w) ? { col: at.col, row: at.row, turn: turnOf(w) } : { col: at.col, row: at.row };
+  }
+  for (const p of skippedP) {
+    const w = was.props.get(p.id)!;
+    Object.assign(p, { x: w.x, z: w.z, yaw: w.yaw });
+    doc.props = [...(doc.props ?? []), p];
+  }
+  const order = new Map(held.map((p, i) => [p.id, i]));
+  doc.props = [...(doc.props ?? [])].sort((a, b) => (order.get(a.id) ?? -1) - (order.get(b.id) ?? -1));
+  return { moved, skipped: skippedM.length + skippedP.length };
+}
+
+export function turnedEach(doc: ArcadeDoc, g: FloorGroup): ArrangeTarget[] {
+  const { machines, props } = arrangeable(doc, g);
+  return [
+    ...machines.map((m) => ({ machine: m.id, place: { col: m.place.col, row: m.place.row, turn: ((turnOf(m.place) + 1) % 4) as Turn } })),
+    ...props.map((p) => ({ prop: p.id, x: p.x, z: p.z, yaw: (p.yaw - Math.PI / 2 + Math.PI * 2) % (Math.PI * 2) })),
+  ];
+}
+
+export function facedAll(doc: ArcadeDoc, g: FloorGroup, turn: Turn): ArrangeTarget[] {
+  return arrangeable(doc, g).machines.map((m) => ({ machine: m.id, place: { col: m.place.col, row: m.place.row, turn } }));
+}
+
+function membersOf(doc: ArcadeDoc, g: FloorGroup): { t: ArrangeTarget; r: Rect }[] {
+  const { machines, props } = arrangeable(doc, g);
+  return [
+    ...machines.map((m) => ({ t: { machine: m.id, place: { ...m.place } } as ArrangeTarget, r: machineFloor(m.place) })),
+    ...props.map((p) => ({ t: { prop: p.id, x: p.x, z: p.z, yaw: p.yaw } as ArrangeTarget, r: propFloor(p) })),
+  ];
+}
+
+function shifted(t: ArrangeTarget, dx: number, dz: number): ArrangeTarget {
+  if ('machine' in t) {
+    return { machine: t.machine, place: { ...t.place, col: t.place.col + Math.round(dx / FLOOR_GEOM.cell), row: t.place.row + Math.round(dz / FLOOR_GEOM.cell) } };
+  }
+  return { ...t, x: t.x + dx, z: t.z + dz };
+}
+
+export type AlignEdge = 'left' | 'centre' | 'right' | 'top' | 'middle' | 'bottom';
+
+export function aligned(doc: ArcadeDoc, g: FloorGroup, edge: AlignEdge): ArrangeTarget[] {
+  const ms = membersOf(doc, g);
+  if (ms.length < 2) return [];
+  const minX = Math.min(...ms.map((m) => m.r.minX)), maxX = Math.max(...ms.map((m) => m.r.maxX));
+  const minZ = Math.min(...ms.map((m) => m.r.minZ)), maxZ = Math.max(...ms.map((m) => m.r.maxZ));
+  return ms.map(({ t, r }) => {
+    switch (edge) {
+      case 'left': return shifted(t, minX - r.minX, 0);
+      case 'right': return shifted(t, maxX - r.maxX, 0);
+      case 'centre': return shifted(t, (minX + maxX) / 2 - (r.minX + r.maxX) / 2, 0);
+      case 'top': return shifted(t, 0, minZ - r.minZ);
+      case 'bottom': return shifted(t, 0, maxZ - r.maxZ);
+      default: return shifted(t, 0, (minZ + maxZ) / 2 - (r.minZ + r.maxZ) / 2);
+    }
+  });
+}
+
+export function distributed(doc: ArcadeDoc, g: FloorGroup, h: boolean): ArrangeTarget[] {
+  const ms = membersOf(doc, g);
+  if (ms.length < 3) return [];
+  const lo = (r: Rect): number => (h ? r.minX : r.minZ);
+  const size = (r: Rect): number => (h ? r.maxX - r.minX : r.maxZ - r.minZ);
+  ms.sort((a, b) => lo(a.r) + size(a.r) / 2 - (lo(b.r) + size(b.r) / 2));
+  const first = lo(ms[0].r);
+  const last = lo(ms[ms.length - 1].r) + size(ms[ms.length - 1].r);
+  const gap = (last - first - ms.reduce((n, m) => n + size(m.r), 0)) / (ms.length - 1);
+  let at = first;
+  return ms.map(({ t, r }) => {
+    const d = at - lo(r);
+    at += size(r) + gap;
+    return h ? shifted(t, d, 0) : shifted(t, 0, d);
+  });
+}
+
+export function turnedAsGroup(doc: ArcadeDoc, g: FloorGroup): ArrangeTarget[] {
+  const ms = membersOf(doc, g);
+  if (!ms.length) return [];
+  const cx = (Math.min(...ms.map((m) => m.r.minX)) + Math.max(...ms.map((m) => m.r.maxX))) / 2;
+  const cz = (Math.min(...ms.map((m) => m.r.minZ)) + Math.max(...ms.map((m) => m.r.maxZ))) / 2;
+  return ms.map(({ t, r }) => {
+    const ix = (r.minX + r.maxX) / 2, iz = (r.minZ + r.maxZ) / 2;
+    const nx = cx - (iz - cz), nz = cz + (ix - cx);
+    if ('machine' in t) {
+      const c = cellOf(nx, nz, FLOOR_GEOM);
+      return { machine: t.machine, place: { col: Math.round(c.col - FLOOR_STEP / 2), row: Math.round(c.row - FLOOR_STEP / 2), turn: ((turnOf(t.place) + 1) % 4) as Turn } };
+    }
+    return { prop: t.prop, x: nx - FLOOR_CENTRE.x, z: nz - FLOOR_CENTRE.z, yaw: (t.yaw - Math.PI / 2 + Math.PI * 2) % (Math.PI * 2) };
+  });
 }
 
 export function standing(doc: ArcadeDoc): (DocMachine & { place: Place })[] {

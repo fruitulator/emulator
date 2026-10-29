@@ -6,8 +6,3 @@
 .ui-dialog .fontpick-row .fontpick-mark { width: 18px; min-width: 18px; height: 18px; display: inline-flex; flex: 0 0 18px; }
 .fontpick-row .fontpick-tick { color: var(--on); }
 @media (max-width: 420px) { .ui-dialog .fontpick-row { grid-template-columns: 18px 1fr; gap: 2px 8px; } .ui-dialog .fontpick-row .fontpick-sample { grid-column: 2; } }
-.menu-stack .fontpick-row { display: grid; grid-template-columns: 18px 1fr; gap: 1px 10px; align-items: center; text-align: left; }
-.menu-stack .fontpick-row .fontpick-mark { grid-row: 1 / span 2; width: 18px; min-width: 18px; height: 18px; display: inline-flex; }
-.menu-stack .fontpick-row .fontpick-name { grid-column: 2; font-size: 0.8em; opacity: 0.7; }
-.menu-stack .fontpick-row .fontpick-sample { grid-column: 2; font-size: 1em; line-height: 1.2; white-space: normal; overflow: visible; }
-.menu-stack .fontpick-row .fontpick-tick { color: var(--on); }

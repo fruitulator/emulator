@@ -11,7 +11,7 @@ import {
 import { closeCabinet } from './cabjson';
 import { readZipEntry } from './zipdir';
 import {
-  SCHEMA_VERSION, getMeta, getSeenHashes, hashGameFiles, inSpareDir, putSeen, type GameMeta,
+  SCHEMA_VERSION, getMeta, getSeenHashes, hasPak, hashGameFiles, inSpareDir, putSeen, type GameMeta,
 } from './store';
 import { str } from './i18n';
 
@@ -165,13 +165,17 @@ export interface SetImportContext {
 }
 
 export async function importFolderSet(set: FolderSet, ctx: SetImportContext): Promise<void> {
+  const held = async (hash: string): Promise<GameMeta | null> => {
+    const m = await getMeta(hash);
+    return m && (await hasPak(hash)) ? m : null;
+  };
   const current = (m: GameMeta | null): boolean =>
     !!m && m.schema === SCHEMA_VERSION && m.decodeVersion === DECODE_VERSION;
   const kept = (m: GameMeta | null, spares: unknown[] | undefined): boolean =>
     !spares?.length || !!m?.batteries?.some(inSpareDir);
   const fp = await setFingerprint(set);
   const seen = fp ? await getSeenHashes(fp) : null;
-  if (seen?.length && (await Promise.all(seen.map(getMeta)))
+  if (seen?.length && (await Promise.all(seen.map(held)))
     .every((m) => current(m) && kept(m, set.spares))) {
     ctx.known(seen);
     return;
@@ -193,8 +197,8 @@ export async function importFolderSet(set: FolderSet, ctx: SetImportContext): Pr
     const hashes: string[] = [];
     for (const unit of units) {
       const hash = await hashGameFiles(unit.files);
-      const held = await getMeta(hash);
-      if (current(held) && kept(held, unit.spares)) {
+      const stored = await held(hash);
+      if (current(stored) && kept(stored, unit.spares)) {
         ctx.known([hash]);
         hashes.push(hash);
         continue;
@@ -202,7 +206,7 @@ export async function importFolderSet(set: FolderSet, ctx: SetImportContext): Pr
       const busy = ctx.inFlight.get(hash);
       if (busy) {
         await busy.catch(() => undefined);
-        const now = await getMeta(hash);
+        const now = await held(hash);
         if (current(now) && kept(now, unit.spares)) {
           ctx.known([hash]);
           hashes.push(hash);

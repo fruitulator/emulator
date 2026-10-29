@@ -1,14 +1,15 @@
 import { openDialog, type Dialog } from '../web/ui/dialog';
 import { actionButton } from '../web/ui/list';
-import { caption, card } from '../web/ui/rows';
 import { asPlayer, devPlayer, serverFlag } from './remote';
 import {
   ACCOUNT_PATH, AVATAR_PATH, PAIR_CODE_LENGTH, PAIR_POLL_MS, PLAYER_NAME_MAX,
   type PairApproveReply, type PairDevice, type PairFindReply, type PairStartReply, type PairWaitReply,
   type AccountInfo, type AccountReply, type ArcadeListing, type AvatarReply, type CreateOptionsJson, type DeleteAccountReply, type GetOptionsJson, type NameReply, type OptionsReply, type PasskeyJson, type SignedInReply,
+  type AccountTheme, type ThemeReply,
 } from './serverwire';
 import { formatBalance } from './wallet';
 import { str } from '../web/i18n';
+import { textField } from '../web/ui/field';
 import { privacyLink } from './privacy';
 
 interface Known { account: AccountInfo; mine: ArcadeListing[] | null }
@@ -58,6 +59,12 @@ export function accountChanged(a: AccountInfo): void {
 
 export async function setPlayerName(server: string, name: string): Promise<NameReply> {
   const r = await post<NameReply>(server, 'name', { name });
+  if (r.ok) accountChanged(r.account);
+  return r;
+}
+
+export async function setAccountTheme(server: string, theme: AccountTheme): Promise<ThemeReply> {
+  const r = await post<ThemeReply>(server, 'theme', { theme });
   if (r.ok) accountChanged(r.account);
   return r;
 }
@@ -366,18 +373,8 @@ export function openLogin(server: string | null = serverFlag(), start: 'login' |
     const createView = (): void => {
       title(str('arcade.account.create_account'));
       const err = errorLine();
-      const field = document.createElement('input');
-      field.type = 'text';
-      field.className = 'host-set-field';
-      field.maxLength = PLAYER_NAME_MAX;
-      field.setAttribute('aria-label', str('arcade.account.player_name'));
-      field.setAttribute('autocomplete', 'nickname');
-      field.spellcheck = false;
-      const row = document.createElement('label');
-      row.className = 'menu-row host-set-name';
-      row.append(field);
-      const nameCard = card();
-      nameCard.append(row);
+      const nameField = textField({ label: str('arcade.account.player_name'), maxLength: PLAYER_NAME_MAX, autocomplete: 'nickname' });
+      const field = nameField.input;
       const note = el('div', str('arcade.account.choose_a_player_name_it'), 'host-set-note');
       const how = el('div', str('arcade.account.then_your_device_makes_a'), 'host-set-note');
       const make = actionButton(str('arcade.account.create_account'), 'primary', () => { void run(); });
@@ -404,7 +401,7 @@ export function openLogin(server: string | null = serverFlag(), start: 'login' |
       field.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void run(); } });
       const acts = el('div', null, 'landing-create-actions account-actions');
       acts.append(back, make);
-      wrap.replaceChildren(caption(str('arcade.account.player_name')), nameCard, note, how, acts, err, privacyNote());
+      wrap.replaceChildren(nameField.el, note, how, acts, err, privacyNote());
       sync();
       if (!supported) show(err, SAY.noSupport);
       field.focus();
@@ -485,20 +482,9 @@ export function openApprove(server: string): Promise<void> {
     const askView = (typed = ''): void => {
       const err = errorLine();
       const lead = el('p', str('arcade.account.enter_the_code_the_other'), 'account-lead');
-      const field = document.createElement('input');
-      field.type = 'text';
-      field.className = 'host-set-field account-code-field';
-      field.value = typed;
-      field.maxLength = PAIR_CODE_LENGTH + 3;
-      field.setAttribute('aria-label', str('arcade.account.code'));
-      field.setAttribute('autocomplete', 'off');
+      const codeField = textField({ label: str('arcade.account.code'), value: typed, maxLength: PAIR_CODE_LENGTH + 3, autocomplete: 'off' });
+      const field = codeField.input;
       field.setAttribute('autocapitalize', 'characters');
-      field.spellcheck = false;
-      const row = document.createElement('label');
-      row.className = 'menu-row host-set-name';
-      row.append(field);
-      const codeCard = card();
-      codeCard.append(row);
       const go = actionButton(str('arcade.account.continue'), 'primary', () => { void run(); });
       const cancel = actionButton(str('arcade.account.cancel'), 'tertiary', () => dlg.close());
       const sync = (): void => { go.disabled = field.value.replace(/[\s-]/g, '').length !== PAIR_CODE_LENGTH; };
@@ -521,7 +507,7 @@ export function openApprove(server: string): Promise<void> {
       field.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void run(); } });
       const acts = el('div', null, 'landing-create-actions account-actions');
       acts.append(cancel, go);
-      wrap.replaceChildren(lead, codeCard, acts, err);
+      wrap.replaceChildren(lead, codeField.el, acts, err);
       sync();
       field.focus();
     };

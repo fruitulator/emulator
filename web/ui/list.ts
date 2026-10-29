@@ -1,9 +1,33 @@
 import { UI_ICONS, rowIcon } from './icons';
 import { str } from '../i18n';
+import { bubbleTip } from './tip';
 
-export function chip(label: string, kind?: 'plat' | 'warn'): HTMLElement {
+function cutOff(el: HTMLElement): boolean {
+  if (el.scrollWidth > el.clientWidth + 1) return true;
+  const copy = el.cloneNode(true) as HTMLElement;
+  copy.removeAttribute('id');
+  copy.setAttribute('aria-hidden', 'true');
+  Object.assign(copy.style, {
+    position: 'absolute', visibility: 'hidden', pointerEvents: 'none', left: '0', top: '0',
+    display: 'block', webkitLineClamp: 'none', height: 'auto', minHeight: '0', maxHeight: 'none',
+    width: `${el.clientWidth}px`,
+  });
+  el.parentElement!.append(copy);
+  const whole = copy.offsetHeight;
+  copy.remove();
+  return whole > el.clientHeight + 1;
+}
+
+const CHIP_CLASS = {
+  plat: 'nb-chip',
+  warn: 'nb-chip nb-chip--cherry',
+  on: 'nb-chip nb-chip--mint',
+  plain: 'nb-chip nb-chip--grey',
+} as const;
+
+export function chip(label: string, kind?: 'plat' | 'warn' | 'on'): HTMLElement {
   const el = document.createElement('span');
-  el.className = kind ? `chip ${kind}` : 'chip';
+  el.className = CHIP_CLASS[kind ?? 'plain'];
   el.textContent = label;
   return el;
 }
@@ -11,7 +35,7 @@ export function chip(label: string, kind?: 'plat' | 'warn'): HTMLElement {
 export function chipButton(label: string, name: string, onPress: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'chip chip-btn';
+  b.className = `${CHIP_CLASS.plain} chip-btn`;
   b.textContent = label;
   b.setAttribute('aria-label', name);
   b.title = name;
@@ -20,10 +44,15 @@ export function chipButton(label: string, name: string, onPress: () => void): HT
   return b;
 }
 
-export function sectionHeading(label: string): HTMLHeadingElement {
-  const head = document.createElement('h2');
-  head.className = 'lib-heading group-h';
-  head.textContent = label;
+export function sectionHeading(label: string, after?: HTMLElement | null): HTMLElement {
+  const head = document.createElement('div');
+  head.className = 'nb-section';
+  const title = document.createElement('h2');
+  title.textContent = label;
+  const line = document.createElement('span');
+  line.className = 'nb-section__line';
+  head.append(title, line);
+  if (after) head.append(after);
   return head;
 }
 
@@ -55,17 +84,18 @@ export interface TileCardOptions {
 
 export function tileCard(o: TileCardOptions): HTMLElement {
   const el = document.createElement('article');
-  el.className = 'card';
+  el.className = 'card nb-card';
   el.tabIndex = 0;
   el.setAttribute('aria-label', o.label);
+  o.art.classList.add('nb-card__art');
   el.append(o.art);
   if (o.flag) o.art.append(o.flag);
   const panel = document.createElement('div');
-  panel.className = 'card-panel';
+  panel.className = 'card-panel nb-card__body';
   const name = document.createElement('h3');
-  name.className = o.titleOnArt ? 'card-title on-art' : 'card-title';
+  name.className = o.titleOnArt ? 'card-title nb-card__title on-art' : 'card-title nb-card__title';
   name.textContent = o.title;
-  if (o.titleTip !== undefined) name.title = o.titleTip;
+  if (o.titleTip !== undefined) bubbleTip(name, o.titleTip, '', () => cutOff(name));
   if (o.titleOnArt) {
     el.classList.add('title-on-art');
     o.art.append(name);
@@ -113,7 +143,7 @@ export function searchBar(o: {
   const wrap = document.createElement('div');
   wrap.className = o.inline ? 'ui-search-wrap inline open' : 'ui-search-wrap';
   const bar = document.createElement('div');
-  bar.className = 'ui-search-bar';
+  bar.className = 'ui-search-bar nb-search';
   bar.setAttribute('role', 'search');
   const input = document.createElement('input');
   input.className = 'ui-search-input';
@@ -125,7 +155,7 @@ export function searchBar(o: {
   input.addEventListener('input', () => o.onInput(input.value.trim()));
   const close = document.createElement('button');
   close.type = 'button';
-  close.className = 'ui-search-close';
+  close.className = 'ui-search-close nb-search__clear';
   close.setAttribute('aria-label', str('ui.list.clear'));
   close.append(svg(UI_ICONS.cross));
   close.addEventListener('click', () => {
@@ -159,7 +189,7 @@ export function emptyState(o: {
   }
   if (o.hint) {
     const h = document.createElement('p');
-    h.className = 'ui-empty-hint';
+    h.className = 'ui-empty-hint nb-meta';
     h.textContent = o.hint;
     box.append(h);
   }
@@ -171,7 +201,7 @@ export function actionButton(
 ): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = `ui-btn ${kind}`;
+  b.className = kind === 'primary' ? 'nb-btn nb-btn--primary' : kind === 'secondary' ? 'nb-btn' : 'nb-link-btn';
   if (icon) b.append(rowIcon(icon, 'row-icon', 16).firstElementChild!);
   b.append(label);
   b.addEventListener('click', onClick);
@@ -181,7 +211,7 @@ export function actionButton(
 export function pillButton(label: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'btn';
+  b.className = 'nb-btn';
   b.textContent = label;
   b.addEventListener('click', onClick);
   return b;

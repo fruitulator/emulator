@@ -30,6 +30,10 @@ export function costOf(c: { label: string; pence?: number | null; token?: boolea
   return t ? Number(t[1]) : -1;
 }
 
+export function unpriced(c: { label: string; pence?: number | null; token?: boolean }): boolean {
+  return costOf(c) < 0;
+}
+
 export function isToken(c: { label: string; token?: boolean }): boolean {
   return c.token ?? /token/i.test(c.label);
 }
@@ -50,7 +54,7 @@ export function formatBalance(b: Balance): string {
 
 export type WalletCoin = { label: string; bit?: number; pence?: number | null; token?: boolean };
 
-interface Held { token: boolean; pence: number; at: number; bit?: number; booked?: boolean; unpriced?: boolean }
+interface Held { token: boolean; pence: number; at: number; bit?: number; booked?: boolean }
 
 export class Wallet {
   private known: Balance | null = null;
@@ -59,7 +63,6 @@ export class Wallet {
   private held: Held[] = [];
   private unsent: CoinCounts = { spent: 0, rejected: 0 };
   private sinceStart = 0;
-  private uncounted = new Set<number>();
   onChange: (() => void) | null = null;
 
   constructor(private readonly server: WalletServer) {}
@@ -98,26 +101,16 @@ export class Wallet {
 
   pay(coin: WalletCoin, at: number = Date.now()): boolean {
     if (!this.canPay(coin, at)) return false;
-    const token = isToken(coin);
-    const pence = costOf(coin);
     const bit = coin.bit !== undefined ? { bit: coin.bit } : {};
-    if (pence < 0 && token) this.held.push({ token, pence: 0, at, unpriced: true, ...bit });
-    else if (pence >= 0) this.held.push({ token, pence, at, ...bit });
+    this.held.push({ token: isToken(coin), pence: costOf(coin), at, ...bit });
     this.changed();
     return true;
   }
 
   canPay(coin: WalletCoin, at: number = Date.now()): boolean {
     const b = this.shown(at);
-    if (!b) return false;
-    if (this.tokenUncounted(coin)) return false;
-    const have = isToken(coin) ? b.tokenPence : b.cashPence;
-    const pence = costOf(coin);
-    return pence < 0 ? have > 0 : pence <= have;
-  }
-
-  tokenUncounted(coin: WalletCoin): boolean {
-    return isToken(coin) && costOf(coin) < 0 && this.uncounted.has(coin.bit ?? -1);
+    if (!b || unpriced(coin)) return false;
+    return costOf(coin) <= (isToken(coin) ? b.tokenPence : b.cashPence);
   }
 
   rejected(bit: number): void {
@@ -150,7 +143,6 @@ export class Wallet {
     this.now = this.base;
     this.held = [];
     this.sinceStart = 0;
-    this.uncounted.clear();
     this.changed();
   }
 
@@ -168,18 +160,7 @@ export class Wallet {
     if (prev) {
       let cashIn = Math.max(0, ledger.inPence - prev.inPence);
       let tokenIn = Math.max(0, ledger.tokenInPence - prev.tokenInPence);
-      let tokenCount = Math.max(0, (ledger.unpricedTokenIn ?? 0) - (prev.unpricedTokenIn ?? 0));
       this.held = this.held.filter((h) => {
-        if (h.unpriced) {
-          if (tokenCount > 0) tokenCount--;
-          else if (tokenIn > 0) tokenIn = 0;
-          else return true;
-          if (!h.booked) {
-            this.unsent.spent++;
-            this.sinceStart++;
-          }
-          return false;
-        }
         const left = h.token ? tokenIn : cashIn;
         if (left <= 0) return true;
         if (!h.booked) {
@@ -213,7 +194,6 @@ export class Wallet {
     this.base = null;
     this.now = null;
     this.held = [];
-    this.uncounted.clear();
     await this.refresh();
   }
 
@@ -221,8 +201,7 @@ export class Wallet {
     if (!this.held.some((h) => at - h.at > HOLD_MS)) return;
     const old = this.held.filter((h) => at - h.at > HOLD_MS);
     this.held = this.held.filter((h) => at - h.at <= HOLD_MS);
-    for (const h of old) if (h.unpriced) this.uncounted.add(h.bit ?? -1);
-    this.unsent.rejected += old.filter((h) => !h.booked && !h.unpriced).length;
+    this.unsent.rejected += old.filter((h) => !h.booked).length;
   }
 
   private changed(): void {

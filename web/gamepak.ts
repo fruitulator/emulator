@@ -1,9 +1,10 @@
 import { deflateSync, inflateSync } from 'fflate';
 import type { GameFile, LayoutProps } from '../src/machine/registry';
+import type { NamedCoin } from '../src/machine/machine';
 
 export const CONTAINER_VERSION = 1;
 
-export const DECODE_VERSION = 183;
+export const DECODE_VERSION = 205;
 
 export type ChunkType = 'META' | 'SRCS' | 'CABJ' | 'IMGS' | 'THMB' | 'STAT' | 'SPAR';
 
@@ -218,7 +219,7 @@ export interface PakRecord {
   variant: string;
   autoSave: boolean;
   title?: string;
-  coinAnswers?: Record<string, number | 'token'>;
+  coinAnswers?: Record<string, NamedCoin>;
   sourceName?: string;
   playCount?: number;
   playedAt?: number;

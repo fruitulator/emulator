@@ -38,6 +38,7 @@ export function sameCoin(a: SlotCoin, b: SlotCoin): boolean {
 }
 
 const posInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
+const pricedToken = (v: unknown): v is { token: number } => !!v && typeof v === 'object' && posInt((v as { token?: unknown }).token);
 
 function readSlotCoin(v: unknown): SlotCoin | null {
   if (posInt(v)) return v;
@@ -76,7 +77,7 @@ export function wiringFromAnswers(raw: unknown): CoinWiring {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!/^\d+$/.test(k)) continue;
-    const coin: SlotCoin | null = v === 'token' ? { token: null } : posInt(v) ? v : null;
+    const coin: SlotCoin | null = v === 'token' ? { token: null } : posInt(v) ? v : pricedToken(v) ? { token: v.token } : null;
     if (coin !== null) out[k] = { coins: [{ coin, line: Number(k) }], how: 'asked' };
   }
   return out;
@@ -98,7 +99,7 @@ export function namedCoinsOf(w: CoinWiring): Record<string, NamedCoin> {
   for (const [line, coins] of by) {
     if (coins.length !== 1 && !coins.every((c) => sameCoin(c, coins[0]))) continue;
     const c = coins[0];
-    out[String(line)] = typeof c === 'number' ? c : 'token';
+    out[String(line)] = typeof c === 'number' ? c : c.token === null ? 'token' : { token: c.token };
   }
   return out;
 }
@@ -149,7 +150,7 @@ export function coinChoices(s: SlotWiring, have: { cashPence: number; tokenPence
     const pence = slotCoinPence(c.coin);
     if (have) {
       const purse = token ? have.tokenPence : have.cashPence;
-      if (pence === null ? purse <= 0 : pence > purse) continue;
+      if (pence === null || pence > purse) continue;
     }
     if (out.some((o) => o.token === token && o.pence === pence)) continue;
     out.push({ label: slotCoinLabel(c.coin), line: c.line, pence, token });
@@ -173,6 +174,7 @@ export function readCoinAnswers(raw: unknown): Record<string, NamedCoin> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (/^\d+$/.test(k) && (v === 'token' || posInt(v))) out[k] = v;
+    else if (/^\d+$/.test(k) && pricedToken(v)) out[k] = { token: v.token };
   }
   return out;
 }
@@ -187,7 +189,7 @@ export function namingChoices(): NamingChoice[] {
 }
 
 export function namedCoinLabel(c: NamedCoin): string {
-  return c === 'token' ? slotCoinLabel({ token: null }) : cashLabel(c);
+  return c === 'token' ? slotCoinLabel({ token: null }) : typeof c === 'object' ? slotCoinLabel(c) : cashLabel(c);
 }
 
 export interface NamingInfo {

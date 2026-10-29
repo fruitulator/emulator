@@ -26,6 +26,7 @@
 .ui-section > .ui-section-head .row-chev,
 .ui-section > .ui-section-head:hover .row-chev {
   transform: none;
+  transition: transform 0.15s ease;
 }
 .ui-section.open > .ui-section-head .row-chev,
 .ui-section.open > .ui-section-head:hover .row-chev {
@@ -35,46 +36,9 @@
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 .ui-section-body[hidden] {
-  display: none;
+  display: none !important;
 }
 
-.ui-mark {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-}
-.ui-mark svg {
-  stroke-width: 2.6;
-}
-.ui-mark.pass {
-  color: var(--on-text);
-  background: var(--on-bg);
-}
-.ui-mark.fail {
-  color: #fff;
-  background: color-mix(in srgb, var(--danger) 70%, #000);
-}
-.ui-mark.warn {
-  color: var(--on-warn);
-  background: var(--warn);
-}
-.ui-mark.pending,
-.ui-mark.running {
-  color: var(--muted);
-  background: var(--surface-3);
-}
-.ui-mark.running svg {
-  animation: ui-spin 1s linear infinite;
-}
-@keyframes ui-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 .menu-row.ui-status {
   align-items: flex-start;
 }
@@ -84,7 +48,7 @@
 .ui-status > .row-label {
   display: flex;
   flex-direction: column;
-  color: var(--text);
+  color: #fff;
 }
 .ui-status .ui-status-title {
   line-height: 1.35;
@@ -97,134 +61,34 @@
   margin-left: auto;
   padding-left: 12px;
   text-align: right;
-  color: var(--muted);
+  color: var(--nb-text-3);
 }
 .ui-status.pass > .ui-status-result {
-  color: var(--on);
+  color: var(--nb-mint);
 }
-.ui-status.fail > .ui-status-result {
-  color: var(--danger);
-}
-.ui-status.warn > .ui-status-result {
-  color: var(--warn);
+.ui-status:is(.fail, .warn) > .ui-status-result {
+  color: #FF8FA6;
 }
 
-.ui-rail {
-  display: grid;
-  grid-template-columns: repeat(var(--n, 6), minmax(0, 1fr));
-  margin: 0;
+.nb-steps .ui-step-name {
   padding: 0;
-  list-style: none;
-}
-.ui-rail .ui-step {
-  position: relative;
-  min-width: 0;
-}
-.ui-rail .ui-step + .ui-step::before {
-  content: "";
-  position: absolute;
-  top: 15px;
-  left: calc(-50% + 20px);
-  right: calc(50% + 20px);
-  height: 2px;
-  border-radius: 1px;
-  background: var(--surface-3);
-}
-.ui-rail .ui-step.filled + .ui-step.filled::before {
-  background: var(--accent);
-}
-.ui-rail .ui-step button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 0;
-  background: transparent;
   border: 0;
-  color: var(--muted-dim);
-  cursor: pointer;
-  font-family: var(--display);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.ui-rail .ui-step button:disabled {
-  cursor: default;
-}
-.ui-rail .ui-step-n {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  color: var(--muted);
-  font-family: var(--ui);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0;
-  transition: background 0.15s ease, box-shadow 0.15s ease;
-}
-.ui-rail .ui-step-name {
-  max-width: 100%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 4px;
-  box-sizing: border-box;
+  cursor: pointer;
 }
-.ui-rail .ui-step-tick {
-  position: absolute;
-  right: -6px;
-  top: -6px;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: var(--on-text);
-  color: var(--on-bg);
-  border: 2px solid var(--shell);
+.nb-steps .ui-step-name:disabled {
+  cursor: default;
 }
-.ui-rail .ui-step-tick svg {
-  stroke-width: 3.4;
-}
-.ui-rail .ui-step.done .ui-step-n {
-  background: var(--on-bg);
-  border-color: var(--on);
-  color: var(--on-text);
-}
-.ui-rail .ui-step.done .ui-step-tick {
-  display: inline-flex;
-}
-.ui-rail .ui-step.done button {
-  color: var(--muted);
-}
-.ui-rail .ui-step.done button:not(:disabled):hover .ui-step-n {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--on) 35%, transparent);
-}
-.ui-rail .ui-step.done button:not(:disabled):hover {
-  color: var(--text);
-}
-.ui-rail .ui-step.current button {
-  color: var(--text);
-}
-.ui-rail .ui-step.current .ui-step-n {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-@media (max-width: 600px) {
-  .ui-rail .ui-step-name {
-    display: none;
-  }
+.nb-steps .ui-step-name:not(:disabled):hover {
+  color: #fff;
 }
 
 .ui-btn {
@@ -270,14 +134,6 @@
 .ui-btn.secondary:hover:not(:disabled) {
   background: var(--surface-2);
   border-color: rgba(255, 255, 255, 0.45);
-}
-.ui-btn.tertiary {
-  padding: 0 12px;
-  color: var(--muted);
-}
-.ui-btn.tertiary:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-2);
 }
 .ui-btn.small {
   height: 28px;
@@ -358,14 +214,11 @@
   height: 18px;
 }
 
-.ui-dialog.export-pick .about-bar,
-.ui-dialog.export-pick .ui-dialog-scroll {
+.ui-dialog.export-pick .nb-dialog {
   width: min(960px, 100%);
 }
 .export-pick-intro {
   margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--muted);
 }
 .export-pick-bar {
   position: sticky;
@@ -378,8 +231,7 @@
   gap: 10px;
   margin: 4px 0 4px;
   padding: 8px 0;
-  background: var(--surface);
-  border-bottom: 1px solid var(--hairline);
+  background: var(--nb-grad-sheet);
 }
 .export-pick-picks {
   display: flex;
@@ -387,38 +239,11 @@
   align-items: center;
   gap: 8px;
 }
-.export-pick-count {
-  font-size: 13px;
-  color: var(--muted);
-}
-.export-pick .ui-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 
-.pack-progress-line {
-  margin: 6px 0 10px;
-  font-size: 14px;
-  min-height: 1.4em;
-}
-.pack-progress {
-  height: 4px;
-  background: var(--surface-3);
-  border-radius: var(--r-ctl);
-  overflow: hidden;
-}
-.pack-progress-fill {
-  height: 100%;
-  width: 0;
-  background: var(--accent);
-  transition: width 0.25s linear;
-}
-.pack-progress-actions {
+.pack-progress-scrim {
+  z-index: 35;
   display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-}
-.ui-dialog.pack-progress-dialog .about-bar,
-.ui-dialog.pack-progress-dialog .ui-dialog-scroll {
-  width: min(440px, 100%);
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
 }

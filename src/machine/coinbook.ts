@@ -4,6 +4,12 @@ import type { CashLedger, CoinChute, NamedCoin } from './machine';
 
 export type BookedCoin = number | { token: number } | 'token' | null;
 
+export function namedBooking(coin: NamedCoin): BookedCoin {
+  if (coin === 'token') return 'token';
+  if (typeof coin === 'object') return Number.isInteger(coin.token) && coin.token > 0 ? { token: coin.token } : null;
+  return Number.isInteger(coin) && coin > 0 ? coin : null;
+}
+
 export function coinName(pence: number): string {
   return pence >= 100 ? (pence % 100 ? `£${(pence / 100).toFixed(2)}` : `£${pence / 100}`) : `${pence}p`;
 }
@@ -36,6 +42,10 @@ export class CoinBook {
 
   setSlides(slides: readonly SlideEffect[] | null): void {
     this.slides = slides ? [...slides] : [];
+  }
+
+  get unpricedSlides(): number[] {
+    return this.slides.flatMap((s, i) => (s === 'token' || s === 'unpriced' ? [i] : []));
   }
 
   get hasSlides(): boolean {
@@ -98,8 +108,8 @@ export class SlotCoins {
   name(line: number, coin: NamedCoin): void {
     const st = this.stated.get(line);
     if (st !== null && st !== 'token') return;
-    if (coin === 'token') this.named.set(line, 'token');
-    else if (Number.isInteger(coin) && coin > 0) this.named.set(line, coin);
+    const c = namedBooking(coin);
+    if (c !== null) this.named.set(line, c);
   }
 
   coinOn(line: number): BookedCoin {

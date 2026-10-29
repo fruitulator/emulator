@@ -2,6 +2,7 @@ import type { GameFile, GameVariant, LayoutProps } from '../src/machine/registry
 import { contentFiles, LAYOUT_FILE, setFiles } from '../src/machine/setfiles';
 import { isEffectSample } from '../src/machine/effects';
 import { encodeSrcs } from './gamepak';
+import type { NamedCoin } from '../src/machine/machine';
 
 export type { GameVariant };
 
@@ -32,8 +33,9 @@ export interface GameMeta {
   variants: GameVariant[];
   variant: string;
   sourceName?: string;
+  origin?: string;
   title?: string;
-  coinAnswers?: Record<string, number | 'token'>;
+  coinAnswers?: Record<string, NamedCoin>;
   layoutProps?: LayoutProps;
   contentHash?: string;
   contentRule?: number;
@@ -41,6 +43,9 @@ export interface GameMeta {
   batteries?: string[];
   maker?: string;
   makerRule?: number;
+  artHash?: string;
+  groupWith?: string;
+  ungrouped?: true;
   missingRule?: number;
 }
 
@@ -143,7 +148,7 @@ export function eraseLibrary(timeoutMs = 10_000): Promise<void> {
     const go = () => {
       const req = indexedDB.deleteDatabase(DB_NAME);
       const timer = setTimeout(() => reject(new EraseBlockedError()), timeoutMs);
-      req.onsuccess = () => { clearTimeout(timer); resolve(); };
+      req.onsuccess = () => { clearTimeout(timer); thumbChanged(null); resolve(); };
       req.onerror = () => {
         clearTimeout(timer);
         reject(req.error ?? new Error('IndexedDB delete failed'));
@@ -161,10 +166,21 @@ async function op<T>(
 ): Promise<T> {
   const db = await openDb();
   return new Promise<T>((resolve, reject) => {
-    const req = run(db.transaction(store, mode).objectStore(store));
-    req.onsuccess = () => resolve(req.result as T);
-    req.onerror = () => reject(req.error ?? new Error('IndexedDB request failed'));
+    const t = db.transaction(store, mode);
+    const req = run(t.objectStore(store));
+    if (mode === 'readonly') {
+      req.onsuccess = () => resolve(req.result as T);
+      req.onerror = () => reject(req.error ?? new Error('IndexedDB request failed'));
+      return;
+    }
+    t.oncomplete = () => resolve(req.result as T);
+    t.onerror = () => reject(t.error ?? req.error ?? new Error('IndexedDB write failed'));
+    t.onabort = () => reject(t.error ?? req.error ?? new Error('IndexedDB write aborted'));
   });
+}
+
+export async function hasPak(hash: string): Promise<boolean> {
+  return (await op<number>('paks', 'readonly', (s) => s.count(hash))) > 0;
 }
 
 function upgrade(rec: GameMeta): GameMeta {
@@ -207,6 +223,30 @@ export async function getThumb(hash: string): Promise<Uint8Array | null> {
 
 export async function putThumb(hash: string, bytes: Uint8Array): Promise<void> {
   await op('thumbs', 'readwrite', (s) => s.put({ hash, bytes }));
+  thumbChanged(hash);
+}
+
+const thumbListeners = new Set<(hash: string | null) => void>();
+let thumbChannel: BroadcastChannel | null | undefined;
+function channel(): BroadcastChannel | null {
+  if (thumbChannel === undefined) {
+    thumbChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('fruitulator-thumbs');
+    if (thumbChannel) {
+      (thumbChannel as { unref?: () => void }).unref?.();
+      thumbChannel.onmessage = (e: MessageEvent) => {
+        for (const fn of thumbListeners) fn(typeof e.data === 'string' ? e.data : null);
+      };
+    }
+  }
+  return thumbChannel;
+}
+function thumbChanged(hash: string | null): void {
+  for (const fn of thumbListeners) fn(hash);
+  try { channel()?.postMessage(hash); } catch {  }
+}
+export function onThumbChange(fn: (hash: string | null) => void): void {
+  thumbListeners.add(fn);
+  channel();
 }
 
 export async function getPak(hash: string): Promise<Uint8Array | null> {
@@ -254,7 +294,7 @@ export async function deleteGame(hash: string): Promise<void> {
     t.objectStore('states').delete(hash);
     t.objectStore('arcade').delete(hash);
     t.objectStore('money').delete(hash);
-    t.oncomplete = () => resolve();
+    t.oncomplete = () => { thumbChanged(hash); resolve(); };
     t.onerror = () => reject(t.error ?? new Error('delete failed'));
     t.onabort = () => reject(t.error ?? new Error('delete aborted'));
   });

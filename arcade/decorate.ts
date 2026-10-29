@@ -41,9 +41,9 @@ export function decorateSection(o: {
     h.textContent = text;
     return h;
   };
-  const labelled = (text: string, cls: string): HTMLElement => {
+  const labelled = (text: string, cls: string, dep = false): HTMLElement => {
     const r = document.createElement('label');
-    r.className = cls;
+    r.className = `${cls} decorate-row${dep ? ' decorate-dep' : ''}`;
     const l = document.createElement('span');
     l.className = 'row-label ui-slider-label';
     l.textContent = text;
@@ -53,15 +53,15 @@ export function decorateSection(o: {
   const well = (text: string, get: () => string, put: (v: string) => void): HTMLInputElement => {
     const i = document.createElement('input');
     i.type = 'color';
-    i.className = 'ui-dock-colour';
+    i.className = 'decorate-swatch-well';
     i.setAttribute('aria-label', text);
     i.value = get();
     i.addEventListener('input', () => put(i.value));
     i.addEventListener('change', flush);
     return i;
   };
-  const colourRow = (text: string, get: () => string, put: (v: string) => void): HTMLElement => {
-    const r = labelled(text, 'menu-row menu-vol ui-slider');
+  const colourRow = (text: string, get: () => string, put: (v: string) => void, dep = false): HTMLElement => {
+    const r = labelled(text, 'menu-row menu-vol ui-slider', dep);
     r.append(well(text, get, put));
     return r;
   };
@@ -95,7 +95,7 @@ export function decorateSection(o: {
     for (const t of THEMES) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'decorate-theme';
+      b.className = 'nb-btn nb-btn--sm decorate-theme';
       b.setAttribute('aria-pressed', String(t.id === cur));
       const sw = document.createElement('span');
       sw.className = 'decorate-swatch';
@@ -115,13 +115,13 @@ export function decorateSection(o: {
         change({ lower: v, lowerColour: PANELLING.find((p) => p.id === v)!.colour });
         render();
       }),
-      colourRow(str('arcade.decorate.panel_colour'), () => look.lowerColour, (v) => change({ lowerColour: v })),
-      colourRow(str('arcade.decorate.rail'), () => look.rail, (v) => change({ rail: v })),
+      colourRow(str('arcade.decorate.panel_colour'), () => look.lowerColour, (v) => change({ lowerColour: v }), true),
+      colourRow(str('arcade.decorate.rail'), () => look.rail, (v) => change({ rail: v }), true),
       choiceRow(str('arcade.decorate.upper_wall'), UPPER_WALLS, () => look.upper, (v) => {
         change({ upper: v, upperColour: UPPER_WALLS.find((p) => p.id === v)!.colour });
         render();
       }),
-      colourRow(str('arcade.decorate.wall_colour'), () => look.upperColour, (v) => change({ upperColour: v })),
+      colourRow(str('arcade.decorate.wall_colour'), () => look.upperColour, (v) => change({ upperColour: v }), true),
       choiceRow(str('arcade.decorate.window'), WINDOW_VIEWS, () => look.window, (v) => change({ window: v })),
     );
     return walls;

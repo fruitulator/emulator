@@ -13,13 +13,15 @@ import { str } from '../web/i18n';
 import { UI_ICONS } from '../web/ui/icons';
 import { displayTitle } from '../web/gamelist';
 import type { ArcadeMachine } from './machines';
+import type { GameMeta } from '../web/store';
+import { withShare } from '../web/sources/get';
 import { banksPlan, gridPlan, type RoomPlan, type Stand } from './floor';
 import type { Place } from './doc';
 import { BANK_MARGINS, buildRoom, dimMaterials, lightPool, type Dressing } from './dressing';
 import { glowPlan, makeGlow, type GlassGlow } from './glassglow';
 import { copyLook, lookOf as roomLook, neonMotionOn, REDUCED_MOTION, type RoomLook } from './roomlook';
 import { DPR_CAP, glassSaid, roomSwitches, switchesSaid, type RoomSwitches } from './roomperf';
-import { PropLayer } from './proplayer';
+import { PropLayer, type CigPart, type VendCue } from './proplayer';
 import { PlayerPills, type PillAnchor, type PillPlayer } from './playerpills';
 import type { Prop } from './proplist';
 import { GpuTimer } from './roombench';
@@ -79,6 +81,8 @@ const BODY_R = 0.3;
 const WALL_STAND_M = 1.0;
 const FACE_NEAR_M = 3.2;
 const DOOR_AT_M = 0.6;
+const VEND_REACH_M = 0.75;
+const VEND_AT_M = 0.6;
 const AHEAD_CONE = 0.45;
 const AHEAD_M = 8;
 
@@ -131,6 +135,7 @@ export class Room {
   private walk: WalkGrid;
   private route: Pt[] = [];
   private arriveFace: number | null = null;
+  private vendOnArrive: { id: string; part: CigPart } | null = null;
   private turnTo: number | null = null;
   private arrivePitch: number | null = null;
   private focus: Slot | null = null;
@@ -182,6 +187,9 @@ export class Room {
   }
   private pausedBy = false;
   onFocus?: (slot: { machine: ArcadeMachine; mode: string } | null) => void;
+  getFromSource?: (m: ArcadeMachine & { source: NonNullable<ArcadeMachine['source']> },
+    progress: (text: string | null, fraction?: number) => void) => Promise<GameMeta | 'other' | null>;
+  private getting = new Set<string>();
   onLeave?: () => void;
   private sayWhenArrived: { s: Slot; show: () => void; by: number } | null = null;
 
@@ -211,6 +219,7 @@ export class Room {
       matchMedia(REDUCED_MOTION).addEventListener('change', () => { this.room.motion = neonMotionOn(); });
     }
     this.props = new PropLayer(this.plan.box, this.renderer);
+    this.props.onCue = (c) => this.vendCue(c);
     this.props.set(opts.props ?? []);
     this.scene.add(this.props.group);
     this.walk = this.walkGrid();
@@ -463,8 +472,7 @@ export class Room {
     const g = s?.glass;
     if (!s?.shell || !g?.cab || this.live.glass !== g) return null;
     const shell = s.shell;
-    const cab = g.cab;
-    const rig = shell.rig;
+    const coin = shell.coin;
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.camera.updateMatrixWorld();
     const onScreen = (w: THREE.Vector3): { x: number; y: number } | null => {
@@ -474,18 +482,13 @@ export class Room {
     };
     let coinAt: THREE.Vector3 | null | undefined;
     return (h) => {
-      if (rig) {
-        const i = g.mountLamps.findIndex((n) => n !== null && cab.lamps[n]?.button !== undefined && h.id === `btn:${cab.lamps[n].button}`);
-        const mark = i >= 0 ? rig.markOf(i) : null;
-        if (mark) return onScreen(mark.at);
-        if (h.lamp && g.replaced.has(h.lamp as CabLamp) && rig.coin.length) {
-          if (coinAt === undefined) {
-            const box = new THREE.Box3();
-            for (const n of rig.coin) box.expandByObject(n);
-            coinAt = box.isEmpty() ? null : box.getCenter(new THREE.Vector3());
-          }
-          return coinAt ? onScreen(coinAt) : null;
+      if (coin?.nodes.length && h.lamp && g.replaced.has(h.lamp as CabLamp)) {
+        if (coinAt === undefined) {
+          const box = new THREE.Box3();
+          for (const n of coin.nodes) box.expandByObject(n);
+          coinAt = box.isEmpty() ? null : box.getCenter(new THREE.Vector3());
         }
+        return coinAt ? onScreen(coinAt) : null;
       }
       if (!h.at || (h.lamp && g.replaced.has(h.lamp as CabLamp))) return null;
       const w = glassWorldPoint(shell, g, h.at.x, h.at.y);
@@ -577,7 +580,7 @@ export class Room {
     const model = await modelFor(s.glass.cabinetStyle, this.slots.indexOf(s), s.glass.machine.setup.cabinet);
     const shell = await buildShell({
       fit: s.glass.shellFit(), texture: s.glass.texture, model,
-      trim: s.glass.trim, name: s.glass.machine.name,
+      trim: s.glass.trim, name: s.glass.machine.name, cabinet: s.glass.machine.setup.cabinet,
       dress: cabinetDress(this.renderer, this.switches.env),
     });
     if (seq !== s.shellSeq) { retireShell(s.holder, shell, s.glass.texture); return; }
@@ -586,7 +589,7 @@ export class Room {
     s.shell = shell;
     s.holder.add(shell.group);
     this.freezeOthers();
-    s.glass.attachRig(shell.rig, shell.modelId);
+    s.glass.attachCoin(shell.coin);
     s.holder.updateMatrixWorld(true);
     s.bounds = new THREE.Box3().setFromObject(s.holder).getBoundingSphere(new THREE.Sphere());
     s.box = new THREE.Box3().setFromObject(shell.group);
@@ -613,6 +616,7 @@ export class Room {
   }
 
   goTo(p: Pt): void {
+    this.vendOnArrive = null;
     const r = this.walk.route(this.pos, p);
     if (!r) return;
     this.route = r;
@@ -635,6 +639,7 @@ export class Room {
     const { fwd, side, turn } = walkIntent(this.keys, { walk: this.walkHeld, turn: this.turnHeld });
     if (fwd || side || turn) {
       this.route = [];
+      this.vendOnArrive = null;
       this.turnTo = null;
       this.arrivePitch = null;
       this.head.yaw = wrap(this.head.yaw + turn * TURN_SPEED * dt);
@@ -659,6 +664,10 @@ export class Room {
         this.pos.z = next.z;
         this.route.shift();
         if (!this.route.length && this.arriveFace !== null) this.turnTo = this.arriveFace;
+        if (!this.route.length && this.vendOnArrive) {
+          this.useVendor(this.vendOnArrive.id, this.vendOnArrive.part);
+          this.vendOnArrive = null;
+        }
       } else {
         this.pos.x += (dx / d) * step;
         this.pos.z += (dz / d) * step;
@@ -676,6 +685,11 @@ export class Room {
     return Math.abs(d) <= max;
   }
 
+  private vendorAtNdc(p: THREE.Vector2): { id: string; part: CigPart } | null {
+    this.raycaster.setFromCamera(p, this.camera);
+    return this.props.partAt(this.raycaster);
+  }
+
   private doorAtNdc(p: THREE.Vector2): boolean {
     this.raycaster.setFromCamera(p, this.camera);
     return this.raycaster.ray.intersectsBox(this.room.door.box);
@@ -691,6 +705,45 @@ export class Room {
     const c = this.room.door.box.getCenter(new THREE.Vector3());
     this.arriveFace = Math.atan2(c.x - stand.x, c.z - stand.z);
     if (!this.route.length) this.turnTo = this.arriveFace;
+  }
+
+  private vendAt(id: string, part: CigPart): void {
+    const stand = this.props.standFor(id, VEND_REACH_M);
+    if (!stand) return;
+    this.live.startSound();
+    this.live.effects.prime();
+    let to: Pt = { x: stand.x, z: stand.z };
+    if (!this.walk.free(to.x, to.z)) to = this.walk.nearestFree(to);
+    const face = Math.atan2(stand.at.x - to.x, stand.at.z - to.z);
+    const pitch = Math.atan2(stand.at.y - EYE, Math.hypot(stand.at.x - to.x, stand.at.z - to.z));
+    if (Math.hypot(this.pos.x - to.x, this.pos.z - to.z) <= VEND_AT_M) {
+      this.useVendor(id, part);
+      this.turnTo = face;
+      this.arrivePitch = Math.max(-LOOK_DOWN, pitch);
+      return;
+    }
+    this.goTo(to);
+    this.arriveFace = face;
+    this.arrivePitch = Math.max(-LOOK_DOWN, pitch);
+    if (!this.route.length) this.turnTo = face;
+    this.vendOnArrive = { id, part };
+  }
+
+  private useVendor(id: string, part: CigPart): void {
+    const t = this.roomTime();
+    if (part.kind === 'coin') this.props.insertCoin(id, t);
+    else if (part.kind === 'reject') this.props.rejectCoins(id);
+    else if (part.kind === 'knob') this.props.pullKnob(id, part.knob, t);
+  }
+
+  private vendCue(c: VendCue): void {
+    if (!this.live.soundOn) return;
+    if (c === 'coin') this.live.effects.coin(undefined);
+    else this.live.effects.button(c === 'pull');
+  }
+
+  private roomTime(): number {
+    return (performance.now() - this.t0) / 1000;
   }
 
   private floorAtNdc(p: THREE.Vector2): Pt | null {
@@ -856,7 +909,9 @@ export class Room {
       if (!this.focus) {
         const at = this.ndc(e);
         const s = this.slotAtNdc(at);
+        const vendor = s ? null : this.vendorAtNdc(at);
         if (s) this.walkUp(s);
+        else if (vendor) this.vendAt(vendor.id, vendor.part);
         else if (this.onLeave && this.doorAtNdc(at)) this.leaveByDoor();
         else {
           const p = this.floorAtNdc(at);
@@ -877,7 +932,7 @@ export class Room {
     const glass = this.focus?.glass;
     if (!glass?.cab || this.live.glass !== glass) return false;
     const hit = this.glassPoint(e);
-    if (!hit || hit.lamp || hit.coin || !(hit.scale > 0)) return false;
+    if (!hit || hit.coin || !(hit.scale > 0)) return false;
     const at = reelAt(glass.cab.reels, hit.x, hit.y);
     if (!at) return false;
     this.peeking = { id: e.pointerId, glass };
@@ -982,6 +1037,32 @@ export class Room {
     return true;
   }
 
+  private async getAndPlay(s: Slot): Promise<void> {
+    const m = s.glass.machine;
+    if (!m.source || !this.getFromSource || this.getting.has(m.id)) return;
+    this.getting.add(m.id);
+    const note = this.live.stopNote;
+    try {
+      const got = await this.getFromSource(m as ArcadeMachine & { source: NonNullable<ArcadeMachine['source']> }, (text, f) => {
+        if (!note) return;
+        if (text === null) { note.clear(); return; }
+        note.notice(f === undefined ? text : withShare(text, f), undefined, undefined, undefined, undefined, true);
+      });
+      if (!this.slots.includes(s)) return;
+      if (got === 'other') {
+        m.otherVersion = true;
+        note?.notice(str('arcade.room.different_version', { 0: m.name }), undefined, undefined, NAME_NOTE_MS);
+        return;
+      }
+      if (!got) return;
+      m.held = got;
+      await this.standFresh(s);
+      if (this.focus === s) this.walkUp(s);
+    } finally {
+      this.getting.delete(m.id);
+    }
+  }
+
   walkUp(s: Slot): void {
     this.walkHeld = 0;
     this.turnHeld = 0;
@@ -998,7 +1079,9 @@ export class Room {
       const text = m.installing ? str('arcade.room.not_installed_yet', { 0: m.name })
         : m.otherVersion ? str('arcade.room.different_version', { 0: m.name })
         : str('arcade.room.not_in_library', { 0: m.name });
-      if (note) this.sayWhenArrived = { s, show: () => note.notice(text, undefined, undefined, NAME_NOTE_MS), by: performance.now() + ASK_BY_MS };
+      const get = !m.installing && !m.outOfService && m.source && this.getFromSource
+        ? { label: str('arcade.room.get_from_n', { 0: m.source.name }), run: () => { void this.getAndPlay(s); } } : undefined;
+      if (note) this.sayWhenArrived = { s, show: () => note.notice(text, get, undefined, get ? undefined : NAME_NOTE_MS), by: performance.now() + ASK_BY_MS };
       return;
     }
     const built = s.glass.game && s.glass.cab ? Promise.resolve() : s.loaded ? null : this.build(s);
@@ -1318,6 +1401,7 @@ export class Room {
       if (g.playAttract(t, this.switches.glassTex)) { paints++; budget--; this.overlays.get(s)?.refresh(); }
     }
     this.room.tick(t, this.camera.position);
+    this.props.tick(t, this.room.motion);
     const tGlass = performance.now();
     this.gpuTimer?.begin();
     this.renderer.render(this.scene, this.camera);
@@ -1410,8 +1494,9 @@ export class Room {
     }
     const cam = this.viewCamera(w / h);
     const size = this.renderer.getSize(new THREE.Vector2());
-    const vh = size.y;
-    const vw = Math.min(size.x, (vh * w) / h);
+    const pr = this.renderer.getPixelRatio();
+    const tileW = Math.min(w, Math.floor(size.x * pr));
+    const tileH = Math.min(h, Math.floor(size.y * pr));
     const dimWas = this.dimK;
     if (dimWas < 1) this.applyDim(1);
     const exposureWas = this.renderer.toneMappingExposure;
@@ -1429,20 +1514,27 @@ export class Room {
         holed.push(s);
       }
     }
-    this.renderer.setViewport(0, 0, vw, vh);
-    this.renderer.setScissor(0, 0, vw, vh);
+    const el = this.renderer.domElement;
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext('2d')!;
     this.renderer.setScissorTest(true);
-    this.renderer.render(this.scene, cam);
+    for (let y = 0; y < h; y += tileH) {
+      for (let x = 0; x < w; x += tileW) {
+        const tw = Math.min(tileW, w - x);
+        const th = Math.min(tileH, h - y);
+        cam.setViewOffset(w, h, x, y, tw, th);
+        this.renderer.setViewport(0, 0, tw / pr, th / pr);
+        this.renderer.setScissor(0, 0, tw / pr, th / pr);
+        this.renderer.render(this.scene, cam);
+        ctx.drawImage(el, 0, el.height - th, tw, th, x, y, tw, th);
+      }
+    }
     for (const s of holed) if (s.shell) holeGlass(s.shell, true);
     for (const s of this.slots) this.shadeGlass(s);
     if (dimWas < 1) this.applyDim(dimWas);
     this.renderer.toneMappingExposure = exposureWas;
-    const el = this.renderer.domElement;
-    const pr = this.renderer.getPixelRatio();
-    const out = document.createElement('canvas');
-    out.width = w;
-    out.height = h;
-    out.getContext('2d')!.drawImage(el, 0, el.height - vh * pr, vw * pr, vh * pr, 0, 0, w, h);
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, size.x, size.y);
     return out;

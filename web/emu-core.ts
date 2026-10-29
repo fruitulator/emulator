@@ -117,6 +117,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
     ...(m.coinChutes ? { coins: m.coinChutes.map((c) => ({ ...c })) } : {}),
     ...(m.unnamedCoinLines?.length ? { unnamedCoins: [...m.unnamedCoinLines] } : {}),
     ...(m.uncountedCoinLines?.length ? { uncountedCoins: [...m.uncountedCoinLines] } : {}),
+    ...(m.unpricedPayoutLines?.length ? { unpricedPayouts: [...m.unpricedPayoutLines] } : {}),
     ...(m.nameCoin ? { namesCoins: true } : {}),
     ...coinTableInfo(m),
     ...slotCoinLinesOf(game, m, resolved),

@@ -1,19 +1,9 @@
 .ui-beta {
-  display: inline-block;
   flex: none;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 3px 5px;
-  border-radius: var(--r-chip);
-  color: var(--on-accent);
-  background: var(--accent);
   white-space: nowrap;
 }
-.ui-sitenav .iconbtn { position: relative; }
-.ui-sitenav .iconbtn > .ui-beta {
+.ui-sitenav .nb-icon-btn { position: relative; }
+.ui-sitenav .nb-icon-btn > .ui-beta {
   position: absolute;
   left: 50%;
   bottom: -3px;
@@ -22,23 +12,6 @@
   padding: 2px 3px;
   pointer-events: none;
 }
-.ui-beta-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ui-beta-note {
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--muted);
-}
-.ui-beta-more {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.ui-beta-more:hover { text-decoration-color: var(--accent-hot); }
+.ui-beta-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.ui-beta-note { margin: 0; }
 #menu .menu-brand > .ui-beta { margin-top: 8px; }

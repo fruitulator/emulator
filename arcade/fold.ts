@@ -21,7 +21,7 @@ export function deckBand(cab: Cabinet<unknown>, column?: Box | null): DeckBand {
   if (!(H > 0)) return DEFAULT_DECK;
   const caps: { t: number; b: number; h: number }[] = [];
   for (const lp of cab.lamps) {
-    if (lp.button === undefined || lp.acceptor) continue;
+    if (lp.button === undefined || lp.acceptor || lp.hidden) continue;
     if (!(lp.width > 0 && lp.height > 0)) continue;
     if (lp.left < col.left || lp.left + lp.width > col.left + col.width) continue;
     const t = (lp.top - c.top) / H;

@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import type { CabinetShell } from './cabinets';
-import { facePoint, meshPointAtUv } from './glasshit';
+import { facePoint, meshPointAtUv, planePointAtUv } from './glasshit';
 import { boundsOf, homography, isRectQuad, type Box, type Pt, type Quad } from './quad';
 import { axisPlan, Presenter } from '../web/present';
 
@@ -18,7 +18,7 @@ export function glassPieces(shell: CabinetShell, cw: number, ch: number, ox: num
     const sq: Pt[] = [], dq: Pt[] = [];
     for (const [u, v] of CORNERS) {
       const f = facePoint(src, u, v);
-      const local = meshPointAtUv(m.geometry, u, v);
+      const local = meshPointAtUv(m.geometry, u, v) ?? (m.userData.shaped ? planePointAtUv(m.geometry, u, v) : null);
       if (!f || !local) break;
       const p = local.applyMatrix4(m.matrixWorld).project(camera);
       if (p.z < -1 || p.z > 1) break;

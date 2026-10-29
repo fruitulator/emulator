@@ -59,16 +59,16 @@ export function ageGate(enter: () => Promise<unknown>, doc: Document = document)
   }
 
   const gate = doc.createElement('div');
-  gate.className = 'agegate';
+  gate.className = 'agegate nb-gate';
   gate.setAttribute('role', 'dialog');
   gate.setAttribute('aria-modal', 'true');
   gate.setAttribute('aria-labelledby', 'agegate-title');
-  const box = el(doc, 'div', 'agegate-box');
+  const box = el(doc, 'div', 'agegate-box nb-gate__card');
   box.tabIndex = -1;
   const scroll = el(doc, 'div', 'agegate-scroll');
-  const btns = el(doc, 'div', 'agegate-btns');
-  const yes = el(doc, 'button', 'ui-btn primary agegate-yes', GATE_COPY.over);
-  const no = el(doc, 'button', 'ui-btn secondary agegate-no', GATE_COPY.under);
+  const btns = el(doc, 'div', 'agegate-btns nb-gate__actions');
+  const yes = el(doc, 'button', 'nb-btn nb-btn--primary agegate-yes', GATE_COPY.over);
+  const no = el(doc, 'button', 'nb-btn agegate-no', GATE_COPY.under);
   yes.setAttribute('type', 'button');
   no.setAttribute('type', 'button');
   btns.append(yes, no);
@@ -100,17 +100,20 @@ function el(doc: Document, tag: string, cls: string, text?: string): HTMLElement
 }
 
 function fill(doc: Document, into: HTMLElement, heading: string, paras: GatePara[]): void {
+  const word = doc.createElement('img');
+  word.className = 'agegate-wordmark';
+  word.src = '/icons/fruitulator-cherries.svg?v=1';
+  word.alt = GATE_COPY.wordmarkAlt;
+  const ring = el(doc, 'span', 'nb-gate__mark');
   const mark = doc.createElement('img');
-  mark.className = 'agegate-mark';
   mark.src = '/icons/18plus.svg';
-  mark.width = 88;
-  mark.height = 88;
+  mark.width = 72;
+  mark.height = 72;
   mark.alt = GATE_COPY.markAlt;
-  const h = el(doc, 'div', 'agegate-title', heading);
+  ring.append(mark);
+  const h = el(doc, 'h2', 'agegate-title', heading);
   h.id = 'agegate-title';
-  h.setAttribute('role', 'heading');
-  h.setAttribute('aria-level', '1');
-  into.append(mark, h);
+  into.append(word, ring, h);
   for (const para of paras) {
     const p = el(doc, 'p', 'agegate-text');
     for (const run of typeof para === 'string' ? [para] : para) {

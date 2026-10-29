@@ -59,8 +59,6 @@ export class DressPreview {
   private pinch: { d: number; zoom: number } | null = null;
   private raf = 0;
   private readonly face: 1 | -1;
-  private readonly marks: HTMLElement;
-  private markCount = 0;
   private viewKey = '';
   private built = 0;
   private drawn = '';
@@ -106,14 +104,10 @@ export class DressPreview {
     this.hint = document.createElement('p');
     this.hint.className = 'dress-hint';
     this.hint.textContent = HINT_LOOK;
-    this.marks = document.createElement('div');
-    this.marks.className = 'dress-marks';
-    this.marks.setAttribute('aria-hidden', 'true');
-    this.marks.style.zIndex = String(CANVAS_OVER_GLASS_Z + 1);
     this.hint.style.zIndex = String(CANVAS_OVER_GLASS_Z + 1);
     this.root.style.background = '#020203';
     this.root.style.isolation = 'isolate';
-    this.root.append(this.canvas, this.marks, this.hint);
+    this.root.append(this.canvas, this.hint);
     this.syncReset();
     this.wireView();
     const loop = (): void => {
@@ -186,50 +180,8 @@ export class DressPreview {
     return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   }
 
-  showMarks(count: number, on: number | null = null): void {
-    if (count !== this.markCount) {
-      this.markCount = count;
-      this.drawn = '';
-      this.marks.replaceChildren();
-      for (let i = 0; i < count; i++) {
-        const b = document.createElement('span');
-        b.className = 'dress-mark';
-        b.textContent = String(i + 1);
-        b.dataset.mount = String(i);
-        this.marks.append(b);
-      }
-    }
-    [...this.marks.children].forEach((b, i) => b.classList.toggle('on', i === on));
-  }
-
-  private placeMarks(w: number, h: number): void {
-    const rig = this.shell?.rig;
-    const show = !this.playing && !!rig && this.markCount > 0;
-    this.marks.hidden = !show;
-    if (!show || !rig) return;
-    const kids = this.marks.children;
-    const to = new THREE.Vector3();
-    for (let i = 0; i < kids.length; i++) {
-      const b = kids[i] as HTMLElement;
-      const m = rig.markOf(i);
-      if (!m) { b.hidden = true; continue; }
-      const facing = to.subVectors(this.camera.position, m.at).dot(m.axis) > 0;
-      const p = m.at.clone().project(this.camera);
-      const inView = p.z < 1 && Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1;
-      b.hidden = !facing || !inView;
-      if (b.hidden) continue;
-      b.style.left = `${((p.x + 1) / 2) * w}px`;
-      b.style.top = `${((1 - p.y) / 2) * h}px`;
-    }
-  }
-
   private deckPoint(s: CabinetShell): THREE.Vector3 {
     const box = new THREE.Box3();
-    const rig = s.rig;
-    if (rig?.count) {
-      for (let i = 0; i < rig.count; i++) { const m = rig.markOf(i); if (m) box.expandByPoint(m.at); }
-      if (!box.isEmpty()) return box.getCenter(new THREE.Vector3());
-    }
     let low: THREE.Vector3 | null = null;
     for (const g of s.glassMeshes) {
       const c = box.setFromObject(g).getCenter(new THREE.Vector3());
@@ -312,7 +264,7 @@ export class DressPreview {
       return null;
     });
     const shell = await buildShell({
-      fit: g.shellFit(), texture: g.texture, model, trim: g.trim, name: g.machine.name,
+      fit: g.shellFit(), texture: g.texture, model, trim: g.trim, name: g.machine.name, cabinet: g.machine.setup.cabinet,
       dress: cabinetDress(this.renderer),
     });
     if (seq !== this.seq) { disposeShell(shell, g.texture); return; }
@@ -320,7 +272,7 @@ export class DressPreview {
     this.shell = shell;
     this.built++;
     this.holder.add(shell.group);
-    g.attachRig(shell.rig, shell.modelId);
+    g.attachCoin(shell.coin);
     this.onBuilt?.(shell.panels);
   }
 
@@ -381,10 +333,9 @@ export class DressPreview {
     }
     this.camera.updateMatrixWorld();
     this.placeGlass(w, h);
-    const stamp = `${this.viewKey}|${this.glass.overlaid ? 'o' : this.glass.paints}|${s?.rig?.version ?? 0}|${this.markCount}`;
+    const stamp = `${this.viewKey}|${this.glass.overlaid ? 'o' : this.glass.paints}`;
     if (stamp === this.drawn) return;
     this.drawn = stamp;
-    this.placeMarks(w, h);
     this.room.tick(0, this.camera.position);
     this.renderer.render(this.scene, this.camera);
   }

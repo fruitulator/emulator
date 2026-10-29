@@ -1,5 +1,6 @@
 import { mountGameList, displayTitle, type Unplayable } from './gamelist';
 import { openDialog } from './ui/dialog';
+import { progressCard } from './ui/progress';
 import { actionButton, pillButton } from './ui/list';
 import { exportPunnet, punnetFileName } from './portable';
 import { PunnetPackWriter, COLLECTION_VERSION, type PackSink } from './punnetpack';
@@ -26,7 +27,7 @@ export function openExportPicker(o: {
   const grid = document.createElement('div');
   grid.className = 'ui-list export-pick-grid';
   const count = document.createElement('span');
-  count.className = 'export-pick-count';
+  count.className = 'export-pick-count nb-meta';
   const save = actionButton(str('punnetexport.save_punnet'), 'primary', () => {
     const picked = o.games.filter((g) => chosen.has(g.hash));
     if (!picked.length) return;
@@ -66,7 +67,7 @@ export function openExportPicker(o: {
   });
 
   const intro = document.createElement('p');
-  intro.className = 'export-pick-intro';
+  intro.className = 'export-pick-intro nb-meta';
   intro.textContent = o.intro ?? str('punnetexport.save_your_games_including_artwork');
   const bar = document.createElement('div');
   bar.className = 'export-pick-bar';
@@ -187,35 +188,29 @@ export interface PackProgress {
 }
 
 export function openPackProgress(title: string): PackProgress {
-  const line = document.createElement('p');
-  line.className = 'pack-progress-line';
-  line.setAttribute('aria-live', 'polite');
-  const track = document.createElement('div');
-  track.className = 'pack-progress';
-  track.setAttribute('role', 'progressbar');
-  track.setAttribute('aria-valuemin', '0');
-  track.setAttribute('aria-valuemax', '100');
-  track.setAttribute('aria-valuenow', '0');
-  const fill = document.createElement('div');
-  fill.className = 'pack-progress-fill';
-  track.append(fill);
   let stopped = false;
-  const stop = pillButton(str('punnetexport.stop'), () => { stopped = true; stop.disabled = true; });
-  const acts = document.createElement('div');
-  acts.className = 'pack-progress-actions';
-  acts.append(stop);
+  const card = progressCard({ label: title, meter: true, stop: { label: str('punnetexport.stop'), run: () => { stopped = true; } } });
+  const scrim = document.createElement('div');
+  scrim.className = 'pack-progress-scrim nb-backdrop';
+  scrim.append(card.root);
+  const onKey = (ev: KeyboardEvent): void => {
+    if (ev.key !== 'Escape') return;
+    ev.stopPropagation();
+    stopped = true;
+  };
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(scrim);
   let closing = false;
-  const dialog = openDialog({ title, body: [line, track, acts], onClose: () => { if (!closing) stopped = true; } });
-  dialog.panel.classList.add('pack-progress-dialog');
   return {
-    say: (msg) => { line.textContent = msg; },
-    fill: (share) => {
-      const pc = Math.round(Math.max(0, Math.min(1, share)) * 100);
-      fill.style.width = `${pc}%`;
-      track.setAttribute('aria-valuenow', String(pc));
-    },
+    say: (msg) => card.title(msg),
+    fill: (share) => card.fill(share),
     get stopped() { return stopped; },
-    close: () => { if (closing) return; closing = true; dialog.close(); },
+    close: () => {
+      if (closing) return;
+      closing = true;
+      document.removeEventListener('keydown', onKey, true);
+      scrim.remove();
+    },
   };
 }
 

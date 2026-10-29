@@ -23,6 +23,8 @@ export class RoomSound {
     } catch {  }
     live.soundOn = this.on;
     live.audio.setVolume(this.volume / 100);
+    const prev = live.audio.onStateChange;
+    live.audio.onStateChange = (st) => { prev?.(st); this.sync(); };
   }
 
   view(): SoundView {
@@ -57,7 +59,7 @@ export class RoomSound {
 
   private sync(): void {
     for (const v of this.views) {
-      showSpeaker(v.button, this.on);
+      showSpeaker(v.button, this.on, this.volume === 0 || !this.live.audio.running);
       v.slider.value = String(this.volume);
     }
   }

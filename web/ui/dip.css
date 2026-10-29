@@ -1,0 +1,126 @@
+
+.dip {
+  width: max-content;
+  max-width: 100%;
+  margin: 4px 0 14px;
+}
+.dip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+.dip-bits {
+  font: 14px/1 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  letter-spacing: 0.08em;
+  color: var(--nb-text-2);
+}
+.dip-bit.on {
+  color: #fff;
+}
+.dip-body {
+  --lever: 18px;
+  --gap: 6px;
+  display: inline-grid;
+  gap: 3px;
+  padding: 5px 9px 4px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ff3b46, #e11d2a 30%, #e11d2a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.28),
+    0 3px 8px rgba(0, 0, 0, 0.45);
+}
+.dip-on {
+  font-family: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  color: #ffffff;
+}
+.dip-on::before {
+  content: '';
+  display: inline-block;
+  margin-right: 4px;
+  border: 3.5px solid transparent;
+  border-bottom: 5px solid #ffffff;
+  border-top: 0;
+  vertical-align: 1px;
+}
+.dip-levers,
+.dip-marks {
+  display: grid;
+  grid-template-columns: repeat(var(--ways), var(--lever));
+  gap: var(--gap);
+}
+.dip-lever {
+  position: relative;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+.dip-knob {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  height: 13px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, #ffffff, color-mix(in srgb, #ffffff 84%, #000));
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
+  transition: transform 140ms cubic-bezier(0.3, 0.7, 0.4, 1.25);
+}
+.dip-lever[aria-checked='true'] .dip-knob {
+  transform: translateY(-15px);
+}
+.dip-lever.hot .dip-knob,
+.dip-lever:hover .dip-knob {
+  background: #ffffff;
+}
+.dip-lever:focus-visible {
+  outline: 2px solid #8fe3ff;
+  outline-offset: 2px;
+}
+.dip-lever.none {
+  opacity: 0.35;
+  cursor: default;
+}
+.dip-marks {
+  font-family: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  font-size: 9.5px;
+  line-height: 1;
+  text-align: center;
+  color: #ffffff;
+}
+.dip-legend {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+.dip-legend li {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.dip-legend-mark {
+  min-width: 2ch;
+  font-family: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  color: rgba(234, 242, 255, 0.5);
+}
+.dip-legend li.hot,
+.dip-legend li.hot .dip-legend-mark {
+  color: #8fe3ff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dip-knob {
+    transition: none;
+  }
+}

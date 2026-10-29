@@ -1,5 +1,6 @@
 import { fillProgramHashes, type Place } from './doc';
 import { mountAvatar } from './avatar';
+import { holdToast } from '../web/ui/toast';
 import { arcadeName, loadMachines } from './machines';
 import { devPlayerForPage, serverFlag, walletServer } from './remote';
 import { Room } from './room';
@@ -10,7 +11,7 @@ import { lookOf } from './roomlook';
 import { decorateSection, type DecorateSection } from './decorate';
 import { putArcade, updateArcadeRoom } from './docstore';
 import { readProps, type Prop } from './proplist';
-import { arcadeServer, roomArcade, syncArcade } from './share';
+import { arcadeServer, KEEPALIVE_LIMIT, roomArcade, syncArcade } from './share';
 import { listGames } from '../web/store';
 import { VIEW_LIMIT } from './serverwire';
 import { leaveArcade, RoomMenu } from './roommenu';
@@ -19,22 +20,30 @@ import { brightnessControl } from '../web/ui/brightness';
 import { viewerIsHost } from './viewer';
 import { Wallet } from './wallet';
 import { str } from '../web/i18n';
+import { fillDocSources, getMachineSet, settleSignIn } from './sourceget';
 
 const host = document.getElementById('room') as HTMLElement;
 const msg = document.getElementById('msg') as HTMLElement;
 const statsEl = document.getElementById('stats') as HTMLElement;
 const loading = document.getElementById('loading') as HTMLElement;
 const loadingBar = document.getElementById('loadingBar') as HTMLElement;
+const loadingTitle = document.getElementById('loadingTitle') as HTMLElement;
 const menuBtn = document.getElementById('menuBtn') as HTMLButtonElement;
 const avatarSlot = document.getElementById('avatarSlot') as HTMLElement;
 const dpad = document.getElementById('dpad') as HTMLElement;
 const padMid = document.getElementById('padMid') as HTMLButtonElement;
+
+const RETAKE_MS = 2500;
+
+const VIEW_W = 640;
+const VIEW_H = 800;
 
 let shownDone = -1;
 const showLoading = (done: number, total: number): void => {
   if (done === shownDone) return;
   shownDone = done;
   const pct = total ? Math.round((done / total) * 100) : 100;
+  loadingBar.hidden = false;
   (loadingBar.firstElementChild as HTMLElement).style.width = `${pct}%`;
   loadingBar.setAttribute('aria-valuenow', String(pct));
 };
@@ -43,10 +52,14 @@ const endLoading = (): void => { loading.classList.add('done'); };
 const opened = await roomArcade().catch((e) => { console.warn('[arcade] the arcade could not be read', e); return { doc: null, visiting: false }; });
 const doc = opened.doc;
 const isHost = viewerIsHost() && !opened.visiting;
+loadingTitle.textContent = arcadeName(doc);
+loadingTitle.hidden = !loadingTitle.textContent;
 const [machines, name] = [await loadMachines(doc, { visiting: opened.visiting }), arcadeName(doc)];
 if (isHost && doc) {
   void listGames().then(async (library) => {
-    if (!fillProgramHashes(doc, library)) return;
+    const hashes = fillProgramHashes(doc, library);
+    const sources = fillDocSources(doc, library);
+    if (!hashes && !sources) return;
     await putArcade(doc);
     await syncArcade(doc);
   }).catch((e) => console.warn('[arcade] the program hashes were not kept', e));
@@ -84,7 +97,7 @@ if (!doc) {
   } else {
     const list = document.createElement('button');
     list.type = 'button';
-    list.className = 'btn';
+    list.className = 'nb-btn';
     list.textContent = str('arcade.roompage.arcades');
     list.addEventListener('click', () => { location.href = '/arcade/'; });
     note.append(list);
@@ -93,6 +106,8 @@ if (!doc) {
 } else {
   const room = new Room(host, machines, { name, look: lookOf(doc?.room), props: readProps(doc?.props) ?? [] });
   room.onLeave = leaveArcade;
+  room.getFromSource = (m, progress) => getMachineSet(m, progress, document.getElementById('hostBtn') ?? document.body);
+  settleSignIn();
   const sound = new RoomSound(room.live);
   const brightness = brightnessControl({ key: 'fruitulator.arcade.brightness', apply: (pct) => room.setBrightness(pct) });
   const server = serverFlag();
@@ -116,23 +131,25 @@ if (!doc) {
   }
   if (server && isHost && doc?.hostKey) {
     const arcade = await arcadeServer();
-    let sent = false;
-    const leave = (): void => {
-      if (sent || room.locked || !arcade) return;
-      const view = encodeView(room.viewShot(VIEW_W, VIEW_H));
+    let fresh = false;
+    const send = (leaving: boolean): void => {
+      if (fresh || room.locked || !arcade) return;
+      const view = encodeView(room.viewShot(VIEW_W, VIEW_H), leaving ? KEEPALIVE_LIMIT : VIEW_LIMIT);
       if (!view) return;
-      sent = true;
-      arcade.sendView(doc, view);
+      fresh = true;
+      arcade.sendView(doc, view, leaving);
     };
+    const leave = (): void => send(true);
     let timer = 0;
     retake = (): void => {
+      fresh = false;
       clearTimeout(timer);
-      timer = window.setTimeout(() => { sent = false; leave(); }, RETAKE_MS);
+      timer = window.setTimeout(() => send(false), RETAKE_MS);
     };
+    retake();
     addEventListener('pagehide', leave);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') leave();
-      else sent = false;
     });
   }
   const decorate = isHost && doc ? (panel: Parameters<typeof decorateSection>[0]['panel']): DecorateSection =>
@@ -161,7 +178,7 @@ if (!doc) {
     const api = arcadeApi ?? await arcadeServer();
     if (api) watchPlaying(api, doc.id, (p) => room.setPlaying(p));
   }
-  const menu = new RoomMenu(room, sound, brightness, menuBtn, isHost, undefined, floor, rating);
+  const menu = new RoomMenu(room, sound, brightness, menuBtn, isHost, rating);
   menu.update();
   if (floor && floorAsked) floor();
   const padWalk = (id: string, dir: 1 | -1): void => holdPad(byId(id), () => { room.walkHeld = dir; },
@@ -176,10 +193,7 @@ if (!doc) {
   padMid.addEventListener('click', () => {
     if (dpad.classList.contains('at')) room.stepBack();
     else if (!room.locked && doc) {
-      void openMachineList(doc, {
-        onGo: (ids) => { room.goToMachine(ids); },
-        onLanded: () => { void loadMachines(doc, { visiting: opened.visiting }).then((ms) => room.sync(ms)); },
-      });
+      void openMachineList(doc, { onGo: (ids) => { room.goToMachine(ids); } });
     }
   });
   const padAt = (at: boolean): void => {
@@ -189,6 +203,7 @@ if (!doc) {
     padMid.title = name;
   };
   dpad.hidden = false;
+  idleFade();
   const sampleToast = import.meta.env.DEV && new URLSearchParams(location.search).has('toast');
   room.onFocus = (f) => {
     menu.update();
@@ -244,7 +259,8 @@ if (!doc) {
         }
         if (e.key !== b.LIVE_BENCH_KEY) return;
         e.preventDefault();
-        void b.runLiveBench(room, (x) => { statsEl.textContent = x; statsEl.classList.add('bench'); });
+        const live = holdToast();
+        void b.runLiveBench(room, (x) => live.say(x));
       });
     });
   }
@@ -256,12 +272,32 @@ function hostSpanner(open: () => void): void {
   const spanner = document.createElement('button');
   spanner.id = 'hostBtn';
   spanner.type = 'button';
-  spanner.className = 'iconbtn';
+  spanner.className = 'nb-icon-btn nb-overlay';
   spanner.setAttribute('aria-label', str('arcade.roompage.your_arcade'));
   spanner.title = str('arcade.roompage.your_arcade');
   spanner.append(rowIcon(UI_ICONS.tool, 'row-icon', 20).firstElementChild!);
   spanner.addEventListener('click', open);
   byId('bar').append(spanner);
+}
+
+function idleFade(): void {
+  const IDLE_MS = 3000;
+  let timer = 0;
+  let down = 0;
+  const idle = (): void => {
+    if (down > 0) { timer = window.setTimeout(idle, IDLE_MS); return; }
+    document.body.classList.add('nb-idle');
+  };
+  const wake = (): void => {
+    document.body.classList.remove('nb-idle');
+    clearTimeout(timer);
+    timer = window.setTimeout(idle, IDLE_MS);
+  };
+  const opts = { capture: true, passive: true };
+  addEventListener('pointerdown', () => { down++; wake(); }, opts);
+  for (const ev of ['pointerup', 'pointercancel'] as const) addEventListener(ev, () => { down = Math.max(0, down - 1); wake(); }, opts);
+  for (const ev of ['pointermove', 'touchstart', 'keydown', 'wheel'] as const) addEventListener(ev, wake, opts);
+  wake();
 }
 
 function byId(id: string): HTMLElement {
@@ -289,17 +325,12 @@ function holdPad(b: HTMLElement, start: () => void, stop: () => void): void {
   });
 }
 
-const RETAKE_MS = 2500;
-
-const VIEW_W = 320;
-const VIEW_H = 400;
-
-function encodeView(c: HTMLCanvasElement): { bytes: Uint8Array; type: string } | null {
-  for (const [type, q] of [['image/webp', 0.75], ['image/jpeg', 0.75], ['image/jpeg', 0.5]] as const) {
+function encodeView(c: HTMLCanvasElement, limit: number): { bytes: Uint8Array; type: string } | null {
+  for (const [type, q] of [['image/webp', 0.75], ['image/webp', 0.5], ['image/jpeg', 0.75], ['image/jpeg', 0.5], ['image/jpeg', 0.3]] as const) {
     const url = c.toDataURL(type, q);
     if (!url.startsWith(`data:${type}`)) continue;
     const bytes = Uint8Array.from(atob(url.slice(url.indexOf(',') + 1)), (ch) => ch.charCodeAt(0));
-    if (bytes.length <= VIEW_LIMIT) return { bytes, type };
+    if (bytes.length <= limit) return { bytes, type };
   }
   return null;
 }

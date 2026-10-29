@@ -1,6 +1,7 @@
 import { str } from '../web/i18n';
 
-export type PropKind = 'barStool' | 'metalStool' | 'plantTall' | 'plantWide' | 'chalkboard' | 'wetFloor' | 'bin' | 'sofa' | 'cigMachine' | 'poster';
+export type PropKind = 'barStool' | 'metalStool' | 'plantTall' | 'plantWide' | 'chalkboard' | 'wetFloor' | 'bin' | 'sofa'
+  | 'ottoman' | 'armchair' | 'bench' | 'posTable' | 'coffeeTable' | 'cigMachine' | 'poster';
 
 export type PosterArt = 'balloon' | 'cirque' | 'trapeze' | 'showmen' | 'clowns' | 'coneyisland' | 'watercircus' | 'ladyclown' | 'bicycles';
 export const POSTERS: { id: PosterArt; label: string; aspect: number }[] = [
@@ -44,6 +45,11 @@ export const PROP_KINDS: {
   { id: 'plantWide', label: str('arcade.proplist.leafy_plant'), file: 'potted_plant_02', w: 0.70, d: 0.66 },
   { id: 'chalkboard', label: str('arcade.proplist.chalkboard_sign'), file: 'standing_chalkboard_01', w: 0.92, d: 0.76 },
   { id: 'sofa', label: str('arcade.proplist.leather_sofa'), file: 'sofa_02', w: 1.81, d: 0.82 },
+  { id: 'ottoman', label: str('arcade.proplist.leather_ottoman'), file: 'Ottoman_01', w: 0.88, d: 0.62 },
+  { id: 'armchair', label: str('arcade.proplist.armchair'), file: 'modern_arm_chair_01', w: 0.82, d: 0.99 },
+  { id: 'bench', label: str('arcade.proplist.wooden_bench'), file: 'painted_wooden_bench', w: 1.16, d: 0.50 },
+  { id: 'posTable', label: str('arcade.proplist.poser_table'), file: 'round_wooden_table_01', w: 1.40, d: 1.40 },
+  { id: 'coffeeTable', label: str('arcade.proplist.coffee_table'), file: 'coffee_table_round_01', w: 1.30, d: 1.30 },
   { id: 'wetFloor', label: str('arcade.proplist.wet_floor_sign'), file: 'WetFloorSign_01', w: 0.30, d: 0.36 },
   { id: 'bin', label: str('arcade.proplist.bin'), file: 'trashcan_cylindric', w: 0.38, d: 0.38, fitH: 0.6, skin: 'powder' },
   { id: 'cigMachine', label: str('arcade.proplist.cigarette_machine'), file: '', w: CIG_MACHINE_W, d: CIG_MACHINE_D, wall: true },

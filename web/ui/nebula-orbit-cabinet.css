@@ -1,0 +1,17 @@
+.nb-orbit__item { overflow: visible !important; background: none !important; border-radius: 0 !important; box-shadow: none !important; }
+.nb-orbit__item::before, .nb-orbit__item::after { display: none !important; }
+.nb-cab { position: absolute; inset: 0; display: flex; flex-direction: column; border-radius: 12px 12px 6px 6px;
+  background: linear-gradient(90deg, #17121F 0%, #2B2436 6%, #1C1726 14%, #1C1726 86%, #2B2436 94%, #17121F 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), inset 0 -2px 0 rgba(0,0,0,.6), 0 30px 50px -18px rgba(0,0,0,.95); padding: 10px 10px 0; }
+.nb-cab { transition: box-shadow .2s ease, background .2s ease; }
+.nb-cab__glass { position: relative; flex: 1; overflow: hidden; border-radius: 6px; background: #000; }
+.nb-cab__glass img { position: absolute; left: -4%; top: -1.5%; width: 108%; height: 104%; object-fit: cover; object-position: center top; }
+.nb-cab__glass::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 2px rgba(0,0,0,.85), inset 0 8px 14px -4px rgba(0,0,0,.75), inset 0 -6px 12px -4px rgba(0,0,0,.6), inset 6px 0 10px -6px rgba(0,0,0,.7), inset -6px 0 10px -6px rgba(0,0,0,.7);
+  background: linear-gradient(115deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,0) 28%); }
+.nb-cab__deck { height: 22px; margin: 0 -10px; border-radius: 0 0 6px 6px;
+  background: linear-gradient(180deg, #3A3248 0%, #221C2C 45%, #120E18 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+.nb-orbit__item:not([data-pos="0"]) .nb-cab__glass img { filter: brightness(.6) saturate(.85); }
+.nb-orbit__item[data-pos="0"] .nb-cab { box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 0 0 1px color-mix(in srgb, var(--nb-accent-hi) 18%, transparent), 0 0 70px color-mix(in srgb, var(--nb-accent) 55%, transparent), 0 50px 70px -24px rgba(0,0,0,.95);
+  background: linear-gradient(90deg, #1A1424 0%, #3A2F4C 6%, #221B2E 14%, #221B2E 86%, #3A2F4C 94%, #1A1424 100%); }
+.nb-orbit__item[data-pos="0"] .nb-cab__deck { background: linear-gradient(180deg, #5A4A78 0%, #2A2238 45%, #140F1C 100%); }

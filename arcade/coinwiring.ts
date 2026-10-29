@@ -1,7 +1,7 @@
 import type { MachineInfo } from '../web/emu-protocol';
 import type { Emu } from '../web/emu-client';
 import { markableLine, viewFor, type PlatformView } from '../web/platform';
-import { wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, type CoinWiring } from '../web/coinask';
+import { wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, slotCoinPence, type CoinWiring } from '../web/coinask';
 import { hasInput, type CabLamp } from '../web/dat';
 import type { NamedCoin } from '../src/machine/machine';
 import { detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
@@ -96,7 +96,7 @@ export function takesACoin(
   w: CoinWiring, info: MachineInfo | null | undefined, platformCoins: readonly { bit: number }[] = [],
 ): boolean {
   if (!unsetCoinLines(w, info).length) return true;
-  for (const s of Object.values(w)) if (s.coins.some((c) => c.line !== null)) return true;
+  for (const s of Object.values(w)) if (s.coins.some((c) => c.line !== null && slotCoinPence(c.coin) !== null)) return true;
   const lines = new Set<number>([
     ...(info?.coins ?? platformCoins).map((c) => c.bit),
     ...(info?.drawnCoins ?? []),
@@ -106,7 +106,10 @@ export function takesACoin(
   for (const l of lines) {
     if (l < 0) continue;
     const wired = wiredCoinOn(w, l);
-    if (wired) return true;
+    if (wired) {
+      if (slotCoinPence(wired) !== null) return true;
+      continue;
+    }
     if (wired === undefined && !unsetCoinLine(w, info, l)) return true;
   }
   return false;
@@ -117,7 +120,7 @@ export interface MarkableButton { button: number; line: number; lamp: CabLamp }
 export function markableButtons(lamps: readonly CabLamp[], view: Pick<PlatformView, 'coinRegister'>, marked: ReadonlySet<number> = new Set()): MarkableButton[] {
   const by = new Map<number, MarkableButton>();
   for (const lp of lamps) {
-    if (!hasInput(lp) || lp.acceptor || (lp.coinInput !== undefined && !marked.has(lp.coinInput))) continue;
+    if (lp.hidden || !hasInput(lp) || lp.acceptor || (lp.coinInput !== undefined && !marked.has(lp.coinInput))) continue;
     const line = markableLine(view, lp.button);
     if (line < 0) continue;
     const at = by.get(lp.button);

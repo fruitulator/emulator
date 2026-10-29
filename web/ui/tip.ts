@@ -12,12 +12,12 @@ let timer = 0;
 function ensure(): HTMLDivElement {
   if (bubble) return bubble;
   bubble = document.createElement('div');
-  bubble.className = 'ui-tip';
+  bubble.className = 'nb-tooltip ui-tip';
   bubble.id = 'ui-tip';
   bubble.setAttribute('role', 'tooltip');
   bubble.hidden = true;
   head = document.createElement('strong');
-  line = document.createElement('span');
+  line = document.createElement('p');
   bubble.append(head, line);
   document.body.append(bubble);
   const hideAll = (): void => hide();
@@ -41,9 +41,10 @@ function show(el: HTMLElement, name: string, what: string): void {
   const left = Math.max(EDGE, Math.min(window.innerWidth - EDGE - w, mid - w / 2));
   const below = r.bottom + GAP + h + EDGE <= window.innerHeight;
   b.classList.toggle('above', !below);
+  b.classList.toggle('nb-tooltip--above', !below);
   b.style.left = `${Math.round(left)}px`;
   b.style.top = `${Math.round(below ? r.bottom + GAP : r.top - GAP - h)}px`;
-  b.style.setProperty('--tip-x', `${Math.round(mid - left)}px`);
+  b.style.setProperty('--arrow-x', `${Math.round(mid - left)}px`);
   requestAnimationFrame(() => { if (owner === el) b.classList.add('up'); });
 }
 
@@ -53,14 +54,21 @@ function hide(): void {
   if (bubble) { bubble.classList.remove('up'); bubble.hidden = true; }
 }
 
-export function bubbleTip(el: HTMLElement, name: string, what: string): void {
+const conditions = new WeakMap<HTMLElement, () => boolean>();
+
+export function bubbleTip(el: HTMLElement, name: string, what: string, when?: () => boolean): void {
+  if (when) conditions.set(el, when); else conditions.delete(el);
   el.removeAttribute('title');
   el.dataset.tipName = name;
   el.dataset.tipText = what;
   el.setAttribute('aria-describedby', 'ui-tip');
   if (el.dataset.tip) return;
   el.dataset.tip = '1';
-  const now = (): void => show(el, el.dataset.tipName!, el.dataset.tipText!);
+  const now = (): void => {
+    const ok = conditions.get(el);
+    if (ok && !ok()) return;
+    show(el, el.dataset.tipName!, el.dataset.tipText!);
+  };
   el.addEventListener('pointerenter', (e) => {
     if (e.pointerType !== 'mouse') return;
     clearTimeout(timer);
@@ -71,4 +79,15 @@ export function bubbleTip(el: HTMLElement, name: string, what: string): void {
   el.addEventListener('blur', hide);
   el.addEventListener('pointerdown', hide);
   el.addEventListener('click', hide);
+}
+
+export function showBubble(el: HTMLElement): void {
+  if (!el.dataset.tip) return;
+  const ok = conditions.get(el);
+  if (ok && !ok()) return;
+  show(el, el.dataset.tipName!, el.dataset.tipText!);
+}
+
+export function hideBubble(): void {
+  hide();
 }

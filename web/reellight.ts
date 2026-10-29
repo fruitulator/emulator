@@ -20,9 +20,9 @@ export function reelLightFloor(
 export function applyOpaqueBand(
   band: { width: number; height: number; data: Uint8ClampedArray | Uint8Array },
   floor: Rgb,
-): number {
+): Rgb {
   const { width, height, data } = band;
-  if (!width || !height) return 255;
+  if (!width || !height) return [0, 0, 0];
   const o = ((height - 1) * width + (width - 1)) * 4;
   const kr = data[o], kg = data[o + 1], kb = data[o + 2];
   const mr = (kr * floor[0]) >> 8, mg = (kg * floor[1]) >> 8, mb = (kb * floor[2]) >> 8;
@@ -32,7 +32,16 @@ export function applyOpaqueBand(
     }
     data[i + 3] = 255;
   }
-  return mb;
+  return [mr, mg, mb];
+}
+
+export function keepOnlyColour(
+  img: { data: Uint8ClampedArray | Uint8Array }, key: Rgb,
+): void {
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] !== key[0] || d[i + 1] !== key[1] || d[i + 2] !== key[2]) d[i + 3] = 0;
+  }
 }
 
 export interface FancySite<A> extends Rect { mask: A | null; lamp: number }

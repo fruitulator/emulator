@@ -1,5 +1,5 @@
 
-export const UNROTATED_TYPES: ReadonlySet<number> = new Set([0x01, 0x06, 0x1b, 0x1f, 0x23, 0x28, 0x2f]);
+export const UNROTATED_TYPES: ReadonlySet<number> = new Set([0x01, 0x06, 0x1b, 0x1c, 0x1f, 0x23, 0x27, 0x28, 0x2f]);
 
 export function drawnAngle(type: number, angle: number): number | undefined {
   if (!Number.isFinite(angle) || angle % 360 === 0 || UNROTATED_TYPES.has(type)) return undefined;

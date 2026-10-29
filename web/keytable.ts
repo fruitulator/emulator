@@ -91,37 +91,45 @@ export interface KeyTableRow {
   chords: string[][];
 }
 
-export function fillKeyTable(root: HTMLElement, o: {
-  own: { title: string; rows: KeyTableRow[] };
-}): void {
+export function fillKeyTable(root: HTMLElement, groups: readonly { title: string; rows: KeyTableRow[] }[]): void {
   root.replaceChildren();
-  const cap = document.createElement('div');
-  cap.className = 'menu-caption';
-  cap.textContent = o.own.title;
-  const c = card();
-  root.append(cap, c);
   const sep = (t: string): HTMLSpanElement => {
     const e = document.createElement('span');
     e.className = 'key-sep';
     e.textContent = t;
     return e;
   };
-  for (const row of o.own.rows) {
+  for (const g of groups) {
+    const c = card();
+    if (groups.length > 1) {
+      const cap = document.createElement('div');
+      cap.className = 'menu-subhead';
+      cap.textContent = g.title;
+      root.append(cap);
+    }
+    root.append(c);
+    fillGroup(c, g.rows, sep);
+  }
+}
+
+function fillGroup(c: HTMLElement, rows: readonly KeyTableRow[], sep: (t: string) => HTMLSpanElement): void {
+  for (const row of rows) {
     const r = document.createElement('div');
-    r.className = 'menu-row menu-kbd';
+    r.className = 'menu-row menu-kbd nb-kv';
     const l = document.createElement('span');
     l.className = 'row-label';
     l.textContent = row.label;
-    l.title = row.label;
     const k = document.createElement('span');
     k.className = 'row-keys';
     row.chords.forEach((chord, i) => {
-      if (i) k.append(sep('/'));
+      const alt = (e: HTMLElement): HTMLElement => { if (i) e.classList.add('key-alt'); return e; };
+      if (i) k.append(alt(sep('/')));
       chord.forEach((capText, j) => {
-        if (j) k.append(sep('+'));
+        if (j) k.append(alt(sep('+')));
         const kbd = document.createElement('kbd');
+        kbd.className = 'nb-key';
         kbd.textContent = capText;
-        k.append(kbd);
+        k.append(alt(kbd));
       });
     });
     r.append(l, k);

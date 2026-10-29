@@ -5,13 +5,8 @@ import { DERIVED } from './cabinetsize';
 
 export { DERIVED };
 
-const BODY = 0x34383f, TRIM = 0x1b1e23;
+const TRIM = 0x1b1e23;
 
-const BODY_BASE = 0x34363c;
-const BODY_TRIM_SHARE = 0.2;
-export function bodyTint(trim: THREE.ColorRepresentation): THREE.Color {
-  return new THREE.Color(BODY_BASE).lerp(new THREE.Color(trim), BODY_TRIM_SHARE);
-}
 const SKIN_ALBEDO = 0x6a6157;
 
 function bodyMaterial(colour: THREE.Color, dress: CabinetDress | null): THREE.MeshStandardMaterial {
@@ -36,47 +31,50 @@ function lit<M extends THREE.MeshStandardMaterial>(m: M, dress: CabinetDress | n
   return m;
 }
 
-function addFurniture(group: THREE.Group, W: number, zLower: number, yShelfBot: number, yPanelTop: number, tint: THREE.Color, dress: CabinetDress | null): void {
-  const mat = (c: THREE.ColorRepresentation, r: number) => lit(new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: 0.08 }), dress);
-  const trim = mat(TRIM, 0.35);
-  const add = (geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number) => {
-    const mesh = new THREE.Mesh(geo, m); mesh.position.set(x, y, z); group.add(mesh); return mesh;
-  };
-  add(new THREE.BoxGeometry(W + 0.006, 0.022, 0.03), trim, 0, yShelfBot - 0.012, zLower + 0.004);
-  add(new THREE.BoxGeometry(W + 0.006, 0.075, 0.035), trim, 0, 0.042, zLower + 0.006);
-  const trayTop = 0.36;
-  const panelH = Math.max(0, (yPanelTop - trayTop - 0.02) * 0.85);
-  if (panelH > 0.05) {
-    add(new THREE.BoxGeometry(W * 0.88, panelH, 0.012), mat(tint.clone().multiplyScalar(0.16), 0.7),
-        0, yPanelTop - 0.01 - panelH / 2, zLower + 0.008);
-  }
-  const trayY = 0.30;
-  add(new THREE.BoxGeometry(W * 0.44, 0.10, 0.02), mat(0x0a0b0d, 0.9), 0, trayY, zLower + 0.010);
-  const lip = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.052, 0.052, W * 0.46, 20, 1, false, 0, Math.PI),
-    mat(TRIM, 0.4));
-  lip.rotation.set(0, 0, Math.PI / 2);
-  lip.position.set(0, trayY - 0.048, zLower + 0.012);
-  group.add(lip);
-  add(new THREE.BoxGeometry(0.012, 0.055, 0.012), mat(0xb9c0cc, 0.3),
-      W * 0.5 - 0.02, yShelfBot - 0.055, zLower + 0.014);
-}
-
 export interface FruitCabinetOptions {
   glassAspect: number;
   glassSrc: Quad;
-  glassLean: number;
   deckAspect: number | null;
   deckSrc: Quad;
   deckRake: number;
   buttonsAspect?: number | null;
   buttonsSrc?: Quad;
   buttonsRake?: number;
-  glassTop: number;
-  tint: THREE.Color | null;
   dress?: CabinetDress | null;
   trim: THREE.ColorRepresentation;
   furniture: boolean;
+  style?: CabinetStyle | null;
+}
+
+export interface CabinetStyle {
+  id: string;
+  W: number; H: number;
+  lean: number; rake?: number;
+  glassTop: number;
+  head: number;
+  cap: 'flat' | 'round' | 'hood' | 'box';
+  crown?: boolean;
+  under: 'step' | 'cove' | 'slope';
+  lower: number;
+  body: 'dark' | 'wood';
+  strip: 'trim' | 'chrome';
+}
+
+const STYLE_MIN_CHIN = 0.08;
+
+export const CABINET_STYLES: readonly CabinetStyle[] = [
+  { id: 'slimline', W: 0.653, H: 1.724, lean: 10, glassTop: 0.035, head: 0.28, cap: 'round', under: 'step', lower: 0.44, body: 'dark', strip: 'trim' },
+  { id: 'cove', W: 0.653, H: 1.74, lean: 9, glassTop: 0.04, head: 0.26, cap: 'round', under: 'cove', lower: 0.42, body: 'dark', strip: 'trim' },
+  { id: 'topbox', W: 0.653, H: 1.86, lean: 4, glassTop: 0.20, head: 0.34, cap: 'box', under: 'cove', lower: 0.44, body: 'dark', strip: 'trim' },
+  { id: 'wedge', W: 0.653, H: 1.724, lean: 14, glassTop: 0.035, head: 0.22, cap: 'flat', under: 'slope', lower: 0.40, body: 'dark', strip: 'trim' },
+  { id: 'classic', W: 0.653, H: 1.72, lean: 6, rake: 40, glassTop: 0.10, head: 0.32, cap: 'hood', under: 'step', lower: 0.47, body: 'wood', strip: 'chrome' },
+  { id: 'arch', W: 0.56, H: 1.62, crown: true, lean: 8, glassTop: 0.03, head: 0.32, cap: 'flat', under: 'cove', lower: 0.43, body: 'dark', strip: 'trim' },
+];
+
+export const DEFAULT_STYLE: CabinetStyle = CABINET_STYLES[0];
+
+export function cabinetStyle(id: string | undefined | null): CabinetStyle | null {
+  return CABINET_STYLES.find((s) => s.id === id) ?? null;
 }
 
 export interface CabinetFace {
@@ -91,7 +89,7 @@ export interface CabinetFace {
 export interface BuiltCabinet {
   group: THREE.Group;
   faces: CabinetFace[];
-  size: { W: number; H: number; D: number };
+  size: { W: number; H: number; D: number; lowerFront?: number };
   glass: { w: number; h: number; top: number; bottom: number; z: number; zFront: number };
   trim: THREE.MeshStandardMaterial;
 }
@@ -101,15 +99,28 @@ const DECK_LIP = 0;
 const DECK_MAX = 0.41;
 const BUTTONS_MAX = 0.22;
 
+function extrudeBody(shape: THREE.Shape, w: number, curveSegments = 12): THREE.ExtrudeGeometry {
+  const g = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false, curveSegments });
+  g.rotateY(-Math.PI / 2);
+  g.translate(w / 2, 0, 0);
+  const cap = g.groups[0];
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  if (cap) for (let i = cap.start; i < cap.start + cap.count; i++) uv.setXY(i, uv.getY(i), uv.getX(i));
+  return g;
+}
+
 export function buildFruitCabinet(opts: FruitCabinetOptions): BuiltCabinet {
-  const { width: W, height: H, depth: D } = DERIVED;
-  const { glassAspect, deckAspect, glassLean, deckRake, glassTop, tint, furniture } = opts;
+  const st = opts.style ?? DEFAULT_STYLE;
+  const { W, H } = st;
+  const { glassAspect, deckAspect } = opts;
+  const deckRake = st.rake ?? opts.deckRake;
+  const glassTop = st.glassTop;
   const dress = opts.dress ?? null;
   const buttonsAspect = opts.buttonsAspect ?? null;
 
   let gw = W - TRIM_W * 2;
   let gh = gw / glassAspect;
-  const lean = THREE.MathUtils.degToRad(glassLean);
+  const lean = THREE.MathUtils.degToRad(st.lean);
   const rake = THREE.MathUtils.degToRad(deckRake);
   const brake = THREE.MathUtils.degToRad(opts.buttonsRake ?? deckRake);
 
@@ -131,96 +142,184 @@ export function buildFruitCabinet(opts: FruitCabinetOptions): BuiltCabinet {
   const maxGh = (H - glassTop - FOOT_ROOM - Math.cos(rake) * deck.h - Math.cos(brake) * btn.h) / Math.cos(lean);
   if (gh > maxGh) { gh = maxGh; gw = gh * glassAspect; deck = deckOf(gw); btn = btnOf(gw); }
 
-  const faceH = gh;
-  const deckW = deck.w;
-  const bandH = deck.h;
-  const deckD = bandH + DECK_LIP;
+  const front = Math.max(
+    st.head + Math.sin(lean) * gh + Math.sin(rake) * (deck.h + DECK_LIP) + Math.sin(brake) * btn.h,
+    st.lower + STYLE_MIN_CHIN);
+  const D = Math.max(front, st.lower + 0.08);
+  const zBack = -D / 2;
+  return styledCabinet(opts, st, { W, H, D, zBack, zFront: zBack + front, faceH: gh, gw, deck, btn, lean, rake, brake, glassTop, dress });
+}
 
-  const zBack = -D / 2, zFront = D / 2;
+const STYLE_DARK = 0x1c1c22;
+const STYLE_WOOD = 0xc8875a;
+const STRIP_BAND = 0.035;
+const STRIP_T = 0.008;
+
+function frontZAt(pts: readonly THREE.Vector2[], y: number, fallback: number): number {
+  let z = -Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (a.y === b.y || (a.y - y) * (b.y - y) > 0) continue;
+    z = Math.max(z, a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
+  }
+  return Number.isFinite(z) ? z : fallback;
+}
+
+function styledCabinet(
+  opts: FruitCabinetOptions, st: CabinetStyle,
+  k: {
+    W: number; H: number; D: number; zBack: number; zFront: number; faceH: number; gw: number;
+    deck: { w: number; h: number }; btn: { w: number; h: number };
+    lean: number; rake: number; brake: number; glassTop: number; dress: CabinetDress | null;
+  },
+): BuiltCabinet {
+  const { W, H, D, zBack, zFront, faceH, gw, deck, btn, lean, rake, brake, glassTop, dress } = k;
+  const deckD = deck.h + DECK_LIP;
   const yTop = H - glassTop;
-  const btnH = btn.h;
-  const zDeckFront = zFront;
-  const zMid = zDeckFront - Math.sin(brake) * btnH;
+  const zMid = zFront - Math.sin(brake) * btn.h;
   const zGlassBot = zMid - Math.sin(rake) * deckD;
   const zGlassTop = zGlassBot - Math.sin(lean) * faceH;
   const yGlassBot = yTop - Math.cos(lean) * faceH;
   const yMid = yGlassBot - Math.cos(rake) * deckD;
-  const yDeckFront = yMid - Math.cos(brake) * btnH;
+  const yDeckFront = yMid - Math.cos(brake) * btn.h;
   const yLip = yDeckFront - 0.045;
-  const zLower = zDeckFront - D * 0.12;
+  const zLow = zBack + st.lower;
 
   const shape = new THREE.Shape();
-  shape.moveTo(zBack, 0);
-  shape.lineTo(zBack, H);
-  shape.lineTo(zGlassTop, H);
-  shape.lineTo(zGlassTop, yTop);
-  shape.lineTo(zGlassBot, yGlassBot);
-  if (btnH > 0.0005) shape.lineTo(zMid, yMid);
-  shape.lineTo(zDeckFront, yDeckFront);
-  shape.lineTo(zDeckFront, yLip);
-  shape.lineTo(zLower, yLip - 0.03);
-  shape.lineTo(zLower, 0.09);
-  shape.lineTo(zLower + 0.02, 0);
+  const edge: THREE.Vector2[] = [];
+  let at = new THREE.Vector2(zBack, 0);
+  shape.moveTo(at.x, at.y);
+  const L = (z: number, y: number, onEdge = true): void => {
+    shape.lineTo(z, y);
+    at = new THREE.Vector2(z, y);
+    if (onEdge) edge.push(at);
+  };
+  const Q = (cz: number, cy: number, z: number, y: number): void => {
+    const c = new THREE.QuadraticBezierCurve(at.clone(), new THREE.Vector2(cz, cy), new THREE.Vector2(z, y));
+    shape.quadraticCurveTo(cz, cy, z, y);
+    edge.push(...c.getPoints(10).slice(1));
+    at = new THREE.Vector2(z, y);
+  };
+  L(zBack, H, false);
+  if (st.cap === 'round') {
+    const r = 0.07;
+    L(zGlassTop - r, H);
+    Q(zGlassTop + 0.012, H, zGlassTop + 0.012, yTop + 0.004);
+  } else if (st.cap === 'hood') {
+    L(zGlassTop + 0.08, H);
+    L(zGlassTop + 0.08, H - 0.035);
+  } else if (st.cap === 'box') {
+    const bz = zGlassTop + 0.035;
+    L(bz - 0.04, H);
+    Q(bz, H, bz, H - 0.04);
+    L(bz, yTop + 0.012);
+  } else {
+    L(zGlassTop, H);
+  }
+  L(zGlassTop, yTop);
+  L(zGlassBot, yGlassBot);
+  if (btn.h > 0.0005) L(zMid, yMid);
+  L(zFront, yDeckFront);
+  L(zFront, yLip);
+  if (st.under === 'cove') {
+    Q(zLow, yLip, zLow, yLip - (zFront - zLow) * 1.15);
+    L(zLow + 0.03, 0.10);
+    L(zLow + 0.04, 0.10);
+    L(zLow + 0.04, 0);
+  } else if (st.under === 'slope') {
+    L(zFront - 0.03, yLip - 0.02);
+    L(zLow, yLip - 0.07);
+    L(zLow - 0.06, 0.08);
+    L(zLow - 0.05, 0);
+  } else {
+    L(zFront - 0.03, yLip - 0.02);
+    L(zLow, yLip - 0.06);
+    L(zLow, 0.09);
+    L(zLow + 0.015, 0);
+  }
   shape.closePath();
 
-  const extrude = (w: number) => {
-    const g = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
-    g.rotateY(-Math.PI / 2);
-    g.translate(w / 2, 0, 0);
-    const cap = g.groups[0];
-    const uv = g.attributes.uv as THREE.BufferAttribute;
-    if (cap) for (let i = cap.start; i < cap.start + cap.count; i++) uv.setXY(i, uv.getY(i), uv.getX(i));
-    return g;
-  };
   const group = new THREE.Group();
-  const bodyColour = tint ?? new THREE.Color(BODY_BASE);
-  group.add(new THREE.Mesh(extrude(W), bodyMaterial(bodyColour, dress)));
+  const trimColour = new THREE.Color(opts.trim);
+  const bodyColour = st.body === 'wood' ? new THREE.Color(STYLE_WOOD) : new THREE.Color(STYLE_DARK).lerp(trimColour, 0.06);
+  const bodyMat = bodyMaterial(bodyColour, dress);
+  group.add(new THREE.Mesh(extrudeBody(shape, W, 16), bodyMat));
 
   const trim = lit(new THREE.MeshStandardMaterial({ color: opts.trim, roughness: 0.35, metalness: 0.25 }), dress);
-  const tw = (W - gw) / 2;
-  const edge = new THREE.Shape();
-  const t = 0.018;
-  edge.moveTo(zGlassTop - 0.02, yTop + 0.01);
-  edge.lineTo(zGlassTop + t, yTop + 0.01);
-  edge.lineTo(zGlassBot + t, yGlassBot + 0.004);
-  if (btnH > 0.0005) edge.lineTo(zMid + 0.01, yMid + 0.008);
-  edge.lineTo(zDeckFront + 0.008, yDeckFront + 0.012);
-  edge.lineTo(zDeckFront + 0.008, yLip);
-  edge.lineTo(zDeckFront - 0.05, yLip);
-  edge.lineTo(zGlassBot - 0.05, yGlassBot - 0.04);
-  edge.lineTo(zGlassTop - 0.05, yTop - 0.02);
-  edge.closePath();
+  const stripMat = st.strip === 'chrome'
+    ? lit(new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.25, metalness: 0.85 }), dress)
+    : trim;
+  const inner = edge.map((q, i) => {
+    const a = edge[Math.max(0, i - 1)], b = edge[Math.min(edge.length - 1, i + 1)];
+    const tx = b.x - a.x, ty = b.y - a.y, l = Math.hypot(tx, ty) || 1;
+    return new THREE.Vector2(q.x + (ty / l) * STRIP_BAND, Math.max(0, q.y - (tx / l) * STRIP_BAND));
+  });
+  const band = new THREE.Shape([...edge.map((q) => new THREE.Vector2(q.x + 0.004, q.y)), ...inner.reverse()]);
   for (const side of [-1, 1]) {
-    const g = new THREE.ExtrudeGeometry(edge, { depth: tw, bevelEnabled: true, bevelSize: 0.004, bevelThickness: 0.004, bevelSegments: 2 });
+    const g = new THREE.ExtrudeGeometry(band, { depth: STRIP_T, bevelEnabled: false });
     g.rotateY(-Math.PI / 2);
-    g.translate(side < 0 ? -W / 2 + tw : W / 2, 0, 0);
-    group.add(new THREE.Mesh(g, trim));
+    g.translate(side < 0 ? -W / 2 + STRIP_T / 2 : W / 2 + STRIP_T / 2, 0, 0);
+    group.add(new THREE.Mesh(g, stripMat));
   }
-  const bar = new THREE.Mesh(new THREE.BoxGeometry(W, 0.022, 0.03), trim);
-  bar.position.set(0, yTop + 0.006, zGlassTop + 0.002);
-  bar.rotation.x = -lean;
-  group.add(bar);
   const lipBar = new THREE.Mesh(new THREE.BoxGeometry(W, yDeckFront - yLip + 0.01, 0.014), trim);
-  lipBar.position.set(0, (yDeckFront + yLip) / 2, zDeckFront + 0.004);
+  lipBar.position.set(0, (yDeckFront + yLip) / 2, zFront + 0.004);
   group.add(lipBar);
 
-  if (furniture) addFurniture(group, W, zLower, yLip - 0.03, yLip - 0.07, tint ?? new THREE.Color(BODY), dress);
+  if (st.cap === 'box') {
+    const boxH = glassTop - 0.05;
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(gw, boxH), new THREE.MeshBasicMaterial({ color: trimColour.clone().multiplyScalar(0.9) }));
+    glow.position.set(0, H - 0.035 - boxH / 2, zGlassTop + 0.036);
+    group.add(glow);
+  }
+  let crownH = 0;
+  if (st.crown) {
+    const r = W / 2, depth = zGlassTop - zBack;
+    crownH = r + 0.008;
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(r, r, depth, 40, 1, false, Math.PI / 2, Math.PI), bodyMat);
+    crown.rotation.x = Math.PI / 2;
+    crown.position.set(0, H, zBack + depth / 2);
+    group.add(crown);
+    const face = new THREE.Mesh(new THREE.CircleGeometry(r - 0.035, 40, 0, Math.PI), new THREE.MeshBasicMaterial({ color: trimColour.clone().multiplyScalar(0.85) }));
+    face.position.set(0, H + 0.01, zGlassTop + 0.002);
+    group.add(face);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r - 0.004, 0.012, 8, 40, Math.PI), trim);
+    ring.position.set(0, H, zGlassTop - 0.004);
+    group.add(ring);
+  }
+
+  const lowerAt = (y: number): number => frontZAt(edge.filter((q) => q.y <= yLip), y, zLow);
+  if (opts.furniture) {
+    const mat = (c: THREE.ColorRepresentation, r: number, m = 0.08) => lit(new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m }), dress);
+    const tray = new THREE.Mesh(new THREE.BoxGeometry(W * 0.44, 0.10, 0.02), mat(0x0a0b0d, 0.9));
+    tray.position.set(0, 0.30, lowerAt(0.30) + 0.002);
+    group.add(tray);
+    const trayLip = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, W * 0.46, 20, 1, false, 0, Math.PI), trim);
+    trayLip.rotation.set(0, 0, Math.PI / 2);
+    trayLip.position.set(0, 0.252, lowerAt(0.252) + 0.004);
+    group.add(trayLip);
+    const coin = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.055, 0.012), mat(0xb9c0cc, 0.3, 0.6));
+    coin.position.set(W * 0.5 - 0.05, yLip - 0.12, lowerAt(yLip - 0.12) + 0.006);
+    group.add(coin);
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(W + 0.004, 0.06, 0.02), mat(TRIM, 0.6));
+    plinth.position.set(0, 0.03, lowerAt(0.03) - 0.006);
+    group.add(plinth);
+  }
 
   const clear = 0.004;
-  type Seg = { name: string; tilt: number; from: [number, number]; to: [number, number]; w: number; src: CabinetFace['src'] };
+  type Seg = Parameters<typeof profileFaces>[0][number];
   const segs: Seg[] = [{ name: 'glass', tilt: lean, from: [zGlassTop, yTop], to: [zGlassBot, yGlassBot], w: gw, src: opts.glassSrc }];
-  if (bandH > 0.0005) {
-    const yb = yGlassBot - Math.cos(rake) * bandH;
-    const zb = zGlassBot + Math.sin(rake) * bandH;
-    segs.push({ name: 'buttons', tilt: rake, from: [zGlassBot, yGlassBot], to: [zb, yb], w: deckW, src: opts.deckSrc });
+  if (deck.h > 0.0005) {
+    segs.push({ name: 'buttons', tilt: rake, from: [zGlassBot, yGlassBot], to: [zGlassBot + Math.sin(rake) * deck.h, yGlassBot - Math.cos(rake) * deck.h], w: deck.w, src: opts.deckSrc });
   }
-  if (btnH > 0.0005 && opts.buttonsSrc) {
-    segs.push({ name: 'deck', tilt: brake, from: [zMid, yMid], to: [zDeckFront, yDeckFront], w: btn.w, src: opts.buttonsSrc });
+  if (btn.h > 0.0005 && opts.buttonsSrc) {
+    segs.push({ name: 'deck', tilt: brake, from: [zMid, yMid], to: [zFront, yDeckFront], w: btn.w, src: opts.buttonsSrc });
   }
-  const faces = profileFaces(segs, clear);
+  let lowerFront = -Infinity;
+  for (const q of edge) if (q.y <= yLip - 0.05) lowerFront = Math.max(lowerFront, q.x);
   return {
-    group, faces, size: { W, H, D },
-    glass: { w: gw, h: gh, top: yTop, bottom: yDeckFront, z: zGlassBot, zFront: zDeckFront },
+    group, faces: profileFaces(segs, clear),
+    size: { W, H: H + crownH, D, lowerFront: Number.isFinite(lowerFront) ? lowerFront : zLow },
+    glass: { w: gw, h: faceH, top: yTop, bottom: yDeckFront, z: zGlassBot, zFront },
     trim,
   };
 }

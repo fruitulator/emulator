@@ -14,7 +14,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 function action(label: string, run: () => void): HTMLButtonElement {
-  const b = el('button', 'pane-btn', label);
+  const b = el('button', 'pane-btn nb-btn nb-btn--sm', label);
   b.type = 'button';
   b.addEventListener('click', run);
   return b;
@@ -33,11 +33,8 @@ function head(title: string, ...controls: HTMLElement[]): HTMLElement {
 function switchRow(label: string, onChange: (on: boolean) => void): {
   row: HTMLLabelElement; box: HTMLInputElement;
 } {
-  const row = el('label', 'menu-check pane-switch');
-  const box = el('input');
-  box.type = 'checkbox';
-  box.setAttribute('role', 'switch');
-  box.addEventListener('change', () => onChange(box.checked));
+  const row = el('label', 'pane-switch');
+  const box = toggleInput((on) => onChange(on));
   row.append(el('span', undefined, label), box);
   return { row, box };
 }
@@ -129,8 +126,8 @@ export function logTab(deps: LogTabDeps): PanelTab {
         record.row.title = str('paneltabs.held_by_diag_in_the');
         record.row.classList.add('pane-locked');
       }
-      count = el('span', 'pane-count', '');
-      const said = el('p', 'pane-empty');
+      count = el('span', 'pane-count nb-meta', '');
+      const said = el('p', 'pane-empty nb-meta');
       said.hidden = true;
       const clearRam = action(str('paneltabs.clear_ram'), () => {
         clearRam.disabled = true;
@@ -140,6 +137,7 @@ export function logTab(deps: LogTabDeps): PanelTab {
           poll();
         });
       });
+      clearRam.classList.add('pane-btn--danger');
       host.append(head(
         str('paneltabs.diagnostics_log'),
         count, record.row,
@@ -150,7 +148,7 @@ export function logTab(deps: LogTabDeps): PanelTab {
 
       const filters = el('div', 'log-filters');
       for (const k of KINDS) {
-        const chip = el('button', 'log-chip', k);
+        const chip = el('button', 'log-chip pane-pill', k);
         chip.type = 'button';
         chip.dataset.kind = k;
         chip.setAttribute('aria-pressed', 'true');
@@ -169,7 +167,7 @@ export function logTab(deps: LogTabDeps): PanelTab {
       list.tabIndex = 0;
       list.setAttribute('role', 'log');
       list.setAttribute('aria-label', str('paneltabs.diagnostics_log_2'));
-      empty = el('p', 'pane-empty');
+      empty = el('p', 'pane-empty nb-meta');
       host.append(empty, list);
     },
     onShow() {
@@ -215,7 +213,7 @@ export function bulbTab(deps: BulbTabDeps): PanelTab {
       });
       box = run.box;
       host.append(head(str('paneltabs.bulb_lab'), run.row));
-      none = el('p', 'pane-empty', str('paneltabs.no_reel_windows_in_this'));
+      none = el('p', 'pane-empty nb-meta', str('paneltabs.no_reel_windows_in_this'));
       none.hidden = true;
       const controls = el('div', 'bulb-host');
       host.append(none, controls);
@@ -250,14 +248,27 @@ export function matrixTab(deps: MatrixTabDeps): PanelTab {
       }
       const cols = Math.min(bits, 8);
       host.append(head(str('paneltabs.switch_matrix')));
+      const group = el('div', 'matrix-group nb-group');
       const grid = el('div', 'matrix-grid');
-      grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      grid.style.gridTemplateColumns = `52px repeat(${cols}, minmax(40px, 1fr))`;
+      const axis = (text: string, row: number, col: number): void => {
+        const a = el('span', 'matrix-axis', text);
+        a.setAttribute('aria-hidden', 'true');
+        a.style.gridRow = String(row);
+        a.style.gridColumn = String(col);
+        grid.append(a);
+      };
+      for (let bit = 0; bit < cols; bit++) axis(String(bit), 1, bit + 2);
+      const strobeRows = new Set<number>();
       for (const id of [...ids].sort((x, y) => x - y)) {
+        const strobe = id >> 3;
+        if (!strobeRows.has(strobe)) { strobeRows.add(strobe); axis(String(strobe), strobe + 2, 1); }
         const b = el('button', 'matrix-cell');
         b.type = 'button';
-        b.append(el('span', 'matrix-sb', `${id >> 3}.${id & 7}`), el('span', 'matrix-id', String(id)));
+        b.append(el('span', 'matrix-id', String(id)));
         b.title = str('paneltabs.strobe_n_bit_n_input', { 0: id >> 3, 1: id & 7, 2: id });
-        b.style.gridColumn = String((id & 7) + 1);
+        b.style.gridColumn = String((id & 7) + 2);
+        b.style.gridRow = String(strobe + 2);
         const set = (v: boolean): void => {
           deps.press(id, v);
           b.classList.toggle('on', v);
@@ -275,7 +286,8 @@ export function matrixTab(deps: MatrixTabDeps): PanelTab {
         b.addEventListener('blur', () => { if (b.classList.contains('on')) set(false); });
         grid.append(b);
       }
-      host.append(grid);
+      group.append(grid);
+      host.append(group);
     },
   };
 }
@@ -303,7 +315,7 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
     body.replaceChildren();
     const rows = deps.rows();
     if (!rows.length) {
-      body.append(el('p', 'pane-empty', str('paneltabs.this_machine_states_no_option')));
+      body.append(el('p', 'pane-empty nb-meta', str('paneltabs.this_machine_states_no_option')));
       return;
     }
     const banks = el('div', 'opt-banks');
@@ -314,7 +326,7 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
       let bank = made.get(name);
       if (!bank) {
         bank = el('section', 'opt-bank');
-        bank.append(el('h4', 'opt-bank-name', name));
+        bank.append(el('h4', 'opt-bank-name nb-field__label', name));
         made.set(name, bank);
         banks.append(bank);
       }
@@ -324,21 +336,23 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
         if (!pkg) {
           pkg = [];
           packages.set(key, pkg);
-          const slot = el('div', 'dip');
+          const slot = el('div', 'dip nb-group');
           slot.dataset.pkg = key;
           bank.append(slot);
         }
         pkg.push(row);
         continue;
       }
-      const label = el('label', 'menu-check opt-row');
+      const label = el('label', 'opt-row nb-row-toggle');
       const box = toggleInput((on) => {
         const said = deps.set(row, on);
         if (note) note.textContent = said;
       });
       box.checked = row.on;
       label.append(el('span', 'opt-row-name', row.label), box);
-      bank.append(label);
+      let rowsGroup = bank.querySelector<HTMLElement>(':scope > .opt-rows');
+      if (!rowsGroup) { rowsGroup = el('div', 'opt-rows nb-group'); bank.append(rowsGroup); }
+      rowsGroup.append(label);
     }
     for (const slot of banks.querySelectorAll<HTMLElement>('.dip')) {
       dipPackage(slot, packages.get(slot.dataset.pkg!)!, (row, on) => {
@@ -354,7 +368,7 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
     label: str('paneltabs.option_switches'),
     icon: 'M4 8h16v8H4zM7.5 8v4M11 8v4M14.5 8v4M18 8v4',
     mount(host) {
-      note = el('span', 'pane-count', '');
+      note = el('span', 'pane-count nb-meta', '');
       body = el('div', 'opt-body');
       host.append(head(str('paneltabs.option_switches'), note), body);
       fill();
@@ -367,7 +381,7 @@ export function optionsTab(deps: OptionsTabDeps): PanelTab {
   };
 }
 
-function dipPackage(
+export function dipPackage(
   host: HTMLElement, rows: OptionSwitchRow[],
   set: (row: OptionSwitchRow, on: boolean) => void,
 ): void {

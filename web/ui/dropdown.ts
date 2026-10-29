@@ -1,3 +1,5 @@
+import { scrollWhenSettled } from './scrollsettle';
+
 export interface Dropdown {
   root: HTMLElement;
   refresh(): void;
@@ -23,28 +25,51 @@ function chevron(): SVGSVGElement {
   return svg;
 }
 
-export function enhanceSelect(select: HTMLSelectElement): Dropdown {
+function iconMarkup(icon: string): string {
+  return icon.startsWith('<') ? icon : icon ? `<path d="${icon}"/>` : '';
+}
+
+function leadIcon(icon: string): SVGSVGElement {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  svg.classList.add('dd-icon');
+  svg.innerHTML = iconMarkup(icon);
+  return svg;
+}
+
+export function enhanceSelect(
+  select: HTMLSelectElement,
+  o: { small?: boolean; icon?: string; name?: (choice: string) => string;
+    icons?: (value: string) => string | undefined;
+    extra?: HTMLElement[];
+    popover?: { align?: 'end'; within?: () => HTMLElement | null; minWidth?: number; maxHeight?: number } } = {},
+): Dropdown {
   const root = document.createElement('div');
   root.className = 'dd';
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'dd-btn';
+  btn.className = o.small ? 'dd-btn nb-btn nb-btn--sm' : 'dd-btn nb-btn';
   btn.setAttribute('aria-haspopup', 'listbox');
   btn.setAttribute('aria-expanded', 'false');
   const value = document.createElement('span');
   value.className = 'dd-value';
   value.id = `${select.id}-value`;
+  const pillIcon = o.icon || o.icons ? leadIcon(o.icon ?? '') : null;
+  if (pillIcon) btn.append(pillIcon);
   btn.append(value, chevron());
 
   const list = document.createElement('ul');
-  list.className = 'dd-list';
+  list.className = 'dd-list nb-menu';
   list.id = `${select.id}-list`;
   list.setAttribute('role', 'listbox');
   list.tabIndex = -1;
 
   const labelledBy = select.getAttribute('aria-labelledby');
-  if (labelledBy) {
+  if (o.name) {
+  } else if (labelledBy) {
     btn.setAttribute('aria-labelledby', `${labelledBy} ${value.id}`);
     list.setAttribute('aria-labelledby', labelledBy);
   } else {
@@ -53,22 +78,34 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
     list.setAttribute('aria-label', label);
   }
 
-  const opts = [...select.options].map((o, i) => {
+  const opts = [...select.options].map((opt, i) => {
     const li = document.createElement('li');
     li.className = 'dd-opt';
     li.id = `${select.id}-opt-${i}`;
     li.setAttribute('role', 'option');
-    li.dataset.value = o.value;
+    li.dataset.value = opt.value;
     li.style.setProperty('--d', `${i * 30}ms`);
-    const tick = document.createElement('i');
-    tick.className = 'dd-tick';
-    tick.setAttribute('aria-hidden', 'true');
-    li.append(tick, document.createTextNode(o.text));
+    const ic = o.icons?.(opt.value);
+    if (ic) li.append(leadIcon(ic));
+    li.append(document.createTextNode(opt.text));
     li.addEventListener('pointerenter', () => setActive(i));
     li.addEventListener('click', () => pick(i));
     return li;
   });
   list.append(...opts);
+  if (o.extra?.length) {
+    const rule = document.createElement('li');
+    rule.className = 'dd-divider';
+    rule.setAttribute('role', 'separator');
+    list.append(rule);
+    for (const x of o.extra) {
+      const li = document.createElement('li');
+      li.className = 'dd-extra';
+      li.setAttribute('role', 'none');
+      li.append(x);
+      list.append(li);
+    }
+  }
 
   let open = false;
   let active = 0;
@@ -76,6 +113,12 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
   function refresh(): void {
     const i = Math.max(0, select.selectedIndex);
     value.textContent = select.options[i]?.text ?? '';
+    if (pillIcon && o.icons) pillIcon.innerHTML = iconMarkup(o.icons(select.options[i]?.value ?? '') ?? '');
+    if (o.name) {
+      const name = o.name(value.textContent);
+      btn.setAttribute('aria-label', name);
+      list.setAttribute('aria-label', name);
+    }
     opts.forEach((li, k) => li.setAttribute('aria-selected', String(k === i)));
   }
 
@@ -87,17 +130,23 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
 
   function place(): void {
     const r = btn.getBoundingClientRect();
+    const p = o.popover;
+    const box = p?.within?.()?.getBoundingClientRect() ?? { top: 0, left: 0, right: innerWidth, bottom: innerHeight };
     const gap = 6;
     const edge = 8;
-    list.style.minWidth = `${Math.max(r.width, 172)}px`;
+    list.style.minWidth = `${Math.max(r.width, p?.minWidth ?? 172)}px`;
+    if (p?.maxHeight) list.style.maxHeight = `${p.maxHeight}px`;
     const w = list.offsetWidth;
     const h = list.offsetHeight;
-    const below = innerHeight - r.bottom - gap - edge;
-    const up = h > below && r.top - gap - edge > below;
+    const below = box.bottom - r.bottom - gap - edge;
+    const above = r.top - box.top - gap - edge;
+    const up = h > below && above > below;
+    const room = Math.max(120, up ? above : below);
     list.classList.toggle('dd-up', up);
-    list.style.top = `${up ? Math.max(edge, r.top - gap - h) : r.bottom + gap}px`;
-    list.style.left = `${Math.max(edge, Math.min(r.left, innerWidth - w - edge))}px`;
-    list.style.maxHeight = `${Math.max(120, up ? r.top - gap - edge : below)}px`;
+    list.style.top = `${up ? Math.max(box.top + edge, r.top - gap - Math.min(h, room)) : r.bottom + gap}px`;
+    const left = p?.align === 'end' ? r.right - w : r.left;
+    list.style.left = `${Math.max(box.left + edge, Math.min(left, box.right - w - edge))}px`;
+    list.style.maxHeight = `${Math.min(room, p?.maxHeight ?? Infinity)}px`;
   }
 
   function onMove(ev: Event): void {
@@ -116,6 +165,7 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
     btn.setAttribute('aria-expanded', 'true');
     setActive(Math.max(0, select.selectedIndex));
     list.focus({ preventScroll: true });
+    scrollWhenSettled(list);
     document.addEventListener('pointerdown', onOutside, true);
     addEventListener('scroll', onMove, true);
     addEventListener('resize', onMove);
@@ -169,6 +219,7 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
     }
   });
   list.addEventListener('keydown', (ev) => {
+    if ((ev.target as HTMLElement).closest('.dd-extra') && ev.key !== 'Escape' && ev.key !== 'Tab') return;
     switch (ev.key) {
       case 'ArrowDown': setActive(active + 1); break;
       case 'ArrowUp': setActive(active - 1); break;

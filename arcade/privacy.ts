@@ -1,4 +1,5 @@
 import { openDialog, type Dialog } from '../web/ui/dialog';
+import { sectionHeading } from '../web/ui/list';
 import { str } from '../web/i18n';
 
 export const PRIVACY_PAGE = '/arcade/?privacy';
@@ -12,7 +13,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
 
 function section(heading: string, lines: string[], list = false): HTMLElement {
   const sec = el('section', undefined, 'about-sec privacy-sec');
-  sec.append(el('h3', heading));
+  sec.append(sectionHeading(heading));
   if (list) {
     const ul = el('ul', undefined, 'privacy-list');
     for (const l of lines) ul.append(el('li', l));

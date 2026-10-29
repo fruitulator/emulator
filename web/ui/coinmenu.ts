@@ -1,4 +1,5 @@
 import { str } from '../i18n';
+import { scrollWhenSettled } from './scrollsettle';
 import { namedCoinLabel, namingChoices } from '../coinask';
 import type { NamedCoin } from '../../src/machine/machine';
 
@@ -21,7 +22,7 @@ export function openCoinMenu(o: {
 }): CoinMenu {
   current?.close();
   const list = document.createElement('ul');
-  list.className = 'dd-list dd-float open coin-menu';
+  list.className = 'dd-list dd-float open nb-menu coin-menu';
   list.setAttribute('role', 'listbox');
   list.setAttribute('aria-label', str('coinmenu.choose_a_coin'));
   list.tabIndex = -1;
@@ -104,6 +105,7 @@ export function openCoinMenu(o: {
   list.addEventListener('keyup', (ev) => ev.stopPropagation());
 
   document.body.append(list);
+  scrollWhenSettled(list);
   setActive(0);
   const edge = 8;
   const w = list.offsetWidth;

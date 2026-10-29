@@ -16,7 +16,7 @@ export function openDock(o: {
 }): Dock {
   current?.close();
   const root = document.createElement('aside');
-  root.className = 'ui-dock';
+  root.className = 'ui-dock nb-sheet';
   root.setAttribute('role', 'dialog');
   root.setAttribute('aria-modal', 'false');
   root.setAttribute('aria-label', o.title);
@@ -27,9 +27,9 @@ export function openDock(o: {
   title.textContent = o.title;
   const x = document.createElement('button');
   x.type = 'button';
-  x.className = 'ui-dock-close';
+  x.className = 'nb-icon-btn ui-dock-close';
   x.setAttribute('aria-label', str('ui.dock.close'));
-  x.append(rowIcon(UI_ICONS.cross, 'row-icon', 18));
+  x.append(rowIcon(UI_ICONS.cross, 'row-icon', 18).firstElementChild!);
   head.append(title, x);
   const body = document.createElement('div');
   body.className = 'ui-dock-body';
@@ -42,6 +42,7 @@ export function openDock(o: {
   const onKey = (e: KeyboardEvent): void => {
     if (e.key !== 'Escape' || !open) return;
     if ((e.target as Element | null)?.closest?.('.dd.open, .dd-list.open')) return;
+    if (document.querySelector('#sheet.open')) return;
     e.stopImmediatePropagation();
     e.preventDefault();
     if (o.onEscape?.()) return;
@@ -51,7 +52,9 @@ export function openDock(o: {
   const dock: Dock = {
     root,
     show(nodes, slide = 'none') {
-      body.replaceChildren(...nodes);
+      const back = nodes[0] instanceof HTMLElement && nodes[0].classList.contains('menu-back') ? nodes[0] : null;
+      head.replaceChildren(back ?? title, x);
+      body.replaceChildren(...(back ? nodes.slice(1) : nodes));
       body.scrollTop = 0;
       body.classList.remove('ui-dock-in', 'ui-dock-out');
       if (slide !== 'none') {

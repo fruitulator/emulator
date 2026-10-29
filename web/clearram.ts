@@ -23,8 +23,8 @@ export function askClearRam(): Promise<boolean> {
         { button: actionButton(CLEAR_RAM_YES, 'primary', () => undefined), run: () => answer(true) },
       ],
       onClose: () => answer(false),
+      info: true,
     });
     a.root.addEventListener('click', (ev) => { if (ev.target === a.root) a.close(); });
-    a.root.querySelector('.ui-alert-msg')?.classList.add('ui-alert-info');
   });
 }

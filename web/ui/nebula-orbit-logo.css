@@ -1,0 +1,18 @@
+.nb-orbit__logo { display: block; height: clamp(56px, min(11vw, 13vh), 130px); width: auto; overflow: visible;
+  filter: drop-shadow(0 10px 30px rgba(0,0,0,.5)); }
+.nb-orbit__logo .L,
+.nb-orbit__logo .nb-logo__cher { transform-box: fill-box; transform-origin: 50% 100%; }
+.nb-orbit__logo .nb-logo__cher { transform-origin: 50% 60%; }
+
+.nb-orbit__logo.is-entering .L { animation: nb-letter-pop .42s cubic-bezier(.3,1.6,.5,1) calc(.15s + var(--i) * .07s) both; }
+.nb-orbit__logo.is-entering .nb-logo__cher { animation: nb-letter-pop .5s cubic-bezier(.3,1.6,.5,1) .36s both; }
+
+@keyframes nb-letter-pop {
+  0%, 100% { transform: none; fill: #fff7ea; }
+  45%      { transform: translateY(-6%) scale(1.18); fill: #ffffff; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nb-orbit__logo.is-entering .L, .nb-orbit__logo.is-entering .nb-logo__cher { animation: none; }
+}
+
+header h1 .nb-orbit__logo { height: auto; margin: 0; filter: none; }

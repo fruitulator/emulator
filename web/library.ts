@@ -5,19 +5,21 @@ import {
 } from './store';
 import { localStateStore } from './statestore';
 import { parseTitle } from './title';
-import { enhanceSelect } from './ui/dropdown';
 import { clearArtwork, fillArtwork, releaseArtwork } from './ui/art';
 import { chip } from './ui/list';
 import {
-  activity, displayTitle, gridArrowNav, mountGameList, systemLabel,
+  activity, displayTitle, gridArrowNav, groupVersionsRow, mountGameList, systemLabel, viewDropdown,
   type GameList, type SortKey,
 } from './gamelist';
-import { closeSheet, confirmInSheet, sheetRow, showSheet } from './ui/sheet';
+import { dangerRow, closeSheet, confirmInSheet, optionRow, sheetRow, showSheet } from './ui/sheet';
+import { UI_ICONS } from './ui/icons';
+import { orbitLogoOnce } from './ui/logoentrance';
 import { showToast } from './ui/toast';
 
 export { closeSheet };
 import { APPLE, primaryModifier } from './shortcuts';
 import { str } from './i18n';
+import { textField } from './ui/field';
 
 export { everPlayed, lastPlayed };
 export {
@@ -25,7 +27,10 @@ export {
 } from './gamelist';
 
 import { siteNav } from './ui/sitenav';
+import { isLocked } from './kioskmode';
 import { bubbleTip } from './ui/tip';
+import { groupLibrary, groupingOn, setGroupingOn, type Grouping } from './versions';
+import { openGroupWith, openLibraryVersions, type VersionHost } from './libversions';
 
 export interface LibraryHandlers {
   onOpen(hash: string, resume: boolean): void;
@@ -67,15 +72,32 @@ function grid(h: LibraryHandlers): GameList {
     unplayable: (g) => listH!.unplayable(g),
     onOpen: (g, hasState, blocked) => (blocked
       ? listH!.onUnplayable(displayTitle(g), blocked.detail)
-      : listH!.onOpen(g.hash, hasState)),
-    more: (g, hasState) => {
+      : listH!.onOpen(g.hash, true)),
+    more: (g, hasState, members) => {
       const hh = listH!;
-      const more = iconBtn('more', str('library.more_options'), () => openSheet(g, hasState, hh, more));
-      more.classList.add('card-more');
+      const more = iconBtn('more', str('library.more_options'), () => openSheet(g, hasState, hh, more, members));
+      more.className = 'nb-icon-btn card-more';
       return more;
     },
+    versions: (members) => openLibraryVersions(members, versionHost(listH!)),
   });
   return list;
+}
+
+let drawn: { all: GameMeta[]; saved: ReadonlySet<string>; grouping: Grouping | null } = {
+  all: [], saved: new Set(), grouping: null,
+};
+
+function versionHost(h: LibraryHandlers): VersionHost {
+  return {
+    saved: drawn.saved,
+    open: (g) => {
+      const why = h.unplayable(g);
+      if (why) h.onUnplayable(displayTitle(g), why.detail);
+      else h.onOpen(g.hash, true);
+    },
+    rerender: () => { void renderLibrary(h); },
+  };
 }
 
 let ringReady = false;
@@ -96,6 +118,8 @@ export function cancelPendingDelete(hash: string): boolean {
   pendingDelete.delete(hash);
   return true;
 }
+
+let firstRender = true;
 
 export function renderLibrary(h: LibraryHandlers): Promise<void> {
   const run = renderQueue.then(() => render(h));
@@ -181,18 +205,23 @@ async function render(h: LibraryHandlers): Promise<void> {
   emptyHint.hidden = !welcome;
 
   const ringGames = showcase(games, h);
-  const useOrbit = view === 'orbit' && ringGames.length >= 3;
+  const useOrbit = isLocked() || (view === 'orbit' && ringGames.length >= 3);
   orbitWrap.hidden = !useOrbit;
   tiles.hidden = useOrbit;
   ringReady = ringGames.length >= 3;
   document.getElementById('to-orbit')!.hidden = !ringReady;
   document.body.classList.toggle('orbit-mode', useOrbit);
+  if (firstRender && useOrbit) orbitLogoOnce();
+  firstRender = false;
 
   if (useOrbit) {
     tiles.replaceChildren();
     renderOrbit(ringGames, saved, orbitDeps(h));
   } else {
-    lst.draw(games, saved);
+    const library = all.filter((g) => !pendingDelete.has(g.hash));
+    const grouping = groupingOn() ? groupLibrary(library) : null;
+    drawn = { all: library, saved, grouping };
+    lst.draw(games, saved, grouping);
   }
 
   const eager = [
@@ -234,7 +263,7 @@ function storageReadout(count: number, unreadable: string | null, est: StorageEs
   more.textContent = '›';
   if (est.usage === undefined && est.quota === undefined) return [left, more];
   const meter = document.createElement('span');
-  meter.className = 'meter';
+  meter.className = 'nb-meter';
   const fill = document.createElement('span');
   const frac = est.usage !== undefined && est.quota ? Math.min(1, est.usage / est.quota) : 0;
   fill.style.width = `${(frac * 100).toFixed(3)}%`;
@@ -259,18 +288,20 @@ export async function settleArtwork(capMs = 2000): Promise<void> {
 }
 
 function openSheet(
-  g: GameMeta, hasState: boolean, h: LibraryHandlers, returnTo: HTMLElement,
+  g: GameMeta, hasState: boolean, h: LibraryHandlers, returnTo: HTMLElement, members?: GameMeta[],
 ): void {
-  const autoRow = sheetRow(str('library.auto_save_state'), str('library.keeps_this_game_where_you'));
-  const toggle = document.createElement('span');
-  toggle.className = 'toggle';
-  toggle.dataset.on = String(g.autoSave);
-  autoRow.append(toggle);
-  autoRow.addEventListener('click', () => {
-    const on = toggle.dataset.on !== 'true';
-    toggle.dataset.on = String(on);
-    h.onToggleAutoSave(g.hash, on);
-  });
+  const autoRow = document.createElement('label');
+  autoRow.className = 'sheet-row nb-menu-item';
+  const autoText = document.createElement('span');
+  const autoSub = document.createElement('small');
+  autoSub.textContent = str('library.keeps_this_game_where_you');
+  autoText.append(str('library.auto_save_state'), autoSub);
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.className = 'nb-toggle';
+  toggle.checked = g.autoSave;
+  toggle.addEventListener('change', () => h.onToggleAutoSave(g.hash, toggle.checked));
+  autoRow.append(autoText, toggle);
 
   const renameRow = renameField(g, h);
 
@@ -289,11 +320,25 @@ function openSheet(
   exportRow.addEventListener('click', () => { closeSheet(); void h.onExport(g.hash); });
 
   const delRow = sheetRow(str('library.remove_from_cache'), hasState ? str('library.discards_the_saved_state_too') : '');
-  delRow.classList.add('destructive');
+  dangerRow(delRow);
   delRow.addEventListener('click', () => { closeSheet(); deferDelete(g, h); });
 
+  const versionRows: HTMLElement[] = [];
+  if (members) {
+    const versionsRow = sheetRow(str('library.versions'), '');
+    versionsRow.addEventListener('click', () => { closeSheet(); openLibraryVersions(members, versionHost(h)); });
+    versionRows.push(versionsRow);
+  }
+  const groupRow = sheetRow(str('libversions.group_with'), '');
+  groupRow.addEventListener('click', () => {
+    closeSheet();
+    const group = members ?? drawn.grouping?.members(g.hash) ?? [g];
+    openGroupWith(g, group, drawn.all, h.unplayable, versionHost(h));
+  });
+  versionRows.push(groupRow);
+
   showSheet(displayTitle(g), [
-    renameRow, autoRow, freshRow, exportRow, delRow,
+    renameRow, autoRow, freshRow, ...versionRows, exportRow, delRow,
   ], returnTo);
 }
 
@@ -314,7 +359,7 @@ function openStorageSheet(
     importing ? str('library.wait_for_the_import_to')
       : str('library.every_cached_game_saved_state'),
   );
-  del.classList.add(importing ? 'inert' : 'destructive');
+  if (importing) del.classList.add('inert'); else dangerRow(del);
   del.addEventListener('click', () => {
     const what = count ? `${count} game${count === 1 ? '' : 's'}` : str('library.the_library');
     confirmInSheet({
@@ -337,10 +382,11 @@ function openStorageSheet(
 
 export async function openAddSheet(
   returnTo: HTMLElement, pick: (which: 'folder' | 'files') => void,
+  more: HTMLElement[] = [],
 ): Promise<void> {
-  const folder = sheetRow(str('library.game_folder'), str('library.one_game_s_folder_or'));
+  const folder = optionRow(str('library.game_folder'), str('library.one_game_s_folder_or'), UI_ICONS.folder);
   folder.addEventListener('click', () => { closeSheet(); pick('folder'); });
-  const files = sheetRow(str('library.zip_punnet_files'), str('library.one_or_several_as_they'));
+  const files = optionRow(str('library.zip_punnet_files'), str('library.one_or_several_as_they'), UI_ICONS.archive);
   files.addEventListener('click', () => { closeSheet(); pick('files'); });
 
   let count = 0;
@@ -356,13 +402,13 @@ export async function openAddSheet(
     }
   }
   const usage = document.createElement('div');
-  usage.className = 'sheet-usage';
+  usage.className = 'sheet-usage nb-meta';
   const left = document.createElement('span');
   left.textContent = str('library.n_games_in_this_browser', { n: count });
   usage.append(left);
   if (est.usage !== undefined || est.quota !== undefined) {
-    const meter = document.createElement('span');
-    meter.className = 'meter';
+    const meter = document.createElement('div');
+    meter.className = 'nb-meter';
     const fill = document.createElement('span');
     const frac = est.usage !== undefined && est.quota ? Math.min(1, est.usage / est.quota) : 0;
     fill.style.width = `${(frac * 100).toFixed(3)}%`;
@@ -373,21 +419,15 @@ export async function openAddSheet(
   }
 
   const note = document.createElement('p');
-  note.className = 'sheet-note';
+  note.className = 'sheet-note nb-meta';
   note.textContent = str('library.nothing_is_uploaded_anywhere_a');
 
-  showSheet(str('library.add_games'), [folder, files, usage, note], returnTo);
+  showSheet(str('library.add_games'), [folder, files, ...more, usage, note], returnTo);
 }
 
 function renameField(g: GameMeta, h: LibraryHandlers): HTMLElement {
-  const row = document.createElement('div');
-  row.className = 'sheet-row sheet-field';
-  const caption = document.createElement('span');
-  caption.textContent = str('library.title');
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = displayTitle(g);
-  input.placeholder = parseTitle(g.sourceName ?? g.name).title;
+  const f = textField({ label: str('library.title'), value: displayTitle(g), placeholder: parseTitle(g.sourceName ?? g.name).title, spellcheck: true });
+  const input = f.input;
   input.setAttribute('aria-label', str('library.game_title'));
   selectAllOnFocus(input);
 
@@ -404,8 +444,8 @@ function renameField(g: GameMeta, h: LibraryHandlers): HTMLElement {
     if (ev.key === 'Escape') { input.value = displayTitle(g); }
   });
   input.addEventListener('change', commit);
-  row.append(caption, input);
-  return row;
+  f.el.classList.add('sheet-field');
+  return f.el;
 }
 
 function selectAllOnFocus(input: HTMLInputElement): void {
@@ -472,6 +512,21 @@ function chooseView(v: ViewKey, lst: GameList): void {
   try { localStorage.setItem(VIEW_STORE, v); } catch {  }
 }
 
+let toGridView: (() => void) | null = null;
+
+export function libraryToGrid(): void {
+  toGridView?.();
+}
+
+let toOrbitChoice: (() => void) | null = null;
+
+export function libraryChooseOrbit(): void {
+  toOrbitChoice?.();
+}
+
+let beforeOrbit: (() => void) | null = null;
+export function onBeforeOrbit(fn: () => void): void { beforeOrbit = fn; }
+
 export function wireLibraryControls(h: LibraryHandlers): void {
   const input = document.getElementById('lib-search') as HTMLInputElement;
   const searchBtn = document.getElementById('searchBtn')!;
@@ -525,12 +580,16 @@ export function wireLibraryControls(h: LibraryHandlers): void {
   });
   document.addEventListener('keydown', (ev) => {
     if (!searchChord(ev)) return;
+    if (document.body.classList.contains('source-view')) return;
     ev.preventDefault();
     if (wrap.classList.contains('open') && document.activeElement === input) closeSearch();
     else openSearch();
   });
   sortSel.value = lst.sort;
-  enhanceSelect(sortSel);
+  viewDropdown(sortSel, [groupVersionsRow(groupingOn(), (on) => {
+    setGroupingOn(on);
+    void renderLibrary(h);
+  })]);
   sortSel.addEventListener('change', () => {
     lst.setSort(sortSel.value as SortKey);
     void renderLibrary(h);
@@ -539,9 +598,11 @@ export function wireLibraryControls(h: LibraryHandlers): void {
   let switching = false;
   const setView = async (v: ViewKey) => {
     if (view === v || switching) return;
+    if (v === 'grid' && isLocked()) return;
     switching = true;
     document.body.classList.add('mode-fade');
     await new Promise((r) => { setTimeout(r, prefersReducedMotion() ? 0 : SCREEN_FADE_MS); });
+    if (v === 'orbit') beforeOrbit?.();
     chooseView(v, lst);
     window.scrollTo(0, 0);
     await renderLibrary(h);
@@ -550,6 +611,8 @@ export function wireLibraryControls(h: LibraryHandlers): void {
     document.body.classList.remove('mode-fade');
     switching = false;
   };
+  toGridView = () => { if (view !== 'grid') void setView('grid'); };
+  toOrbitChoice = () => { beforeOrbit?.(); chooseView('orbit', lst); };
   document.querySelector('header h1')!.addEventListener('click', () => {
     const lib = document.getElementById('library') as HTMLElement;
     if (!lib.hidden && ringReady) setView('orbit');
@@ -557,8 +620,7 @@ export function wireLibraryControls(h: LibraryHandlers): void {
   document.getElementById('to-library')!.addEventListener('click', () => setView('grid'));
   bubbleTip(document.getElementById('to-library')!, str('ui.tip.library_name'), str('ui.tip.library'));
   bubbleTip(document.getElementById('to-orbit')!, str('ui.tip.home_name'), str('ui.tip.home'));
-  bubbleTip(document.getElementById('aboutBtn')!, str('ui.tip.about_name'), str('ui.tip.about'));
-  document.getElementById('aboutBtn')!.before(siteNav({ here: 'games' }));
+  document.getElementById('settingsBtn')!.before(siteNav({ here: 'games' }));
   document.getElementById('to-orbit')!.addEventListener('click', () => {
     if (ringReady) setView('orbit');
   });
@@ -618,7 +680,7 @@ export function icon(name: keyof typeof ICONS | string): SVGSVGElement {
 function iconBtn(name: string, label: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'ghost';
+  b.className = 'nb-icon-btn';
   b.append(icon(name));
   b.setAttribute('aria-label', label);
   b.title = label;

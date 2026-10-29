@@ -10,14 +10,48 @@ import { reelBounceOn, setReelBounceOn } from './bouncepref';
 import { reelPeekOn, setReelPeekOn } from './peekpref';
 import { reelBandsOn, setReelBandsOn } from './bandspref';
 import { fillScreenOn, setFillScreenOn } from './fillpref';
+import { cropViewOn, setCropViewOn } from './croppref';
 import { str } from './i18n';
 import { PANEL_SHOW } from './ui/drawer';
 
 function button(label: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
-  b.textContent = label;
+  b.type = 'button';
+  b.className = coinClass(label);
+  const two = /^(\S+)\s+(\S.*)$/.exec(label.trim());
+  if (two) {
+    const v = document.createElement('span');
+    v.className = 'nb-coin__v';
+    v.textContent = two[1];
+    const w = document.createElement('span');
+    w.className = 'nb-coin__w';
+    w.textContent = two[2];
+    b.append(v, w);
+    b.setAttribute('aria-label', label);
+  } else {
+    b.textContent = label;
+  }
   b.addEventListener('click', onClick);
   return b;
+}
+
+function fitCoins(coins: HTMLElement): void {
+  for (const b of coins.querySelectorAll<HTMLElement>(':scope > .nb-coin:not([data-fit])')) {
+    if (b.children.length || !b.firstChild) continue;
+    const room = b.clientWidth * 0.78;
+    if (!room) continue;
+    b.dataset.fit = '';
+    const range = document.createRange();
+    range.selectNodeContents(b);
+    const wide = range.getBoundingClientRect().width;
+    if (wide > room) b.style.fontSize = `${parseFloat(getComputedStyle(b).fontSize) * room / wide}px`;
+  }
+}
+
+function coinClass(label: string): string {
+  if (/token/i.test(label)) return 'nb-coin nb-coin--token';
+  if (/^£\s*[12](\.00)?$/.test(label.trim())) return 'nb-coin';
+  return 'nb-coin nb-coin--silver';
 }
 
 export function coinsPanel(
@@ -25,11 +59,21 @@ export function coinsPanel(
   onCoin: (c: { label: string; bit: number }) => void,
   own?: () => OwnCoins | null,
   naming?: CoinNaming,
+  money: HTMLElement | null = null,
 ): HTMLElement {
   const coins = document.createElement('div');
-  coins.className = 'menu-grid';
-  if (naming?.slots().length) return withNaming(coinsGrid(coins, info, view, system, onCoin, own), naming);
-  return coinsGrid(coins, info, view, system, onCoin, own);
+  coins.className = 'nb-coins';
+  const grid = coinsGrid(coins, info, view, system, onCoin, own);
+  if (!money) return naming?.slots().length ? withNaming(grid, naming) : grid;
+  const panel = document.createElement('div');
+  panel.className = 'menu-stack coins-panel';
+  panel.append(grid);
+  if (money) {
+    money.classList.add('coin-money');
+    panel.append(money);
+  }
+  panel.addEventListener(PANEL_SHOW, () => grid.dispatchEvent(new Event(PANEL_SHOW)));
+  return naming?.slots().length ? withNaming(panel, naming) : panel;
 }
 
 function coinsGrid(
@@ -51,6 +95,7 @@ function coinsGrid(
     return true;
   };
   if (own) coins.addEventListener(PANEL_SHOW, () => { fill(); });
+  coins.addEventListener(PANEL_SHOW, () => requestAnimationFrame(() => fitCoins(coins)));
   if (fill()) return coins;
   const list = machineCoins(info, view);
   for (const c of list) coins.append(button(c.label, () => onCoin(c)));
@@ -81,7 +126,7 @@ function withNaming(grid: HTMLElement, naming: CoinNaming): HTMLElement {
     box.replaceChildren(...slots.map((s, i) => {
       const r = document.createElement('button');
       r.type = 'button';
-      r.className = 'menu-row menu-stat coin-name-row';
+      r.className = 'menu-row menu-stat nb-kv coin-name-row';
       const l = document.createElement('span');
       l.className = 'row-label';
       l.textContent = slots.length === 1 ? str('menupanels.coin_slot') : str('menupanels.coin_slot_n', { 0: i + 1 });
@@ -207,6 +252,16 @@ export function fillScreenRow(refit: () => void): HTMLLabelElement {
   });
   box.checked = fillScreenOn();
   row.title = str('menupanels.stretch_the_machine_to_fill');
+  return row;
+}
+
+export function cropRow(recrop: () => void): HTMLLabelElement {
+  const { row, box } = checkRow(str('menupanels.crop'), (on) => {
+    setCropViewOn(on);
+    recrop();
+  });
+  box.checked = cropViewOn();
+  row.title = str('menupanels.show_just_the_machine_without');
   return row;
 }
 

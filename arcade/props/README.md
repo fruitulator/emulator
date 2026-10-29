@@ -16,6 +16,11 @@ Real-world size, as Poly Haven states it (`api.polyhaven.com/info/<id>`
 | `trashcan_cylindric.glb` | Quaternius "Trashcan" via Poly Pizza — https://poly.pizza/m/vlVx279xut (CC0) | Quaternius | as made 750 × 750 × 1074; stood at 380 × 380 × 600 (ASSUMED indoor size) | CC0 | 2026-10-06 |
 | `WetFloorSign_01.glb` | https://polyhaven.com/a/WetFloorSign_01 | Fran Calvente | 300 × 359 × 630 | CC0 | 2026-10-06 |
 | `sofa_02.glb` | https://polyhaven.com/a/sofa_02 | Kirill Sannikov | 1807 × 818 × 709 | CC0 | 2026-10-09 |
+| `Ottoman_01.glb` | https://polyhaven.com/a/Ottoman_01 | Caspian Fortune | 885 × 621 × 624 | CC0 | 2026-10-27 |
+| `round_wooden_table_01.glb` | https://polyhaven.com/a/round_wooden_table_01 | Ulan Cabanilla | 1399 × 1399 × 1005 | CC0 | 2026-10-27 |
+| `modern_arm_chair_01.glb` | https://polyhaven.com/a/modern_arm_chair_01 | Vibrant Nordic | 820 × 987 × 1023 | CC0 | 2026-10-27 |
+| `painted_wooden_bench.glb` | https://polyhaven.com/a/painted_wooden_bench | Kirill Sannikov | 1165 × 497 × 889 | CC0 | 2026-10-27 |
+| `coffee_table_round_01.glb` | https://polyhaven.com/a/coffee_table_round_01 | Ulan Cabanilla | 1301 × 1301 × 491 | CC0 | 2026-10-27 |
 
 Licence: CC0 (Poly Haven, https://polyhaven.com/license; Quaternius, CC0 per
 Poly Pizza's listing).
@@ -54,6 +59,21 @@ tufted dark leather two-seater on a hardwood frame. `sofa_03` (Victorian,
 2.7 m, fringed cushions) was shown to the owner and ruled out; `Sofa_01` is
 a wooden settee. Packed as above, it is 117 KB.
 
+Five more pieces of furniture (owner, 2026-10-27: "make the arcade room
+richer"), all from the Poly Haven list read on 2026-10-09 and in the same
+spirit as the sofa: a dark leather ottoman, a 1 m tall round wooden poser
+table to go with the bar stools, a leather armchair, a painted wooden bench
+and a low round coffee table. Fetched and packed as above on 2026-10-27
+(glTF-Transform 4.5.1, every one at simplify error 0.001): 148, 232, 271, 80
+and 161 KB.
+
+**No jukebox.** One was built in code on 2026-10-27 and taken out the same
+day (owner: it looked "drawn by a 6 year old"; "take the jukebox prop out
+for now"). No CC0 model of one exists (searched 2026-10-09: Poly Haven's
+whole model list, Sketchfab's CC0 filter, Poly Pizza; again 2026-10-27).
+The one lead is Sketchfab's "Wurlitzer Jukebox 412" by Osho, CC BY 4.0,
+which the owner has not cleared (CC-BY models are on hold).
+
 **The cigarette machine is built in code** (arcade/proplayer.ts
 `cigMachineObject`), like the poster, because no CC0 model of one exists.
 Searched 2026-10-09: Poly Haven's whole model list (no vending machine,
@@ -62,4 +82,9 @@ models, for "cigarette vending machine", "cigarette machine" (CC0 filter),
 "vintage vending machine" (CC0 filter) and "cigarette dispenser", all
 empty; Poly Pizza, only low-poly modern drinks machines, CC-BY. Its body is
 the room's `black_oak_veneer` tinted walnut; the rest is plain colours. It
-carries no brand: the marks on a real one are trademarks.
+carries no real brand: the marks on a real one are trademarks. The packs in
+its windows (owner, 2026-10-27: period-style branding) are drawn in canvas
+by arcade/proplayer.ts (`PACK_BRANDS`): invented names and invented
+artwork in the manner of 1970s-90s UK packets, each name checked by hand
+against the brands of that period so none is a real one or a lookalike, and
+no health warning, real or parodied.

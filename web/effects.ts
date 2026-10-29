@@ -107,6 +107,11 @@ export class CabinetEffects {
     if (s) this.play(s.first, s.then);
   }
 
+  prime(): void {
+    const s = coinSound(undefined, undefined);
+    for (const i of [s?.first, s?.then, SAMPLE.ButtonDown, SAMPLE.ButtonUp]) if (typeof i === 'number') this.buffer(i);
+  }
+
   coinDrop(
     acceptor: { note?: number; effect?: number } | undefined,
     land: () => CoinOutcome | null,

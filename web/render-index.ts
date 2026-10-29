@@ -3,7 +3,7 @@ import { drawnBounce } from './bouncepref';
 import {
   bandStripWindow, flipReelFace, mfmeBandIndex, mfmeBoardReelPosition,
   mfmeFlipReelPosition, reelEffectivePosition, rgbLedColour,
-  type BandStrip, type Cabinet, type CabLamp, type FlipStrip, type RgbLed,
+  type BandStrip, type Cabinet, type CabCheckbox, type CabLamp, type FlipStrip, type RgbLed,
 } from './dat';
 import { discAngleDeg } from './discreel';
 import { peekable } from './play/peek';
@@ -211,6 +211,7 @@ export function buildRenderIndex(
   cab: Cabinet<Sized>, clusters: LightClusterGeom[],
   heldInput: (input: number) => boolean = () => false,
   reelPeek: () => number = () => 0,
+  checkboxTicked: (cb: CabCheckbox) => boolean = (cb) => cb.checked,
 ): IndexedElement[] {
   const els: IndexedElement[] = [];
 
@@ -367,7 +368,8 @@ export function buildRenderIndex(
 
   for (const s of cab.segDisplays ?? []) {
     els.push({
-      extent: turned(rect(s.left, s.top, s.width, s.height), s),
+      extent: turned(s.block ? rect(s.block.left, s.block.top, s.block.width, s.block.height)
+        : rect(s.left, s.top, s.width, s.height), s),
       key: (m) => {
         if (s.digit !== undefined) {
           let h = mix(mix(0, m.layoutDigit(s.digit)), m.layoutDigitLevel?.(s.digit) ?? 0xff);
@@ -430,6 +432,12 @@ export function buildRenderIndex(
     els.push({
       extent: turned(rect(d.left, d.top, d.width, d.height), d),
       key: (m) => mix(m.epoch, m.videoSerial),
+    });
+  }
+  for (const cb of cab.checkboxes ?? []) {
+    els.push({
+      extent: turned(rect(cb.left, cb.top, cb.width, cb.height), cb),
+      key: () => (checkboxTicked(cb) ? 1 : 0),
     });
   }
 

@@ -1,11 +1,9 @@
 import { onFloor, type ArcadeDoc, type DocMachine } from './doc';
-import { uploadToLibrary, type UploadResult } from './upload';
 import { listGames, type GameMeta } from '../web/store';
 import { displayTitle } from '../web/gamelist';
 import { parseTitle } from '../web/title';
 import { closeSheet, escapeCloses, sheetLine, sheetRow, showSheet } from '../web/ui/sheet';
 import { statusIcon, type Mark } from '../web/ui/status';
-import { rowIcon, UI_ICONS } from '../web/ui/icons';
 import { str } from '../web/i18n';
 
 export function machineTitle(name: string, held: GameMeta | null): string {
@@ -57,30 +55,15 @@ export function countHolding(games: readonly ListedGame[], lib: Holdings, as: Ho
 }
 
 export async function openMachineList(doc: ArcadeDoc, o: {
-  onLanded?: (games: GameMeta[]) => void; onGo?: (ids: string[]) => void;
+  onGo?: (ids: string[]) => void;
   returnTo?: HTMLElement;
 } = {}): Promise<void> {
-  const { onLanded, onGo } = o;
+  const { onGo } = o;
   const games = gamesOf(onFloor(doc));
-  let lib: Holdings = holdingsOf([]);
-  let byContent = new Map<string, GameMeta>();
-  const readHeld = async (): Promise<void> => {
-    const library = await listGames().catch(() => [] as GameMeta[]);
-    lib = holdingsOf(library);
-    byContent = new Map();
-    for (const g of library) if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, g);
-  };
-  await readHeld();
-
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.multiple = true;
-  input.hidden = true;
-  input.setAttribute('aria-hidden', 'true');
-
-  let addSub = '';
-  let running = false;
-  let problems: { name: string; reason: string }[] = [];
+  const library = await listGames().catch(() => [] as GameMeta[]);
+  const lib = holdingsOf(library);
+  const byContent = new Map<string, GameMeta>();
+  for (const g of library) if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, g);
   const returnTo = o.returnTo ?? (document.activeElement as HTMLElement | null) ?? document.body;
 
   const draw = (): void => {
@@ -90,11 +73,12 @@ export async function openMachineList(doc: ArcadeDoc, o: {
     const said = !games.length ? str('arcade.machinelist.this_arcade_has_no_machines')
       : missing || other ? '' : str('arcade.machinelist.you_have_every_game_here');
     if (said) lines.push(sheetLine(said, '', { quiet: true }));
-    for (const { machines, shown } of games) {
+    const titled = games.map((g) => ({ ...g, name: machineTitle(g.shown.name, byContent.get(g.shown.contentHash) ?? null) }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    for (const { machines, shown, name } of titled) {
       const s = machineStatus(shown, holding(shown, lib));
       const sub = machines.length > 1 ? `${s.label} · ${str('arcade.landing.n_machines', { n: machines.length })}` : s.label;
       const icon = statusIcon(s.mark, s.label);
-      const name = machineTitle(shown.name, byContent.get(shown.contentHash) ?? null);
       const note = shown.name;
       if (!onGo) { lines.push(sheetLine(name, sub, { icon, note })); continue; }
       const ids = machines.filter((m) => m.status === 'installed' && !m.outOfService).map((m) => m.id);
@@ -102,47 +86,8 @@ export async function openMachineList(doc: ArcadeDoc, o: {
       row.addEventListener('click', () => { closeSheet(); onGo(ids); });
       lines.push(row);
     }
-    for (const p of problems) lines.push(sheetLine(p.name, p.reason, { quiet: true }));
-    const add = sheetRow(str('arcade.machinelist.add_games_from_a_punnet'), addSub, { disabled: running, icon: rowIcon(UI_ICONS.plus, 'row-icon', 18) });
-    add.addEventListener('click', () => input.click());
-    lines.push(input);
-    showSheet(doc.name || str('arcade.machinelist.machines_in_this_arcade'), lines, returnTo, { foot: [add] });
+    showSheet(doc.name || str('arcade.machinelist.machines_in_this_arcade'), lines, returnTo);
   };
-
-  const run = async (files: File[]): Promise<void> => {
-    if (running || !files.length) return;
-    running = true;
-    problems = [];
-    addSub = str('arcade.machinelist.importing');
-    draw();
-    const before = games.filter((g) => holding(g.shown, lib) === 'held').length;
-    let result: UploadResult;
-    try {
-      result = await uploadToLibrary(files, (text) => {
-        addSub = text;
-        const sub = document.querySelector('#sheet-foot .sheet-sub');
-        if (sub) sub.textContent = text;
-      });
-    } catch (e) {
-      result = { games: [], empty: false, problems: [{ name: files.length === 1 ? files[0].name : `${files.length} files`,
-        reason: (e as Error).message || str('arcade.machinelist.the_import_failed') }] };
-    }
-    await readHeld();
-    if (result.games.length) onLanded?.(result.games);
-    running = false;
-    const lit = games.filter((g) => holding(g.shown, lib) === 'held').length - before;
-    addSub = result.empty ? str('arcade.machinelist.nothing_in_that_looked_like')
-      : lit > 0 ? str('arcade.machinelist.n_games_can_now_be', { n: lit })
-      : result.games.length ? str('arcade.machinelist.added_to_your_library_but')
-      : '';
-    problems = result.problems;
-    draw();
-  };
-  input.addEventListener('change', () => {
-    const files = [...(input.files ?? [])];
-    input.value = '';
-    void run(files);
-  });
 
   draw();
   escapeCloses();

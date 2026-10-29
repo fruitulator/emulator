@@ -2,6 +2,7 @@ import { UI_ICONS } from './icons';
 import { str } from '../i18n';
 import { betaTag } from './beta';
 import { bubbleTip } from './tip';
+import { settingsButton } from './settings';
 
 declare const __HAS_ARCADE__: boolean;
 
@@ -11,7 +12,7 @@ export function hasArcade(): boolean {
 
 function link(href: string, icon: string, label: string, tip: [name: string, what: string], id: string): HTMLAnchorElement {
   const a = document.createElement('a');
-  a.className = 'iconbtn';
+  a.className = 'nb-icon-btn';
   a.id = id;
   a.href = href;
   a.setAttribute('aria-label', label);
@@ -25,33 +26,7 @@ function link(href: string, icon: string, label: string, tip: [name: string, wha
   return a;
 }
 
-export function aboutButton(): HTMLButtonElement {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'iconbtn about';
-  b.id = 'aboutBtn';
-  b.setAttribute('aria-label', str('index.about_fruitulator'));
-  bubbleTip(b, str('ui.tip.about_name'), str('ui.tip.about'));
-  b.setAttribute('aria-haspopup', 'dialog');
-  b.setAttribute('aria-expanded', 'false');
-  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  s.setAttribute('viewBox', '0 0 24 24');
-  s.setAttribute('aria-hidden', 'true');
-  s.setAttribute('focusable', 'false');
-  s.innerHTML = UI_ICONS.info;
-  b.append(s);
-  b.addEventListener('click', () => {
-    void import('../about').then((m) => {
-      const up = m.aboutOpen();
-      if (up) { up.close(); return; }
-      b.setAttribute('aria-expanded', 'true');
-      m.openAbout({ onClose: () => b.setAttribute('aria-expanded', 'false') });
-    });
-  });
-  return b;
-}
-
-export function siteNav(o: { here: 'games' | 'arcades'; about?: boolean }): HTMLElement {
+export function siteNav(o: { here: 'games' | 'arcades'; settings?: boolean; onLocked?: () => void }): HTMLElement {
   const nav = document.createElement('nav');
   nav.className = 'ui-sitenav';
   nav.setAttribute('aria-label', str('ui.sitenav.sections'));
@@ -64,7 +39,7 @@ export function siteNav(o: { here: 'games' | 'arcades'; about?: boolean }): HTML
   } else {
     nav.append(link('/', UI_ICONS.library, str('index.open_the_library'), [str('ui.tip.my_games_name'), str('ui.tip.my_games')], 'to-games'));
   }
-  if (o.about) nav.append(aboutButton());
+  if (o.settings) nav.append(settingsButton({ onLocked: o.onLocked }));
   nav.hidden = !nav.childElementCount;
   return nav;
 }

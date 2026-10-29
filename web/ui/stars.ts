@@ -27,12 +27,12 @@ export interface StarPicker {
 
 export function starPicker(o: { label: string; value: number; onPick: (stars: number) => void; disabled?: boolean }): StarPicker {
   const el = document.createElement('div');
-  el.className = 'ui-stars';
+  el.className = 'nb-rating ui-stars';
   el.setAttribute('role', 'radiogroup');
   el.setAttribute('aria-label', o.label);
   let value = o.value;
   const buttons: HTMLButtonElement[] = [];
-  const light = (n: number): void => { buttons.forEach((b, i) => b.classList.toggle('on', i < n)); };
+  const light = (n: number): void => { buttons.forEach((b, i) => b.classList.toggle('is-on', i < n)); };
   const set = (n: number): void => {
     value = n;
     buttons.forEach((b, i) => {
@@ -50,7 +50,6 @@ export function starPicker(o: { label: string; value: number; onPick: (stars: nu
     b.disabled = !!o.disabled;
     b.append(starSvg());
     b.addEventListener('click', () => { set(i); o.onPick(i); });
-    b.addEventListener('pointerenter', () => light(i));
     b.addEventListener('keydown', (e) => {
       const to = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? i + 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? i - 1 : 0;
       if (to < 1 || to > 5) return;
@@ -59,7 +58,6 @@ export function starPicker(o: { label: string; value: number; onPick: (stars: nu
     });
     buttons.push(b);
   }
-  el.addEventListener('pointerleave', () => light(value));
   el.append(...buttons);
   set(value);
   return { el, set };

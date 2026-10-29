@@ -75,6 +75,7 @@ const arcadeServerPort = /^\d{1,5}$/.test(process.env.ARCADE_SERVER_PORT ?? '') 
 export default defineConfig(({ mode }) => ({
   plugins: [arcadeSlash(), ...(mode === 'lan' ? [...(lanCert ? [] : [basicSsl()]), closeStrayUpgrades()] : []), precachePlugin()],
   optimizeDeps: { entries: ['index.html', ...(hasArcade ? ['arcade/index.html'] : [])] },
+  worker: { format: 'es' },
   build: {
     rolldownOptions: {
       input: {
