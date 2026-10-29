@@ -1383,7 +1383,7 @@
   },
   "kioskmode.title": "Kioskmodus",
   "kioskmode.subtitle": "Modus voor beperkt spelen",
-  "kioskmode.can_play": "Elk spel spelen vanuit de Orbit",
+  "kioskmode.can_play": "Elk spel spelen vanaf de startpagina",
   "kioskmode.can_coins": "Munten toevoegen, volume wijzigen",
   "kioskmode.cannot_library": "De bibliotheek of speelhallen openen",
   "kioskmode.cannot_games": "Spellen toevoegen of verwijderen",

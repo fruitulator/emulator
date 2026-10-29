@@ -2,7 +2,7 @@
 import type { Endpoint, EndpointName, Category, Source } from './index';
 import { refresh, type Tokens } from './auth';
 import { parseCatalogue, type Catalogue, type CatSet } from './catalogue';
-import { invisionCategoryPage, invisionDownloadFile, invisionCategories, parseInvisionFiles, parseInvisionTopics } from './invision';
+import { ATTACHMENT, invisionCategoryPage, invisionDownloadFile, invisionCategories, parseInvisionFiles, parseInvisionTopics } from './invision';
 import { expand, templateVars } from './template';
 import { dropAnswers, keepAnswer, keptAnswer } from './answers';
 
@@ -164,10 +164,15 @@ export class SourceClient {
 
   byName(name: string): Promise<Catalogue> { return this.answer(this.source.endpoints.byName, { name }); }
 
-  async download(set: Pick<CatSet, 'id' | 'download'>, steps: DownloadSteps = {}): Promise<Download> {
+  async download(set: Pick<CatSet, 'id' | 'download' | 'file'>, steps: DownloadSteps = {}): Promise<Download> {
     const url = set.download ?? (this.source.endpoints.download ? expand(this.source.endpoints.download.url, { id: set.id }) : undefined);
     if (!url) throw new SourceError('missing');
-    if (!set.download && this.source.endpoints.download?.format === 'wait-ticket') return this.waitTicket(url, set.id, steps);
+    const ticketed = !set.download && this.source.endpoints.download?.format === 'wait-ticket';
+    if (set.id.startsWith(ATTACHMENT)) {
+      if (!ticketed) throw new SourceError('missing');
+      return this.attachment(url, set, steps);
+    }
+    if (ticketed) return this.waitTicket(url, set.id, steps);
     steps.start?.();
     let res = await this.fetchFor(url);
     let from = url;
@@ -187,23 +192,19 @@ export class SourceClient {
     return { blob: await readBlob(res, steps.progress), name: fileName(res, res.url || from, set.id) };
   }
 
+  private async formPost(url: string, fields: Record<string, string>): Promise<Response> {
+    let t = this.tokens.get();
+    if (t?.expiresAt !== undefined && t.expiresAt < Date.now() + 30_000 && t.refresh) t = await this.renew(t);
+    const body = new URLSearchParams(fields);
+    if (t && this.mayAuth(url)) body.set('access_token', t.access);
+    let res: Response;
+    try { res = await this.fetchFn(url, { method: 'POST', body, credentials: 'omit' }); } catch { throw new SourceError('blocked'); }
+    if (res.status === 401) { this.tokens.set(undefined); throw new SourceError('signin', await problemDetail(res)); }
+    return res;
+  }
+
   private async waitTicket(url: string, id: string, steps: DownloadSteps): Promise<Download> {
-    const post = async (fields: Record<string, string>): Promise<Response> => {
-      let t = this.tokens.get();
-      if (t?.expiresAt !== undefined && t.expiresAt < Date.now() + 30_000 && t.refresh) t = await this.renew(t);
-      const body = new URLSearchParams(fields);
-      if (t && this.mayAuth(url)) body.set('access_token', t.access);
-      let res: Response;
-      try { res = await this.fetchFn(url, { method: 'POST', body, credentials: 'omit' }); } catch { throw new SourceError('blocked'); }
-      if (res.status === 401) { this.tokens.set(undefined); throw new SourceError('signin', await problemDetail(res)); }
-      return res;
-    };
-    const refusal = (j: Record<string, unknown> | null, status: number): SourceError => {
-      const said = j && typeof j.errorMessage === 'string' && j.errorMessage ? j.errorMessage : undefined;
-      if (said) return new SourceError('forbidden', said);
-      return new SourceError(status === 429 ? 'busy' : status === 404 ? 'missing' : 'failed', j && typeof j.errorCode === 'string' ? j.errorCode : String(status));
-    };
-    const res = await post({ action: 'info', id });
+    const res = await this.formPost(url, { action: 'info', id });
     const j = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (!res.ok || !j || j.errorCode !== undefined) throw refusal(j, res.status);
     const info = readWaitInfo(j);
@@ -220,7 +221,7 @@ export class SourceClient {
       }
       const f = info.files[0];
       steps.start?.();
-      const got = await post({ action: 'file', id, ticket: info.ticket, r: f.r, agree: '1' });
+      const got = await this.formPost(url, { action: 'file', id, ticket: info.ticket, r: f.r, agree: '1' });
       if (got.ok && !(got.headers.get('Content-Type') ?? '').includes('json')) {
         return { blob: await readBlob(got, steps.progress), name: f.name || fileName(got, url, id) };
       }
@@ -230,6 +231,26 @@ export class SourceClient {
     }
     throw new SourceError('busy');
   }
+
+  private async attachment(url: string, set: Pick<CatSet, 'id' | 'file'>, steps: DownloadSteps): Promise<Download> {
+    steps.start?.();
+    const got = await this.formPost(url, { action: 'attachment', id: set.id.slice(ATTACHMENT.length) });
+    if (got.ok && !(got.headers.get('Content-Type') ?? '').includes('json')) {
+      const blob = await readBlob(got, steps.progress);
+      const named = fileName(got, url, '');
+      const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+      const ext = head[0] === 0x52 && head[1] === 0x61 && head[2] === 0x72 && head[3] === 0x21 ? 'rar'
+        : head[0] === 0x37 && head[1] === 0x7a && head[2] === 0xbc && head[3] === 0xaf ? '7z' : 'zip';
+      return { blob, name: named !== '.zip' ? named : set.file ?? `${set.id}.${ext}` };
+    }
+    throw refusal(await got.json().catch(() => null) as Record<string, unknown> | null, got.status);
+  }
+}
+
+function refusal(j: Record<string, unknown> | null, status: number): SourceError {
+  const said = j && typeof j.errorMessage === 'string' && j.errorMessage ? j.errorMessage : undefined;
+  if (said) return new SourceError('forbidden', said);
+  return new SourceError(status === 429 ? 'busy' : status === 404 ? 'missing' : 'failed', j && typeof j.errorCode === 'string' ? j.errorCode : String(status));
 }
 
 async function readBlob(res: Response, progress?: (fraction: number) => void): Promise<Blob> {

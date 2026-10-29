@@ -1383,7 +1383,7 @@
   },
   "kioskmode.title": "Kiosk mode",
   "kioskmode.subtitle": "Restricted play only mode",
-  "kioskmode.can_play": "Play any game from the Orbit",
+  "kioskmode.can_play": "Play any game from the home page",
   "kioskmode.can_coins": "Add coins, change volume",
   "kioskmode.cannot_library": "Open the library or arcades",
   "kioskmode.cannot_games": "Add or delete games",

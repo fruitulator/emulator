@@ -70,7 +70,7 @@ export interface GetUi {
   waiting?(left: number | null): void;
 }
 
-export async function fetchFromSource(c: SourceClient, set: Pick<CatSet, 'id' | 'download'>, title: string, ui: GetUi): Promise<File> {
+export async function fetchFromSource(c: SourceClient, set: Pick<CatSet, 'id' | 'download' | 'file'>, title: string, ui: GetUi): Promise<File> {
   const clock = (n: number): string => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
   const d = await c.download(set, {
     terms: (text) => agreeSheet(title, text, ui.returnTo),

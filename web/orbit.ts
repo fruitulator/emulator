@@ -1,7 +1,7 @@
 import type { GameMeta } from './store';
 import type { LibraryHandlers } from './library';
 import { str } from './i18n';
-import { createOrbitCaption, type OrbitCaption } from './ui/orbit-caption.js';
+import { createOrbitCaption, type OrbitCaption, type OrbitCaptionGame } from './ui/orbit-caption.js';
 
 export interface OrbitDeps {
   h: LibraryHandlers;
@@ -88,7 +88,7 @@ export function renderOrbit(g: GameMeta[], s: Set<string>, d: OrbitDeps): void {
   void stage.offsetHeight;
   stage.classList.remove('placing');
   fitToHeight();
-  updateCaption();
+  settleOrbitCaption();
 }
 
 function poseAt(o: number): Pose {
@@ -219,8 +219,20 @@ function stopSpin(): void {
 
 export function replayOrbitCaption(): void {
   if (!games.length || !onScreen(wrapEl())) return;
-  caption = null;
-  updateCaption();
+  cancelMove();
+  captionCtl().replay(captionFor(focused()));
+}
+
+function cancelMove(): void {
+  stopSpin();
+  settleSeq++;
+  window.clearTimeout(settleTimer);
+}
+
+export function settleOrbitCaption(): void {
+  if (!games.length) return;
+  cancelMove();
+  captionCtl().settle(captionFor(focused()));
 }
 
 function updateCaption(): void {
@@ -229,6 +241,10 @@ function updateCaption(): void {
 }
 
 function showCaption(g: GameMeta): void {
+  captionCtl().update(captionFor(g));
+}
+
+function captionFor(g: GameMeta): OrbitCaptionGame {
   const d = deps!;
   focusHash = g.hash;
   const blocked = d.h.unplayable(g);
@@ -244,11 +260,11 @@ function showCaption(g: GameMeta): void {
   const play = document.getElementById('orbit-play') as HTMLButtonElement;
   play.classList.toggle('blocked', !!blocked);
   play.classList.toggle('nb-btn--primary', !blocked);
-  captionCtl().update({
+  return {
     title: d.displayTitle(g),
     chipsHtml: chips.map((c) => c.outerHTML).join(''),
     ctaLabel: hasState ? str('orbit.resume') : str('orbit.play'),
-  });
+  };
 }
 
 function openFocused(): void {
@@ -281,6 +297,12 @@ function wireOnce(): void {
   if (wired) return;
   wired = true;
   const stage = stageEl();
+
+  const back = (): void => { if (onScreen(wrapEl())) settleOrbitCaption(); };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') back();
+  });
+  window.addEventListener('pageshow', back);
 
   document.getElementById('orbit-prev')!.addEventListener('click', () => {
     setFocus(Math.round(pos) - 1);

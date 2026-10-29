@@ -55,6 +55,7 @@
   padding: 2px;
   box-sizing: border-box;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -75,6 +76,7 @@
 }
 #menuFly {
   overflow: hidden;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 12px;

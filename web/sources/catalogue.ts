@@ -4,6 +4,7 @@ export interface CatSet {
   layout: string;
   romset: string;
   config?: { variant?: string; market?: string; stake?: string; jackpot?: string; percentage?: string };
+  file?: string;
   download?: string;
   refs?: Record<string, string>;
   retired?: boolean;

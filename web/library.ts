@@ -1,4 +1,4 @@
-import { renderOrbit, type OrbitDeps } from './orbit';
+import { renderOrbit, settleOrbitCaption, type OrbitDeps } from './orbit';
 import {
   everPlayed, lastPlayed, listGames, playCountOf,
   type GameMeta,
@@ -110,12 +110,19 @@ let view: ViewKey = ((): ViewKey => {
 })();
 
 const pendingDelete = new Map<string, number>();
+const pendingToast = new Map<string, () => void>();
+
+function forgetPending(hash: string): void {
+  const t = pendingDelete.get(hash);
+  if (t !== undefined) clearTimeout(t);
+  pendingDelete.delete(hash);
+  pendingToast.get(hash)?.();
+  pendingToast.delete(hash);
+}
 
 export function cancelPendingDelete(hash: string): boolean {
-  const t = pendingDelete.get(hash);
-  if (t === undefined) return false;
-  clearTimeout(t);
-  pendingDelete.delete(hash);
+  if (!pendingDelete.has(hash)) return false;
+  forgetPending(hash);
   return true;
 }
 
@@ -130,11 +137,10 @@ export function renderLibrary(h: LibraryHandlers): Promise<void> {
 let renderQueue: Promise<void> = Promise.resolve();
 
 export function commitPendingDeletes(h: LibraryHandlers): void {
-  for (const [hash, timer] of pendingDelete) {
-    clearTimeout(timer);
+  for (const hash of [...pendingDelete.keys()]) {
+    forgetPending(hash);
     void h.onDelete(hash);
   }
-  pendingDelete.clear();
 }
 
 function showcase(games: GameMeta[], h: LibraryHandlers): GameMeta[] {
@@ -218,6 +224,7 @@ async function render(h: LibraryHandlers): Promise<void> {
     tiles.replaceChildren();
     renderOrbit(ringGames, saved, orbitDeps(h));
   } else {
+    settleOrbitCaption();
     const library = all.filter((g) => !pendingDelete.has(g.hash));
     const grouping = groupingOn() ? groupLibrary(library) : null;
     drawn = { all: library, saved, grouping };
@@ -366,8 +373,7 @@ function openStorageSheet(
       ask: str('library.delete_n_and_start_over', { 0: what }), sub: str('library.this_cannot_be_undone'),
       keep: count ? str('library.keep_my_games') : str('library.cancel'), yes: str('library.yes_delete_everything'),
       onYes: () => {
-        for (const t of pendingDelete.values()) clearTimeout(t);
-        pendingDelete.clear();
+        for (const hash of [...pendingDelete.keys()]) forgetPending(hash);
         void h.onEraseAll();
       },
     });
@@ -471,22 +477,21 @@ function selectAllOnFocus(input: HTMLInputElement): void {
 function deferDelete(g: GameMeta, h: LibraryHandlers): void {
   const timer = window.setTimeout(() => {
     pendingDelete.delete(g.hash);
+    pendingToast.delete(g.hash);
     void h.onDelete(g.hash);
   }, UNDO_MS);
   pendingDelete.set(g.hash, timer);
   void renderLibrary(h);
-  showToast(str('library.removed_n', { 0: displayTitle(g) }), {
+  pendingToast.set(g.hash, showToast(str('library.removed_n', { 0: displayTitle(g) }), {
     action: {
       label: str('library.undo'),
       run: () => {
-        const t = pendingDelete.get(g.hash);
-        if (t !== undefined) clearTimeout(t);
-        pendingDelete.delete(g.hash);
+        forgetPending(g.hash);
         void renderLibrary(h);
       },
     },
     ms: UNDO_MS,
-  });
+  }));
 }
 
 const NOTICE_MS = 8_000;

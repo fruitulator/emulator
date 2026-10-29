@@ -53,10 +53,14 @@
   visibility: visible;
   transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, visibility 0s;
 }
+.dd > .dd-list:not(.dd-float) {
+  display: none;
+}
 .dd-list.dd-float {
   position: fixed;
   z-index: 40;
   overflow: hidden;
+  overscroll-behavior: contain;
   box-sizing: border-box;
 }
 .dd-list.dd-float.nb-scrolls {

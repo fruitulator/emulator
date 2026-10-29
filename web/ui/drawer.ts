@@ -1,5 +1,5 @@
 import { backRow, choreograph, menuRow } from './rows';
-import { scrollWhenSettled } from './scrollsettle';
+import { scrollFromOpen } from './scrollsettle';
 
 export const PANEL_SHOW = 'menu-panel-show';
 
@@ -112,7 +112,7 @@ export class MenuDrawer {
     choreograph(fly);
     fly.scrollTop = 0;
     fly.classList.add('open');
-    scrollWhenSettled(fly);
+    scrollFromOpen(fly);
     if (drill) this.keepFlyout(top);
     else this.placeFlyout(row);
   }

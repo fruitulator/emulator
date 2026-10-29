@@ -1,4 +1,4 @@
-import { scrollWhenSettled } from './scrollsettle';
+import { revealNearest, scrollFromOpen } from './scrollsettle';
 
 export interface Dropdown {
   root: HTMLElement;
@@ -165,7 +165,8 @@ export function enhanceSelect(
     btn.setAttribute('aria-expanded', 'true');
     setActive(Math.max(0, select.selectedIndex));
     list.focus({ preventScroll: true });
-    scrollWhenSettled(list);
+    scrollFromOpen(list);
+    revealNearest(list, opts[active]);
     document.addEventListener('pointerdown', onOutside, true);
     addEventListener('scroll', onMove, true);
     addEventListener('resize', onMove);

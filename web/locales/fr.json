@@ -1383,7 +1383,7 @@
   },
   "kioskmode.title": "Mode kiosque",
   "kioskmode.subtitle": "Mode jeu restreint",
-  "kioskmode.can_play": "Jouer à n'importe quel jeu depuis l'Orbit",
+  "kioskmode.can_play": "Jouer à n'importe quel jeu depuis la page d'accueil",
   "kioskmode.can_coins": "Ajouter des pièces, régler le volume",
   "kioskmode.cannot_library": "Ouvrir la bibliothèque ou les salles d'arcade",
   "kioskmode.cannot_games": "Ajouter ou supprimer des jeux",

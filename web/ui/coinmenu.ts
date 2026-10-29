@@ -1,5 +1,5 @@
 import { str } from '../i18n';
-import { scrollWhenSettled } from './scrollsettle';
+import { scrollFromOpen } from './scrollsettle';
 import { namedCoinLabel, namingChoices } from '../coinask';
 import type { NamedCoin } from '../../src/machine/machine';
 
@@ -105,7 +105,7 @@ export function openCoinMenu(o: {
   list.addEventListener('keyup', (ev) => ev.stopPropagation());
 
   document.body.append(list);
-  scrollWhenSettled(list);
+  scrollFromOpen(list);
   setActive(0);
   const edge = 8;
   const w = list.offsetWidth;

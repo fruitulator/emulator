@@ -1193,6 +1193,7 @@ autosave.watchPage(window);
 
 async function openFromLibrary(hash: string, resume: boolean, variant?: string): Promise<void> {
   cancelPendingDelete(hash);
+  commitPendingDeletes(libraryHandlers);
   enterGameFullscreen();
   autosave.moment('switch');
   dismissError();

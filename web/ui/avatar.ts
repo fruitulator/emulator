@@ -87,7 +87,7 @@ export function avatarFace(name: string | null, pic: string | null, size: number
   return el;
 }
 
-export function namePill(name: string, pic: string | null, size = 22): HTMLSpanElement {
+export function namePill(name: string, pic: string | null, size = 32): HTMLSpanElement {
   const el = document.createElement('span');
   el.className = 'ui-name-pill';
   const label = document.createElement('span');

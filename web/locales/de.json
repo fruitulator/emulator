@@ -1383,7 +1383,7 @@
   },
   "kioskmode.title": "Kioskmodus",
   "kioskmode.subtitle": "Modus nur zum eingeschränkten Spielen",
-  "kioskmode.can_play": "Jedes Spiel aus dem Orbit spielen",
+  "kioskmode.can_play": "Jedes Spiel von der Startseite spielen",
   "kioskmode.can_coins": "Münzen einwerfen, Lautstärke ändern",
   "kioskmode.cannot_library": "Die Bibliothek oder Spielhallen öffnen",
   "kioskmode.cannot_games": "Spiele hinzufügen oder löschen",

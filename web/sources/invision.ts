@@ -75,7 +75,8 @@ export function parseInvisionTopics(json: unknown): Catalogue {
     const post = obj(t.firstPost);
     const html = typeof post.content === 'string' ? post.content : '';
     const files = [...new Set([...html.matchAll(/[?&/]files\/file\/(\d+)-/g)].map((m) => m[1]))];
-    if (!files.length && !/attachment\.php\?id=\d+/.test(html)) continue;
+    const attached = files.length ? [] : threadAttachments(html);
+    if (!files.length && !attached.length) continue;
     const author = obj(post.author).name;
     const img = /<img[^>]+src="(https:\/\/[^"]+)"/.exec(html)?.[1];
     machines.push({
@@ -83,7 +84,13 @@ export function parseInvisionTopics(json: unknown): Catalogue {
       ...(typeof author === 'string' && author ? { authors: [author] } : {}),
       ...(img ? { thumb: img } : {}),
       ...(typeof t.url === 'string' && /^https:\/\//.test(t.url) ? { page: t.url } : {}),
-      sets: files.map((f) => ({ id: f, layout: '', romset: '' })),
+      sets: files.length
+        ? files.map((f) => ({ id: f, layout: '', romset: '' }))
+        : attached.map((a) => ({
+          id: `${ATTACHMENT}${a.id}`, layout: '', romset: '',
+          ...(/\.(zip|rar|7z)$/i.test(a.name) ? { file: a.name } : {}),
+          ...(attached.length > 1 ? { config: { variant: a.name } } : {}),
+        })),
     });
   }
   return {
@@ -91,6 +98,22 @@ export function parseInvisionTopics(json: unknown): Catalogue {
     ...(typeof doc.page === 'number' ? { page: doc.page } : {}),
     ...(typeof doc.totalPages === 'number' ? { pages: doc.totalPages } : {}),
   };
+}
+
+export const ATTACHMENT = 'attachment-';
+
+function threadAttachments(html: string): { id: string; name: string }[] {
+  const all: { id: string; name: string; game: boolean }[] = [];
+  for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const id = /attachment\.php\?(?:[^"'>]*?&(?:amp;)?)?id=(\d+)/i.exec(m[1])?.[1];
+    if (!id || /<img\b/i.test(m[2]) || all.some((a) => a.id === id)) continue;
+    const name = unescapeTitle(m[2].replace(/<[^>]*>/g, '')).trim();
+    const ext = /data-fileext=["']?([a-z0-9]+)/i.exec(m[1])?.[1] ?? '';
+    all.push({ id, name, game: /\.(zip|rar|gam)$/i.test(name) || /^(zip|rar|gam)$/i.test(ext) });
+  }
+  const games = all.some((a) => a.game) ? all.filter((a) => a.game)
+    : all.filter((a) => !/\.(txt|pdf|docx?|rtf|jpe?g|png|gif|bmp|webp)$/i.test(a.name));
+  return games.map(({ id, name }) => ({ id, name }));
 }
 
 export function invisionDownloadFile(json: unknown): { url: string; name: string } {

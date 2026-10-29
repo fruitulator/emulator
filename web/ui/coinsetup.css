@@ -12,6 +12,7 @@
 .dd-list.coin-menu {
   min-width: 120px;
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
   z-index: 60;
   transition: none;
 }

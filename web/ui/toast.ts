@@ -22,7 +22,7 @@ function stackEl(): HTMLElement {
   return stack;
 }
 
-export function showToast(message: string, opts: ToastOptions = {}): void {
+export function showToast(message: string, opts: ToastOptions = {}): () => void {
   const { action, ms = TOAST_MS } = opts;
   const kind: ToastKind = opts.kind ?? (opts.error ? 'error' : 'info');
   const stays = opts.sticky === true || kind === 'error';
@@ -57,6 +57,7 @@ export function showToast(message: string, opts: ToastOptions = {}): void {
   el.append(close);
   stackEl().append(el);
   if (!stays) timer = window.setTimeout(hide, ms);
+  return hide;
 }
 
 export function holdToast(): { say(text: string): void; close(): void } {
