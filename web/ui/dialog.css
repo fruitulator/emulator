@@ -173,4 +173,6 @@
 .ui-dialog.help p { line-height: 1.45; margin: 0 0 10px; }
 .ui-dialog.help h3 { margin: 16px 0 6px; scroll-margin-top: 8px; }
 .ui-dialog.help ul, .ui-dialog.help ol { margin: 0 0 10px; padding-left: 22px; }
+.ui-dialog.help img { display: block; width: 100%; height: auto; aspect-ratio: 1100 / 720; margin: 10px 0 14px; border-radius: 10px; }
+.ui-dialog.help .ui-dialog-card { width: min(760px, 100%); max-width: 760px; }
 .ui-dialog.help li { margin: 6px 0; line-height: 1.45; }

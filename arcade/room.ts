@@ -14,7 +14,7 @@ import { UI_ICONS } from '../web/ui/icons';
 import { displayTitle } from '../web/gamelist';
 import type { ArcadeMachine } from './machines';
 import type { GameMeta } from '../web/store';
-import { withShare } from '../web/sources/get';
+import { downloadCard, type DownloadCard } from '../web/ui/progress';
 import { banksPlan, gridPlan, type RoomPlan, type Stand } from './floor';
 import type { Place } from './doc';
 import { BANK_MARGINS, buildRoom, dimMaterials, lightPool, type Dressing } from './dressing';
@@ -1043,11 +1043,13 @@ export class Room {
     this.getting.add(m.id);
     const note = this.live.stopNote;
     try {
+      let card = null as DownloadCard | null;
       const got = await this.getFromSource(m as ArcadeMachine & { source: NonNullable<ArcadeMachine['source']> }, (text, f) => {
-        if (!note) return;
-        if (text === null) { note.clear(); return; }
-        note.notice(f === undefined ? text : withShare(text, f), undefined, undefined, undefined, undefined, true);
+        if (text === null) return;
+        if (!card) { note?.clear(); card = downloadCard(); }
+        card.update(text, f);
       });
+      if (got) card?.done(); else card?.remove();
       if (!this.slots.includes(s)) return;
       if (got === 'other') {
         m.otherVersion = true;

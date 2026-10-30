@@ -1,8 +1,8 @@
 import { readFitSet, type Quad } from './fit';
-import { hasPak, listGames, type GameMeta, type StateRec } from '../web/store';
+import { listGames, type GameMeta, type StateRec } from '../web/store';
 import { byContentKey } from '../web/contentkeys';
-import { rekeyHolders } from './restamp';
-import { machineTitle } from './machinelist';
+import { holdingLibrary } from './restamp';
+import { machineKeys, machineTitle } from './machinelist';
 import {
   ARCADE_MAX_MACHINES, fromBase64, fromMachineState, onFloor, switchedOff, toMachineState, traceId, turnOf,
   type ArcadeDoc, type MachineConfig, type MachineSetup, type MachineSource, type Place,
@@ -235,19 +235,14 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
   const server = serverFlag();
   const player = server ? await devPlayerForPage() : '';
   if (server) console.info(`[arcade] playing against the arcade server at ${server} as ${player}`);
-  const byContent = byContentKey(await rekeyHolders(library, onFloor(arcade)));
-  const holderFor = (m: { contentHash: string; formerContentHashes?: string[] }): GameMeta[] =>
-    [m.contentHash, ...(m.formerContentHashes ?? [])].map((k) => byContent.get(k)).filter((g): g is GameMeta => !!g);
-  const noPak = new Set<string>();
-  await Promise.all([...new Set(onFloor(arcade).flatMap(holderFor))].map(async (g) => {
-    if (!(await hasPak(g.hash).catch(() => true))) noPak.add(g.hash);
-  }));
-  const programs = new Set(library.filter((g) => !noPak.has(g.hash)).map((g) => g.programHash).filter((p): p is string => !!p));
+  const holders = await holdingLibrary(library, onFloor(arcade));
+  const byContent = byContentKey(holders);
+  const programs = new Set(holders.map((g) => g.programHash).filter((p): p is string => !!p));
   const visiting = !!o.visiting;
   const out = onFloor(arcade).map((m): ArcadeMachine => {
     const t = m.trace;
     const formers = m.formerContentHashes ?? [];
-    const mine = holderFor(m).find((g) => !noPak.has(g.hash)) ?? null;
+    const mine = machineKeys(m).map((k) => byContent.get(k)).find((g) => !!g) ?? null;
     return {
       id: m.id,
       contentHash: m.contentHash,

@@ -67,14 +67,19 @@ export function pillPlayers(server: string, playing: readonly MachinePlayer[]): 
   return new Map(playing.map((p) => [p.machine, { name: p.name, pic: avatarUrl(server, { id: p.id, name: p.name, avatarAt: p.avatarAt }) }]));
 }
 
+export const PLAYING_QUIET_MS = 5 * 60_000;
+
+const ACTIVITY = ['pointerdown', 'pointermove', 'wheel', 'keydown'] as const;
+
 export function watchPlaying(api: ArcadeServer, arcadeId: string, onPlayers: (p: Map<string, PillPlayer>) => void): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   let asking = false;
+  let lastActive = Date.now();
   const ask = async (): Promise<void> => {
     if (asking) return;
     if (timer) { clearTimeout(timer); timer = null; }
-    if (stopped || document.visibilityState === 'hidden') return;
+    if (stopped || document.visibilityState === 'hidden' || Date.now() - lastActive >= PLAYING_QUIET_MS) return;
     asking = true;
     try {
       const r = await api.playing(arcadeId);
@@ -86,12 +91,22 @@ export function watchPlaying(api: ArcadeServer, arcadeId: string, onPlayers: (p:
     }
     if (!stopped) timer = setTimeout(() => void ask(), PLAYING_POLL_MS);
   };
-  const shown = (): void => { if (document.visibilityState === 'visible') void ask(); };
+  const shown = (): void => {
+    if (document.visibilityState !== 'visible') return;
+    lastActive = Date.now();
+    void ask();
+  };
+  const active = (): void => {
+    lastActive = Date.now();
+    if (timer === null && !asking) void ask();
+  };
   document.addEventListener('visibilitychange', shown);
+  for (const e of ACTIVITY) window.addEventListener(e, active, { capture: true, passive: true });
   void ask();
   return () => {
     stopped = true;
     if (timer) clearTimeout(timer);
     document.removeEventListener('visibilitychange', shown);
+    for (const e of ACTIVITY) window.removeEventListener(e, active, { capture: true });
   };
 }

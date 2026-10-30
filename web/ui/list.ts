@@ -63,11 +63,89 @@ export function tileGrid(cards: HTMLElement[] = []): HTMLDivElement {
   return grid;
 }
 
+const STRIP_DRAG_PX = 6;
+
 export function tileStrip(cards: HTMLElement[] = []): HTMLDivElement {
   const strip = document.createElement('div');
   strip.className = 'tile-strip';
   strip.append(...cards);
-  return strip;
+  const box = document.createElement('div');
+  box.className = 'tile-strip-box tile-strip-at-start tile-strip-at-end';
+  const arrow = (icon: string, label: string, dir: -1 | 1): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `nb-icon-btn tile-strip-arrow tile-strip-${dir < 0 ? 'prev' : 'next'}`;
+    b.setAttribute('aria-label', label);
+    b.append(rowIcon(icon, 'tile-strip-chev', 20));
+    b.addEventListener('click', () => pageStrip(strip, dir));
+    return b;
+  };
+  const prev = arrow(UI_ICONS.chevLeft, str('ui.list.previous'), -1);
+  const next = arrow(UI_ICONS.chevRight, str('ui.list.next'), 1);
+  box.append(strip, prev, next);
+
+  const sync = (): void => {
+    const atStart = strip.scrollLeft <= 1;
+    const atEnd = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1;
+    box.classList.toggle('tile-strip-at-start', atStart);
+    box.classList.toggle('tile-strip-at-end', atEnd);
+    if (atStart && document.activeElement === prev) next.focus();
+    if (atEnd && document.activeElement === next) prev.focus();
+  };
+  strip.addEventListener('scroll', sync, { passive: true });
+  new ResizeObserver(sync).observe(strip);
+  dragStrip(strip);
+  return box;
+}
+
+function pageStrip(strip: HTMLElement, dir: -1 | 1): void {
+  const [a, b] = strip.children;
+  if (!a || !b) return;
+  const pitch = b.getBoundingClientRect().left - a.getBoundingClientRect().left;
+  const css = getComputedStyle(strip);
+  const shown = strip.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+  const cards = Math.max(1, Math.floor((shown + parseFloat(css.columnGap)) / pitch) - 1);
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  strip.scrollBy({ left: dir * cards * pitch, behavior: still ? 'instant' : 'smooth' });
+}
+
+function dragStrip(strip: HTMLElement): void {
+  let press: { id: number; x: number; left: number } | null = null;
+  let dragging = false;
+  let swallowClick = false;
+  strip.addEventListener('pointerdown', (e) => {
+    swallowClick = false;
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    if (strip.scrollWidth <= strip.clientWidth) return;
+    press = { id: e.pointerId, x: e.clientX, left: strip.scrollLeft };
+  });
+  strip.addEventListener('pointermove', (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    const moved = e.clientX - press.x;
+    if (!dragging && Math.abs(moved) > STRIP_DRAG_PX) {
+      dragging = true;
+      strip.setPointerCapture(press.id);
+      strip.classList.add('tile-strip-dragging');
+    }
+    if (dragging) strip.scrollLeft = press.left - moved;
+  });
+  const end = (e: PointerEvent): void => {
+    if (!press || e.pointerId !== press.id) return;
+    press = null;
+    if (!dragging) return;
+    dragging = false;
+    swallowClick = e.type === 'pointerup';
+    strip.classList.remove('tile-strip-dragging');
+  };
+  strip.addEventListener('pointerup', end);
+  strip.addEventListener('pointercancel', end);
+  strip.addEventListener('click', (e) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  strip.addEventListener('dragstart', (e) => e.preventDefault());
 }
 
 export interface TileCardOptions {

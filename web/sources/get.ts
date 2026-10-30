@@ -62,8 +62,6 @@ export function agreeSheet(title: string, terms: string, returnTo: HTMLElement):
   return askInSheet({ title, line: text, yes: str('sources.agree'), returnTo });
 }
 
-export const withShare = (text: string, fraction: number): string => str('sources.busy_share', { text, n: Math.round(fraction * 100) });
-
 export interface GetUi {
   busy(text: string | null, fraction?: number): void;
   returnTo: HTMLElement;

@@ -1,6 +1,7 @@
 import { onFloor, switchedOff, type ArcadeDoc, type DocMachine } from './doc';
 import { listGames, type GameMeta } from '../web/store';
 import { byContentKey, contentKeys } from '../web/contentkeys';
+import { holdingLibrary } from './restamp';
 import { displayTitle } from '../web/gamelist';
 import { parseTitle } from '../web/title';
 import { closeSheet, escapeCloses, sheetLine, sheetRow, showSheet } from '../web/ui/sheet';
@@ -23,10 +24,14 @@ export function holdingsOf(library: readonly Pick<GameMeta, 'contentHash' | 'for
   return { content, program };
 }
 
+export function machineKeys(m: Pick<DocMachine, 'contentHash' | 'formerContentHashes'>): string[] {
+  return [m.contentHash, ...(m.formerContentHashes ?? [])];
+}
+
 export type Holding = 'held' | 'other' | 'none';
 
-export function holding(m: Pick<DocMachine, 'contentHash' | 'programHash'>, lib: Holdings): Holding {
-  if (lib.content.has(m.contentHash)) return 'held';
+export function holding(m: Pick<DocMachine, 'contentHash' | 'formerContentHashes' | 'programHash'>, lib: Holdings): Holding {
+  if (machineKeys(m).some((k) => lib.content.has(k))) return 'held';
   return m.programHash && lib.program.has(m.programHash) ? 'other' : 'none';
 }
 
@@ -38,7 +43,7 @@ export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService' | 'h
   return { mark: 'warn', label: str('arcade.machinelist.not_in_your_library') };
 }
 
-type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'contentHash' | 'programHash' | 'name'>;
+type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'contentHash' | 'formerContentHashes' | 'programHash' | 'name'>;
 
 export interface ListedGame<M extends Listed = Listed> { machines: M[]; shown: M }
 
@@ -61,7 +66,7 @@ export async function openMachineList(doc: ArcadeDoc, o: {
 } = {}): Promise<void> {
   const { onGo } = o;
   const games = gamesOf(onFloor(doc));
-  const library = await listGames().catch(() => [] as GameMeta[]);
+  const library = await holdingLibrary(await listGames().catch(() => [] as GameMeta[]), onFloor(doc));
   const lib = holdingsOf(library);
   const byContent = byContentKey(library);
   const returnTo = o.returnTo ?? (document.activeElement as HTMLElement | null) ?? document.body;
@@ -73,7 +78,7 @@ export async function openMachineList(doc: ArcadeDoc, o: {
     const said = !games.length ? str('arcade.machinelist.this_arcade_has_no_machines')
       : missing || other ? '' : str('arcade.machinelist.you_have_every_game_here');
     if (said) lines.push(sheetLine(said, '', { quiet: true }));
-    const titled = games.map((g) => ({ ...g, name: machineTitle(g.shown.name, byContent.get(g.shown.contentHash) ?? null) }))
+    const titled = games.map((g) => ({ ...g, name: machineTitle(g.shown.name, machineKeys(g.shown).map((k) => byContent.get(k)).find((h) => !!h) ?? null) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
     for (const { machines, shown, name } of titled) {
       const s = machineStatus(shown, holding(shown, lib));

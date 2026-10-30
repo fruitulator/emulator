@@ -13,6 +13,13 @@ let arcadeGuide: (() => void) | null = null;
 export function setArcadeGuide(opener: () => void): void { arcadeGuide = opener; }
 
 function blockNode(b: Block): HTMLElement {
+  if ('img' in b) {
+    const i = document.createElement('img');
+    i.src = `/help/${b.img}.webp`;
+    i.alt = b.alt;
+    i.loading = 'lazy';
+    return i;
+  }
   if ('p' in b) return richInto(document.createElement('p'), b.p);
   if ('h' in b) {
     const h = document.createElement('h3');

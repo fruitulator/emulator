@@ -658,6 +658,15 @@
       body.hosting #dpad { display: none; }
       body:has(#menu.open) #dpad { visibility: hidden; }
       body:has(#stopnote.open) #dpad { bottom: calc(var(--toast-h, 66px) + 26px + env(safe-area-inset-bottom)); }
+      .nb-dlstack { --foot: 20px; position: fixed; z-index: 15; left: 24px; right: 24px; margin-inline: auto; max-width: 420px;
+        bottom: calc(var(--foot) + env(safe-area-inset-bottom)); }
+      body.hosting .nb-dlstack, body:has(#menu.open) .nb-dlstack { visibility: hidden; }
+      body:has(#stopnote.open) .nb-dlstack { --foot: calc(var(--toast-h, 66px) + 26px); }
+      @media (max-width: 819px) {
+        .nb-dlstack { align-items: stretch; }
+        body:has(.nb-dlcard) #dpad { bottom: calc(var(--dl-h, 54px) + 26px + env(safe-area-inset-bottom)); }
+        body:has(.nb-dlcard):has(#stopnote.open) #dpad { bottom: calc(var(--toast-h, 66px) + var(--dl-h, 54px) + 32px + env(safe-area-inset-bottom)); }
+      }
       #dpad button { padding: 0; margin: 0; touch-action: none; -webkit-tap-highlight-color: transparent; }
       #dpad button svg { pointer-events: none; }
       #padMid .pad-icon { display: flex; pointer-events: none; }
@@ -671,6 +680,9 @@
         body:has(#dpad.at) #stopnote.open.passing { animation-name: toast-pop-top; }
         body:has(#dpad.at) #stopnote.open.settled { animation: none; }
         body:has(#dpad.at):has(#stopnote.open) #dpad { bottom: calc(var(--pad-rest) + env(safe-area-inset-bottom)); }
+        body:has(#dpad.at) .nb-dlstack { top: calc(64px + env(safe-area-inset-top)); bottom: auto; }
+        body:has(#dpad.at):has(#stopnote.open) .nb-dlstack { top: calc(64px + var(--toast-h, 66px) + 8px + env(safe-area-inset-top)); }
+        body:has(#dpad.at):has(.nb-dlcard) #dpad { bottom: calc(var(--pad-rest) + env(safe-area-inset-bottom)); }
         @media (prefers-reduced-motion: reduce) {
           body:has(#dpad.at) #stopnote, body:has(#dpad.at) #stopnote.open { transform: none; }
           body:has(#dpad.at) #stopnote.open, body:has(#dpad.at) #stopnote.open.passing { animation-name: toast-fade-in; }

@@ -1,4 +1,4 @@
-import { CONTENT_RULE, byContentKey, contentIdentityOf, getMeta, getPak, putMeta, type GameMeta } from '../web/store';
+import { CONTENT_RULE, byContentKey, contentIdentityOf, getMeta, getPak, hasPak, putMeta, type GameMeta } from '../web/store';
 import { decodePak, decodeSrcs } from '../web/gamepak';
 import type { ArcadeDoc } from './doc';
 
@@ -36,6 +36,18 @@ export async function rekeyHolders<M extends Wanted>(library: GameMeta[], machin
   const out: GameMeta[] = [];
   for (const g of library) out.push(g.programHash && programs.has(g.programHash) && !isCurrent(g) ? await rekeyRecord(g) : g);
   return out;
+}
+
+export async function holdingLibrary<M extends Wanted>(library: GameMeta[], machines: readonly M[]): Promise<GameMeta[]> {
+  const rekeyed = await rekeyHolders(library, machines);
+  const by = byContentKey(rekeyed);
+  const holders = new Set(machines.flatMap((m) => [m.contentHash, ...(m.formerContentHashes ?? [])])
+    .flatMap((k) => { const g = by.get(k); return g ? [g] : []; }));
+  const noPak = new Set<string>();
+  await Promise.all([...holders].map(async (g) => {
+    if (!(await hasPak(g.hash).catch(() => true))) noPak.add(g.hash);
+  }));
+  return noPak.size ? rekeyed.filter((g) => !noPak.has(g.hash)) : rekeyed;
 }
 
 export async function restampMachines(doc: ArcadeDoc, library: GameMeta[]): Promise<boolean> {

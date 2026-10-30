@@ -10,7 +10,7 @@
   gap: 20px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scroll-snap-type: x mandatory;
+  scroll-snap-type: x proximity;
   scrollbar-width: none;
   padding-bottom: 4px;
 }
@@ -23,6 +23,44 @@
 }
 .tile-strip::-webkit-scrollbar { display: none; }
 .tile-strip > * { scroll-snap-align: start; }
+.tile-strip-box { position: relative; min-width: 0; }
+.tile-strip-box:not(.tile-strip-at-start) .tile-strip,
+.tile-strip-box:not(.tile-strip-at-end) .tile-strip {
+  --fade-start: 48px;
+  --fade-end: 48px;
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+}
+.tile-strip-box.tile-strip-at-start .tile-strip { --fade-start: 0px; }
+.tile-strip-box.tile-strip-at-end .tile-strip { --fade-end: 0px; }
+.tile-strip-box .tile-strip-arrow { display: none; }
+@media (pointer: fine) {
+  .tile-strip-box .tile-strip-arrow {
+    display: inline-flex;
+    position: absolute;
+    top: 50%;
+    z-index: 2;
+    translate: 0 -50%;
+    opacity: 0;
+    transition: opacity .15s ease, filter .12s ease;
+  }
+  .tile-strip-box .tile-strip-prev { left: -22px; }
+  .tile-strip-box .tile-strip-next { right: -22px; }
+  .tile-strip-box:hover .tile-strip-arrow,
+  .tile-strip-box:focus-within .tile-strip-arrow { opacity: 1; }
+  .tile-strip-box.tile-strip-at-start .tile-strip-prev,
+  .tile-strip-box.tile-strip-at-end .tile-strip-next {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .15s ease, visibility 0s .15s;
+  }
+  .tile-strip-box:not(.tile-strip-at-start) .tile-strip,
+  .tile-strip-box:not(.tile-strip-at-end) .tile-strip { cursor: grab; user-select: none; }
+  .tile-strip-box .tile-strip.tile-strip-dragging { cursor: grabbing; scroll-snap-type: none; }
+  .tile-strip.tile-strip-dragging * { cursor: grabbing !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile-strip-box.tile-strip-box .tile-strip-arrow { transition: none; }
+}
 .tiles-small .tile-grid {
   grid-template-columns: repeat(auto-fill, minmax(clamp(104px, 10vw, 136px), 1fr));
   gap: 12px;
