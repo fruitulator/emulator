@@ -41,7 +41,7 @@
       #home { flex: none; display: block; text-decoration: none; }
       #home > * { display: block; height: min(var(--mark-h), calc((100vw - 120px) / (var(--mark-ar)))); width: auto; }
       #bar #home { display: none; }
-      .host-top { justify-content: space-between; box-sizing: border-box; height: 88px; max-width: var(--page); margin: 0 auto; }
+      .host-top { position: relative; z-index: 1; justify-content: space-between; box-sizing: border-box; height: 88px; max-width: var(--page); margin: 0 auto; }
       @media (max-width: 600px) {
         .host-top { height: auto; flex-wrap: nowrap; gap: 8px; }
         .host-top.nb-topbar .host-top-right, .host-top .ui-sitenav { gap: 8px; }
