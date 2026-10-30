@@ -1,5 +1,5 @@
 import {
-  classifyGame, linkedInstances, missingProgramRoms, missingSoundRoms,
+  classifyGame, gameFromConfig, linkedInstances, missingProgramRoms, missingSoundRoms,
   type Game, type GameFile, type LayoutProps,
 } from '../src/machine/registry';
 import { damagedRoms } from '../src/machine/textcopy';
@@ -14,11 +14,12 @@ import {
   DECODE_VERSION, PakError, decodeImgs, decodePak, decodeSrcs, loadPlan, readMeta,
 } from './gamepak';
 import type { ImportErrorCode, ImportRequest, ImportResponse } from './import-protocol';
+import { asHostFiles } from './hostfiles';
 import { gameFromZip } from './ingest';
 import { batteriesOf, isQuotaError, persistGame } from './persist';
 import { importPunnet } from './portable';
 import {
-  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, getMeta, getPak, hashGameFiles, playCountOf, programHashOf,
+  CONTENT_RULE, SCHEMA_VERSION, contentIdentityOf, getMeta, getPak, hashGameFiles, playCountOf, programHashOf,
   putMeta, type GameMeta,
 } from './store';
 
@@ -81,6 +82,17 @@ async function postCabinet(id: number, cab: Cabinet<ImageData> | null): Promise<
     assets.map(async (a): Promise<[number, ImageBitmap]> => [a.id, await createImageBitmap(a.image)]),
   );
   post({ id, kind: 'cabinet', geo, bitmaps }, bitmaps.map(([, b]) => b));
+}
+
+async function postCachedCabinet(id: number, cached: { geo: CabGeometry; imgs: Map<number, Uint8Array> }): Promise<void> {
+  assembleCabinet(cached.geo, cached.imgs);
+  const bitmaps = await Promise.all(
+    [...cached.imgs].map(async ([assetId, png]): Promise<[number, ImageBitmap]> => [
+      assetId,
+      await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' })),
+    ]),
+  );
+  post({ id, kind: 'cabinet', geo: cached.geo, bitmaps }, bitmaps.map(([, b]) => b));
 }
 
 async function importUpload(
@@ -192,20 +204,13 @@ async function openPak(
   if (plan === 'fast' && cached && storedMeta && storedMeta.system === game.system) {
     try {
       setPhase('rehydrate');
-      assembleCabinet(cached.geo, cached.imgs);
-      const bitmaps = await Promise.all(
-        [...cached.imgs].map(async ([assetId, png]): Promise<[number, ImageBitmap]> => [
-          assetId,
-          await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' })),
-        ]),
-      );
-      post({ id, kind: 'cabinet', geo: cached.geo, bitmaps }, bitmaps.map(([, b]) => b));
+      await postCachedCabinet(id, cached);
       const roms = missingProgramRoms(game);
       const sound = missingSoundRoms(game);
       const damaged = damagedRoms(game);
       const linked = linkedInstances(game);
       const stamped = storedMeta.contentHash !== undefined
-        && storedMeta.contentRule === CONTENT_RULE;
+        && storedMeta.contentRule === CONTENT_RULE && storedMeta.formerContentHashes !== undefined;
       const batteries = batteriesOf(files, spares);
       const bumped: GameMeta = {
         ...storedMeta,
@@ -221,8 +226,7 @@ async function openPak(
         missingSound: sound.length ? sound : undefined,
         damagedRoms: damaged.length ? damaged : undefined,
         linkedInstances: linked.length ? linked : undefined,
-        contentHash: stamped ? storedMeta.contentHash : await contentHashOf(files),
-        contentRule: CONTENT_RULE,
+        ...(stamped ? {} : await contentIdentityOf(files)),
         programHash: storedMeta.programHash ?? await programHashOf(files) ?? undefined,
         batteries: batteries.length ? batteries : undefined,
       };
@@ -250,6 +254,59 @@ async function openPak(
     : `[library] refreshed ${game.name} to decode v${DECODE_VERSION}`);
 }
 
+async function openAsHost(
+  req: Extract<ImportRequest, { op: 'openAsHost' }>,
+  setPhase: (p: string) => void,
+): Promise<void> {
+  const { id, hash } = req;
+  setPhase('read');
+  const bytes = await getPak(hash);
+  const storedMeta = await getMeta(hash);
+  if (!bytes || !storedMeta) throw new CodedError('game missing from library', 'missing-pak');
+  const pak = decodePak(bytes);
+  let files: GameFile[];
+  try {
+    files = decodeSrcs(pak.chunk('SRCS'));
+  } catch (e) {
+    console.warn('[library] source chunk unreadable', e);
+    throw new CodedError('cached source files unreadable', 'corrupt-srcs');
+  }
+  let spares: GameFile[] = [];
+  try {
+    if (pak.has('SPAR')) spares = decodeSrcs(pak.chunk('SPAR'));
+  } catch (e) {
+    console.warn('[library] spare state unreadable', e);
+  }
+  setPhase('match');
+  const { files: named, ownName } = await asHostFiles([...files, ...spares], req.hostFiles);
+  setPhase('classify');
+  const game = req.config ? gameFromConfig(named, req.config, storedMeta.name) : classifyGame(named, storedMeta.name);
+  const own = game.layoutName ? ownName.get(game.layoutName)?.toLowerCase() ?? null : null;
+  const current = storedMeta.decodeVersion === DECODE_VERSION;
+  const lp = current && own !== null && storedMeta.layoutProps?.layout === own ? storedMeta.layoutProps : undefined;
+  const layoutProps = lp && game.layoutName ? { ...lp, layout: game.layoutName.toLowerCase() } : undefined;
+  post({ id, kind: 'files', files: named, storedMeta: { ...storedMeta, layoutProps }, variant: game.variant });
+
+  const stamp = readMeta(pak);
+  if (pak.decodeVersion === DECODE_VERSION && pak.has('CABJ') && own !== null && stamp?.layout === own) {
+    try {
+      setPhase('rehydrate');
+      await postCachedCabinet(id, {
+        geo: JSON.parse(strFromU8(pak.chunk('CABJ'))) as CabGeometry,
+        imgs: decodeImgs(pak.chunk('IMGS')),
+      });
+      post({ id, kind: 'done', meta: storedMeta });
+      return;
+    } catch (e) {
+      console.warn('[library] cached cabinet unreadable, decoding the layout', e);
+    }
+  }
+  setPhase('decoding');
+  const { cab } = await decodeLayoutOrNone(game);
+  await postCabinet(id, cab);
+  post({ id, kind: 'done', meta: storedMeta });
+}
+
 function errorCode(e: unknown): ImportErrorCode | undefined {
   if (e instanceof CodedError) return e.code;
   if (isQuotaError(e)) return 'quota';
@@ -265,6 +322,8 @@ async function handle(req: ImportRequest): Promise<void> {
       await importUpload(req, setPhase);
     } else if (req.op === 'openPak') {
       await openPak(req, setPhase);
+    } else if (req.op === 'openAsHost') {
+      await openAsHost(req, setPhase);
     } else if (req.op === 'importPunnet') {
       setPhase('read');
       let meta: GameMeta;

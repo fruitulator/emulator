@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { classifyGame, machineFor, type Game } from '../src/machine/registry';
+import { classifyGame, gameFromConfig, machineFor, type Game, type GameConfig } from '../src/machine/registry';
 import { FrameView, frameLayoutFor, type FrameLayout } from '../src/machine/framestate';
 import { decodedLayout, readSetting } from '../src/layout/fmlconfig';
-import { openPak } from '../web/importer';
+import { openAsHost, openPak, type ImportEvents } from '../web/importer';
+import type { HostFile } from '../web/hostfiles';
 import { currentLayoutProps } from '../web/gamepak';
 import { usableCabinet, type Cabinet, type CabLamp } from '../web/dat';
 import { artImage, componentBounds } from '../web/cabjson';
@@ -13,6 +14,7 @@ import { capsAreSwitches } from '../web/cappulse';
 import { stampCoinInputs, viewFor } from '../web/platform';
 import { virtualDisplayReversed } from '../src/machine/layoutdisplay';
 import { getThumb } from '../web/store';
+import { contentKeys } from '../web/contentkeys';
 import { decodeTrace, traceMismatch, TracePlayer } from './trace';
 import { DEFAULT_DECK, deckBand, lowerSplit } from './fold';
 import { cropOf, proposeFit, quadFrac, resolveFit, wholeTextureFit, type FitDetected, type ShellFit } from './fit';
@@ -186,7 +188,8 @@ export class Glass {
   }
 
   private key(): string {
-    const held = this.machine.held!;
+    const m = this.machine;
+    const held = m.hostFiles && m.gameConfig ? { ...m.held!, variant: m.gameConfig.source } : m.held!;
     return cacheKey({
       held, contentHash: this.machine.contentHash, setup: this.machine.setup,
       cabinetStyle: this.machine.cabinetStyle, traceUrl: this.machine.traceUrl, texSize: TEX_ATTRACT,
@@ -254,7 +257,8 @@ export class Glass {
     try {
       const rec = await this.readCache();
       t = performance.now();
-      const { game, cab } = await openHeld(held.hash, T);
+      const m = this.machine;
+      const { game, cab } = await openHeld(held.hash, T, m.hostFiles ? { files: m.hostFiles, config: m.gameConfig ?? null } : null);
       lap('open');
       this.game = game;
       if (rec) {
@@ -307,7 +311,7 @@ export class Glass {
       const art = this.whole && this.showArt(TEX_WHOLE);
       if (this.machine.traceUrl) {
         try {
-          await this.loadTrace(this.machine, held.contentHash ?? this.machine.contentHash, game,
+          await this.loadTrace(this.machine, [...contentKeys(held), this.machine.contentHash, ...this.machine.formerContentHashes], game,
             shapeIsCurrent(rec) ? rec.shape : null);
           lap('trace');
           this.mode = 'attract';
@@ -335,7 +339,7 @@ export class Glass {
     }
   }
 
-  private async loadTrace(m: ArcadeMachine, contentHash: string, game: Game, kept: FrameLayout | null): Promise<void> {
+  private async loadTrace(m: ArcadeMachine, contentHash: readonly string[], game: Game, kept: FrameLayout | null): Promise<void> {
     let bytes: Uint8Array;
     if (m.traceBytes) {
       bytes = await m.traceBytes();
@@ -628,16 +632,19 @@ export function artReader(cab: Cabinet, blocks: readonly { left: number; top: nu
 }
 const ART_MARGIN = 4;
 
-function openHeld(hash: string, T: LoadTimes): Promise<{ game: Game; cab: Cabinet | null }> {
+function openHeld(
+  hash: string, T: LoadTimes, host: { files: HostFile[]; config: GameConfig | null } | null,
+): Promise<{ game: Game; cab: Cabinet | null }> {
   return new Promise((resolve, reject) => {
     let game: Game | null = null;
     let cab: Cabinet | null | undefined;
     const done = (): void => { if (game && cab !== undefined) resolve({ game, cab }); };
-    openPak(hash, {
+    const events: ImportEvents = {
       onFiles: (files, meta, build) => {
         const t = performance.now();
         const hasGam = files.some((f) => /\.gam$/i.test(f.name));
-        const g = classifyGame(files, hasGam ? undefined : meta?.name, build);
+        const g = host?.config ? gameFromConfig(files, host.config, meta?.name)
+          : classifyGame(files, hasGam ? undefined : meta?.name, build);
         g.layoutProps = currentLayoutProps(meta);
         game = g;
         T.openMain += performance.now() - t;
@@ -649,6 +656,8 @@ function openHeld(hash: string, T: LoadTimes): Promise<{ game: Game; cab: Cabine
         T.openMain += performance.now() - t;
         done();
       },
-    }, undefined, false).then(() => { if (!game) reject(new Error('the record opened with no files')); done(); }, reject);
+    };
+    (host ? openAsHost(hash, host.files, host.config, events) : openPak(hash, events, undefined, false))
+      .then(() => { if (!game) reject(new Error('the record opened with no files')); done(); }, reject);
   });
 }

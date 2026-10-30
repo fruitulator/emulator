@@ -264,7 +264,7 @@ export class DressPreview {
       return null;
     });
     const shell = await buildShell({
-      fit: g.shellFit(), texture: g.texture, model, trim: g.trim, name: g.machine.name, cabinet: g.machine.setup.cabinet,
+      fit: g.shellFit(), texture: g.texture, model, trim: g.trim, body: g.machine.setup.body, surface: g.machine.setup.surface, name: g.machine.name, cabinet: g.machine.setup.cabinet,
       dress: cabinetDress(this.renderer),
     });
     if (seq !== this.seq) { disposeShell(shell, g.texture); return; }

@@ -10,26 +10,40 @@ export interface OrbitDeps {
   activity(g: GameMeta): string;
   fillArtwork(frame: HTMLElement): Promise<void>;
   clearArtwork(frame: HTMLElement): void;
+  saveArtRatio(hash: string, ratio: number): void;
   chip(label: string, kind?: 'plat' | 'warn' | 'on'): HTMLElement;
 }
 
 const SLOT_MAX = 12;
 
-type Pose = { x: number; turn: number; scale: number; opacity: number; w: number; h: number };
+type Pose = { gap: number; turn: number; scale: number; opacity: number; h: number };
 const WIDE: readonly Pose[] = [
-  { x: 0, turn: 0, scale: 1, opacity: 1, w: 330, h: 430 },
-  { x: 270, turn: 34, scale: 0.88, opacity: 0.75, w: 250, h: 340 },
-  { x: 470, turn: 48, scale: 0.72, opacity: 0.35, w: 250, h: 340 },
-  { x: 470, turn: 48, scale: 0.72, opacity: 0, w: 250, h: 340 },
+  { gap: 0, turn: 0, scale: 1, opacity: 1, h: 430 },
+  { gap: 6, turn: 34, scale: 0.88, opacity: 0.75, h: 340 },
+  { gap: 6, turn: 48, scale: 0.72, opacity: 0.35, h: 340 },
+  { gap: 6, turn: 48, scale: 0.72, opacity: 0, h: 340 },
 ];
 const NARROW: readonly Pose[] = [
-  { x: 0, turn: 0, scale: 1, opacity: 1, w: 250, h: 330 },
-  { x: 170, turn: 34, scale: 0.75, opacity: 0.75, w: 250, h: 340 },
-  { x: 470, turn: 48, scale: 0.72, opacity: 0, w: 250, h: 340 },
-  { x: 470, turn: 48, scale: 0.72, opacity: 0, w: 250, h: 340 },
+  { gap: 0, turn: 0, scale: 1, opacity: 1, h: 330 },
+  { gap: -36, turn: 34, scale: 0.75, opacity: 0.75, h: 340 },
+  { gap: 130, turn: 48, scale: 0.72, opacity: 0, h: 340 },
+  { gap: 130, turn: 48, scale: 0.72, opacity: 0, h: 340 },
 ];
 const narrowQuery = typeof matchMedia === 'function' ? matchMedia('(max-width: 720px)') : null;
 const poses = (): readonly Pose[] => (narrowQuery?.matches ? NARROW : WIDE);
+
+const RATIO_MIN = 0.6;
+const RATIO_MAX = 0.85;
+const RATIO_UNKNOWN = 0.72;
+const BEZEL_W = 20;
+const BEZEL_H = 32;
+const PERSPECTIVE = 1200;
+
+const ratios = new Map<string, number>();
+const knownRatio = (g: GameMeta): number | undefined => ratios.get(g.hash) ?? g.artRatio;
+const clampRatio = (r: number): number => Math.max(RATIO_MIN, Math.min(RATIO_MAX, r));
+const frameRatio = (k: number): number => clampRatio(knownRatio(games[mod(k, games.length)]) ?? RATIO_UNKNOWN);
+const cardWidth = (h: number, r: number): number => (h - BEZEL_H) * r + BEZEL_W;
 
 let games: GameMeta[] = [];
 let saved = new Set<string>();
@@ -91,16 +105,39 @@ export function renderOrbit(g: GameMeta[], s: Set<string>, d: OrbitDeps): void {
   settleOrbitCaption();
 }
 
-function poseAt(o: number): Pose {
+function fanX(base: number, o: number): number {
+  if (o === 0) return 0;
+  const P = poses();
+  const side = Math.sign(o);
+  let edge = cardWidth(P[0].h, frameRatio(base)) / 2;
+  let x = 0;
+  for (let i = 1; i <= Math.min(Math.abs(o), P.length - 1); i++) {
+    const row = P[i];
+    const half = (cardWidth(row.h, frameRatio(base + side * i)) / 2) * row.scale;
+    const turn = (row.turn * Math.PI) / 180;
+    const across = half * Math.cos(turn);
+    const depth = half * Math.sin(turn);
+    x = ((edge + row.gap) * (PERSPECTIVE + depth)) / PERSPECTIVE + across;
+    if (i === 1) edge = ((x + across) * PERSPECTIVE) / (PERSPECTIVE - depth);
+  }
+  return side * x;
+}
+
+function poseAt(k: number): Pose & { x: number; w: number } {
+  const o = k - pos;
   const P = poses();
   const d = Math.min(Math.abs(o), P.length - 1);
   const i = Math.min(Math.floor(d), P.length - 2);
   const t = d - i;
-  const mix = (k: keyof Pose): number => P[i][k] + (P[i + 1][k] - P[i][k]) * t;
-  const left = o < 0;
+  const mix = (f: 'turn' | 'scale' | 'opacity' | 'h'): number => P[i][f] + (P[i + 1][f] - P[i][f]) * t;
+  const below = Math.floor(pos);
+  const along = pos - below;
+  const h = mix('h');
   return {
-    x: (left ? -1 : 1) * mix('x'), turn: (left ? 1 : -1) * mix('turn'),
-    scale: mix('scale'), opacity: mix('opacity'), w: mix('w'), h: mix('h'),
+    gap: 0,
+    x: fanX(below, k - below) * (1 - along) + fanX(below + 1, k - below - 1) * along,
+    turn: (o < 0 ? 1 : -1) * mix('turn'),
+    scale: mix('scale'), opacity: mix('opacity'), h, w: cardWidth(h, frameRatio(k)),
   };
 }
 
@@ -117,13 +154,13 @@ function fitToHeight(): void {
 
 function applyPoses(held: boolean): void {
   for (const el of slots) {
-    const o = Number(el.dataset.k) - pos;
-    const at = Math.round(o);
+    const k = Number(el.dataset.k);
+    const at = Math.round(k - pos);
     el.dataset.pos = String(at);
     if (at === 0) el.setAttribute('aria-current', 'true');
     else el.removeAttribute('aria-current');
     if (held) {
-      const p = poseAt(o);
+      const p = poseAt(k);
       el.style.width = `${p.w.toFixed(1)}px`;
       el.style.height = `${p.h.toFixed(1)}px`;
       el.style.marginTop = `${(-p.h / 2).toFixed(1)}px`;
@@ -131,7 +168,8 @@ function applyPoses(held: boolean): void {
       el.style.transform = `translateX(${p.x.toFixed(1)}px) rotateY(${p.turn.toFixed(2)}deg) scale(${p.scale.toFixed(3)})`;
       el.style.opacity = p.opacity.toFixed(3);
     } else {
-      for (const k of ['width', 'height', 'marginTop', 'marginLeft', 'transform', 'opacity'] as const) el.style[k] = '';
+      for (const f of ['width', 'height', 'marginTop', 'marginLeft', 'transform', 'opacity'] as const) el.style[f] = '';
+      el.style.setProperty('--x', `${fanX(Math.round(pos), at).toFixed(1)}px`);
     }
   }
 }
@@ -156,6 +194,10 @@ function fillSlot(slot: HTMLElement, g: GameMeta): void {
   if (old) d.clearArtwork(old);
   slot.replaceChildren();
   slot.dataset.hash = g.hash;
+  slot.style.transitionProperty = 'transform, opacity';
+  dressFrame(slot, g);
+  void slot.offsetWidth;
+  slot.style.transitionProperty = '';
 
   const frame = document.createElement('div');
   frame.className = 'art nb-cab__glass';
@@ -185,6 +227,28 @@ function fillSlot(slot: HTMLElement, g: GameMeta): void {
     flag.setAttribute('aria-hidden', 'true');
     frame.append(flag);
   }
+}
+
+function dressFrame(slot: HTMLElement, g: GameMeta): void {
+  const r = knownRatio(g);
+  slot.style.setProperty('--r', String(clampRatio(r ?? RATIO_UNKNOWN)));
+  slot.dataset.fit = r !== undefined && r === clampRatio(r) ? 'fill' : 'contain';
+}
+
+function artLoaded(img: HTMLImageElement): void {
+  const slot = img.closest<HTMLElement>('.orbit-card');
+  const g = slot && games.find((x) => x.hash === slot.dataset.hash);
+  if (!slot || !g || !img.naturalHeight) return;
+  const r = Math.round((img.naturalWidth / img.naturalHeight) * 10000) / 10000;
+  const was = knownRatio(g);
+  if (r === was) return;
+  ratios.set(g.hash, r);
+  deps!.saveArtRatio(g.hash, r);
+  if (was !== undefined && clampRatio(was) === clampRatio(r)) { dressFrame(slot, g); return; }
+  slot.style.setProperty('--r', String(clampRatio(r)));
+  slot.dataset.fit = 'contain';
+  window.setTimeout(() => { if (slot.dataset.hash === g.hash) dressFrame(slot, g); }, SETTLE_MS);
+  applyPoses(stageEl().classList.contains('dragging'));
 }
 
 let caption: OrbitCaption | null = null;
@@ -298,6 +362,10 @@ function wireOnce(): void {
   wired = true;
   const stage = stageEl();
 
+  ringEl().addEventListener('load', (ev) => {
+    if (ev.target instanceof HTMLImageElement && ev.target.classList.contains('art-img')) artLoaded(ev.target);
+  }, true);
+
   const back = (): void => { if (onScreen(wrapEl())) settleOrbitCaption(); };
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') back();
@@ -348,7 +416,7 @@ function wireOnce(): void {
   let vel = 0;
   let downTarget: HTMLElement | null = null;
 
-  const posPerPx = () => 1 / poses()[1].x;
+  const posPerPx = () => 1 / (narrowQuery?.matches ? 170 : 270);
 
   stage.addEventListener('pointerdown', (ev) => {
     if (!games.length || ev.button !== 0) return;

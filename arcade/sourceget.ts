@@ -1,6 +1,7 @@
 import { fillSources, type ArcadeDoc, type MachineSource } from './doc';
 import { uploadToLibrary } from './upload';
 import { putMeta, type GameMeta } from '../web/store';
+import { contentKeys } from '../web/contentkeys';
 import { SourceClient, SourceError } from '../web/sources/client';
 import { askInSheet, errText, fetchFromSource, getFailedText, readSource, startSignIn } from '../web/sources/get';
 import { SourceStore, hostOfKey, sourceKey, splitOrigin } from '../web/sources/store';
@@ -65,7 +66,7 @@ export async function getMachineSet(
     progress(str('arcade.source.importing_n', { 0: title }));
     const result = await uploadToLibrary([file], (text, done) => progress(text, done));
     progress(null);
-    const exact = result.games.find((g) => g.contentHash === m.contentHash);
+    const exact = result.games.find((g) => contentKeys(g).includes(m.contentHash));
     for (const g of result.games) if (!g.origin) await putMeta({ ...g, origin: `${sourceKey(idx.host, s.id)}#${m.source.item}` }).catch(() => undefined);
     if (exact) return exact;
     if (result.games.length) return 'other';

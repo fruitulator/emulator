@@ -141,9 +141,9 @@ export function decodeTrace(bytes: Uint8Array): DecodedTrace {
   return { header, frames: payload, still };
 }
 
-export function traceMismatch(h: TraceHeader, contentHash: string, fl: FrameLayout): string | null {
+export function traceMismatch(h: TraceHeader, contentHash: string | readonly string[], fl: FrameLayout): string | null {
   if (h.version !== TRACE_VERSION) return `trace version ${h.version}, this build reads ${TRACE_VERSION}`;
-  if (h.contentHash !== contentHash) return 'trace is of another set';
+  if (!(typeof contentHash === 'string' ? [contentHash] : contentHash).includes(h.contentHash)) return 'trace is of another set';
   if (h.layoutDigest !== layoutDigest(fl)) return 'trace was captured with another frame shape';
   return null;
 }

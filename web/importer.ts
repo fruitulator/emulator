@@ -1,4 +1,5 @@
-import type { GameFile } from '../src/machine/registry';
+import type { GameConfig, GameFile } from '../src/machine/registry';
+import type { HostFile } from './hostfiles';
 import { assembleCabinet } from './cabjson';
 import type { Cabinet } from './dat';
 import type {
@@ -198,6 +199,12 @@ export function openPak(
   hash: string, events: ImportEvents, variant?: VariantId, play?: boolean,
 ): Promise<GameMeta> {
   return request({ id: nextId++, op: 'openPak', hash, variant, play }, events, []);
+}
+
+export function openAsHost(
+  hash: string, hostFiles: HostFile[], config: GameConfig | null, events: ImportEvents,
+): Promise<GameMeta> {
+  return request({ id: nextId++, op: 'openAsHost', hash, hostFiles, config }, events, [], true);
 }
 
 export function importPunnet(

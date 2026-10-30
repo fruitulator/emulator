@@ -13,7 +13,7 @@ import { enhanceSelect } from '../web/ui/dropdown';
 import type { ArcadeMachine } from './machines';
 import { machineTitle } from './machinelist';
 import { cabinetModels, styleModel } from './cabinets';
-import { CABINET_STYLES, cabinetStyle, DEFAULT_STYLE } from './cabinet-default';
+import { CABINET_STYLES, cabinetStyle, DEFAULT_STYLE, styleBody } from './cabinet-default';
 import { controlNaming } from '../web/controlname';
 import { viewFor } from '../web/platform';
 import { invalidateRec } from './cache';
@@ -36,11 +36,13 @@ import { LiveLook, settleLook } from './looksettle';
 import { addDeck, hasDeck, isSetBox, readFitSet, removeDeck, resetBox, resolveFit, withBox, type FitSet, type PanelName } from './fit';
 import { clampQuad, isConvexQuad, quadOfRect, type Quad } from './quad';
 import { listGames } from '../web/store';
+import { contentKeys } from '../web/contentkeys';
 import { PlayPointer } from '../web/play/pointer';
 import { str } from '../web/i18n';
 import { coinTicks } from '../web/ui/coinsetup';
 import { editedSlot, markedSlots, readCoinWiring, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
 import { markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
+import { definitionOf, keepCoinAnswers } from './hostset';
 
 declare const __BUILD_ID__: string;
 const BUILD = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev';
@@ -119,7 +121,7 @@ export async function openWizard(
   if (!row) return;
   const library = await listGames().catch(() => []);
   if (exited) return;
-  const held = library.find((g) => (g.contentHash ?? g.hash) === row.contentHash) ?? null;
+  const held = library.find((g) => (g.contentHash ? contentKeys(g) : [g.hash]).includes(row.contentHash)) ?? null;
   title.textContent = machineTitle(row.name, held);
   if (!held) {
     const missing = el('div', null, { class: 'wz-missing' });
@@ -132,7 +134,7 @@ export async function openWizard(
   }
   row.setup = readFitSet(row.setup ?? {});
   w = new Wizard(root, doc, row, mode, leave, {
-    id: row.id, contentHash: row.contentHash, name: machineTitle(row.name, held), board: row.board, cabinetStyle: row.detected?.cabinetStyle ?? null,
+    id: row.id, contentHash: row.contentHash, formerContentHashes: row.formerContentHashes ?? [], name: machineTitle(row.name, held), board: row.board, cabinetStyle: row.detected?.cabinetStyle ?? null,
     traceUrl: null, held, setup: row.setup, config: row.config,
     slot: {
       load: async () => (mode === 'edit' && row.state ? fromMachineState(row.state, held.hash) : null),
@@ -1286,6 +1288,7 @@ class Wizard {
     cab.value = models.some((mdl) => mdl.id === set.cabinet) || (cabinetStyle(set.cabinet) && cabinetStyle(set.cabinet) !== DEFAULT_STYLE) ? set.cabinet : 'default';
     cab.addEventListener('change', () => {
       set.cabinet = cab.value;
+      syncBody();
       void changed();
     });
     cabRow.append(el('span', str('arcade.wizard.model'), { class: 'row-label' }), cab);
@@ -1323,6 +1326,49 @@ class Wizard {
     trimRow.append(el('span', str('arcade.wizard.trim_colour'), { class: 'row-label' }), trimEnd);
     syncTrim();
     box.append(trimRow);
+    const bodyRow = el('div', null, { class: 'menu-row nb-kv wz-look-row' });
+    const body = el('input', null, { type: 'color', 'aria-label': str('arcade.wizard.body_colour'), class: 'wiz-colour' });
+    const bodyReset = iconButton(UI_ICONS.reset, str('arcade.wizard.reset_body_colour'), () => {
+      delete set.body;
+      syncBody();
+      void changed();
+    });
+    bodyReset.className = 'nb-mini-btn wz-trim-reset';
+    function syncBody(): void {
+      body.value = set.body ?? styleBody(set.cabinet);
+      const off = !!set.body;
+      bodyReset.classList.toggle('off-neutral', off);
+      bodyReset.disabled = !off;
+      bodyRow.hidden = models.some((mdl) => mdl.id === set.cabinet);
+    }
+    body.addEventListener('input', () => {
+      set.body = body.value;
+      syncBody();
+      if (this.preview?.root.isConnected) void this.preview?.rebuild();
+    });
+    body.addEventListener('change', () => {
+      set.body = body.value;
+      syncBody();
+      if (this.preview?.root.isConnected) void this.preview?.rebuild();
+      void this.save();
+    });
+    const surface = el('select', null, { 'aria-label': str('arcade.wizard.body_material') });
+    surface.append(
+      el('option', str('arcade.wizard.body_wood'), { value: 'wood' }),
+      el('option', str('arcade.wizard.body_plastic'), { value: 'plastic' }),
+    );
+    surface.value = set.surface ?? 'wood';
+    surface.addEventListener('change', () => {
+      if (surface.value === 'plastic') set.surface = 'plastic';
+      else delete set.surface;
+      void changed();
+    });
+    const bodyEnd = el('span', null, { class: 'wz-trim' });
+    bodyEnd.append(surface, bodyReset, body);
+    bodyRow.append(el('span', str('arcade.wizard.body_colour'), { class: 'row-label' }), bodyEnd);
+    syncBody();
+    box.append(bodyRow);
+    enhanceSelect(surface, { small: true });
     this.cabGroup = group(str('arcade.wizard.cabinet'), box);
     this.panel.append(this.cabGroup);
     this.fitView?.dispose();
@@ -2049,6 +2095,12 @@ class Wizard {
       m.installedAt ??= Date.now();
       m.money = this.trust();
       m.gameConfig = g.game ? configOf(g.game) : null;
+      if (g.game) {
+        const def = await definitionOf(g.game);
+        m.hostFiles = def.hostFiles;
+        m.versions = def.versions;
+      }
+      keepCoinAnswers(m, this.wm.machine.held?.coinAnswers);
       m.detected = {
         glass: g.detected ? quadOfRect(g.detected.glass) : undefined,
         buttons: g.detected ? quadOfRect(g.detected.buttons) : undefined,
@@ -2058,6 +2110,7 @@ class Wizard {
       m.balance.push({ at: Date.now(), kind: m.balance.some((b) => b.kind === 'float') ? 'reading' : 'float', ledger: reading });
       this.finishValidation();
       await this.save();
+      void syncArcade(this.doc);
       const hash = this.wm.machine.held?.hash;
       if (hash) await invalidateRec(hash);
       this.preview?.dispose();

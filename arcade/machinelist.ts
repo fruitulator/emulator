@@ -1,5 +1,6 @@
-import { onFloor, type ArcadeDoc, type DocMachine } from './doc';
+import { onFloor, switchedOff, type ArcadeDoc, type DocMachine } from './doc';
 import { listGames, type GameMeta } from '../web/store';
+import { byContentKey, contentKeys } from '../web/contentkeys';
 import { displayTitle } from '../web/gamelist';
 import { parseTitle } from '../web/title';
 import { closeSheet, escapeCloses, sheetLine, sheetRow, showSheet } from '../web/ui/sheet';
@@ -12,11 +13,11 @@ export function machineTitle(name: string, held: GameMeta | null): string {
 
 export interface Holdings { content: ReadonlySet<string>; program: ReadonlySet<string> }
 
-export function holdingsOf(library: readonly Pick<GameMeta, 'contentHash' | 'programHash'>[]): Holdings {
+export function holdingsOf(library: readonly Pick<GameMeta, 'contentHash' | 'formerContentHashes' | 'programHash'>[]): Holdings {
   const content = new Set<string>();
   const program = new Set<string>();
   for (const g of library) {
-    if (g.contentHash) content.add(g.contentHash);
+    for (const k of contentKeys(g)) content.add(k);
     if (g.programHash) program.add(g.programHash);
   }
   return { content, program };
@@ -29,15 +30,15 @@ export function holding(m: Pick<DocMachine, 'contentHash' | 'programHash'>, lib:
   return m.programHash && lib.program.has(m.programHash) ? 'other' : 'none';
 }
 
-export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService'>, held: Holding): { mark: Mark; label: string } {
+export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles'>, held: Holding): { mark: Mark; label: string } {
   if (m.status !== 'installed') return { mark: 'pending', label: str('arcade.machinelist.not_set_up_yet') };
-  if (m.outOfService) return { mark: 'pending', label: str('arcade.machinelist.out_of_service') };
+  if (switchedOff(m)) return { mark: 'pending', label: str('arcade.machinelist.out_of_service') };
   if (held === 'held') return { mark: 'pass', label: str('arcade.machinelist.in_your_library') };
   if (held === 'other') return { mark: 'warn', label: str('arcade.machinelist.different_version') };
   return { mark: 'warn', label: str('arcade.machinelist.not_in_your_library') };
 }
 
-type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'contentHash' | 'programHash' | 'name'>;
+type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'contentHash' | 'programHash' | 'name'>;
 
 export interface ListedGame<M extends Listed = Listed> { machines: M[]; shown: M }
 
@@ -46,12 +47,12 @@ export function gamesOf<M extends Listed>(machines: readonly M[]): ListedGame<M>
   for (const m of machines) by.set(m.contentHash, [...(by.get(m.contentHash) ?? []), m]);
   return [...by.values()].map((ms) => ({
     machines: ms,
-    shown: ms.find((m) => m.status === 'installed' && !m.outOfService) ?? ms.find((m) => m.status === 'installed') ?? ms[0],
+    shown: ms.find((m) => m.status === 'installed' && !switchedOff(m)) ?? ms.find((m) => m.status === 'installed') ?? ms[0],
   }));
 }
 
 export function countHolding(games: readonly ListedGame[], lib: Holdings, as: Holding): number {
-  return games.filter(({ shown: m }) => m.status === 'installed' && !m.outOfService && holding(m, lib) === as).length;
+  return games.filter(({ shown: m }) => m.status === 'installed' && !switchedOff(m) && holding(m, lib) === as).length;
 }
 
 export async function openMachineList(doc: ArcadeDoc, o: {
@@ -62,8 +63,7 @@ export async function openMachineList(doc: ArcadeDoc, o: {
   const games = gamesOf(onFloor(doc));
   const library = await listGames().catch(() => [] as GameMeta[]);
   const lib = holdingsOf(library);
-  const byContent = new Map<string, GameMeta>();
-  for (const g of library) if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, g);
+  const byContent = byContentKey(library);
   const returnTo = o.returnTo ?? (document.activeElement as HTMLElement | null) ?? document.body;
 
   const draw = (): void => {
@@ -81,7 +81,7 @@ export async function openMachineList(doc: ArcadeDoc, o: {
       const icon = statusIcon(s.mark, s.label);
       const note = shown.name;
       if (!onGo) { lines.push(sheetLine(name, sub, { icon, note })); continue; }
-      const ids = machines.filter((m) => m.status === 'installed' && !m.outOfService).map((m) => m.id);
+      const ids = machines.filter((m) => m.status === 'installed' && !switchedOff(m)).map((m) => m.id);
       const row = sheetRow(name, sub, { disabled: !ids.length, icon, note });
       row.addEventListener('click', () => { closeSheet(); onGo(ids); });
       lines.push(row);

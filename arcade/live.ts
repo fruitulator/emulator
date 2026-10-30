@@ -6,9 +6,10 @@ import { coinsForLoad, markedChutes, takesACoin, unsetCoinLine, wiringFor } from
 import { openCoinMenu } from '../web/ui/coinmenu';
 import { UI_ICONS } from '../web/ui/icons';
 import {
-  decodeState, deflatedRecord, idleNamedInputs, readSavedOptionKeys, readSavedPanelSwitches, stateRecord,
+  decodeState, deflatedRecord, idleNamedInputs, stateRecord,
 } from '../web/gamestate';
 import { boardStamp } from '../web/boardstamp';
+import { resumesOn, versionOf } from '../web/play/savedversion';
 import type { StateRec } from '../web/store';
 import { cabinetSurfaces, classifyGlassCore, readGlass, type CabinetSurfaces } from '../src/machine/alarmread';
 import { SNAPSHOT_VERSION, type Snapshot } from '../web/snapshot';
@@ -559,10 +560,21 @@ export class Live {
         if (judged === 'battery') { battery = rec.nvram!; rec = null; }
         else if (judged === 'fresh') { rec = null; }
       }
+      let otherVersion = false;
+      const versions = glass.machine.hostFiles ? glass.machine.versions ?? 1 : 1;
+      if (!o.snapshot && versions > 1) {
+        if (battery) { battery = null; otherVersion = true; }
+        if (rec) {
+          let made: string | null = game.variant;
+          try { made = versionOf(decodeState(rec)); } catch {  }
+          if (!resumesOn(made, game.variant, versions)) { rec = null; otherVersion = true; }
+        }
+      }
       const setAside = !!got && got !== 'version' && !battery && !rec;
       let snapshot: Snapshot | undefined = o.snapshot;
       let updated = got === 'version' || !!battery || setAside;
       let why = o.snapshot ? 'restored' : rec ? 'resumed' : o.cold ? 'cold boot'
+        : otherVersion ? 'cold boot: its save was not made on the version of the game it runs'
         : battery ? 'restarted from its battery: another emulation wrote its save'
         : updated ? UPDATED_WHY : 'cold boot: no saved state for this machine yet';
       if (o.powerCycle && (o.snapshot || rec)) why = `${why}, then restarted with its memory kept`;
@@ -584,13 +596,14 @@ export class Live {
       glass.resetGates(gatesOf(snapshot));
       glass.onGateSeen = (lamps) => { if (this.glass === glass && seq === this.loadSeq) this.emu.gateSeen(lamps); };
       const cfg = glass.machine.config;
+      const ownAnswers = glass.machine.hostFiles ? undefined : meta?.coinAnswers;
       const opts = {
         game: battery ? { ...game, nvram: battery } : game,
-        optionKeys: cfg.optionKeys ?? readSavedOptionKeys(game),
-        panelSwitches: cfg.panelSwitches ?? readSavedPanelSwitches(game),
-        ...coinsForLoad(cfg.coins, meta?.coinAnswers, null),
+        optionKeys: cfg.optionKeys,
+        panelSwitches: cfg.panelSwitches,
+        ...coinsForLoad(cfg.coins, ownAnswers, null),
       };
-      this.oldCoinAnswers = meta?.coinAnswers;
+      this.oldCoinAnswers = ownAnswers;
       this.lastStart = { t0, resumed: !!snapshot, why };
       this.loaded = null;
       this.halted = false;
@@ -1119,9 +1132,9 @@ export class Live {
       const cfg = g.machine.config;
       const info = await this.emu.load({
         game,
-        optionKeys: cfg.optionKeys ?? readSavedOptionKeys(game),
-        panelSwitches: cfg.panelSwitches ?? readSavedPanelSwitches(game),
-        ...coinsForLoad(cfg.coins, meta?.coinAnswers, null),
+        optionKeys: cfg.optionKeys,
+        panelSwitches: cfg.panelSwitches,
+        ...coinsForLoad(cfg.coins, g.machine.hostFiles ? undefined : meta?.coinAnswers, null),
         snapshot,
         follow: { cycle: k.cycle, seq: k.seq, bufferMs: WATCH_BUFFER_MS },
       });

@@ -1,3 +1,4 @@
+import { contentKeys, byContentKey } from './contentkeys';
 import type { GameFile, GameVariant, LayoutProps } from '../src/machine/registry';
 import { contentFiles, LAYOUT_FILE, setFiles } from '../src/machine/setfiles';
 import { isEffectSample } from '../src/machine/effects';
@@ -30,6 +31,7 @@ export interface GameMeta {
   hasThumb: boolean;
   thumbFromPlay?: boolean;
   thumbRule?: number;
+  artRatio?: number;
   variants: GameVariant[];
   variant: string;
   sourceName?: string;
@@ -39,6 +41,7 @@ export interface GameMeta {
   layoutProps?: LayoutProps;
   contentHash?: string;
   contentRule?: number;
+  formerContentHashes?: string[];
   programHash?: string;
   batteries?: string[];
   maker?: string;
@@ -329,7 +332,7 @@ function canonicalOrder<T extends { name: string }>(files: T[]): T[] {
   });
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -338,13 +341,29 @@ export async function hashGameFiles(files: GameFile[]): Promise<string> {
   return sha256Hex(encodeSrcs(canonicalOrder(files.filter((f) => !isEffectSample(f.name)))));
 }
 
-export const CONTENT_RULE = 3;
+export const CONTENT_RULE = 4;
 
 export async function contentHashOf(files: GameFile[]): Promise<string> {
+  const digests = (await Promise.all(contentFiles(setFiles(files)).map((f) => sha256Hex(f.bytes)))).sort();
+  return sha256Hex(new TextEncoder().encode(`content\n${digests.join('\n')}`));
+}
+
+async function namedContentHash(files: GameFile[], txt: boolean): Promise<string> {
   const content = contentFiles(setFiles(files))
+    .filter((f) => txt || !/\.txt$/i.test(f.name))
     .map((f) => ({ name: f.name.toLowerCase(), bytes: f.bytes }));
   return sha256Hex(encodeSrcs(canonicalOrder(content)));
 }
+
+export async function formerContentHashesOf(files: GameFile[]): Promise<string[]> {
+  return [...new Set([await namedContentHash(files, true), await namedContentHash(files, false)])];
+}
+
+export async function contentIdentityOf(files: GameFile[]): Promise<{ contentHash: string; contentRule: number; formerContentHashes: string[] }> {
+  return { contentHash: await contentHashOf(files), contentRule: CONTENT_RULE, formerContentHashes: await formerContentHashesOf(files) };
+}
+
+export { contentKeys, byContentKey };
 
 export async function programHashOf(files: GameFile[]): Promise<string | null> {
   const program = contentFiles(setFiles(files))
@@ -355,5 +374,5 @@ export async function programHashOf(files: GameFile[]): Promise<string | null> {
 }
 
 export async function findByContentHash(contentHash: string): Promise<GameMeta[]> {
-  return (await listGames()).filter((g) => g.contentHash === contentHash);
+  return (await listGames()).filter((g) => contentKeys(g).includes(contentHash));
 }

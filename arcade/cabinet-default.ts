@@ -9,11 +9,16 @@ const TRIM = 0x1b1e23;
 
 const SKIN_ALBEDO = 0x6a6157;
 
-function bodyMaterial(colour: THREE.Color, dress: CabinetDress | null): THREE.MeshStandardMaterial {
+function bodyTint(colour: string): THREE.Color {
+  const c = new THREE.Color(colour), a = new THREE.Color(SKIN_ALBEDO);
+  return new THREE.Color(c.r / a.r, c.g / a.g, c.b / a.b);
+}
+
+function bodyMaterial(colour: THREE.Color, dress: CabinetDress | null, gloss = 1): THREE.MeshStandardMaterial {
   const skin = dress?.skin ?? null;
   const m = new THREE.MeshStandardMaterial({
     color: skin ? colour : colour.clone().multiply(new THREE.Color(SKIN_ALBEDO)),
-    roughness: skin?.arm || skin?.rough ? 1 : 0.62,
+    roughness: (skin?.arm || skin?.rough ? 1 : 0.62) * gloss,
     metalness: 0.06,
   });
   if (skin) {
@@ -42,6 +47,8 @@ export interface FruitCabinetOptions {
   buttonsRake?: number;
   dress?: CabinetDress | null;
   trim: THREE.ColorRepresentation;
+  body?: string | null;
+  plastic?: boolean;
   furniture: boolean;
   style?: CabinetStyle | null;
 }
@@ -56,22 +63,32 @@ export interface CabinetStyle {
   crown?: boolean;
   under: 'step' | 'cove' | 'slope';
   lower: number;
-  body: 'dark' | 'wood';
+  body: string;
+  gloss: number;
   strip: 'trim' | 'chrome';
 }
 
 const STYLE_MIN_CHIN = 0.08;
 
+export const BODY_BLACK = '#000000';
+const BODY_WOOD = '#512f19';
+const ASH_GLOSS = 0.55;
+const PLASTIC_ROUGH = 0.3;
+
 export const CABINET_STYLES: readonly CabinetStyle[] = [
-  { id: 'slimline', W: 0.653, H: 1.724, lean: 10, glassTop: 0.035, head: 0.28, cap: 'round', under: 'step', lower: 0.44, body: 'dark', strip: 'trim' },
-  { id: 'cove', W: 0.653, H: 1.74, lean: 9, glassTop: 0.04, head: 0.26, cap: 'round', under: 'cove', lower: 0.42, body: 'dark', strip: 'trim' },
-  { id: 'topbox', W: 0.653, H: 1.86, lean: 4, glassTop: 0.20, head: 0.34, cap: 'box', under: 'cove', lower: 0.44, body: 'dark', strip: 'trim' },
-  { id: 'wedge', W: 0.653, H: 1.724, lean: 14, glassTop: 0.035, head: 0.22, cap: 'flat', under: 'slope', lower: 0.40, body: 'dark', strip: 'trim' },
-  { id: 'classic', W: 0.653, H: 1.72, lean: 6, rake: 40, glassTop: 0.10, head: 0.32, cap: 'hood', under: 'step', lower: 0.47, body: 'wood', strip: 'chrome' },
-  { id: 'arch', W: 0.56, H: 1.62, crown: true, lean: 8, glassTop: 0.03, head: 0.32, cap: 'flat', under: 'cove', lower: 0.43, body: 'dark', strip: 'trim' },
+  { id: 'slimline', W: 0.653, H: 1.724, lean: 10, glassTop: 0.035, head: 0.28, cap: 'round', under: 'step', lower: 0.44, body: BODY_BLACK, gloss: ASH_GLOSS, strip: 'trim' },
+  { id: 'cove', W: 0.653, H: 1.74, lean: 9, glassTop: 0.04, head: 0.26, cap: 'round', under: 'cove', lower: 0.42, body: BODY_BLACK, gloss: ASH_GLOSS, strip: 'trim' },
+  { id: 'topbox', W: 0.653, H: 1.86, lean: 4, glassTop: 0.20, head: 0.34, cap: 'box', under: 'cove', lower: 0.44, body: BODY_BLACK, gloss: ASH_GLOSS, strip: 'trim' },
+  { id: 'wedge', W: 0.653, H: 1.724, lean: 14, glassTop: 0.035, head: 0.22, cap: 'flat', under: 'slope', lower: 0.40, body: BODY_BLACK, gloss: ASH_GLOSS, strip: 'trim' },
+  { id: 'classic', W: 0.653, H: 1.72, lean: 6, rake: 40, glassTop: 0.10, head: 0.32, cap: 'hood', under: 'step', lower: 0.47, body: BODY_WOOD, gloss: 1, strip: 'chrome' },
+  { id: 'arch', W: 0.56, H: 1.62, crown: true, lean: 8, glassTop: 0.03, head: 0.32, cap: 'flat', under: 'cove', lower: 0.43, body: BODY_BLACK, gloss: ASH_GLOSS, strip: 'trim' },
 ];
 
 export const DEFAULT_STYLE: CabinetStyle = CABINET_STYLES[0];
+
+export function styleBody(id: string | undefined | null): string {
+  return (cabinetStyle(id) ?? DEFAULT_STYLE).body;
+}
 
 export function cabinetStyle(id: string | undefined | null): CabinetStyle | null {
   return CABINET_STYLES.find((s) => s.id === id) ?? null;
@@ -150,8 +167,6 @@ export function buildFruitCabinet(opts: FruitCabinetOptions): BuiltCabinet {
   return styledCabinet(opts, st, { W, H, D, zBack, zFront: zBack + front, faceH: gh, gw, deck, btn, lean, rake, brake, glassTop, dress });
 }
 
-const STYLE_DARK = 0x1c1c22;
-const STYLE_WOOD = 0xc8875a;
 const STRIP_BAND = 0.035;
 const STRIP_T = 0.008;
 
@@ -241,8 +256,9 @@ function styledCabinet(
 
   const group = new THREE.Group();
   const trimColour = new THREE.Color(opts.trim);
-  const bodyColour = st.body === 'wood' ? new THREE.Color(STYLE_WOOD) : new THREE.Color(STYLE_DARK).lerp(trimColour, 0.06);
-  const bodyMat = bodyMaterial(bodyColour, dress);
+  const bodyMat = opts.plastic
+    ? lit(new THREE.MeshStandardMaterial({ color: opts.body ?? st.body, roughness: PLASTIC_ROUGH, metalness: 0 }), dress)
+    : bodyMaterial(bodyTint(opts.body ?? st.body), dress, st.gloss);
   group.add(new THREE.Mesh(extrudeBody(shape, W, 16), bodyMat));
 
   const trim = lit(new THREE.MeshStandardMaterial({ color: opts.trim, roughness: 0.35, metalness: 0.25 }), dress);

@@ -1,4 +1,7 @@
 import { listGames, CONTENT_RULE, type GameMeta } from '../web/store';
+import { contentKeys } from '../web/contentkeys';
+
+const keysOf = (g: GameMeta): string[] => (g.contentHash ? contentKeys(g) : [g.hash]);
 import { MENU_ICONS, UI_ICONS, rowIcon } from '../web/ui/icons';
 import { card, menuRow, setKvValue, statRow } from '../web/ui/rows';
 import type { DecorateSection } from './decorate';
@@ -12,7 +15,7 @@ import { dangerRow, closeSheet, confirmInSheet, escapeCloses, optionRow, sheetRo
 import { statusRow } from '../web/ui/status';
 import {
   ARCADE_MAX_MACHINES, FLOOR_CENTRE, FLOOR_COLS, FLOOR_GEOM, FLOOR_ROWS, FLOOR_STEP, addMachine, addProp, aligned, arrange, cannotAdd, distributed, duplicateMachine, facedAll, fits, moveMachine, moveProp, turnedAsGroup, turnedEach, type AlignEdge, type Arranged, type ArrangeTarget,
-  faceProp, groupMoved, moveGroup, propFits, propSize, propStand, removeMachine, removeProp, snapProp, turnMachine, turnOf, turnProp, type ArcadeDoc, type DocMachine, type FloorGroup, type Place, type Turn,
+  faceProp, groupMoved, moveGroup, propFits, propSize, propStand, removeMachine, removeProp, switchedOff, snapProp, turnMachine, turnOf, turnProp, type ArcadeDoc, type DocMachine, type FloorGroup, type Place, type Turn,
 } from './doc';
 import { cellCentre, doorway } from './floor';
 import { posterArt, POSTER_FRAME, POSTER_H, POSTERS, PROP_KINDS, propKind, PROPS_MAX, type PosterArt, type Prop, type PropKind } from './proplist';
@@ -291,7 +294,7 @@ export async function render(): Promise<void> {
     const dark = darkNote(d, 'host-note');
     if (dark) nodes.push(dark);
     const byContent = new Map<string, GameMeta>();
-    for (const g of library) byContent.set(g.contentHash ?? g.hash, g);
+    for (const g of library) for (const k of keysOf(g)) byContent.set(k, g);
     nodes.push(floorplan(d, byContent));
     const row = el('div', null, { class: 'host-actions' });
     row.append(el('p', str('arcade.host.n_of_n_machines', { 0: d.machines.length, 1: ARCADE_MAX_MACHINES }), { class: 'host-count readout' }));
@@ -617,7 +620,7 @@ function machineCard(d: ArcadeDoc, m: DocMachine, held: GameMeta | null): HTMLEl
   rotate.addEventListener('pointerdown', (ev) => ev.stopPropagation());
   c.append(rotate);
   pickable(c, d, 'machines', m.id);
-  if (m.outOfService || m.status !== 'installed') c.classList.add('fp-dim');
+  if (switchedOff(m) || m.status !== 'installed') c.classList.add('fp-dim');
   c.addEventListener('keydown', (ev) => {
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target === c) { ev.preventDefault(); openMachineMenu(d, m, c, held); return; }
     if (ev.target !== c) return;
@@ -1212,7 +1215,7 @@ function askDelete(d: ArcadeDoc, m: DocMachine, returnTo?: HTMLElement): void {
 }
 
 function machineState(m: DocMachine): 'off' | 'dark' | 'open' {
-  return m.outOfService ? 'off' : !m.source ? 'dark' : 'open';
+  return switchedOff(m) ? 'off' : !m.source ? 'dark' : 'open';
 }
 
 function statusLine(m: DocMachine): HTMLElement {
@@ -1224,7 +1227,7 @@ function statusLine(m: DocMachine): HTMLElement {
 }
 
 function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElement[] {
-  const ms = [...d.machines].sort((a, b) => Number(!!b.outOfService) - Number(!!a.outOfService) || a.name.localeCompare(b.name));
+  const ms = [...d.machines].sort((a, b) => Number(switchedOff(b)) - Number(switchedOff(a)) || a.name.localeCompare(b.name));
   const list = el('div', null, { class: 'ml-list nb-group' });
   const box = el('div', null, { class: 'ml-scroll' });
   box.append(list);
@@ -1893,7 +1896,7 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
   const games = await listGames().catch(() => [] as GameMeta[]);
   const here = new Map<string, DocMachine[]>();
   for (const m of d.machines) here.set(m.contentHash, [...(here.get(m.contentHash) ?? []), m]);
-  const copiesOf = (g: GameMeta): DocMachine[] => here.get(g.contentHash ?? g.hash) ?? [];
+  const copiesOf = (g: GameMeta): DocMachine[] => keysOf(g).flatMap((k) => here.get(k) ?? []);
   const free = games.filter((g) => !copiesOf(g).length);
   const sources = new SourceStore();
   const sourceOf = new Map(games.map((g) => [g.hash, librarySource(g, sources)]));
@@ -1971,7 +1974,7 @@ async function install(d: ArcadeDoc, g: GameMeta, copies: DocMachine[] = []): Pr
   const ch = g.contentHash ?? g.hash;
   const source = librarySource(g);
   const m = addMachine(d, {
-    contentHash: ch, contentRule: CONTENT_RULE, hash: g.hash, name: g.name, board: g.system,
+    contentHash: ch, contentRule: g.contentRule ?? CONTENT_RULE, hash: g.hash, name: g.name, board: g.system,
     ...(g.programHash ? { programHash: g.programHash } : {}),
     ...(source ? { source } : {}),
   }, wantedCell());

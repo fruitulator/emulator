@@ -3,7 +3,9 @@ import type { RoomLook } from './roomlook';
 import { footprintAt, newPropId, posterArt, PROP_WALL_GAP, propFootprint, propKind, propOnWall, PROPS_MAX, readProps, wallHalfWidth, type PosterArt, type Prop, type PropKind } from './proplist';
 import type { CashLedger } from '../src/machine/machine';
 import type { GameConfig } from '../src/machine/registry';
+import type { HostFile } from '../web/hostfiles';
 import type { StateRec } from '../web/store';
+import { contentKeys } from '../web/contentkeys';
 import type { MachineLook } from './machines';
 import type { MoneyRecord } from './moneyrecord';
 import type { CreditSince } from './serverwire';
@@ -48,6 +50,8 @@ export interface MachineConfig {
 
 export interface MachineSetup extends Partial<MachineLook> {
   cabinet?: string;
+  body?: string;
+  surface?: 'plastic';
   noDeck?: boolean;
   noLower?: boolean;
 }
@@ -143,6 +147,7 @@ export interface DocMachine {
   id: string;
   contentHash: string;
   contentRule: number;
+  formerContentHashes?: string[];
   hash?: string;
   programHash?: string;
   source?: MachineSource;
@@ -150,6 +155,8 @@ export interface DocMachine {
   board: string;
   status: MachineStatus;
   gameConfig?: GameConfig | null;
+  hostFiles?: HostFile[];
+  versions?: number;
   config: MachineConfig;
   setup: MachineSetup;
   detected?: MachineDetected;
@@ -449,13 +456,13 @@ export function placeAll(doc: ArcadeDoc): boolean {
 }
 
 export function fillProgramHashes(
-  doc: ArcadeDoc, library: readonly { hash: string; contentHash?: string; programHash?: string }[],
+  doc: ArcadeDoc, library: readonly { hash: string; contentHash?: string; formerContentHashes?: string[]; programHash?: string }[],
 ): boolean {
   const byContent = new Map<string, string>();
   const byKey = new Map<string, string>();
   for (const g of library) {
     if (!g.programHash) continue;
-    if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, g.programHash);
+    for (const k of contentKeys(g)) if (!byContent.has(k)) byContent.set(k, g.programHash);
     byKey.set(g.hash, g.programHash);
   }
   let changed = false;
@@ -468,7 +475,7 @@ export function fillProgramHashes(
 }
 
 export function fillSources(
-  doc: ArcadeDoc, library: readonly { hash: string; contentHash?: string }[],
+  doc: ArcadeDoc, library: readonly { hash: string; contentHash?: string; formerContentHashes?: string[] }[],
   sourceOf: (g: { hash: string; contentHash?: string }) => MachineSource | undefined,
 ): boolean {
   const byContent = new Map<string, MachineSource>();
@@ -476,7 +483,7 @@ export function fillSources(
   for (const g of library) {
     const s = sourceOf(g);
     if (!s) continue;
-    if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, s);
+    for (const k of contentKeys(g)) if (!byContent.has(k)) byContent.set(k, s);
     byKey.set(g.hash, s);
   }
   let changed = false;
@@ -521,12 +528,19 @@ export function duplicateMachine(doc: ArcadeDoc, id: string, place?: Place | nul
   if (src.programHash !== undefined) copy.programHash = src.programHash;
   if (src.source !== undefined) copy.source = { ...src.source };
   if (src.gameConfig !== undefined) copy.gameConfig = structuredClone(src.gameConfig);
+  if (src.hostFiles !== undefined) copy.hostFiles = src.hostFiles.map((f) => ({ ...f }));
+  if (src.versions !== undefined) copy.versions = src.versions;
+  if (src.formerContentHashes !== undefined) copy.formerContentHashes = [...src.formerContentHashes];
   if (src.detected !== undefined) copy.detected = structuredClone(src.detected);
   if (src.money !== undefined) copy.money = src.money;
   if (src.validation !== undefined) copy.validation = structuredClone(src.validation);
   if (src.status === 'installed') copy.installedAt = Date.now();
   doc.machines.push(copy);
   return copy;
+}
+
+export function switchedOff(m: Pick<DocMachine, 'outOfService' | 'hostFiles'>): boolean {
+  return !!m.outOfService || !m.hostFiles?.length;
 }
 
 export function removeMachine(doc: ArcadeDoc, id: string): void {

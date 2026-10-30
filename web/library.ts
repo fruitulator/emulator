@@ -1,6 +1,6 @@
 import { renderOrbit, settleOrbitCaption, type OrbitDeps } from './orbit';
 import {
-  everPlayed, lastPlayed, listGames, playCountOf,
+  everPlayed, getMeta, lastPlayed, listGames, playCountOf, putMeta,
   type GameMeta,
 } from './store';
 import { localStateStore } from './statestore';
@@ -168,6 +168,9 @@ function orbitDeps(h: LibraryHandlers): OrbitDeps {
     activity,
     fillArtwork,
     clearArtwork,
+    saveArtRatio: (hash, ratio) => {
+      void getMeta(hash).then((m) => (m ? putMeta({ ...m, artRatio: ratio }) : undefined));
+    },
     chip,
   };
 }

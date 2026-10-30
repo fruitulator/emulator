@@ -1,8 +1,10 @@
 import { readFitSet, type Quad } from './fit';
 import { listGames, type GameMeta, type StateRec } from '../web/store';
+import { byContentKey } from '../web/contentkeys';
+import { rekeyHolders } from './restamp';
 import { machineTitle } from './machinelist';
 import {
-  ARCADE_MAX_MACHINES, fromBase64, fromMachineState, onFloor, toMachineState, traceId, turnOf,
+  ARCADE_MAX_MACHINES, fromBase64, fromMachineState, onFloor, switchedOff, toMachineState, traceId, turnOf,
   type ArcadeDoc, type MachineConfig, type MachineSetup, type MachineSource, type Place,
 } from './doc';
 import { currentArcade, getArcade, getMachineState, putMachineState, updateMachineMoney, updateMachineStats } from './docstore';
@@ -12,6 +14,8 @@ import type { StateStore } from '../web/statestore';
 import { devPlayerForPage, remoteSlot, serverFlag } from './remote';
 import type { CreditSince, RelayBatch } from './serverwire';
 import type { Balance, CoinCounts } from './wallet';
+import type { GameConfig } from '../src/machine/registry';
+import type { HostFile } from '../web/hostfiles';
 
 export interface StateSlot {
   load(stamp?: string): Promise<StateRec | null | 'version' | SlotBattery>;
@@ -189,6 +193,7 @@ export function trimFor(contentHash: string): string {
 export interface ArcadeMachine {
   id: string;
   contentHash: string;
+  formerContentHashes: string[];
   name: string;
   board: string;
   cabinetStyle: string | null;
@@ -201,6 +206,9 @@ export interface ArcadeMachine {
   installing?: boolean;
   otherVersion?: boolean;
   outOfService?: boolean;
+  hostFiles?: HostFile[];
+  gameConfig?: GameConfig | null;
+  versions?: number;
   source?: MachineSource;
   place?: Place;
 }
@@ -227,23 +235,27 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
   const server = serverFlag();
   const player = server ? await devPlayerForPage() : '';
   if (server) console.info(`[arcade] playing against the arcade server at ${server} as ${player}`);
-  const byContent = new Map<string, GameMeta>();
-  for (const g of library) if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, g);
+  const byContent = byContentKey(await rekeyHolders(library, onFloor(arcade)));
   const programs = new Set(library.map((g) => g.programHash).filter((p): p is string => !!p));
   const visiting = !!o.visiting;
   const out = onFloor(arcade).map((m): ArcadeMachine => {
     const t = m.trace;
-    const mine = byContent.get(m.contentHash) ?? null;
+    const formers = m.formerContentHashes ?? [];
+    const mine = [m.contentHash, ...formers].map((k) => byContent.get(k)).find((g) => !!g) ?? null;
     return {
       id: m.id,
       contentHash: m.contentHash,
+      formerContentHashes: formers,
       name: machineTitle(m.name, mine),
       board: m.board,
       cabinetStyle: m.detected?.cabinetStyle ?? null,
       traceUrl: t ? `doc:${m.contentHash}:${traceId(t)}` : null,
       traceBytes: t ? () => Promise.resolve(fromBase64(t.data)) : undefined,
-      held: m.outOfService || m.status !== 'installed' ? null : mine,
-      outOfService: !!m.outOfService,
+      held: switchedOff(m) || m.status !== 'installed' ? null : mine,
+      outOfService: !!m.outOfService || (m.status === 'installed' && switchedOff(m)),
+      ...(m.hostFiles ? { hostFiles: m.hostFiles } : {}),
+      ...(m.gameConfig !== undefined ? { gameConfig: m.gameConfig } : {}),
+      ...(m.versions !== undefined ? { versions: m.versions } : {}),
       installing: m.status !== 'installed',
       ...(!mine && m.programHash && programs.has(m.programHash) ? { otherVersion: true } : {}),
       ...(m.source ? { source: m.source } : {}),

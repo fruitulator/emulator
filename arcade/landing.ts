@@ -1,4 +1,5 @@
 import { listGames, type GameMeta } from '../web/store';
+import { contentKeys } from '../web/contentkeys';
 import { openDialog } from '../web/ui/dialog';
 import { MENU_ICONS, UI_ICONS, rowIcon } from '../web/ui/icons';
 import { artwork, thumbMosaic, thumbStack } from '../web/ui/art';
@@ -26,6 +27,8 @@ import { ratingChip } from '../web/ui/stars';
 import { str } from '../web/i18n';
 import { textField } from '../web/ui/field';
 import { fillDocSources } from './sourceget';
+import { restampMachines } from './restamp';
+import { defineMachines } from './hostset';
 
 const HOST_PAGE = '/arcade/?host';
 
@@ -98,7 +101,10 @@ export async function openLanding(): Promise<void> {
   for (const d of mine) {
     const hashes = fillProgramHashes(d, library);
     const sources = fillDocSources(d, library);
-    if (hashes || sources) void putArcade(d).then(() => syncArcade(d)).catch((e) => console.warn('[arcade] the program hashes were not kept', e));
+    void restampMachines(d, library).then(async (stamped) => {
+      const defined = await defineMachines(d, library);
+      if (hashes || sources || stamped || defined) await putArcade(d).then(() => syncArcade(d));
+    }).catch((e) => console.warn('[arcade] the program hashes were not kept', e));
   }
   const byRow = new Map(ROWS.map((r, i) => [r.sort, rowLists[i]]));
   const firstList: Community = rowLists.find((c) => c.kind === 'ok') ?? rowLists[0];
@@ -106,9 +112,9 @@ export async function openLanding(): Promise<void> {
   const count = mine.length + elsewhere.length;
   plus.hidden = count >= ARCADES_PER_PLAYER;
   const thumbs = new Map<string, string>();
-  for (const g of library) if (g.contentHash && g.hasThumb && !thumbs.has(g.contentHash)) thumbs.set(g.contentHash, g.hash);
+  for (const g of library) if (g.hasThumb) for (const k of contentKeys(g)) if (!thumbs.has(k)) thumbs.set(k, g.hash);
   const mineById = new Map<string, GameMeta>();
-  for (const g of library) if (g.contentHash && !mineById.has(g.contentHash.slice(0, MACHINE_ID_LEN))) mineById.set(g.contentHash.slice(0, MACHINE_ID_LEN), g);
+  for (const g of library) for (const k of contentKeys(g)) if (!mineById.has(k.slice(0, MACHINE_ID_LEN))) mineById.set(k.slice(0, MACHINE_ID_LEN), g);
   const ownedIn = (a: ArcadeListing): GameMeta[] => (a.machineIds ?? []).map((id) => mineById.get(id)).filter((g): g is GameMeta => !!g);
   const listMachines = (a: ArcadeListing): void => {
     if (!server) return;

@@ -227,6 +227,7 @@ export interface PakRecord {
   layoutProps?: LayoutProps;
   contentHash?: string;
   contentRule?: number;
+  formerContentHashes?: string[];
 }
 
 export interface PakMeta {

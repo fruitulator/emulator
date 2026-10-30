@@ -12,7 +12,7 @@ import {
   type PakChunkIn, type PakMeta,
 } from './gamepak';
 import {
-  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, programHashOf, deleteGame, getMeta, getPak, inSpareDir,
+  SCHEMA_VERSION, contentIdentityOf, programHashOf, deleteGame, getMeta, getPak, inSpareDir,
   playCountOf, putMeta, putPak, putThumb, type GameMeta,
 } from './store';
 
@@ -142,7 +142,8 @@ async function writeGame(
   const spare = spares?.length ? spares
     : prev?.batteries?.some(inSpareDir) ? await storedSpares(hash) : [];
   const own = storedFiles(game);
-  const contentHash = await contentHashOf(own);
+  const identity = await contentIdentityOf(own);
+  const { contentHash } = identity;
   const programHash = await programHashOf(own);
   const chunks: PakChunkIn[] = [
     { type: 'META', bytes: encodeMeta(pakMetaOf(game, cab, contentHash, artwork)), deflate: true },
@@ -204,8 +205,7 @@ async function writeGame(
     ...listOrDrop('damagedRoms', damagedRoms(game)),
     ...listOrDrop('linkedInstances', linkedInstances(game)),
     layoutProps: layoutProps ?? prev?.layoutProps,
-    contentHash,
-    contentRule: CONTENT_RULE,
+    ...identity,
     ...(programHash ? { programHash } : {}),
     ...listOrDrop('batteries', batteriesOf(own, spare)),
     ...makerFields(own, game.system, sourceName ?? prev?.sourceName),

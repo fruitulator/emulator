@@ -10,7 +10,7 @@ import {
 import { batteriesOf, storedSpares } from './persist';
 import { readCoinAnswers } from './coinask';
 import {
-  CONTENT_RULE, SCHEMA_VERSION, contentHashOf, programHashOf, getMeta, getPak, getThumb,
+  SCHEMA_VERSION, contentIdentityOf, programHashOf, getMeta, getPak, getThumb,
   hashGameFiles, inSpareDir, playCountOf, putMeta, putPak, putThumb, type GameMeta,
 } from './store';
 import { localStateStore } from './statestore';
@@ -39,6 +39,7 @@ export function recordForExport(meta: GameMeta): PakRecord {
     ...(meta.layoutProps !== undefined ? { layoutProps: meta.layoutProps } : {}),
     ...(meta.contentHash !== undefined ? { contentHash: meta.contentHash } : {}),
     ...(meta.contentRule !== undefined ? { contentRule: meta.contentRule } : {}),
+    ...(meta.formerContentHashes !== undefined ? { formerContentHashes: meta.formerContentHashes } : {}),
   };
 }
 
@@ -101,7 +102,7 @@ export async function importPunnet(
 
   onStage?.('hashing');
   const hash = await hashGameFiles(files);
-  const contentHash = await contentHashOf(files);
+  const identity = await contentIdentityOf(files);
   const programHash = await programHashOf(files);
   const mismatch = record !== undefined && record.hash !== hash;
 
@@ -126,7 +127,7 @@ export async function importPunnet(
       files: storedFiles(game).map((f) => ({ name: f.name, size: f.bytes.length })),
       variant: game.variant,
     }),
-    contentHash,
+    contentHash: identity.contentHash,
   };
   delete meta.record;
   if (mismatch) {
@@ -185,8 +186,7 @@ export async function importPunnet(
     layoutProps: (record?.layoutProps
       && record.layoutProps.layout === game.layoutName?.toLowerCase()
       ? record.layoutProps : undefined) ?? prev?.layoutProps,
-    contentHash,
-    contentRule: CONTENT_RULE,
+    ...identity,
     ...(programHash ? { programHash } : {}),
     ...listOrDrop('batteries', batteriesOf(files, spares)),
   };

@@ -1405,5 +1405,10 @@
   "kioskmode.entered": {
     "one": "{n} chiffre sur 4 saisi",
     "other": "{n} chiffres sur 4 saisis"
-  }
+  },
+  "arcade.wizard.body_colour": "Finition du meuble",
+  "arcade.wizard.reset_body_colour": "Réinitialiser la finition du meuble",
+  "arcade.wizard.body_material": "Matière",
+  "arcade.wizard.body_wood": "Bois",
+  "arcade.wizard.body_plastic": "Plastique"
 }

@@ -5,7 +5,6 @@ import { loadingLine } from '../ui/progress';
 import { UI_ICONS } from '../ui/icons';
 import { closeSheet, confirmInSheet, sheetRow, showSheet } from '../ui/sheet';
 import { str } from '../i18n';
-import { addEnabled } from './flag';
 import { revoke } from './auth';
 import type { CatSet, Machine } from './catalogue';
 import { SourceClient, SourceError, forgetAnswers, sourceOrigins } from './client';
@@ -128,11 +127,10 @@ export class SourceView {
   refresh(): void {
     const opts: HTMLOptionElement[] = [new Option(str('sources.my_games'), LOCAL)];
     for (const idx of this.store.hosts()) for (const s of idx.sources) opts.push(new Option(s.name, sourceKey(idx.host, s.id)));
-    const held = opts.length - 1;
-    if (addEnabled()) opts.push(new Option(str('sources.add_source_option'), ADD));
+    opts.push(new Option(str('sources.add_source_option'), ADD));
     this.select.replaceChildren(...opts);
     this.select.value = this.chosen ? sourceKey(this.chosen.idx.host, this.chosen.s.id) : LOCAL;
-    this.wrap.hidden = held === 0;
+    this.wrap.hidden = opts.length <= 2;
     this.dd?.root.remove();
     this.dd = enhanceSelect(this.select, {
       name: (c) => str('sources.library_n', { 0: c }),

@@ -5,6 +5,7 @@ import {
 } from './serverwire';
 import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, readMachineSource, type ArcadeDoc, type DocMachine } from './doc';
 import { getArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
+import { readHostFiles } from '../web/hostfiles';
 import { readRoomLook } from './roomlook';
 import { readProps } from './proplist';
 import { asPlayer, devPlayerForPage, machineUrl, seedMachine, serverFlag, serverParam } from './remote';
@@ -19,10 +20,13 @@ export function roomDoc(d: ArcadeDoc): ArcadeDoc {
       config: m.config ?? {}, setup: m.setup ?? {}, balance: [], trace: m.trace ?? null, place: m.place ?? null,
     };
     if (m.gameConfig !== undefined) out.gameConfig = m.gameConfig;
+    if (m.hostFiles?.length) out.hostFiles = m.hostFiles;
+    if (m.versions !== undefined) out.versions = m.versions;
     if (m.detected !== undefined) out.detected = m.detected;
     if (m.money !== undefined) out.money = m.money;
     if (m.outOfService) out.outOfService = true;
     if (m.programHash) out.programHash = m.programHash;
+    if (m.formerContentHashes?.length) out.formerContentHashes = m.formerContentHashes;
     if (m.source) out.source = m.source;
     return out;
   };
@@ -48,7 +52,10 @@ export function readRoomDoc(v: unknown, id: string): ArcadeDoc | null {
     format: ARCADE_FORMAT, version: ARCADE_DOC_VERSION, id, name: typeof d.name === 'string' ? d.name : '',
     createdAt: Number(d.createdAt) || 0, updatedAt: Number(d.updatedAt) || 0,
     machines: machines.map((m) => ({ ...m, config: m.config ?? {}, setup: m.setup ?? {}, balance: [], trace: m.trace ?? null, state: null, stats: null,
-      programHash: typeof m.programHash === 'string' ? m.programHash : undefined, source: readMachineSource(m.source) })),
+      programHash: typeof m.programHash === 'string' ? m.programHash : undefined, source: readMachineSource(m.source),
+      formerContentHashes: Array.isArray(m.formerContentHashes) ? m.formerContentHashes.filter((h): h is string => typeof h === 'string') : undefined,
+      hostFiles: readHostFiles(m.hostFiles) ?? undefined,
+      versions: Number.isInteger(m.versions) && (m.versions as number) > 0 ? m.versions : undefined })),
     ...(room ? { room } : {}),
     ...(props?.length ? { props } : {}),
   };

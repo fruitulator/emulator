@@ -1,5 +1,6 @@
 import { standing, type ArcadeDoc } from './doc';
 import type { GameMeta } from '../web/store';
+import { byContentKey } from '../web/contentkeys';
 import { localStateStore } from '../web/statestore';
 import { unplayableReason } from '../web/libimport';
 import { openExportPicker, openPackTarget, packReport, packWithProgress } from '../web/punnetexport';
@@ -10,8 +11,7 @@ import { showToast } from '../web/ui/toast';
 import { str } from '../web/i18n';
 
 export function arcadeGames(doc: ArcadeDoc, library: readonly GameMeta[]): { games: GameMeta[]; missing: number } {
-  const byContent = new Map<string, GameMeta>();
-  for (const g of library) if (g.contentHash && !byContent.has(g.contentHash)) byContent.set(g.contentHash, g);
+  const byContent = byContentKey(library);
   const byKey = new Map(library.map((g) => [g.hash, g]));
   const games: GameMeta[] = [];
   const seen = new Set<string>();

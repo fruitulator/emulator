@@ -1405,5 +1405,10 @@
   "kioskmode.entered": {
     "one": "{n} van 4 cijfers ingevoerd",
     "other": "{n} van 4 cijfers ingevoerd"
-  }
+  },
+  "arcade.wizard.body_colour": "Afwerking",
+  "arcade.wizard.reset_body_colour": "Afwerkingskleur herstellen",
+  "arcade.wizard.body_material": "Materiaal",
+  "arcade.wizard.body_wood": "Hout",
+  "arcade.wizard.body_plastic": "Kunststof"
 }

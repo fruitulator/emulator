@@ -151,6 +151,8 @@ function loadGltf(url: string): Promise<THREE.Group> {
 export interface ShellOptions {
   fit: ShellFit;
   trim: THREE.ColorRepresentation;
+  body?: string;
+  surface?: 'plastic';
   texture: THREE.Texture;
   model: CabinetModel | null;
   name: string;
@@ -186,6 +188,8 @@ function defaultShell(o: ShellOptions): CabinetShell {
     buttonsRake: 48.6,
     dress: o.dress,
     trim: o.trim,
+    body: o.body,
+    plastic: o.surface === 'plastic',
     furniture: true,
     style: cabinetStyle(o.cabinet),
   });

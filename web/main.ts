@@ -2,7 +2,6 @@ import {
   classifyGame, linkedInstances, missingProgramRoms, platformFor, type Game,
 } from '../src/machine/registry';
 import { sources } from './sources/feature';
-import { addEnabled as addSourceEnabled } from './sources/flag';
 import { Presenter, planSize, uniformPlan } from './present';
 import { damagedRoms } from '../src/machine/textcopy';
 import { type FrameView } from '../src/machine/framestate';
@@ -3793,9 +3792,8 @@ document.addEventListener('visibilitychange', () => {
 function openAdd(ev: Event): void {
   if (isLocked()) return;
   const returnTo = ev.currentTarget as HTMLElement;
-  const canAdd = addSourceEnabled();
-  if (canAdd && sources.inSource()) { sources.addSource(returnTo); return; }
-  void openAddSheet(returnTo, openPicker, canAdd ? [sources.addGamesRow(returnTo)] : []);
+  if (sources.inSource()) { sources.addSource(returnTo); return; }
+  void openAddSheet(returnTo, openPicker, [sources.addGamesRow(returnTo)]);
 }
 addBtn.addEventListener('click', openAdd);
 

@@ -1,4 +1,5 @@
-import type { GameFile } from '../src/machine/registry';
+import type { GameConfig, GameFile } from '../src/machine/registry';
+import type { HostFile } from './hostfiles';
 import type { CabGeometry } from './cabjson';
 import type { GameMeta } from './store';
 
@@ -22,6 +23,13 @@ export type ImportRequest =
       hash: string;
       variant?: VariantId;
       play?: boolean;
+    }
+  | {
+      id: number;
+      op: 'openAsHost';
+      hash: string;
+      hostFiles: HostFile[];
+      config: GameConfig | null;
     }
   | {
       id: number;

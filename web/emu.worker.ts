@@ -8,6 +8,7 @@ import {
 } from '../src/machine/framestate';
 import { applyState, captureState, captureStateRaw } from './snapshot';
 import { gatesOf, stampGates } from './play/gates';
+import { stampVersion } from './play/savedversion';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { Follower, diffPaths, followBudget, settleSound, signalsOf, snapshotHash, type Check, type RelayInput } from './relay';
 import {
@@ -39,6 +40,7 @@ let epoch = -1;
 let layout: FrameLayout | null = null;
 let schematic: Schematic | null = null;
 let gameName = '';
+let gameVariant = '';
 let gateSeen: number[] = [];
 let benchStep = false;
 let paused = false;
@@ -98,6 +100,7 @@ function pushAutosave(now: number, trigger: AutosaveTrigger): void {
   try {
     const snap = captureStateRaw(machine, gameName);
     stampGates(snap, gateSeen);
+    stampVersion(snap, gameVariant);
     const nvram = machine.batteryRam?.() ?? undefined;
     post({ type: 'autosave', epoch, snap, cycles: snap.cycles, trigger, nvram });
   } catch (e) {
@@ -302,6 +305,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
   try {
     const m = machineFor(req.game);
     gameName = req.game.name;
+    gameVariant = req.game.variant;
     gateSeen = gatesOf(req.snapshot);
     applyOptionKeyState(m, req.optionKeys);
     if (req.snapshot) applyState(m, req.snapshot);
@@ -490,6 +494,7 @@ function handle(req: EmuRequest): void {
         settleSound(m);
         const snap = captureState(m, gameName);
         stampGates(snap, gateSeen);
+        stampVersion(snap, gameVariant);
         const data = deflateSync(strToU8(JSON.stringify(snap)));
         const nvram = m.batteryRam?.() ?? undefined;
         post({
@@ -567,6 +572,7 @@ function handle(req: EmuRequest): void {
         const snap = captureState(m, gameName);
         if (diagLog.enabled) snap.diag = [...diagLog.entries()];
         stampGates(snap, gateSeen);
+        stampVersion(snap, gameVariant);
         if (req.deflate) {
           const data = deflateSync(strToU8(JSON.stringify(snap)));
           post({ type: 'snapshot-result', id: req.id, data, cycles: snap.cycles }, [data.buffer]);

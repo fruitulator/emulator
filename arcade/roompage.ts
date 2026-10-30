@@ -21,6 +21,8 @@ import { viewerIsHost } from './viewer';
 import { Wallet } from './wallet';
 import { str } from '../web/i18n';
 import { fillDocSources, getMachineSet, settleSignIn } from './sourceget';
+import { restampMachines } from './restamp';
+import { defineMachines } from './hostset';
 
 const host = document.getElementById('room') as HTMLElement;
 const msg = document.getElementById('msg') as HTMLElement;
@@ -54,12 +56,18 @@ const doc = opened.doc;
 const isHost = viewerIsHost() && !opened.visiting;
 loadingTitle.textContent = arcadeName(doc);
 loadingTitle.hidden = !loadingTitle.textContent;
+if (isHost && doc) {
+  const defined = await listGames().then((library) => defineMachines(doc, library))
+    .catch((e) => { console.warn('[arcade] the machines could not be switched on', e); return false; });
+  if (defined) void putArcade(doc).then(() => syncArcade(doc)).catch((e) => console.warn('[arcade] the switched-on machines were not kept', e));
+}
 const [machines, name] = [await loadMachines(doc, { visiting: opened.visiting }), arcadeName(doc)];
 if (isHost && doc) {
   void listGames().then(async (library) => {
     const hashes = fillProgramHashes(doc, library);
     const sources = fillDocSources(doc, library);
-    if (!hashes && !sources) return;
+    const stamped = await restampMachines(doc, library);
+    if (!hashes && !sources && !stamped) return;
     await putArcade(doc);
     await syncArcade(doc);
   }).catch((e) => console.warn('[arcade] the program hashes were not kept', e));

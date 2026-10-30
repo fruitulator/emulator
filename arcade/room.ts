@@ -89,7 +89,7 @@ const AHEAD_M = 8;
 const ALIVE_GAP_MS = 50;
 
 function lookOf(g: Glass): string {
-  return JSON.stringify([g.shellFit(), g.cabinetStyle, g.trim]);
+  return JSON.stringify([g.shellFit(), g.cabinetStyle, g.trim, g.machine.setup.body ?? null, g.machine.setup.surface ?? null]);
 }
 
 interface Slot {
@@ -580,7 +580,7 @@ export class Room {
     const model = await modelFor(s.glass.cabinetStyle, this.slots.indexOf(s), s.glass.machine.setup.cabinet);
     const shell = await buildShell({
       fit: s.glass.shellFit(), texture: s.glass.texture, model,
-      trim: s.glass.trim, name: s.glass.machine.name, cabinet: s.glass.machine.setup.cabinet,
+      trim: s.glass.trim, body: s.glass.machine.setup.body, surface: s.glass.machine.setup.surface, name: s.glass.machine.name, cabinet: s.glass.machine.setup.cabinet,
       dress: cabinetDress(this.renderer, this.switches.env),
     });
     if (seq !== s.shellSeq) { retireShell(s.holder, shell, s.glass.texture); return; }
@@ -1077,6 +1077,7 @@ export class Room {
     if (!held) {
       const m = s.glass.machine;
       const text = m.installing ? str('arcade.room.not_installed_yet', { 0: m.name })
+        : m.outOfService ? str('arcade.host.n_is_out_of_service', { 0: m.name })
         : m.otherVersion ? str('arcade.room.different_version', { 0: m.name })
         : str('arcade.room.not_in_library', { 0: m.name });
       const get = !m.installing && !m.outOfService && m.source && this.getFromSource
