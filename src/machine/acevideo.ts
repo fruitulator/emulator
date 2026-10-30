@@ -451,6 +451,8 @@ export class AceVideo implements Machine {
   }
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
+  get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
 
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void {
     this.slots.setLines(lines);

@@ -40,7 +40,7 @@ import { contentKeys } from '../web/contentkeys';
 import { PlayPointer } from '../web/play/pointer';
 import { str } from '../web/i18n';
 import { coinTicks } from '../web/ui/coinsetup';
-import { editedSlot, markedSlots, readCoinWiring, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
+import { editedSlot, markedSlots, readCoinWiring, readPayoutValues, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
 import { markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 import { definitionOf, keepCoinAnswers } from './hostset';
 
@@ -1520,7 +1520,9 @@ class Wizard {
 
   private coinsWired(): boolean {
     const w = this.wiring();
+    const valued = readPayoutValues(this.m.config.payouts);
     return this.wiringRun !== 'running'
+      && (this.wm.live.emu.info?.tokenPayouts ?? []).every((l) => valued[String(l)])
       && this.wireSlots().every((s) => (w[String(s.line)]?.coins.some((c) => c.line !== null) ?? false))
       && this.slotlessLines().every((l) => w[String(l)] !== undefined)
       && !this.markDrafts.length
@@ -1591,7 +1593,8 @@ class Wizard {
   private renderCoins(): HTMLElement | null {
     const slots = this.wireSlots();
     const marking = this.markOffer();
-    if (!slots.length && !this.wm.live.emu.info?.slotlessCoins?.length && !marking) return null;
+    const tokenOuts = this.wm.live.emu.info?.tokenPayouts ?? [];
+    if (!slots.length && !this.wm.live.emu.info?.slotlessCoins?.length && !marking && !tokenOuts.length) return null;
     if (this.wiringRun === 'no') { queueMicrotask(() => { void this.findWiring(); }); }
     const box = card();
     if (this.wiringRun !== 'done') {
@@ -1642,7 +1645,46 @@ class Wizard {
     });
     this.renderSlotless(box);
     if (marking) this.renderMarked(box);
+    this.renderTokenPayouts(box, tokenOuts);
     return box.childElementCount ? box : null;
+  }
+
+  private renderTokenPayouts(box: HTMLElement, lines: readonly number[]): void {
+    lines.forEach((line, i) => {
+      const name = lines.length === 1 ? str('arcade.wizard.token_payout') : str('arcade.wizard.token_payout_n', { 0: i + 1 });
+      const sel = document.createElement('select');
+      sel.className = 'coin-token-value';
+      sel.setAttribute('aria-label', name);
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = str('coinask.no_value');
+      sel.append(none, ...TOKEN_VALUES.map((p) => {
+        const o = document.createElement('option');
+        o.value = String(p);
+        o.textContent = cashLabel(p);
+        return o;
+      }));
+      sel.value = String(readPayoutValues(this.m.config.payouts)[String(line)] ?? '');
+      sel.addEventListener('change', () => {
+        const next = readPayoutValues(this.m.config.payouts);
+        if (sel.value) next[String(line)] = Number(sel.value);
+        else delete next[String(line)];
+        for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
+          if (Object.keys(next).length) c.payouts = { ...next };
+          else delete c.payouts;
+        }
+        this.wm.live.applyPayouts(next);
+        void this.save();
+        this.nav(undefined, this.coinsWired());
+        this.renderStrip();
+      });
+      const head = el('div', null, { class: 'coin-slot-head' });
+      head.append(el('span', name, { class: 'row-label' }));
+      const row = el('div', null, { class: 'coin-slot' });
+      row.append(head, sel);
+      box.append(row);
+      enhanceSelect(sel, { small: true });
+    });
   }
 
   private glassMark(n: number | string, at: { left: number; top: number; width: number; height: number }, row?: HTMLElement): HTMLElement | null {

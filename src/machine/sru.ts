@@ -317,6 +317,8 @@ export class Sru extends Sys80 {
   }
 
   get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+  get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
 
   nameCoin(line: number, coin: NamedCoin): void {
     const i = line - 20;

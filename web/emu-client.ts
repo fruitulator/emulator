@@ -7,6 +7,7 @@ import type { Snapshot } from './snapshot';
 import type { Recording } from '../src/machine/replay';
 import type { Check, CheckResult, RelayInput } from './relay';
 import { workerName } from './i18n';
+import { reloadStalePageOnce, sessionStorageOrNull } from './stalepage';
 
 export interface ClearRamSettings {
   optionKeys?: Record<string, number>;
@@ -21,6 +22,7 @@ export interface EmuLoadOptions {
   optionKeys?: Record<string, number>;
   panelSwitches?: Record<string, boolean>;
   namedCoins?: Record<string, NamedCoin>;
+  namedPayouts?: Record<string, number>;
   coinWiring?: CoinWiring;
   powerCycle?: boolean;
   benchStep?: boolean;
@@ -59,6 +61,7 @@ export interface Emu {
   input(id: number, on: boolean): void;
   coin(bit: number): void;
   nameCoin(line: number, coin: NamedCoin): void;
+  namePayout(line: number, pence: number): void;
   gateSeen(lamps: readonly number[]): void;
   setCoinWiring(wiring: CoinWiring): void;
   readonly coinWiringStatus: CoinWiringStatus | null;
@@ -144,6 +147,7 @@ export class WorkerEmu implements Emu {
       this.worker = new Worker(new URL('./emu.worker.ts', import.meta.url), { type: 'module', name: workerName('emu') });
       this.worker.onmessage = (ev: MessageEvent<EmuResponse>) => this.dispatch(ev.data);
       this.worker.onerror = (ev) => {
+        if (!ev.message && reloadStalePageOnce(import.meta.url, sessionStorageOrNull(), () => location.reload())) return;
         const msg = ev.message || 'emulation worker failed';
         this.pendingLoad?.reject(new Error(msg));
         this.pendingLoad = null;
@@ -316,6 +320,7 @@ export class WorkerEmu implements Emu {
         optionKeys: opts.optionKeys,
         panelSwitches: opts.panelSwitches,
         namedCoins: opts.namedCoins,
+        namedPayouts: opts.namedPayouts,
         coinWiring: opts.coinWiring,
         powerCycle: opts.powerCycle,
         benchStep: opts.benchStep,
@@ -341,6 +346,10 @@ export class WorkerEmu implements Emu {
 
   nameCoin(line: number, coin: NamedCoin): void {
     this.post({ type: 'name-coin', epoch: this.epoch, line, coin });
+  }
+
+  namePayout(line: number, pence: number): void {
+    this.post({ type: 'name-payout', epoch: this.epoch, line, pence });
   }
 
   gateSeen(lamps: readonly number[]): void {

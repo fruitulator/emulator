@@ -87,6 +87,10 @@ export class BlackBox implements Bus, Machine {
     this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
   }
 
+  get tokenPayoutLines(): readonly number[] {
+    return this.meterOutPence.some((p) => p) ? [] : this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
   }
@@ -443,7 +447,7 @@ export class BlackBox implements Bus, Machine {
       this.slideEjects[i]++;
       if (typeof p === 'number') this.slideOutPence += p;
       if (metered || !this.booksMoney) continue;
-      if (p === 'token') this.cashLedger.unpricedTokenOut++;
+      if (p === 'token') this.coinBook.payouts.book(this.cashLedger, i);
       else if (p === 'unpriced') this.cashLedger.unpricedOut++;
       else this.coinBook.cashOut(p);
     }

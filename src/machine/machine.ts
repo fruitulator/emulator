@@ -192,6 +192,8 @@ export interface Machine {
   readonly coinChutes?: readonly CoinChute[];
   readonly uncountedCoinLines?: readonly number[];
   readonly unpricedPayoutLines?: readonly number[];
+  readonly tokenPayoutLines?: readonly number[];
+  namePayout?(line: number, pence: number): void;
   readonly coinPortLines?: CoinPortLines;
   readonly coinLockHarnessRead?: boolean;
   readonly coinsRefused?: number;

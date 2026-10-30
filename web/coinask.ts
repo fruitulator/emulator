@@ -11,6 +11,12 @@ export interface SlotWiring { coins: WiredCoin[]; how: WiringHow; checked?: bool
 
 export type CoinWiring = Record<string, SlotWiring>;
 
+export function readPayoutValues(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object') return {};
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>)
+    .filter((e): e is [string, number] => /^\d+$/.test(e[0]) && Number.isInteger(e[1]) && (e[1] as number) > 0));
+}
+
 export const CASH_COINS: readonly number[] = [200, 100, 50, 20, 10, 5, 2];
 
 export const TOKEN_VALUES: readonly number[] = [5, 10, 20, 25, 50, 100];

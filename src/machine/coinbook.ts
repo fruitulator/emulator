@@ -21,8 +21,26 @@ export function coinOfNote(id: number): BookedCoin {
   return n.pence;
 }
 
+export class TokenPayouts {
+  private readonly named = new Map<number, number>();
+
+  name(line: number, pence: number): void {
+    if (Number.isInteger(pence) && pence > 0) this.named.set(line, pence);
+  }
+
+  value(line: number): number | undefined { return this.named.get(line); }
+
+  book(ledger: CashLedger, line: number): void {
+    const v = this.named.get(line);
+    if (v === undefined) ledger.unpricedTokenOut++;
+    else ledger.tokenOutPence += v;
+  }
+}
+
 export class CoinBook {
-  static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'openOnCoin'];
+  static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'openOnCoin', 'payouts'];
+
+  readonly payouts = new TokenPayouts();
 
   slides: SlideEffect[] = [];
   changeWindow = 0;
@@ -48,6 +66,10 @@ export class CoinBook {
     return this.slides.flatMap((s, i) => (s === 'token' || s === 'unpriced' ? [i] : []));
   }
 
+  get tokenSlides(): number[] {
+    return this.slides.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+
   get hasSlides(): boolean {
     return this.slides.some((s) => s !== null);
   }
@@ -66,7 +88,9 @@ export class CoinBook {
   }
 
   slide(line: number): void {
-    this.pay(this.slides[line] ?? null);
+    const s = this.slides[line] ?? null;
+    const named = s === 'token' ? this.payouts.value(line) : undefined;
+    this.pay(named === undefined ? s : { token: named });
   }
 
   pay(s: SlideEffect | { token: number }): void {

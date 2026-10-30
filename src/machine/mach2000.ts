@@ -218,6 +218,8 @@ export class Mach2000 implements Machine {
   }
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
+  get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }

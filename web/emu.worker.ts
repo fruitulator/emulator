@@ -12,7 +12,7 @@ import { stampVersion } from './play/savedversion';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { Follower, diffPaths, followBudget, settleSound, signalsOf, snapshotHash, type Check, type RelayInput } from './relay';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
@@ -311,6 +311,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
     if (req.snapshot) applyState(m, req.snapshot);
     applyPanelSwitchState(m, req.panelSwitches);
     applyNamedCoins(m, req.namedCoins);
+    applyNamedPayouts(m, req.namedPayouts);
     applyCoinWiring(m, req.coinWiring);
     if (req.powerCycle) powerCycleOrThrow(m);
     layout = frameLayoutFor(req.game.system, m, req.game.layout);
@@ -466,6 +467,9 @@ function handle(req: EmuRequest): void {
       break;
     case 'name-coin':
       m.nameCoin?.(req.line, req.coin);
+      break;
+    case 'name-payout':
+      m.namePayout?.(req.line, req.pence);
       break;
     case 'gate-seen':
       gateSeen = gatesOf({ gates: req.lamps });

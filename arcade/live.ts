@@ -1,6 +1,6 @@
 import { WorkerEmu, type AutosaveBlob } from '../web/emu-client';
 import { getMeta, playCountOf, putMeta } from '../web/store';
-import { coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
+import { readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
 import { coinsForLoad, markedChutes, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
 import { openCoinMenu } from '../web/ui/coinmenu';
@@ -602,6 +602,7 @@ export class Live {
         optionKeys: cfg.optionKeys,
         panelSwitches: cfg.panelSwitches,
         ...coinsForLoad(cfg.coins, ownAnswers, null),
+        namedPayouts: readPayoutValues(cfg.payouts),
       };
       this.oldCoinAnswers = ownAnswers;
       this.lastStart = { t0, resumed: !!snapshot, why };
@@ -705,7 +706,7 @@ export class Live {
       this.showCoinsStopped();
       return false;
     }
-    if (this.wallet && this.emu.info?.unpricedPayouts?.length) {
+    if (this.wallet && this.emu.info?.unpricedPayouts?.some((l) => !readPayoutValues(this.glass?.machine.config?.payouts)[String(l)])) {
       this.wallet.turnedAway();
       this.stopNote?.notice(PAYOUT_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
       return false;
@@ -759,6 +760,11 @@ export class Live {
     const now = wiringFor(g.machine.config.coins, this.oldCoinAnswers, info);
     if (!Object.keys(now).length || JSON.stringify(now) === JSON.stringify(sent ?? {})) return;
     this.applyWiring(now);
+  }
+
+  applyPayouts(values: Record<string, number>): void {
+    if (!this.running || this.watching) return;
+    for (const [line, pence] of Object.entries(values)) this.emu.namePayout(Number(line), pence);
   }
 
   applyWiring(w: CoinWiring): void {
@@ -1135,6 +1141,7 @@ export class Live {
         optionKeys: cfg.optionKeys,
         panelSwitches: cfg.panelSwitches,
         ...coinsForLoad(cfg.coins, g.machine.hostFiles ? undefined : meta?.coinAnswers, null),
+        namedPayouts: readPayoutValues(cfg.payouts),
         snapshot,
         follow: { cycle: k.cycle, seq: k.seq, bufferMs: WATCH_BUFFER_MS },
       });

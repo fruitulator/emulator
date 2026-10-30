@@ -117,7 +117,9 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
     ...(m.coinChutes ? { coins: m.coinChutes.map((c) => ({ ...c })) } : {}),
     ...(m.unnamedCoinLines?.length ? { unnamedCoins: [...m.unnamedCoinLines] } : {}),
     ...(m.uncountedCoinLines?.length ? { uncountedCoins: [...m.uncountedCoinLines] } : {}),
-    ...(m.unpricedPayoutLines?.length ? { unpricedPayouts: [...m.unpricedPayoutLines] } : {}),
+    ...(m.unpricedPayoutLines?.length || m.tokenPayoutLines?.length
+      ? { unpricedPayouts: [...(m.unpricedPayoutLines ?? m.tokenPayoutLines ?? [])] } : {}),
+    ...(m.namePayout && m.tokenPayoutLines?.length ? { tokenPayouts: [...m.tokenPayoutLines] } : {}),
     ...(m.nameCoin ? { namesCoins: true } : {}),
     ...coinTableInfo(m),
     ...slotCoinLinesOf(game, m, resolved),
@@ -309,6 +311,11 @@ export function applyPanelSwitchState(
 export function applyNamedCoins(m: Machine, named: Record<string, NamedCoin> | undefined): void {
   if (!named || !m.nameCoin) return;
   for (const [line, coin] of Object.entries(named)) m.nameCoin(Number(line), coin);
+}
+
+export function applyNamedPayouts(m: Machine, named: Record<string, number> | undefined): void {
+  if (!named || !m.namePayout) return;
+  for (const [line, pence] of Object.entries(named)) m.namePayout(Number(line), pence);
 }
 
 export function applyCoinWiring(m: Machine, wiring: CoinWiring | undefined): void {

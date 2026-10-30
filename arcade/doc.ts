@@ -46,6 +46,7 @@ export interface MachineConfig {
   optionKeys?: Record<string, number>;
   panelSwitches?: Record<string, boolean>;
   coins?: CoinWiring;
+  payouts?: Record<string, number>;
 }
 
 export interface MachineSetup extends Partial<MachineLook> {

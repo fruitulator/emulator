@@ -1,4 +1,5 @@
 import type { Bus } from '../cpu/bus';
+import { TokenPayouts } from './coinbook';
 import type { Machine, DigitKind, CabinetSwitch, CoinPortLines, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { SlideEffect, SwitchControl } from '../layout/fmlconfig';
@@ -313,7 +314,7 @@ export class SegColumnBank {
 }
 
 export class Mpu4 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache', 'modType'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache', 'modType', 'tokenPayouts'];
   readonly digitKind: DigitKind = 'mpu4led';
   readonly cpu: M6809;
   readonly ram = new Uint8Array(0x0800);
@@ -1571,6 +1572,12 @@ export class Mpu4 implements Bus, Machine {
     return 0;
   }
 
+  private readonly tokenPayouts = new TokenPayouts();
+  get tokenPayoutLines(): readonly number[] {
+    return this.outMetered ? [] : this.triacSlides.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  namePayout(line: number, pence: number): void { this.tokenPayouts.name(line, pence); }
+
   setTriacSlides(slides: SlideEffect[]): void {
     for (let i = 0; i < 8; i++) this.triacSlides[i] = slides[i] ?? null;
   }
@@ -1604,7 +1611,7 @@ export class Mpu4 implements Bus, Machine {
       this.triacPulses[i]++;
       const slide = this.outMetered ? null : this.triacSlides[i];
       if (!this.booksMoney) {  }
-      else if (slide === 'token') this.cashLedger.unpricedTokenOut++;
+      else if (slide === 'token') this.tokenPayouts.book(this.cashLedger, i);
       else if (slide === 'unpriced') this.cashLedger.unpricedOut++;
       else if (slide !== null) this.cashLedger.outPence += slide;
       if (this.wiring && this.triacInMult[i]) this.wiring.check.count(this.triacInMult[i]!, this.wiringState.now);

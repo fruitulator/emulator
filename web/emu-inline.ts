@@ -9,7 +9,7 @@ import {
 import { applyState, captureState, captureStateRaw } from './snapshot';
 import { gatesOf, stampGates } from './play/gates';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
@@ -97,6 +97,7 @@ export class InlineEmu implements Emu {
       if (opts.snapshot) applyState(m, opts.snapshot);
       applyPanelSwitchState(m, opts.panelSwitches);
       applyNamedCoins(m, opts.namedCoins);
+      applyNamedPayouts(m, opts.namedPayouts);
       applyCoinWiring(m, opts.coinWiring);
       if (opts.powerCycle) powerCycleOrThrow(m);
       this.layout = frameLayoutFor(opts.game.system, m, opts.game.layout);
@@ -233,6 +234,10 @@ export class InlineEmu implements Emu {
 
   gateSeen(lamps: readonly number[]): void {
     this.gates = gatesOf({ gates: [...lamps] });
+  }
+
+  namePayout(line: number, pence: number): void {
+    this.machine?.namePayout?.(line, pence);
   }
 
   nameCoin(line: number, coin: NamedCoin): void {

@@ -304,6 +304,10 @@ export class Mpu3 implements Bus, Machine {
       .some((p) => p > 0);
   }
 
+  get tokenPayoutLines(): readonly number[] {
+    return this.outPriced ? [] : this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
     this.tokenOutCache = null;
@@ -559,7 +563,7 @@ export class Mpu3 implements Bus, Machine {
       if (p === null) continue;
       if (typeof p === 'number') this.slideOutPence += p;
       if (this.outPriced || !this.booksMoney) continue;
-      if (p === 'token') this.cashLedger.unpricedTokenOut++;
+      if (p === 'token') this.coinBook.payouts.book(this.cashLedger, i);
       else if (p === 'unpriced') this.cashLedger.unpricedOut++;
       else this.coinBook.cashOut(p);
     }
