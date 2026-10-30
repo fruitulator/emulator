@@ -19,24 +19,29 @@ function storable(res) {
     : Promise.resolve(res);
 }
 
+function isPage(res) {
+  return (res.headers.get('content-type') ?? '').includes('text/html');
+}
+
 async function precache() {
   const cache = await caches.open(CACHE);
   const jobs = [
-    ...SHELL_PAGES.map(([key, page]) => ({ key, from: page })),
+    ...SHELL_PAGES.map(([key, page]) => ({ key, from: page, page: true })),
     ...PRECACHE.files.map((f) => ({ key: f, from: f })),
   ];
   const total = jobs.length;
   let done = 0;
   let failed = 0;
   await tell({ done, total });
-  const one = async ({ key, from }) => {
+  const one = async ({ key, from, page }) => {
     try {
       if (!(await cache.match(key))) {
         const old = key.startsWith('/assets/') ? await caches.match(key) : undefined;
-        if (old) await cache.put(key, old);
+        if (old && !isPage(old)) await cache.put(key, old);
         else {
           const res = await fetch(from, { cache: 'no-cache' });
           if (!res.ok) throw new Error(`${from}: ${res.status}`);
+          if (!page && isPage(res)) throw new Error(`${from}: a page, not the file`);
           await cache.put(key, await storable(res));
         }
       }
@@ -69,7 +74,7 @@ self.addEventListener('message', (event) => {
   const urls = event.data && event.data.type === 'cache-assets' ? event.data.urls : null;
   if (!Array.isArray(urls)) return;
   event.waitUntil(caches.open(CACHE).then((c) => Promise.all(
-    urls.map((u) => c.add(u).catch(() => undefined)),
+    urls.map((u) => fetch(u).then((res) => (res.ok && !isPage(res) ? c.put(u, res) : undefined)).catch(() => undefined)),
   )));
 });
 
@@ -95,12 +100,12 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(req, { ignoreVary: true }).then((hit) => hit ?? fetch(req).then((res) => {
-      if (res.ok && res.type === 'basic') {
+    caches.match(req, { ignoreVary: true }).then((hit) => (hit && !isPage(hit) ? hit : fetch(req).then((res) => {
+      if (res.ok && res.type === 'basic' && !isPage(res)) {
         const copy = res.clone();
         void caches.open(CACHE).then((c) => c.put(req, copy));
       }
       return res;
-    })),
+    }))),
   );
 });

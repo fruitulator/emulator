@@ -26,7 +26,7 @@ function link(href: string, icon: string, label: string, tip: [name: string, wha
   return a;
 }
 
-export function siteNav(o: { here: 'games' | 'arcades'; settings?: boolean; onLocked?: () => void }): HTMLElement {
+export function siteNav(o: { here: 'games' | 'arcades'; settings?: boolean; onLocked?: () => void; help?: HTMLElement }): HTMLElement {
   const nav = document.createElement('nav');
   nav.className = 'ui-sitenav';
   nav.setAttribute('aria-label', str('ui.sitenav.sections'));
@@ -39,6 +39,7 @@ export function siteNav(o: { here: 'games' | 'arcades'; settings?: boolean; onLo
   } else {
     nav.append(link('/', UI_ICONS.library, str('index.open_the_library'), [str('ui.tip.my_games_name'), str('ui.tip.my_games')], 'to-games'));
   }
+  if (o.help) nav.append(o.help);
   if (o.settings) nav.append(settingsButton({ onLocked: o.onLocked }));
   nav.hidden = !nav.childElementCount;
   return nav;

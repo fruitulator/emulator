@@ -56,6 +56,7 @@ const SURFACES: Record<SurfaceId, Surface> = {
 
 const loader = new THREE.TextureLoader();
 const cache = new Map<string, THREE.Texture>();
+const waiting = new Map<THREE.Texture, THREE.Texture[]>();
 
 let anisotropy = 8;
 let plain = false;
@@ -65,13 +66,24 @@ export function setSurfaceOptions(o: { aniso: number; textures: boolean }): void
 }
 
 function map(url: string, colour: boolean, renderer: THREE.WebGLRenderer): THREE.Texture {
-  return baseMap(url, colour, renderer).clone();
+  const base = baseMap(url, colour, renderer);
+  const c = base.clone();
+  if (base.image === null) {
+    c.version = 0;
+    waiting.get(base)!.push(c);
+  }
+  return c;
 }
 
 function baseMap(url: string, colour: boolean, renderer: THREE.WebGLRenderer): THREE.Texture {
   let t = cache.get(url);
   if (!t) {
-    t = loader.load(url);
+    const loading = loader.load(url, () => {
+      for (const c of waiting.get(loading) ?? []) c.needsUpdate = true;
+      waiting.delete(loading);
+    });
+    waiting.set(loading, []);
+    t = loading;
     if (colour) t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.anisotropy = Math.min(anisotropy, renderer.capabilities.getMaxAnisotropy());

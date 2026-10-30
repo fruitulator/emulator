@@ -1,3 +1,4 @@
+import { helpButton } from '../web/help/help';
 import { listGames, CONTENT_RULE, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 
@@ -119,7 +120,7 @@ export async function openHost(): Promise<void> {
   const home = document.getElementById('home');
   if (home) top.append(betaBrand(home));
   const right = el('div', null, { class: 'host-top-right' });
-  right.append(siteNav({ here: 'arcades', settings: true, onLocked: () => location.replace('/') }));
+  right.append(siteNav({ here: 'arcades', help: helpButton(() => { void import('./guide').then((m) => m.openGuide()); }), settings: true, onLocked: () => location.replace('/') }));
   top.append(right);
   void mountAvatar(right);
   root().before(top);

@@ -1,5 +1,6 @@
 import { openDialog, type Dialog } from '../web/ui/dialog';
 import { str } from '../web/i18n';
+import { richInto } from '../web/ui/rich';
 import { openPrivacy } from './privacy';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
@@ -17,22 +18,22 @@ function section(heading: string, lines: string[]): HTMLElement {
 }
 
 function para(text: string): HTMLParagraphElement {
-  const p = el('p');
-  for (const part of text.split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
-    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) p.append(el('strong', part.slice(2, -2)));
-    else if (part.startsWith('`') && part.endsWith('`') && part.length > 2) p.append(el('code', part.slice(1, -1)));
-    else if (part) p.append(document.createTextNode(part));
-  }
-  return p;
+  return richInto(el('p'), text);
 }
 
 let open: Dialog | null = null;
+let afterClose: (() => void) | undefined;
 
 function guideBody(): HTMLElement[] {
   const protect = section(str('arcade.guide.how_we_protect'), []);
-  const priv = el('button', str('arcade.privacy.how_the_arcade_keeps_your'), 'ui-beta-more');
+  const priv = el('button', str('arcade.privacy.how_the_arcade_keeps_your'), 'privacy-link');
   priv.type = 'button';
-  priv.addEventListener('click', () => { open?.close(); openPrivacy(); });
+  priv.addEventListener('click', () => {
+    const then = afterClose;
+    afterClose = undefined;
+    open?.close();
+    openPrivacy(then);
+  });
   const p = el('p');
   p.append(priv);
   protect.append(p);
@@ -63,10 +64,11 @@ function guideBody(): HTMLElement[] {
 
 export function openGuide(onClose?: () => void): Dialog {
   if (open) return open;
+  afterClose = onClose;
   const d = openDialog({
     title: str('arcade.guide.how_the_arcade_works'),
     body: guideBody(),
-    onClose: () => { open = null; onClose?.(); },
+    onClose: () => { open = null; afterClose?.(); },
   });
   d.panel.classList.add('privacy', 'guide');
   open = d;

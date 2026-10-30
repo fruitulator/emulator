@@ -1,5 +1,8 @@
 import { applyStrings, str } from '../web/i18n';
+import { setArcadeGuide } from '../web/help/help';
 import { betaTag } from '../web/ui/beta';
+
+setArcadeGuide(() => { void import('./guide').then((m) => m.openGuide()); });
 
 applyStrings();
 document.querySelector('#menu .menu-brand')?.append(betaTag());

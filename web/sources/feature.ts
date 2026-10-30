@@ -1,3 +1,4 @@
+import { openHelp } from '../help/help';
 import { closeSheet, optionRow, sheetLine, showSheet } from '../ui/sheet';
 import { UI_ICONS } from '../ui/icons';
 import { actionButton } from '../ui/list';
@@ -56,7 +57,7 @@ function addSheet(returnTo: HTMLElement, then: (host: string) => void): void {
     ev.stopPropagation();
     if (ev.key === 'Enter') { ev.preventDefault(); void run(); }
   });
-  showSheet(str('sources.add_source'), [field, status], returnTo, { foot: [actions(go)] });
+  showSheet(str('sources.add_source'), [field, status], returnTo, { foot: [actions(go)], help: () => openHelp('source') });
   input.focus({ preventScroll: true });
 }
 

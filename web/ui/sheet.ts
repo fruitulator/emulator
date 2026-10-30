@@ -231,6 +231,7 @@ export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HT
   closeButton?: boolean;
   back?: () => void;
   variant?: 'wide';
+  help?: () => void;
 } = {}): void {
   escapeAlwaysCloses();
   closeSideCard();
@@ -263,6 +264,16 @@ export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HT
     x.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${UI_ICONS.cross}</svg>`;
     x.addEventListener('click', closeSheet);
     title.after(x);
+  }
+  if (o.help) {
+    const run = o.help;
+    const q = document.createElement('button');
+    q.type = 'button';
+    q.className = 'nb-icon-btn sheet-close';
+    q.setAttribute('aria-label', str('help.title'));
+    q.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${UI_ICONS.help}</svg>`;
+    q.addEventListener('click', () => { closeSheet(); run(); });
+    title.after(q);
   }
   if (o.variant) sheet.dataset.variant = o.variant;
   else delete sheet.dataset.variant;

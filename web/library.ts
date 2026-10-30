@@ -1,3 +1,4 @@
+import { openHelp } from './help/help';
 import { renderOrbit, settleOrbitCaption, type OrbitDeps } from './orbit';
 import {
   everPlayed, getMeta, lastPlayed, listGames, playCountOf, putMeta,
@@ -431,7 +432,7 @@ export async function openAddSheet(
   note.className = 'sheet-note nb-meta';
   note.textContent = str('library.nothing_is_uploaded_anywhere_a');
 
-  showSheet(str('library.add_games'), [folder, files, ...more, usage, note], returnTo);
+  showSheet(str('library.add_games'), [folder, files, ...more, usage, note], returnTo, { help: () => openHelp('add') });
 }
 
 function renameField(g: GameMeta, h: LibraryHandlers): HTMLElement {

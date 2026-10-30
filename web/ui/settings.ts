@@ -26,6 +26,16 @@ function aboutRow(leave: () => void): HTMLButtonElement {
   return row;
 }
 
+function helpRow(leave: () => void): HTMLButtonElement {
+  const { row } = valueRow(str('help.title'), '');
+  row.setAttribute('aria-haspopup', 'dialog');
+  row.addEventListener('click', () => {
+    leave();
+    void import('../help/help').then((m) => m.openHelpList());
+  });
+  return row;
+}
+
 export function mountSettings(btn: HTMLButtonElement, o: { onLocked?: () => void } = {}): void {
   let menu: { el: HTMLElement; off: () => void } | null = null;
   if (o.onLocked) onKioskMode((locked) => { if (locked) o.onLocked!(); });
@@ -46,6 +56,7 @@ export function mountSettings(btn: HTMLButtonElement, o: { onLocked?: () => void
     themeRow({ returnTo: btn, back: phone ? openSheet : undefined, beforeSheet: closeMenu }),
     languageRow({ returnTo: btn, back: phone ? openSheet : undefined, beforeSheet: closeMenu }),
     divider(),
+    helpRow(leave),
     aboutRow(leave),
   ];
 

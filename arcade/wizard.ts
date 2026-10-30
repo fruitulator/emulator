@@ -1,3 +1,4 @@
+import { helpButton, openHelp } from '../web/help/help';
 import { configOf } from '../src/machine/registry';
 import type { CashLedger } from '../src/machine/machine';
 import type { Snapshot } from '../web/snapshot';
@@ -116,7 +117,7 @@ export async function openWizard(
   root.setAttribute('aria-modal', 'true');
   heading.id = 'wzTitle';
   root.setAttribute('aria-labelledby', heading.id);
-  top.append(name, exitButton(leave));
+  top.append(name, helpButton(() => openHelp('machine', `step${w?.stepNow ?? 0}`)), exitButton(leave));
   root.append(top);
   if (!row) return;
   const library = await listGames().catch(() => []);
@@ -241,6 +242,7 @@ class Wizard {
   private onNextCustom: (() => void) | undefined;
   private steps!: StepHeader;
   private step: number;
+  get stepNow(): number { return this.step; }
   private busy = false;
   private booting = false;
   private reboot = false;

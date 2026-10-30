@@ -212,6 +212,7 @@ export class RoomMenu {
     appendItems(content, disabledItems(this.ids), (label, icon, panel) => this.drawer.navRow(label, icon, panel));
     if (!this.host && this.rating) content.lastElementChild?.before(this.rateCard(this.rating));
     const out = card();
+    out.append(menuRow(str('help.title'), UI_ICONS.help, () => { void import('../web/help/help').then((m) => m.openHelp('room')); }, false));
     out.append(menuRow(str('arcade.roompage.arcades'), UI_ICONS.back, leaveArcade, false));
     content.append(out);
     appendMenuFoot(content);

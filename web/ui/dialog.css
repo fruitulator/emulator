@@ -169,3 +169,8 @@
 .ui-alert-hint > p {
   margin: 0;
 }
+
+.ui-dialog.help p { line-height: 1.45; margin: 0 0 10px; }
+.ui-dialog.help h3 { margin: 16px 0 6px; scroll-margin-top: 8px; }
+.ui-dialog.help ul, .ui-dialog.help ol { margin: 0 0 10px; padding-left: 22px; }
+.ui-dialog.help li { margin: 6px 0; line-height: 1.45; }

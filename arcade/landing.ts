@@ -1,3 +1,4 @@
+import { helpButton } from '../web/help/help';
 import { listGames, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import { openDialog } from '../web/ui/dialog';
@@ -80,7 +81,7 @@ export async function openLanding(): Promise<void> {
   svg.innerHTML = UI_ICONS.plus;
   plus.append(svg);
   plus.addEventListener('click', () => { void signedInThen(() => { void openCreate(); }); });
-  const lib = siteNav({ here: 'arcades' });
+  const lib = siteNav({ here: 'arcades', help: helpButton(() => { void import('./guide').then((m) => m.openGuide()); }) });
   const right = el('div', null, 'landing-right host-top-right');
   right.append(lib, settingsButton({ onLocked: () => location.replace('/') }));
   top.append(right);
