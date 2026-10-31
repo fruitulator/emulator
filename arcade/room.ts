@@ -1058,11 +1058,19 @@ export class Room {
       }
       if (!got) return;
       m.held = got;
+      this.nowHeld(s);
       await this.standFresh(s);
       if (this.focus === s) this.walkUp(s);
     } finally {
       this.getting.delete(m.id);
     }
+  }
+
+  private nowHeld(s: Slot): void {
+    this.builds.forget(s);
+    s.loaded = false;
+    s.shown = false;
+    if (!this.switches.glow) s.holder.add(lightPool());
   }
 
   walkUp(s: Slot): void {

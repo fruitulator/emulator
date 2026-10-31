@@ -5,6 +5,7 @@ import { PANEL_LABEL, PANEL_NAMES, stretchOf, type PanelName, type Rect } from '
 import type { SplitHow } from './fold';
 import { dragQuad, isRectQuad, levelEdges, rectifiedSize, roundQuad, squareUp, type Quad, type QuadGrip as Grip } from './quad';
 import { el, iconButton } from './host';
+import { ZOOM_MAX, ZOOM_PER_UNIT } from './flatzoom';
 import { NudgeRun } from './looksettle';
 import type { CabinetPanels } from './cabinets';
 import { str } from '../web/i18n';
@@ -28,8 +29,6 @@ export interface FitViewOptions {
 const GRIPS: Grip[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const PAD = 16;
 const DRAG_SLOP = 3;
-const ZOOM_MAX = 8;
-const ZOOM_PER_UNIT = 0.0025;
 const EDGES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 0]];
 const NAMES: PanelName[] = PANEL_NAMES;
 const SVG = 'http://www.w3.org/2000/svg';

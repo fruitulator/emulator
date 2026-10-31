@@ -31,6 +31,7 @@ import { TRACE_FPS } from './trace';
 import { COINS_STOPPED_HOST_TEXT, el, exitButton, iconButton } from './host';
 import { serverMoney } from './moneyrecord';
 import { DressPreview, type GlassPlay } from './dresspreview';
+import { FlatZoom } from './flatzoom';
 import { TEX_WHOLE } from './glass';
 import { FitView } from './fitview';
 import { LiveLook, settleLook } from './looksettle';
@@ -473,6 +474,7 @@ class Wizard {
 
   private blocked(): boolean {
     if (!this.busy) return false;
+    if (this.testing) return this.testStop;
     return !(this.booting && this.reboot && !this.configChanged());
   }
 
@@ -481,6 +483,7 @@ class Wizard {
     if (this.step === 1 && i > 1 && this.configChanged()) { this.promptRestart(i); return; }
     if (this.step === 1 && i > 1) this.settle();
     if (i > this.step) this.left.add(this.step);
+    if (this.testing && i !== this.step) this.testStop = true;
     if (this.step === FILL && i !== FILL) this.refillOff();
     this.step = i;
     this.panel.scrollTop = 0;
@@ -677,7 +680,8 @@ class Wizard {
   private loop(): void {
     const tick = (): void => {
       if (this.disposed) return;
-      this.wm.paint(TEX_WHOLE);
+      const zoomed = this.flatZoom && this.flatZoom.zoom > 1 && this.stage.firstElementChild === this.flat;
+      this.wm.paint(zoomed ? Infinity : TEX_WHOLE);
       this.fitGlass();
       this.fitView?.draw(this.wm.glass.paints);
       this.paintReady();
@@ -693,18 +697,21 @@ class Wizard {
     const cw = this.canvas.width;
     const ch = this.canvas.height;
     if (!fw || !fh || !cw || !ch) return;
-    const k = Math.min(fw / cw, fh / ch);
+    const k = Math.min(fw / cw, fh / ch) * (this.flatZoom?.zoom ?? 1);
     const w = `${Math.floor(cw * k)}px`;
     const h = `${Math.floor(ch * k)}px`;
     if (this.flat.style.width !== w || this.flat.style.height !== h) {
       this.flat.style.width = w;
       this.flat.style.height = h;
     }
+    this.flatZoom?.place(cw * k, ch * k, fw, fh);
     if (cw > 4 && this.wm.glass.paints > 0 && !this.flat.classList.contains('shown')) {
       this.flat.classList.add('shown');
       this.showView();
     }
   }
+
+  private flatZoom: FlatZoom | null = null;
 
   private wirePointer(): void {
     const cv = this.canvas;
@@ -726,11 +733,7 @@ class Wizard {
       release: (id) => this.wm.live.release(id),
       capture: (id) => cv.setPointerCapture(id),
     });
-    cv.addEventListener('pointerdown', (ev) => { caps.down(ev); });
-    const up = (ev: PointerEvent): void => { caps.up(ev); };
-    cv.addEventListener('pointerup', up);
-    cv.addEventListener('pointercancel', up);
-    cv.addEventListener('lostpointercapture', up);
+    this.flatZoom = new FlatZoom(this.stage, this.flat, cv, caps as PlayPointer<unknown>);
     const typing = (ev: KeyboardEvent): boolean => ev.target instanceof HTMLInputElement || ev.target instanceof HTMLSelectElement;
     const down = (ev: KeyboardEvent): void => { if (!typing(ev)) this.wm.live.keys.keyDown(ev); };
     const up2 = (ev: KeyboardEvent): void => { if (!typing(ev)) this.wm.live.keys.keyUp(ev); };
@@ -834,7 +837,7 @@ class Wizard {
   private running: string | null = null;
 
   private setCheck(id: string, pass: boolean | null, note: string): void {
-    if (this.gone()) return;
+    if (this.gone() || this.testStop) return;
     this.ran.add(id);
     const v = this.m.validation!;
     const c = v.checks.find((x) => x.id === id)!;
@@ -1544,7 +1547,7 @@ class Wizard {
   }
 
   private async findWiring(): Promise<void> {
-    if (this.wiringRun !== 'no' || this.booting) return;
+    if (this.wiringRun !== 'no' || this.booting || this.testing) return;
     const info = this.wm.live.emu.info;
     let need = this.wireSlots().map((s) => s.line).filter((l) => !this.wiring()[String(l)]);
     if (!info || !need.length) {
@@ -1894,6 +1897,7 @@ class Wizard {
   }
 
   private autoTestedFor: string | null = null;
+  private testStop = false;
   private testing = false;
   private noCoinSlot = false;
 
@@ -1938,7 +1942,7 @@ class Wizard {
       snap = await wm.snapshot();
       if (!snap) { this.setCheck('coin', false, str('arcade.wizard.the_machine_state_could_not')); return; }
       this.preTest = snap;
-      await this.coinAndStart();
+      if (!this.testStop) await this.coinAndStart();
     } finally {
       this.running = null;
       if (!this.stoodDown()) {
@@ -1960,9 +1964,12 @@ class Wizard {
       this.askStart = false;
       this.askCoin = false;
       this.testFrom = null;
+      const stopped = this.testStop;
+      this.testStop = false;
+      if (stopped) this.autoTestedFor = null;
       if (!this.stoodDown()) {
         this.render();
-        if (this.failure() === 'test') this.selfTestFailed('test');
+        if (!stopped && this.failure() === 'test') this.selfTestFailed('test');
         await this.save();
       }
     }
@@ -1970,6 +1977,7 @@ class Wizard {
 
   private async coinAndStart(): Promise<void> {
     const wm = this.wm;
+    const stop = (): boolean => this.testStop;
     this.running = 'coin';
     this.render();
     const slot = wm.coinSlot();
@@ -1988,7 +1996,7 @@ class Wizard {
       this.say(str('arcade.wizard.put_a_coin_in_on_the_machine'), 'warn');
       this.runNote = str('arcade.wizard.put_a_coin_in_on_the_machine_2');
       this.render();
-      for (const tEnd = performance.now() + 60_000; performance.now() < tEnd;) {
+      for (const tEnd = performance.now() + 60_000; performance.now() < tEnd && !stop();) {
         await sleep(300);
         after = await wm.ledger();
         if (booked(after) > 0 || (noBooks && newOnGlass())) break;
@@ -1997,7 +2005,7 @@ class Wizard {
       after = await wm.ledger();
       this.askCoin = false;
       this.renderStrip();
-    } else while (coins < (noBooks ? 1 : COINS_MAX) && booked(after) < CREDIT_PENCE) {
+    } else while (!stop() && coins < (noBooks ? 1 : COINS_MAX) && booked(after) < CREDIT_PENCE) {
       this.say(str('arcade.wizard.putting_a_coin_in_n', { 0: coins + 1 }));
       this.runNote = str('arcade.wizard.putting_a_coin_in_n_2', { 0: coins + 1 });
       this.render();
@@ -2005,7 +2013,7 @@ class Wizard {
       await wm.coin(slot.line);
       coins++;
       let took = false;
-      for (const tEnd = performance.now() + 10_000; performance.now() < tEnd && !took;) {
+      for (const tEnd = performance.now() + 10_000; performance.now() < tEnd && !took && !stop();) {
         await sleep(300);
         after = await wm.ledger();
         took = booked(after) > was;
@@ -2016,6 +2024,7 @@ class Wizard {
       const d = booked(after) - was;
       if (slot.pence != null && d !== slot.pence) { wrong = d; break; }
     }
+    if (stop()) return;
     if (wm.coinsStopped()) { this.setCheck('coin', false, COINS_STOPPED_HOST_TEXT); return; }
     const moneyMoved = booked(after) > 0;
     if (!moneyMoved) {
@@ -2028,7 +2037,8 @@ class Wizard {
         return;
       }
     }
-    await wm.until(() => wm.secs.length >= secsAtCoin + 2, 4000);
+    await wm.until(() => wm.secs.length >= secsAtCoin + 2, 4000, stop);
+    if (stop()) return;
     const readable = wm.glassReadable();
     const glassMoved = !readable || newOnGlass();
     if (!moneyMoved && noBooks) {
@@ -2050,20 +2060,22 @@ class Wizard {
     this.running = 'spin';
     this.runNote = str('arcade.wizard.waiting_for_the_reels_to');
     this.render();
-    await wm.until(() => wm.secs.length >= 2 && wm.secs.slice(-2).every((s) => !s.reels), 15_000);
+    await wm.until(() => wm.secs.length >= 2 && wm.secs.slice(-2).every((s) => !s.reels), 15_000, stop);
     const caps = wm.startCaps();
     let moved = false;
     let pressed: string | null = null;
     for (const cap of caps) {
+      if (stop()) return;
       const travel0 = wm.travel;
       this.say(str('arcade.wizard.pressing_start'));
       this.runNote = str('arcade.wizard.pressing_n', { 0: cap.name });
       this.render();
       wm.resetVideoPlay();
       await wm.tap(cap.lp);
-      moved = await wm.until(() => wm.travel > travel0 || wm.videoPlayed(), 12_000);
+      moved = await wm.until(() => wm.travel > travel0 || wm.videoPlayed(), 12_000, stop);
       if (moved) { pressed = cap.name; break; }
     }
+    if (stop()) return;
     if (!moved) {
       const travel0 = wm.travel;
       this.askStart = true;
@@ -2071,9 +2083,10 @@ class Wizard {
       this.runNote = str('arcade.wizard.press_start_on_the_machine_2');
       this.render();
       wm.resetVideoPlay();
-      moved = await wm.until(() => wm.travel > travel0 || wm.videoPlayed(), 60_000);
+      moved = await wm.until(() => wm.travel > travel0 || wm.videoPlayed(), 60_000, stop);
       this.askStart = false;
       this.renderStrip();
+      if (stop()) return;
     }
     this.setCheck('spin', moved,
       moved ? (pressed ? str('arcade.wizard.pressed_n', { 0: pressed }) : str('arcade.wizard.start_pressed'))

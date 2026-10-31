@@ -490,6 +490,7 @@
       #host .wiz-flat { position: relative; flex: none; opacity: 0; transition: opacity 0.35s ease; }
       #host .wiz-flat.shown { opacity: 1; }
       @media (prefers-reduced-motion: reduce) { #host .wiz-flat { transition: none; } }
+      #host .wiz-flat.wiz-zoomed canvas.glass { cursor: grab; }
       #host .wz-wait { position: absolute; inset: 0; margin: auto; width: min(40%, 160px); aspect-ratio: 1;
         background: var(--nb-text-3); opacity: .5; pointer-events: none;
         -webkit-mask: url(/icons/sack-trolley.svg) center / contain no-repeat;
