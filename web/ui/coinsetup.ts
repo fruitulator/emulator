@@ -14,6 +14,7 @@ export function coinTicks(o: {
   onChange: (coins: SlotCoin[], unused: boolean) => void;
   single?: boolean; unused?: boolean;
   noUnused?: boolean;
+  takes?: ReadonlySet<number> | null;
 }): CoinTicks {
   const root = document.createElement('div');
   root.className = 'coin-ticks nb-choices';
@@ -55,7 +56,13 @@ export function coinTicks(o: {
   };
 
   for (const p of CASH_COINS) {
-    root.append(tick(cashLabel(p), cash.has(p), (on) => { if (on) cash.add(p); else cash.delete(p); }));
+    const refused = !!o.takes && !o.takes.has(p);
+    const b = tick(cashLabel(p), cash.has(p), (on) => {
+      if (on) cash.add(p); else cash.delete(p);
+      if (!on && refused) b.disabled = true;
+    });
+    b.disabled = refused && !cash.has(p);
+    root.append(b);
   }
 
   const worth = document.createElement('select');
@@ -67,6 +74,7 @@ export function coinTicks(o: {
   none.textContent = str('coinask.no_value');
   worth.append(none);
   for (const p of TOKEN_VALUES) {
+    if (o.takes && !o.takes.has(p) && token?.token !== p) continue;
     const opt = document.createElement('option');
     opt.value = String(p);
     opt.textContent = cashLabel(p);

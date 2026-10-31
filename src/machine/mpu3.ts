@@ -822,7 +822,7 @@ export class Mpu3 implements Bus, Machine {
     if (taken !== null) {
       const agrees = typeof c === 'number'
         ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || taken.token === null || c.token === taken.token);
+        : typeof taken === 'object' ? (c.token === null || taken.token === null || c.token === taken.token) : c.token === taken;
       this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
       if (!agrees) return;
     }

@@ -43,7 +43,7 @@ import { PlayPointer } from '../web/play/pointer';
 import { str } from '../web/i18n';
 import { coinTicks } from '../web/ui/coinsetup';
 import { editedSlot, markedSlots, readCoinWiring, readPayoutValues, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
-import { markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
+import { coinsTaken, markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 import { definitionOf, keepCoinAnswers } from './hostset';
 
 declare const __BUILD_ID__: string;
@@ -1624,10 +1624,11 @@ class Wizard {
       head.append(
         el('span', name, { class: 'row-label' }),
         el('span', found
-          ? str('arcade.wizard.found_on_the_machine_n', { 0: now.coins.map((c) => slotCoinLabel(c.coin)).join(', ') })
+          ? str('arcade.wizard.found_on_the_machine_n', { 0: [...new Set(now.coins.map((c) => slotCoinLabel(c.coin)))].join(', ') })
           : str('arcade.wizard.which_coins_does_this_slot'), { class: 'nb-meta' }),
       );
       const ticks = coinTicks({
+        takes: coinsTaken(this.wm.live.emu.info),
         label: name,
         start: now?.coins.map((c) => c.coin) ?? [],
         onChange: (coins: SlotCoin[]) => {
@@ -1727,6 +1728,7 @@ class Wizard {
         el('span', str('arcade.wizard.which_coin_is_this'), { class: 'row-sub' }),
       );
       const ticks = coinTicks({
+        takes: coinsTaken(this.wm.live.emu.info),
         label: name,
         single: true,
         start: now?.coins.map((c) => c.coin) ?? [],
@@ -1849,6 +1851,7 @@ class Wizard {
       pick.append(sel);
       enhanceSelect(sel, { small: true });
       const ticks = coinTicks({
+        takes: coinsTaken(this.wm.live.emu.info),
         label: name, single: true, noUnused: true,
         start: r.coin === null ? [] : [r.coin],
         onChange: (coins: SlotCoin[]) => {

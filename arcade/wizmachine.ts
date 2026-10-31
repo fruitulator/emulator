@@ -24,6 +24,7 @@ import { markedChutes } from './coinwiring';
 
 export const WINDOW_S = ATTRACT_WINDOW_S;
 export const TRACE_S = 30;
+const VK_SPACE = 32;
 const VIDEO_KEEP = 50;
 const HEADER_BYTES = 24;
 const REEL_BYTES = 12;
@@ -294,6 +295,8 @@ export class WizardMachine {
       if (typeof w === 'number') return w;
       return chutes.find((c) => c.bit === line)?.pence ?? null;
     };
+    const creditsNone = (line: number): boolean => info.coinTable?.lines.find((l) => l.line === line)?.credits === 0;
+    const worth = (line: number, pence: number | null): number => (creditsNone(line) ? -2 : pence ?? -1);
     let best: { line: number; pence: number | null; from: 'layout' } | null = null;
     for (const lp of cab.lamps) {
       if (!lp.acceptor) continue;
@@ -301,18 +304,18 @@ export class WizardMachine {
       if (got.kind === 'note' || got.line < 0) continue;
       if (acceptorTakesToken(view, lp, got.line, info.coins)) continue;
       const pence = priceOf(got.line);
-      if (!best || (pence ?? -1) > (best.pence ?? -1)) best = { line: got.line, pence, from: 'layout' };
+      if (!best || worth(got.line, pence) > worth(best.line, best.pence)) best = { line: got.line, pence, from: 'layout' };
     }
     if (best) return best;
     for (const c of markedChutes(wiring, info)) {
       const coin = wiredCoinOn(wiring, c.bit);
       if (typeof coin !== 'number') continue;
-      if (!best || coin > (best.pence ?? -1)) best = { line: c.bit, pence: coin, from: 'layout' };
+      if (!best || worth(c.bit, coin) > worth(best.line, best.pence)) best = { line: c.bit, pence: coin, from: 'layout' };
     }
     if (best) return best;
     const coins = chutes.filter((c) => !c.token);
     if (!coins.length) return null;
-    const top = coins.reduce((a, b) => ((b.pence ?? -1) > (a.pence ?? -1) ? b : a));
+    const top = coins.reduce((a, b) => (worth(b.bit, b.pence) > worth(a.bit, a.pence) ? b : a));
     return { line: top.bit, pence: top.pence, from: 'machine' };
   }
 
@@ -329,14 +332,16 @@ export class WizardMachine {
     const view = viewFor(game.system);
     const measured: { lp: CabLamp; name: string }[] = [];
     const named: { lp: CabLamp; name: string }[] = [];
+    const keyed: { lp: CabLamp; name: string }[] = [];
     const seen = new Set<number>();
     for (const lp of cab.lamps) {
       if (!hasInput(lp) || lp.button < 0 || lp.acceptor || seen.has(lp.button)) continue;
       const name = controlName(lp, view, info.coins ?? view.coins, info.capNames, info.coinPort);
       if (info.capNames?.[lp.button]?.role === 'start') { measured.push({ lp, name }); seen.add(lp.button); continue; }
-      if (/\bstart\b/i.test(name)) { named.push({ lp, name }); seen.add(lp.button); }
+      if (/\bstart\b/i.test(name)) { named.push({ lp, name }); seen.add(lp.button); continue; }
+      if (lp.shortcut === VK_SPACE || lp.shortcut2 === VK_SPACE) keyed.push({ lp, name: 'Start' });
     }
-    return [...measured, ...named];
+    return [...measured, ...named, ...keyed];
   }
 
   async tap(lp: CabLamp, ms = 300): Promise<void> {

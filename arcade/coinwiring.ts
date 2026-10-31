@@ -4,7 +4,7 @@ import { markableLine, viewFor, type PlatformView } from '../web/platform';
 import { wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, slotCoinPence, type CoinWiring } from '../web/coinask';
 import { hasInput, type CabLamp } from '../web/dat';
 import type { NamedCoin } from '../src/machine/machine';
-import { detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
+import { detectCoins, detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
 
 export type { WireSlot } from '../web/coinslots';
 
@@ -34,6 +34,18 @@ export const wiringFinder: WiringFinder = {
   },
   mapAsked: (w, info) => mapAskedByTable(w, info.coinTable, info.slotlessCoins ?? []),
 };
+
+export function coinsTaken(info: MachineInfo | null | undefined): ReadonlySet<number> | null {
+  if (!info?.coinTable) return null;
+  const coins = detectCoins(info.coinTable);
+  if (!(coins instanceof Map)) return null;
+  const out = new Set<number>();
+  for (const c of coins.values()) {
+    const v = typeof c === 'number' ? c : c.token;
+    if (v !== null) out.add(v);
+  }
+  return out.size ? out : null;
+}
 
 export function measureLines(req: WiringRequest): number[] {
   const chutes = req.info.coins ?? viewFor(req.info.system).coins;
