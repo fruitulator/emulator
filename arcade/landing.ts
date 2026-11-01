@@ -10,14 +10,17 @@ import { fillProgramHashes, newArcade, standing, type ArcadeDoc } from './doc';
 import { exportArcadeGames } from './punnet';
 import { openMachineList } from './machinelist';
 import { arcadeLeaders, leaderBoard, openLeaderboards, siteLeaders } from './leaderboard';
-import { listArcades, putArcade, setCurrentArcade } from './docstore';
+import { deleteArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
+import { deletedCard, startRestore } from './deletedcard';
 import { ARCADE_NAME_MAX, cleanName } from './machines';
-import { avatarUrl, needLogin, serverArcades } from './account';
+import { arcadesChanged, avatarUrl, needLogin, serverArcades } from './account';
 import { avatarFace } from '../web/ui/avatar';
 import { mountAvatar } from './avatar';
 import { showToast } from '../web/ui/toast';
-import { arcadeServer, HAVE_ONE, NAME_TAKEN, nameTakenHere, newHostKey, offerLink, publishRefusal, shareArcade, shareHooks, shareLink, floorLink, syncArcade, type ArcadeServer } from './share';
-import { arcadeFigures, pounds, publicSwitch, type ArcadeFigures, type ShareHooks } from './hostsettings';
+import { watchRoom } from './playerpills';
+import { ARCADE_CLOSED_FLAG } from './roomlive';
+import { arcadeServer, carryArcadeName, deletedArcades, HAVE_ONE, NAME_TAKEN, nameTakenHere, newHostKey, offerLink, publishRefusal, shareArcade, shareHooks, shareLink, floorLink, syncArcade, type ArcadeServer } from './share';
+import { arcadeFigures, confirmDelete, pounds, publicSwitch, type ArcadeFigures, type ShareHooks } from './hostsettings';
 import { ARCADES_PER_PLAYER, MACHINE_ID_LEN, type ArcadeListing, type ArcadeSort } from './serverwire';
 import { tabBar } from '../web/ui/tabs';
 import { siteNav } from '../web/ui/sitenav';
@@ -62,13 +65,15 @@ const ROWS: { sort: ArcadeSort; label: () => string }[] = [
   { sort: 'latest', label: () => str('arcade.landing.latest') },
 ];
 
+let drawnOnce = false;
+
+const watching: Array<() => void> = [];
+
 export async function openLanding(): Promise<void> {
+  if (drawnOnce) arcadesChanged();
   for (const id of ['room', 'bar', 'at', 'stats']) document.getElementById(id)?.setAttribute('hidden', '');
   document.body.classList.add('hosting', 'landing');
   const root = document.getElementById('host') as HTMLElement;
-  const top = el('div', null, 'host-top nb-topbar');
-  const home = document.getElementById('home');
-  if (home) top.append(betaBrand(home));
   const plus = document.createElement('button');
   plus.type = 'button';
   plus.className = 'nb-icon-btn landing-plus';
@@ -81,30 +86,40 @@ export async function openLanding(): Promise<void> {
   svg.innerHTML = UI_ICONS.plus;
   plus.append(svg);
   plus.addEventListener('click', () => { void signedInThen(() => { void openCreate(); }); });
-  const lib = siteNav({ here: 'arcades', help: helpButton(() => { void import('./guide').then((m) => m.openGuide()); }) });
-  const right = el('div', null, 'landing-right host-top-right');
-  right.append(lib, settingsButton({ onLocked: () => location.replace('/') }));
-  top.append(right);
-  void mountAvatar(right);
-  root.before(top);
+  if (!drawnOnce) {
+    const top = el('div', null, 'host-top nb-topbar');
+    const home = document.getElementById('home');
+    if (home) top.append(betaBrand(home));
+    const lib = siteNav({ here: 'arcades', help: helpButton(() => { void import('./guide').then((m) => m.openGuide()); }) });
+    const right = el('div', null, 'landing-right host-top-right');
+    right.append(lib, settingsButton({ onLocked: () => location.replace('/') }));
+    top.append(right);
+    void mountAvatar(right);
+    root.before(top);
+  }
+  drawnOnce = true;
   root.hidden = false;
 
   const server = await arcadeServer();
   const fetchList = (s: ArcadeSort): Promise<Community> => (server
     ? server.list(s).then((arcades): Community => ({ kind: 'ok', arcades })).catch((): Community => ({ kind: 'down' }))
     : Promise.resolve<Community>({ kind: 'none' }));
-  const [mine, library, rowLists, onServer] = await Promise.all([
-    listArcades().catch(() => [] as ArcadeDoc[]),
+  const held = listArcades().catch(() => [] as ArcadeDoc[]);
+  const [all, deletedIds, library, rowLists, onServer] = await Promise.all([
+    held,
+    held.then((docs) => deletedArcades(server, docs)),
     listGames().catch(() => [] as GameMeta[]),
     Promise.all(ROWS.map((r) => fetchList(r.sort))),
     serverArcades().catch(() => [] as ArcadeListing[]),
   ]);
+  const mine = all.filter((d) => !deletedIds.has(d.id));
+  const deleted = all.filter((d) => deletedIds.has(d.id));
   for (const d of mine) {
     const hashes = fillProgramHashes(d, library);
     const sources = fillDocSources(d, library);
     void restampMachines(d, library).then(async (stamped) => {
       const defined = await defineMachines(d, library);
-      if (hashes || sources || stamped || defined) await putArcade(d).then(() => syncArcade(d));
+      if ((hashes || sources || stamped || defined) && await putArcade(d)) await syncArcade(d);
     }).catch((e) => console.warn('[arcade] the program hashes were not kept', e));
   }
   const byRow = new Map(ROWS.map((r, i) => [r.sort, rowLists[i]]));
@@ -120,7 +135,7 @@ export async function openLanding(): Promise<void> {
   const listMachines = (a: ArcadeListing): void => {
     if (!server) return;
     void server.resolve(a.id).catch(() => null).then((r) => {
-      if (!r) { showToast(str('arcade.roompage.this_arcade_cannot_be_found')); return; }
+      if (!r) { showToast(str('arcade.roompage.this_arcade_cannot_be_found'), { error: true }); return; }
       void openMachineList(r.doc);
     });
   };
@@ -156,7 +171,7 @@ export async function openLanding(): Promise<void> {
   });
   sorts.el.classList.add('landing-sorts');
 
-  const head = sectionHeading(count ? str('arcade.landing.your_arcade') : str('arcade.landing.arcades'), plus);
+  const head = sectionHeading(count || deleted.length ? str('arcade.landing.your_arcade') : str('arcade.landing.arcades'), plus);
   const leadersOf: LeadersOf = (id, name, own) => (server ? (from) => openLeaderboards(arcadeLeaders(server, id, own), from, undefined, name || undefined) : null);
   const nodes: HTMLElement[] = [betaNotice({ label: str('arcade.guide.how_the_arcade_works'), run: () => { void import('./guide').then((m) => m.openGuide()); } })];
   let filter = '';
@@ -173,15 +188,15 @@ export async function openLanding(): Promise<void> {
       const boardOf = (id: string): HTMLElement | null => (server ? leaderBoard(arcadeLeaders(server, id, true), { top: HERO_LEADERS_SHOWN, mini: true }) : null);
       yours.append(d
         ? hero(d.name, standing(d).length, listed.has(d.id),
-          viewArt(viewOf(d.id, onServer.find((a) => a.id === d.id)?.viewAt), d.name, () => enter(d.id),
-            () => { const m = firstThumb(d, thumbs); return artwork(m, d.name, () => enter(d.id)); }),
+          viewArt(viewOf(d.id, onServer.find((a) => a.id === d.id)?.viewAt), d.name, () => enter(d.id, d.name),
+            () => { const m = firstThumb(d, thumbs); return artwork(m, d.name, () => enter(d.id, d.name)); }),
           d.id, server ? () => { void signedInThen(() => { void shareArcade(server, d); }); } : null,
           () => { void exportArcadeGames(d, library); },
           server ? shareHooks(server, d) : null, arcadeFigures(d, !!server), () => { void openMachineList(d); },
-          onServer.some((a) => a.id === d.id) ? boardOf(d.id) : null, () => setUp(d.id))
+          onServer.some((a) => a.id === d.id) ? boardOf(d.id) : null, () => setUp(d.id, d.name))
         : hero(elsewhere[0].name, elsewhere[0].machines, listed.has(elsewhere[0].id),
-          viewArt(viewOf(elsewhere[0].id, elsewhere[0].viewAt), elsewhere[0].name, () => enter(elsewhere[0].id),
-            () => artwork(null, elsewhere[0].name, () => enter(elsewhere[0].id))),
+          viewArt(viewOf(elsewhere[0].id, elsewhere[0].viewAt), elsewhere[0].name, () => enter(elsewhere[0].id, elsewhere[0].name),
+            () => artwork(null, elsewhere[0].name, () => enter(elsewhere[0].id, elsewhere[0].name))),
           elsewhere[0].id, () => { void offerLink(elsewhere[0].name, shareLink(elsewhere[0].id)); }, null, null, null,
           server ? () => listMachines(elsewhere[0]) : null, boardOf(elsewhere[0].id), null));
       const rest = [
@@ -190,7 +205,16 @@ export async function openLanding(): Promise<void> {
         ...elsewhere.slice(d ? 0 : 1).map((a) => elsewhereTile(a, listed.has(a.id), viewOf(a.id, a.viewAt), server ? () => listMachines(a) : null, leadersOf(a.id, a.name, true))),
       ];
       if (rest.length) yours.append(sectionHeading(str('arcade.landing.your_other_arcades')), tileGrid(rest));
-    } else if (community.kind !== 'ok' || !others.length) {
+    }
+    if (deleted.length) {
+      if (count) yours.append(sectionHeading(str('arcade.landing.your_other_arcades')));
+      yours.append(...deleted.map((d) => deletedCard(d, artwork(firstThumb(d, thumbs), d.name, () => undefined), {
+        restore: () => {
+          if (server) void signedInThen(() => { void startRestore(server, d, mayCreate, () => { void openLanding(); }); });
+        },
+        remove: () => confirmDelete({ doc: d, share: null, remove: async () => { await deleteArcade(d.id); await openLanding(); } }),
+      })));
+    } else if (!count && (community.kind !== 'ok' || !others.length)) {
       yours.append(emptyState({
         message: str('arcade.landing.you_have_no_arcades_yet'),
         actions: [actionButton(str('arcade.landing.create_arcade'), 'primary', () => { void signedInThen(() => { void openCreate(); }); }, UI_ICONS.plus)],
@@ -266,6 +290,19 @@ export async function openLanding(): Promise<void> {
   nodes.push(theirs);
   root.replaceChildren(...nodes);
   document.getElementById('loading')?.classList.add('done');
+  const query = new URLSearchParams(location.search);
+  if (query.has(ARCADE_CLOSED_FLAG)) {
+    showToast(str('arcade.landing.this_arcade_has_closed'), { kind: 'warn' });
+    query.delete(ARCADE_CLOSED_FLAG);
+    const rest = query.toString();
+    history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}`);
+  }
+  for (const stop of watching.splice(0)) stop();
+  if (server) {
+    for (const a of onServer) {
+      watching.push(watchRoom(server, a.id, { onMessage: (m) => { if (m.type === 'arcade' && m.data.gone) void openLanding(); } }));
+    }
+  }
 }
 
 function rowHead(title: string, action: string, run: () => void): HTMLElement {
@@ -292,12 +329,12 @@ async function signedInThen(then: () => void): Promise<void> {
   if (await needLogin()) then();
 }
 
-function enter(id: string): void {
-  void signedInThen(() => { location.href = shareLink(id); });
+function enter(id: string, name: string): void {
+  void signedInThen(() => { carryArcadeName(id, name); location.href = shareLink(id); });
 }
 
-function setUp(id: string): void {
-  void signedInThen(() => { void setCurrentArcade(id).catch(() => undefined).then(() => { location.href = floorLink(id); }); });
+function setUp(id: string, name: string): void {
+  void signedInThen(() => { carryArcadeName(id, name); void setCurrentArcade(id).catch(() => undefined).then(() => { location.href = floorLink(id); }); });
 }
 
 const HERO_LEADERS_SHOWN = 3;
@@ -339,8 +376,8 @@ function hero(
   }
   const acts = el('div', null, 'landing-hero-actions');
   const go = actionButton(str('arcade.landing.enter'), 'primary', () => {
-    if (machines) enter(id);
-    else void signedInThen(() => { void setCurrentArcade(id).catch(() => undefined).then(() => { location.href = floorLink(id); }); });
+    if (machines) enter(id, name);
+    else void signedInThen(() => { carryArcadeName(id, name); void setCurrentArcade(id).catch(() => undefined).then(() => { location.href = floorLink(id); }); });
   });
   go.classList.add('nb-btn--lg');
   acts.append(go);
@@ -418,7 +455,7 @@ function ownTile(d: ArcadeDoc, thumbs: Map<string, string>, isPublic: boolean, v
 }
 
 function elsewhereTile(a: ArcadeListing, isPublic: boolean, view: string | null, listMachines: (() => void) | null, leaders: ((from: HTMLElement) => void) | null): HTMLElement {
-  const enter = (): void => { void signedInThen(() => { location.href = shareLink(a.id); }); };
+  const enter = (): void => { void signedInThen(() => { carryArcadeName(a.id, a.name); location.href = shareLink(a.id); }); };
   const art = viewArt(view, a.name, enter, () => artwork(null, a.name, enter));
   const chips = [machinesChip(a.machines, listMachines)];
   if (isPublic) chips.push(chip(str('arcade.landing.public')));
@@ -430,8 +467,9 @@ function elsewhereTile(a: ArcadeListing, isPublic: boolean, view: string | null,
 }
 
 export async function mayCreate(): Promise<boolean> {
-  const [mine, onServer] = await Promise.all([listArcades().catch(() => [] as ArcadeDoc[]), serverArcades().catch(() => [] as ArcadeListing[])]);
-  const ids = new Set([...mine.map((d) => d.id), ...onServer.map((a) => a.id)]);
+  const [mine, onServer, server] = await Promise.all([listArcades().catch(() => [] as ArcadeDoc[]), serverArcades().catch(() => [] as ArcadeListing[]), arcadeServer()]);
+  const deleted = await deletedArcades(server, mine);
+  const ids = new Set([...mine.filter((d) => !deleted.has(d.id)).map((d) => d.id), ...onServer.map((a) => a.id)]);
   return ids.size < ARCADES_PER_PLAYER;
 }
 
@@ -470,7 +508,7 @@ function communityTile(
   a: ArcadeListing, view: string | null, owned: GameMeta[], listMachines: (() => void) | null, serverBase: string | null,
   leaders: ((from: HTMLElement) => void) | null,
 ): HTMLElement {
-  const enter = (): void => { void signedInThen(() => { location.href = shareLink(a.id); }); };
+  const enter = (): void => { void signedInThen(() => { carryArcadeName(a.id, a.name); location.href = shareLink(a.id); }); };
   const thumbed = owned.filter((g) => g.hasThumb).map((g) => g.hash);
   const nameOf = (h: string): string => owned.find((g) => g.hash === h)?.name ?? '';
   const art = viewArt(view, a.name, enter, () => thumbMosaic(thumbed, a.name, enter));
@@ -495,7 +533,7 @@ function communityTile(
 
 export async function openCreate(): Promise<void> {
   if (!(await mayCreate())) {
-    showToast(HAVE_ONE);
+    showToast(HAVE_ONE, { kind: 'warn' });
     document.querySelector('.landing-plus')?.setAttribute('hidden', '');
     return;
   }

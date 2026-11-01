@@ -50,6 +50,10 @@ export async function serverArcades(server: string | null = serverFlag()): Promi
   return k?.mine ?? [];
 }
 
+export function arcadesChanged(): void {
+  if (asked) asked = asked.then((k) => (k ? { ...k, mine: null } : k));
+}
+
 const signedInAs = (a: AccountInfo): void => { asked = Promise.resolve({ account: a, mine: null }); };
 
 export function accountChanged(a: AccountInfo): void {

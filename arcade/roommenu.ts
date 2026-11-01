@@ -115,16 +115,15 @@ export class RoomMenu {
     if (!import.meta.env.DEV) return;
     void Promise.all([file.text(), import('./loadstate')]).then(([text, { readStateFile }]) => {
       const r = readStateFile(text, g.machine.name);
-      if (!r.ok) { showToast(r.why); return; }
+      if (!r.ok) { showToast(r.why, { error: true }); return; }
       this.drawer.close();
       const live = this.room.live;
       return live.start(g, { snapshot: r.snapshot, stampPlay: false, saveOnLeave: false }).then(() => {
         if (live.glass !== g) return;
-        showToast(live.lastStart?.resumed
-          ? str('arcade.roommenu.state_loaded_nothing_you_do')
-          : str('arcade.roommenu.the_state_could_not_be', { 0: live.lastStart?.why ?? 'unknown' }));
+        if (live.lastStart?.resumed) showToast(str('arcade.roommenu.state_loaded_nothing_you_do'), { kind: 'ok' });
+        else showToast(str('arcade.roommenu.the_state_could_not_be', { 0: live.lastStart?.why ?? 'unknown' }), { error: true });
       });
-    }, (e: Error) => showToast(str('arcade.roommenu.the_state_could_not_be_2', { 0: e.message })));
+    }, (e: Error) => showToast(str('arcade.roommenu.the_state_could_not_be_2', { 0: e.message }), { error: true }));
   }
 
   private openSystem(): void {
@@ -183,7 +182,7 @@ export class RoomMenu {
         void r.set(n).then((ok) => {
           if (ok) { mine = n; showToast(str('arcade.roommenu.thanks_for_rating'), { kind: 'ok' }); return; }
           stars.set(mine);
-          showToast(str('arcade.roommenu.rating_not_kept'));
+          showToast(str('arcade.roommenu.rating_not_kept'), { error: true });
         });
       },
     });

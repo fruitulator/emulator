@@ -6,6 +6,7 @@ import type { ArcadeServer } from './share';
 import { agoText } from '../web/gamelist';
 import { pounds } from '../web/moneytext';
 import { avatarFace } from '../web/ui/avatar';
+import { countUp } from '../web/ui/countup';
 import { nebulaOpenSpot } from '../web/ui/nebula-avatar.js';
 import { escapeCloses, sheetLine, showSheet } from '../web/ui/sheet';
 import { tabBar } from '../web/ui/tabs';
@@ -57,7 +58,11 @@ function lineOf(t: Table, r: LeaderRow, place: (row: LeaderRow) => string): { fi
   };
 }
 
-export function tableLines(t: Table, reply: LeadersReply, base: string, place: (row: LeaderRow) => string): HTMLElement[] {
+function countFigure(fig: HTMLElement, t: Table, r: LeaderRow): void {
+  countUp(fig, r.value, t === 'regulars' ? playedFor : pounds);
+}
+
+export function tableLines(t: Table, reply: LeadersReply, base: string, place: (row: LeaderRow) => string, count = false): HTMLElement[] {
   const rows = reply[t];
   if (!rows.length) return [sheetLine(emptyText(t), '', { quiet: true })];
   return rows.map((r, i) => {
@@ -67,6 +72,7 @@ export function tableLines(t: Table, reply: LeadersReply, base: string, place: (
     fig.className = 'sheet-figure';
     fig.textContent = figure;
     line.append(fig);
+    if (count) countFigure(fig, t, r);
     return line;
   });
 }
@@ -78,6 +84,7 @@ export function leaderPanel(src: LeaderboardSource, o: { machine?: string; top?:
   const got = new Map<Scope, LeadersReply | null>();
   const list = document.createElement('div');
   list.className = 'leader-list';
+  let counted = false;
 
   const draw = (): void => {
     if (!got.has(scope)) {
@@ -95,8 +102,9 @@ export function leaderPanel(src: LeaderboardSource, o: { machine?: string; top?:
     const r = got.get(scope);
     const shown = r && top ? { ...r, wins: r.wins.slice(0, top), sessions: r.sessions.slice(0, top), regulars: r.regulars.slice(0, top) } : r;
     list.replaceChildren(...(shown
-      ? tableLines(table, shown, src.base, scope === 'machine' ? () => '' : src.where)
+      ? tableLines(table, shown, src.base, scope === 'machine' ? () => '' : src.where, !counted)
       : [sheetLine(str('arcade.leaderboard.could_not_load'), '', { quiet: true })]));
+    if (shown) counted = true;
   };
 
   const tables = tabBar<Table>({
@@ -148,6 +156,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   return e;
 }
 
+const boardsCounted = new Set<string>();
+
 export function leaderBoard(src: LeaderboardSource, o: BoardOptions = {}): HTMLElement {
   const { top = 5, mini = false } = o;
   const board = el('div', mini ? 'lb-board lb-mini' : 'lb-board');
@@ -160,21 +170,24 @@ export function leaderBoard(src: LeaderboardSource, o: BoardOptions = {}): HTMLE
     return { b, box, head };
   });
   const fill = (r: LeadersReply | null): void => {
+    const kind = mini ? 'mini' : 'podium';
+    const count = !!r && !boardsCounted.has(kind);
+    if (r) boardsCounted.add(kind);
     for (const { b, box, head } of boards) {
       const rows = r ? r[b.table].slice(0, top) : [];
       box.replaceChildren(head);
       if (mini) {
         if (!r) box.append(el('p', 'nb-meta lb-mini-quiet', str('arcade.leaderboard.could_not_load')));
         else if (!rows.length) box.append(el('p', 'nb-meta lb-mini-quiet', str('arcade.leaderboard.no_data')));
-        else box.append(...rows.map((row, i) => miniRow(b.table, row, i, src)));
+        else box.append(...rows.map((row, i) => miniRow(b.table, row, i, src, count)));
         continue;
       }
       const podium = el('ol', 'nb-lb__podium');
-      for (let i = 0; i < 3; i++) podium.append(place(b.table, rows[i] ?? null, i, src));
+      for (let i = 0; i < 3; i++) podium.append(place(b.table, rows[i] ?? null, i, src, count));
       box.append(podium);
       if (rows.length > 3) {
         const rest = el('ol', 'nb-lb__rest');
-        rest.append(...rows.slice(3).map((row, i) => restRow(b.table, row, i + 3, src)));
+        rest.append(...rows.slice(3).map((row, i) => restRow(b.table, row, i + 3, src, count)));
         box.append(rest);
       }
       if (r && !rows.length) {
@@ -217,7 +230,7 @@ function coin(): SVGSVGElement {
   return svg;
 }
 
-function place(t: Table, r: LeaderRow | null, i: number, src: LeaderboardSource): HTMLElement {
+function place(t: Table, r: LeaderRow | null, i: number, src: LeaderboardSource, count = false): HTMLElement {
   const n = i + 1;
   const li = el('li', `nb-lb__place nb-lb__place--${n}${r ? '' : ' nb-lb__place--open'}`);
   const ring = el('span', `nb-ring nb-ring--${n}`);
@@ -228,28 +241,31 @@ function place(t: Table, r: LeaderRow | null, i: number, src: LeaderboardSource)
   }
   const pillar = el('div', 'nb-lb__pillar');
   const ord = el('span', 'nb-lb__ord', String(n));
-  pillar.append(coin(), ord, el('span', 'nb-lb__value', r ? lineOf(t, r, () => '').figure : '\u2014'));
+  const value = el('span', 'nb-lb__value', r ? lineOf(t, r, () => '').figure : '\u2014');
+  if (r && count) countFigure(value, t, r);
+  pillar.append(coin(), ord, value);
   li.append(ring, el('span', 'nb-lb__name', r ? r.name : '\u00a0'), pillar);
   return li;
 }
 
-function restRow(t: Table, r: LeaderRow, i: number, src: LeaderboardSource): HTMLElement {
+function restRow(t: Table, r: LeaderRow, i: number, src: LeaderboardSource, count: boolean): HTMLElement {
   const li = el('li', 'nb-row');
   const { figure, sub } = lineOf(t, r, src.where);
   const main = el('span', 'nb-row__main');
   main.append(el('span', 'nb-row__name', r.name), el('span', 'nb-row__sub', sub));
-  li.append(el('span', 'nb-row__rank', String(i + 1)), face(r, src, 34), main, el('span', 'nb-row__value', figure));
+  const value = el('span', 'nb-row__value', figure);
+  if (count) countFigure(value, t, r);
+  li.append(el('span', 'nb-row__rank', String(i + 1)), face(r, src, 34), main, value);
   return li;
 }
 
-function miniRow(t: Table, r: LeaderRow, i: number, src: LeaderboardSource): HTMLElement {
+function miniRow(t: Table, r: LeaderRow, i: number, src: LeaderboardSource, count: boolean): HTMLElement {
   const row = el('div', 'nb-row');
   const { figure, sub } = lineOf(t, r, src.where);
   const main = el('span', 'nb-row__main');
   main.append(el('span', 'nb-row__name', r.name), el('span', 'nb-row__sub', sub));
-  row.append(
-    el('span', `nb-medal nb-medal--${i + 1}`, String(i + 1)), face(r, src, 32), main,
-    el('span', `nb-row__value${i === 0 ? ' nb-money' : ''}`, figure),
-  );
+  const value = el('span', `nb-row__value${i === 0 ? ' nb-money' : ''}`, figure);
+  if (count) countFigure(value, t, r);
+  row.append(el('span', `nb-medal nb-medal--${i + 1}`, String(i + 1)), face(r, src, 32), main, value);
   return row;
 }

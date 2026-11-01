@@ -185,13 +185,13 @@ export function openArcadeSettings(h: SettingsHooks): Dialog {
     title: str('arcade.hostsettings.arcade_settings'), body: [wrap], frost: true,
     onClose: () => {
       open = null;
-      void keepName().then((why) => { if (why) showToast(why); });
+      void keepName().then((why) => { if (why) showToast(why, { kind: 'warn', sticky: true }); });
     },
   });
   return open;
 }
 
-function confirmDelete(h: SettingsHooks, going: () => void): void {
+export function confirmDelete(h: Pick<SettingsHooks, 'doc' | 'share' | 'remove'>, going: () => void = () => undefined): void {
   const d = h.doc;
   const keep = pillButton(str('arcade.hostsettings.keep_it'), () => undefined);
   const yes = pillButton(str('arcade.hostsettings.yes_delete_it'), () => undefined);

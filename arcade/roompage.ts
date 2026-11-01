@@ -1,15 +1,17 @@
-import { fillProgramHashes, type Place } from './doc';
+import { fillProgramHashes, type ArcadeDoc, type Place } from './doc';
 import { mountAvatar } from './avatar';
+import { NOTE_INFO } from '../web/stopnote';
 import { holdToast } from '../web/ui/toast';
 import { arcadeName, loadMachines } from './machines';
 import { devPlayerForPage, serverFlag, walletServer } from './remote';
 import { Room } from './room';
 import { openMachineList } from './machinelist';
 import { watchPlaying } from './playerpills';
+import { leaveClosedArcade, RoomLive, roomLook, type RoomStanding } from './roomlive';
 import { rowIcon, UI_ICONS } from '../web/ui/icons';
 import { lookOf } from './roomlook';
 import { decorateSection, type DecorateSection } from './decorate';
-import { putArcade, updateArcadeRoom } from './docstore';
+import { getArcade, putArcade, updateArcadeRoom } from './docstore';
 import { readProps, type Prop } from './proplist';
 import { arcadeServer, KEEPALIVE_LIMIT, roomArcade, syncArcade } from './share';
 import { listGames } from '../web/store';
@@ -46,6 +48,7 @@ const showLoading = (done: number, total: number): void => {
   shownDone = done;
   const pct = total ? Math.round((done / total) * 100) : 100;
   loadingBar.hidden = false;
+  loadingBar.style.visibility = '';
   (loadingBar.firstElementChild as HTMLElement).style.width = `${pct}%`;
   loadingBar.setAttribute('aria-valuenow', String(pct));
 };
@@ -59,7 +62,7 @@ loadingTitle.hidden = !loadingTitle.textContent;
 if (isHost && doc) {
   const defined = await listGames().then((library) => defineMachines(doc, library))
     .catch((e) => { console.warn('[arcade] the machines could not be switched on', e); return false; });
-  if (defined) void putArcade(doc).then(() => syncArcade(doc)).catch((e) => console.warn('[arcade] the switched-on machines were not kept', e));
+  if (defined) void putArcade(doc).then((kept) => (kept ? syncArcade(doc) : undefined)).catch((e) => console.warn('[arcade] the switched-on machines were not kept', e));
 }
 const [machines, name] = [await loadMachines(doc, { visiting: opened.visiting }), arcadeName(doc)];
 if (isHost && doc) {
@@ -68,8 +71,7 @@ if (isHost && doc) {
     const sources = fillDocSources(doc, library);
     const stamped = await restampMachines(doc, library);
     if (!hashes && !sources && !stamped) return;
-    await putArcade(doc);
-    await syncArcade(doc);
+    if (await putArcade(doc)) await syncArcade(doc);
   }).catch((e) => console.warn('[arcade] the program hashes were not kept', e));
 }
 const openFloor = isHost && doc
@@ -112,6 +114,7 @@ if (!doc) {
   }
   document.body.append(note);
 } else {
+  let live: RoomLive | null = null;
   const room = new Room(host, machines, { name, look: lookOf(doc?.room), props: readProps(doc?.props) ?? [] });
   room.onLeave = leaveArcade;
   room.getFromSource = (m, progress) => getMachineSet(m, progress, document.getElementById('hostBtn') ?? document.body);
@@ -173,7 +176,7 @@ if (!doc) {
       },
     }) : undefined;
   const floor = openFloor ? (): void => openFloor((p) => { room.rearrange(p); retake(); }, decorate, (list) => { room.setProps(list); retake(); }, async () => { const ok = room.sync(await loadMachines(doc, { visiting: false })); retake(); return ok; },
-    (open) => { room.paused = open; }) : undefined;
+    (open) => { room.paused = open; if (!open) live?.look(); }) : undefined;
   if (floor) hostSpanner(floor);
   const arcadeId = opened.visiting ? new URLSearchParams(location.search).get('arcade') : null;
   const arcadeApi = arcadeId && server ? await arcadeServer() : null;
@@ -184,7 +187,19 @@ if (!doc) {
   } : undefined;
   if (server) {
     const api = arcadeApi ?? await arcadeServer();
-    if (api) watchPlaying(api, doc.id, (p) => room.setPlaying(p));
+    if (api) {
+      live = new RoomLive({
+        shown: () => doc,
+        read: () => (opened.visiting ? api.roomNow(doc.id, doc) : getArcade(doc.id)),
+        atMachine: () => !!room.focused,
+        waiting: () => room.paused,
+        loading: () => room.locked,
+        apply: (next, was) => standRoom(room, next, was, opened.visiting),
+        closed: async (say) => { await room.live.settled().catch(() => undefined); leaveClosedArcade(say); },
+      }, opened.at);
+      const channel = live;
+      watchPlaying(api, doc.id, (p) => { room.setPlaying(p); channel.players(new Set(p.keys())); }, undefined, (m) => channel.message(m));
+    }
   }
   const menu = new RoomMenu(room, sound, brightness, menuBtn, isHost, rating);
   menu.update();
@@ -215,13 +230,14 @@ if (!doc) {
   const sampleToast = import.meta.env.DEV && new URLSearchParams(location.search).has('toast');
   room.onFocus = (f) => {
     menu.update();
+    if (!f) live?.look();
     padAt(!!f);
     const spanner = document.getElementById('hostBtn');
     if (spanner) spanner.hidden = !!f;
     if (sampleToast && f) {
       setTimeout(() => room.live.stopNote?.notice(str('arcade.roompage.this_is_a_test_message'), {
         label: str('arcade.roompage.carry_on'), run: () => room.live.stopNote?.clear(),
-      }), 1500);
+      }, undefined, undefined, NOTE_INFO), 1500);
     }
   };
   const loop = (now: number): void => {
@@ -236,6 +252,7 @@ if (!doc) {
     room.locked = false;
     room.openTimes.ready = performance.now();
     endLoading();
+    live?.look();
   });
   if (import.meta.env.DEV) {
     void Promise.all([import('./roombench'), import('../web/trace')]).then(([b, t]) => {
@@ -274,6 +291,17 @@ if (!doc) {
   }
   (window as unknown as { __arcade: Room }).__arcade = room;
   (window as unknown as { __roomMenu: RoomMenu }).__roomMenu = menu;
+}
+
+async function standRoom(room: Room, next: ArcadeDoc, was: RoomStanding, visiting: boolean): Promise<void> {
+  const now = roomLook(next);
+  if (now.machines !== was.machines && !room.sync(await loadMachines(next, { visiting }))) {
+    location.reload();
+    return;
+  }
+  room.rename(arcadeName(next));
+  if (now.look !== was.look) room.restyle(lookOf(next.room));
+  if (now.props !== was.props) room.setProps(readProps(next.props) ?? []);
 }
 
 function hostSpanner(open: () => void): void {

@@ -1,14 +1,15 @@
 import {
-  ARCADES_PATH, arcadeNameKey, LEADERS_PATH, LEADERS_SITE_PATH, PLAYING_PATH, RATING_PATH, VIEW_KEY_HEADER, VIEW_LIMIT, VISIT_PATH,
+  ARCADES_PATH, arcadeNameKey, ROOM_NAMED_QUERY, LEADERS_PATH, LEADERS_SITE_PATH, PLAYING_PATH, RATING_PATH, RESTORE_PATH, STATE_PATH, VIEW_KEY_HEADER, VIEW_LIMIT, VISIT_PATH,
   type ArcadeSort, type ArcadeVisitReply, type LeadersReply, type PlayingReply, type RatingReply,
-  type ArcadeListReply, type ArcadeListing, type ArcadeReply, type DeleteReply, type PublishBody, type PublishReply,
+  type ArcadeListReply, type ArcadeListing, type ArcadeReply, type DeleteReply, type PublishBody, type PublishReply, type RestoreReply, type ArcadeStateReply,
 } from './serverwire';
-import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, readMachineSource, type ArcadeDoc, type DocMachine } from './doc';
-import { getArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
+import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, readMachineSource, traceId, type ArcadeDoc, type DocMachine } from './doc';
+import { arcadeDeletedHere, clearArcadeDeleted, getArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
 import { readHostFiles } from '../web/hostfiles';
 import { readRoomLook } from './roomlook';
 import { readProps } from './proplist';
 import { asPlayer, devPlayerForPage, machineUrl, seedMachine, serverFlag, serverParam } from './remote';
+import { needLogin } from './account';
 import { str } from '../web/i18n';
 import { showToast } from '../web/ui/toast';
 import type { ShareHooks } from './hostsettings';
@@ -41,6 +42,20 @@ export function roomDoc(d: ArcadeDoc): ArcadeDoc {
   return out;
 }
 
+export function roomToSend(d: ArcadeDoc, carry: readonly string[] = []): unknown {
+  const room = roomDoc(d);
+  return {
+    ...room,
+    machines: room.machines.map((m) => {
+      if (!m.trace) return m;
+      const id = traceId(m.trace);
+      if (carry.includes(id)) return m;
+      const { data: _data, ...named } = m.trace;
+      return { ...m, trace: { ...named, id } };
+    }),
+  };
+}
+
 export function readRoomDoc(v: unknown, id: string): ArcadeDoc | null {
   const d = v as Partial<ArcadeDoc> | null;
   if (!d || d.format !== ARCADE_FORMAT || d.version !== ARCADE_DOC_VERSION || !Array.isArray(d.machines)) return null;
@@ -71,6 +86,10 @@ export function shareLink(arcadeId: string, origin: string = location.origin, se
   return u.href;
 }
 
+export function carryArcadeName(id: string, name: string): void {
+  try { sessionStorage.setItem('arcadeEntering', JSON.stringify({ id, name })); } catch {  }
+}
+
 export function floorLink(id: string): string {
   const u = new URL(shareLink(id));
   u.searchParams.set('floor', '');
@@ -82,8 +101,14 @@ export const NAME_TAKEN = str('arcade.share.that_name_is_taken_try');
 export const TRY_AGAIN = str('arcade.share.that_did_not_go_through');
 
 export function publishRefusal(r: PublishReply | null): string {
-  if (r && !r.ok && r.why === 'taken') return NAME_TAKEN;
-  if (r && !r.ok && r.why === 'limit') return HAVE_ONE;
+  console.info(r && !r.ok ? `[arcade] the server did not take this arcade (${r.why})` : '[arcade] no answer from the server about this arcade');
+  if (r && !r.ok) {
+    if (r.why === 'taken') return NAME_TAKEN;
+    if (r.why === 'limit') return HAVE_ONE;
+    if (r.why === 'gone') return str('arcade.share.this_arcade_has_been_deleted');
+    if (r.why === 'not-owner') return str('arcade.share.this_arcade_belongs_to_a');
+    if (r.why === 'bad') return str('arcade.share.there_was_a_problem_saving');
+  }
   return TRY_AGAIN;
 }
 
@@ -103,18 +128,19 @@ export async function offerLink(title: string, url: string): Promise<void> {
 
 export async function shareArcade(server: ArcadeServer, d: ArcadeDoc): Promise<void> {
   const r = await server.publish(d).catch(() => null);
-  if (!r?.ok) { showToast(publishRefusal(r)); return; }
+  if (!r?.ok) { showToast(publishRefusal(r), { error: true, sticky: true }); return; }
   await offerLink(d.name, shareLink(d.id));
 }
 
 export function shareHooks(server: ArcadeServer, d: ArcadeDoc): ShareHooks {
-  const failed = (r: PublishReply | null): void => { showToast(publishRefusal(r)); };
+  const failed = (r: PublishReply | null): void => { showToast(publishRefusal(r), { error: true, sticky: true }); };
   return {
     isPublic: async () => (d.hostKey ? (await server.resolve(d.id))?.public ?? false : false),
     setPublic: async (on) => {
-      const r = await server.publish(d, { pub: on }).catch(() => null);
+      if (!(await needLogin())) throw new Error('not signed in');
+      const r = await server.publish(d, { pub: on, room: false }).catch(() => null);
       if (!r?.ok) { failed(r); throw new Error('not taken'); }
-      showToast(on ? str('arcade.host.your_arcade_is_on_the') : str('arcade.host.your_arcade_is_off_the'));
+      showToast(on ? str('arcade.host.your_arcade_is_on_the') : str('arcade.host.your_arcade_is_off_the'), { kind: 'ok' });
     },
     shareLink: () => shareArcade(server, d),
     shared: () => !!d.hostKey,
@@ -178,24 +204,46 @@ export class ArcadeServer {
     return this.call<RatingReply>(`/${encodeURIComponent(id)}/${RATING_PATH}`, 'PUT', { stars });
   }
 
-  async resolve(id: string): Promise<{ doc: ArcadeDoc; public: boolean } | null> {
-    const r = await this.call<ArcadeReply>(`/${encodeURIComponent(id)}`, 'GET');
+  async resolve(id: string, query = ''): Promise<{ doc: ArcadeDoc; public: boolean; at: number } | null> {
+    const r = await this.call<ArcadeReply>(`/${encodeURIComponent(id)}${query}`, 'GET');
     if (!r.ok) return null;
     const doc = readRoomDoc(r.arcade.doc, id);
     if (!doc) return null;
     doc.name = r.arcade.name;
-    return { doc, public: r.arcade.public };
+    return { doc, public: r.arcade.public, at: r.arcade.at };
+  }
+
+  async roomNow(id: string, held: ArcadeDoc): Promise<ArcadeDoc | null> {
+    const r = await this.resolve(id, `?${ROOM_NAMED_QUERY}`);
+    if (!r) return null;
+    const have = new Map(held.machines.flatMap((m) => (m.trace ? [[traceId(m.trace), m.trace] as const] : [])));
+    for (const m of r.doc.machines) {
+      const name = (m.trace as { id?: unknown } | null)?.id;
+      if (typeof name !== 'string') continue;
+      const t = have.get(name);
+      if (!t) return (await this.resolve(id))?.doc ?? null;
+      m.trace = t;
+    }
+    return r.doc;
   }
 
   async publish(d: ArcadeDoc, o: { pub?: boolean; room?: boolean } = {}): Promise<PublishReply> {
+    if (await arcadeDeletedHere(d.id)) return { ok: false, why: 'gone' };
+    const everyTrace = (): string[] => d.machines.flatMap((m) => (m.trace ? [traceId(m.trace)] : []));
+    const fresh = !d.hostKey;
     if (!d.hostKey) {
       d.hostKey = newHostKey();
       await putArcade(d);
     }
     const body: PublishBody = { key: d.hostKey, name: d.name };
     if (o.pub !== undefined) body.public = o.pub;
-    if (o.room !== false) body.doc = roomDoc(d);
-    const r = await this.call<PublishReply>(`/${encodeURIComponent(d.id)}`, 'PUT', body);
+    if (fresh) body.doc = roomToSend(d, everyTrace());
+    else if (o.room !== false) body.doc = roomToSend(d);
+    const path = `/${encodeURIComponent(d.id)}`;
+    let r = await this.call<PublishReply>(path, 'PUT', body);
+    if (r.ok && (r.needRoom || r.needTraces?.length)) {
+      r = await this.call<PublishReply>(path, 'PUT', { ...body, doc: roomToSend(d, r.needRoom ? everyTrace() : r.needTraces) });
+    }
     if (r.ok) await this.seed(d);
     return r;
   }
@@ -229,6 +277,14 @@ export class ArcadeServer {
     if (!d.hostKey) return { ok: true };
     return this.call<DeleteReply>(`/${encodeURIComponent(d.id)}`, 'DELETE', { key: d.hostKey });
   }
+
+  async deleted(id: string): Promise<boolean> {
+    return (await this.call<ArcadeStateReply>(`/${encodeURIComponent(id)}/${STATE_PATH}`, 'GET')).deleted;
+  }
+
+  restore(d: ArcadeDoc, name: string): Promise<RestoreReply> {
+    return this.call<RestoreReply>(`/${encodeURIComponent(d.id)}/${RESTORE_PATH}`, 'POST', { key: d.hostKey, name });
+  }
 }
 
 export const KEEPALIVE_LIMIT = 60 * 1024;
@@ -236,6 +292,23 @@ export const KEEPALIVE_LIMIT = 60 * 1024;
 export async function arcadeServer(): Promise<ArcadeServer | null> {
   const base = serverFlag();
   return base ? new ArcadeServer(base, await devPlayerForPage()) : null;
+}
+
+export async function deletedArcades(server: ArcadeServer | null, docs: readonly ArcadeDoc[]): Promise<Set<string>> {
+  if (!server) return new Set();
+  const asked = await Promise.all(docs.filter((d) => d.hostKey).map(async (d) => (
+    (await server.deleted(d.id).catch(() => false)) ? d.id : null)));
+  return new Set(asked.filter((id): id is string => id !== null));
+}
+
+export async function restoreArcade(server: ArcadeServer, d: ArcadeDoc, name: string = d.name): Promise<RestoreReply | null> {
+  const r = await server.restore(d, name).catch(() => null);
+  if (!r?.ok) return r;
+  await clearArcadeDeleted(d.id);
+  d.name = name;
+  await putArcade(d);
+  await server.publish(d).catch((e) => { console.warn('[arcade] could not send the restored arcade\'s room', e); });
+  return r;
 }
 
 const sent = new Map<string, string>();
@@ -258,6 +331,7 @@ export async function syncArcade(d: ArcadeDoc): Promise<void> {
 export interface RoomArcade {
   doc: ArcadeDoc | null;
   visiting: boolean;
+  at?: number;
 }
 
 export async function roomArcade(search: string = location.search): Promise<RoomArcade> {
@@ -274,7 +348,8 @@ export async function roomArcade(search: string = location.search): Promise<Room
   const server = await arcadeServer();
   if (!server) return { doc: null, visiting: true };
   try {
-    return { doc: (await server.resolve(id))?.doc ?? null, visiting: true };
+    const r = await server.resolve(id);
+    return { doc: r?.doc ?? null, visiting: true, at: r?.at };
   } catch (e) {
     console.warn('[arcade] could not reach the arcade server for this link', e);
     return { doc: null, visiting: true };

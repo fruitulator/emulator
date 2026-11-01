@@ -16,6 +16,7 @@ async function serverCheck(): Promise<void> {
   const { showToast } = await import('../web/ui/toast');
   showToast(str('arcade.main.server_not_reachable'), {
     error: true,
+    sticky: true,
     action: { label: str('arcade.landing.try_again'), run: () => location.reload() },
   });
 }

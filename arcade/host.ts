@@ -24,8 +24,8 @@ import { moneyTrust, NO_BOOKKEEPING } from './moneygate';
 import { deleteArcade, listArcades, putArcade, setCurrentArcade, currentArcade } from './docstore';
 import { arcadeSettingsParts, darkNote, openArcadeSettings, type SettingsHooks, type SettingsParts } from './hostsettings';
 import { lookOf, THEMES, themeOfLook } from './roomlook';
-import { ArcadeServer, arcadeServer, NAME_TAKEN, nameTakenHere, newHostKey, publishRefusal, shareHooks, syncArcade, floorLink } from './share';
-import { showToast } from '../web/ui/toast';
+import { ArcadeServer, arcadeServer, NAME_TAKEN, nameTakenHere, newHostKey, publishRefusal, shareHooks, syncArcade, carryArcadeName, floorLink } from './share';
+import { showToast, type ToastKind } from '../web/ui/toast';
 import { invalidateRec } from './cache';
 import { lostCreditText, serverMoney, statsMoney, type StatsMoney } from './moneyrecord';
 import { serverFlag } from './remote';
@@ -91,12 +91,12 @@ export function exitButton(onExit: () => void): HTMLButtonElement {
 
 let doc: ArcadeDoc | null = null;
 
-function say(text: string): void {
-  showToast(text);
+function say(text: string, kind: ToastKind = 'info'): void {
+  showToast(text, { kind });
 }
 
 function sayNoRoom(): void {
-  showToast(str('arcade.host.no_room_there'), { ms: 1500 });
+  showToast(str('arcade.host.no_room_there'), { ms: 1500, kind: 'warn' });
 }
 
 const go = (q: string): void => {
@@ -155,6 +155,7 @@ export async function openHost(): Promise<void> {
     return;
   }
   void syncArcade(doc);
+  carryArcadeName(doc.id, doc.name);
   location.replace(floorLink(doc.id));
 }
 
@@ -194,7 +195,7 @@ export async function openFloorDock(o: {
       decorating?.leave();
       decorating = null;
       dockShow = null;
-      void dockSettings?.keepName().then((why) => { if (why) showToast(why); });
+      void dockSettings?.keepName().then((why) => { if (why) showToast(why, { kind: 'warn', sticky: true }); });
       if (frame) closeDialog();
       closeEditor();
       if (dockBody === body) { dockRoot = null; dockBody = null; onPlaced = null; onProps = null; onChanged = null; dockSettings = null; }
@@ -266,8 +267,7 @@ async function leaveDialog(): Promise<void> {
 
 async function saveDoc(): Promise<void> {
   if (!doc) return;
-  await putArcade(doc);
-  void syncArcade(doc);
+  if (await putArcade(doc)) void syncArcade(doc);
 }
 
 export async function render(): Promise<void> {
@@ -365,7 +365,7 @@ function sectionLabel(text: string): HTMLElement {
 let dockSettings: SettingsParts | null = null;
 
 async function refresh(): Promise<void> {
-  if (dockBody) { location.replace(floorLink(doc!.id)); return; }
+  if (dockBody) { carryArcadeName(doc!.id, doc!.name); location.replace(floorLink(doc!.id)); return; }
   await render();
 }
 
@@ -395,7 +395,7 @@ function settingsHooks(d: ArcadeDoc, server: ArcadeServer | null): SettingsHooks
       share: server ? shareHooks(server, d) : null,
       renamed: () => {
         root().querySelector('.host-name')?.replaceWith(nameHeading(d));
-        say(str('arcade.host.saved'));
+        say(str('arcade.host.saved'), 'ok');
       },
       claimName: async (n) => {
         if (!server) return (await nameTakenHere(n, d.id)) ? NAME_TAKEN : null;
@@ -412,7 +412,7 @@ function settingsHooks(d: ArcadeDoc, server: ArcadeServer | null): SettingsHooks
         if (d.hostKey && server) {
           const r = await server.remove(d).catch(() => null);
           if (!r?.ok) {
-            showToast(str('arcade.host.the_arcade_could_not_be'));
+            showToast(str('arcade.host.the_arcade_could_not_be'), { error: true, sticky: true });
             return;
           }
         }
@@ -1048,7 +1048,7 @@ function openFloorMenu(d: ArcadeDoc, at: { col: number; row: number }, returnTo:
     closeSheet();
     const p = placeUnder(at);
     if (fits(d, p)) addAt(p);
-    else say(str('arcade.host.there_is_no_room_for'));
+    else say(str('arcade.host.there_is_no_room_for'), 'warn');
   });
   const prop = sheetRow(str('arcade.host.add_prop'), '');
   prop.append(rowIcon(MENU_ICONS.chevRight, 'row-chev', 16));
@@ -1061,14 +1061,14 @@ const fullNote = (): string => str('arcade.host.full_n_machines', { 0: ARCADE_MA
 function openAddProp(d: ArcadeDoc, returnTo: HTMLElement, at?: { col: number; row: number }): void {
   const add = (kind: PropKind, art?: PosterArt): void => {
     closeSheet();
-    if ((d.props?.length ?? 0) >= PROPS_MAX) { say(str('arcade.host.there_is_no_clear_floor_for_it')); return; }
+    if ((d.props?.length ?? 0) >= PROPS_MAX) { say(str('arcade.host.there_is_no_clear_floor_for_it'), 'warn'); return; }
     let to: { x: number; z: number } | null = null;
     if (at) {
       const c = cellCentre({ col: Math.floor(at.col), row: Math.floor(at.row) }, GEOM);
       to = propKind(kind).wall ? { x: c.x - FLOOR_CENTRE.x, z: c.z - FLOOR_CENTRE.z } : snapProp(c.x, c.z, { id: '', kind, x: 0, z: 0, yaw: 0 });
     }
     const p = addProp(d, kind, art, to);
-    if (!p) { if (to) sayNoRoom(); else say(str('arcade.host.there_is_no_clear_floor_for_it')); return; }
+    if (!p) { if (to) sayNoRoom(); else say(str('arcade.host.there_is_no_clear_floor_for_it'), 'warn'); return; }
     void propsChanged(d, p.id);
   };
   const posters = (): void => {
@@ -1172,11 +1172,11 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
     closeSheet();
     void (async () => {
       let copy: DocMachine | null;
-      try { copy = duplicateMachine(d, m.id); } catch (e) { say((e as Error).message); return; }
+      try { copy = duplicateMachine(d, m.id); } catch (e) { say((e as Error).message, 'warn'); return; }
       if (!copy) return;
       await saveDoc();
       await refreshIn();
-      say(str('arcade.host.another_n_was_added', { 0: m.name }));
+      say(str('arcade.host.another_n_was_added', { 0: m.name }), 'ok');
     })();
   });
   const stats = sheetRow(str('arcade.host.stats'), str('arcade.host.money_in_and_out_and'));
@@ -1207,7 +1207,7 @@ function askDelete(d: ArcadeDoc, m: DocMachine, returnTo?: HTMLElement): void {
         picked.machines.delete(m.id);
         await saveDoc();
         await refreshIn();
-        say(str('arcade.host.n_was_deleted_from_this', { 0: m.name }));
+        say(str('arcade.host.n_was_deleted_from_this', { 0: m.name }), 'ok');
       })();
     },
   };
@@ -1305,7 +1305,7 @@ function openEditor(d: ArcadeDoc, byContent: Map<string, GameMeta>): void {
   bar.append(
     tool(str('arcade.host.add_machine'), UI_ICONS.cabinet, () => {
       const why = cannotAdd(d);
-      if (why) { say(why); return; }
+      if (why) { say(why, 'warn'); return; }
       addAt(null);
     }),
     tool(str('arcade.host.add_furniture'), UI_ICONS.plus, (b) => openAddProp(d, b)),
@@ -1315,7 +1315,7 @@ function openEditor(d: ArcadeDoc, byContent: Map<string, GameMeta>): void {
     machine.addEventListener('click', () => {
       closeSheet();
       const why = cannotAdd(d);
-      if (why) { say(why); return; }
+      if (why) { say(why, 'warn'); return; }
       addAt(null);
     });
     const furniture = optionRow(str('arcade.host.add_furniture'), '', UI_ICONS.plus);
@@ -1527,7 +1527,7 @@ async function arranged(d: ArcadeDoc, r: Arranged): Promise<void> {
     onPlaced?.(placesOf(d));
     onProps?.(d.props ?? []);
   }
-  if (r.skipped) showToast(str('arcade.host.n_items_could_not_be_moved', { n: r.skipped }));
+  if (r.skipped) showToast(str('arcade.host.n_items_could_not_be_moved', { n: r.skipped }), { kind: 'warn' });
 }
 
 const runArrange = (d: ArcadeDoc, targets: ArrangeTarget[]): Promise<void> => arranged(d, arrange(d, targets));
@@ -1589,7 +1589,7 @@ async function duplicatePicked(d: ArcadeDoc): Promise<void> {
   const copies = { machines: [] as string[], props: [] as string[] };
   for (const m of d.machines.filter((x) => picked.machines.has(x.id) && x.status === 'installed')) {
     let copy: DocMachine | null;
-    try { copy = duplicateMachine(d, m.id); } catch (e) { say((e as Error).message); break; }
+    try { copy = duplicateMachine(d, m.id); } catch (e) { say((e as Error).message, 'warn'); break; }
     if (copy) copies.machines.push(copy.id);
   }
   for (const p of (d.props ?? []).filter((x) => picked.props.has(x.id))) {
@@ -1960,7 +1960,7 @@ function filterSwitch(label: string, on: boolean, onChange: (on: boolean) => voi
 
 async function install(d: ArcadeDoc, g: GameMeta, copies: DocMachine[] = []): Promise<void> {
   const why = cannotAdd(d);
-  if (why) { say(why); return; }
+  if (why) { say(why, 'warn'); return; }
   const src = copies.find((m) => m.status === 'installed') ?? copies[0];
   if (src) {
     const copy = duplicateMachine(d, src.id, wantedCell());
@@ -1968,7 +1968,7 @@ async function install(d: ArcadeDoc, g: GameMeta, copies: DocMachine[] = []): Pr
     await saveDoc();
     if (copy.status === 'installed') {
       go('');
-      say(str('arcade.host.another_n_was_added', { 0: src.name }));
+      say(str('arcade.host.another_n_was_added', { 0: src.name }), 'ok');
     } else go(`&install=${encodeURIComponent(copy.id)}`);
     return;
   }

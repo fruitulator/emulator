@@ -4,7 +4,7 @@ import type { NamedCoin } from '../src/machine/machine';
 
 export const CONTAINER_VERSION = 1;
 
-export const DECODE_VERSION = 205;
+export const DECODE_VERSION = 206;
 
 export type ChunkType = 'META' | 'SRCS' | 'CABJ' | 'IMGS' | 'THMB' | 'STAT' | 'SPAR';
 

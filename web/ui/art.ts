@@ -61,7 +61,9 @@ onThumbChange(forgetUrl);
 export function fillArtwork(frame: HTMLElement): Promise<void> {
   const pending = inflight.get(frame);
   if (pending) return pending;
-  const run = fillArtworkNow(frame).finally(() => { inflight.delete(frame); });
+  const run: Promise<void> = fillArtworkNow(frame).finally(() => {
+    if (inflight.get(frame) === run) inflight.delete(frame);
+  });
   inflight.set(frame, run);
   return run;
 }
@@ -103,7 +105,7 @@ async function fillArtworkNow(frame: HTMLElement): Promise<void> {
   await img.decode().catch(() => undefined);
   back.classList.add('in');
   img.classList.add('in');
-  if (ph) setTimeout(() => { if (frameUrls.get(frame) === url) ph.remove(); }, 320);
+  if (ph) setTimeout(() => { if (frameUrls.get(frame) === url && img.isConnected) ph.remove(); }, 320);
 }
 
 export function showTile(frame: HTMLElement): Promise<void> {
@@ -118,6 +120,7 @@ export function clearArtwork(frame: HTMLElement): void {
   const url = frameUrls.get(frame);
   if (!url) return;
   frameUrls.delete(frame);
+  inflight.delete(frame);
   for (const img of frame.querySelectorAll('.art-blur, .art-img')) img.remove();
   if (!frame.querySelector(':scope > .art-placeholder')) frame.prepend(placeholder(true));
 }

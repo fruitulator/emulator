@@ -522,10 +522,10 @@ export class SourceView {
       if (e instanceof SourceError && e.why === 'declined') return;
       const said = getFailedText(e, m.title);
       if (e instanceof SourceError && e.why === 'signin') {
-        showToast(said, { error: true, action: { label: str('sources.sign_in'), run: () => this.askSignIn() } });
+        showToast(said, { error: true, sticky: true, action: { label: str('sources.sign_in'), run: () => this.askSignIn() } });
         return;
       }
-      showToast(said, { error: true });
+      showToast(said, { error: true, sticky: true });
       return;
     }
     this.busy.delete(origin);

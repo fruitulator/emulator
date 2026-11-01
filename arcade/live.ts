@@ -28,7 +28,7 @@ import type { HintPlace } from '../web/keyhints';
 import { acceptorResolve, stampCoinInputs, viewFor } from '../web/platform';
 import { hasInput, type CabLamp } from '../web/dat';
 import {
-  HALT_NOTE_TEXT, StopWatch, judgeStop, noteReason, noteText, offersState, stopNoteParts, type StopNote,
+  HALT_NOTE_TEXT, StopWatch, judgeStop, noteReason, noteText, offersState, stopNoteParts, type StopNote, NOTE_INFO, NOTE_WARN,
 } from '../web/stopnote';
 import { liveValue } from '../web/settings';
 import { logInputLabels } from '../web/downloads';
@@ -708,7 +708,7 @@ export class Live {
     }
     if (this.wallet && this.emu.info?.unpricedPayouts?.some((l) => !readPayoutValues(this.glass?.machine.config?.payouts)[String(l)])) {
       this.wallet.turnedAway();
-      this.stopNote?.notice(PAYOUT_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
+      this.stopNote?.notice(PAYOUT_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000, NOTE_WARN);
       return false;
     }
     const g = this.glass;
@@ -720,12 +720,12 @@ export class Live {
     }
     if (wired === null || this.unsetSlot(line, w)) {
       this.wallet?.turnedAway();
-      if (wired === undefined) this.stopNote?.notice(SLOT_NOT_SET_UP_TEXT, undefined, undefined, 6000);
+      if (wired === undefined) this.stopNote?.notice(SLOT_NOT_SET_UP_TEXT, undefined, undefined, 6000, NOTE_WARN);
       return false;
     }
     if (this.wallet && this.emu.info?.uncountedCoins?.includes(line)) {
       this.wallet.turnedAway();
-      this.stopNote?.notice(TOKENS_UNCOUNTED_TEXT, undefined, undefined, 6000);
+      this.stopNote?.notice(TOKENS_UNCOUNTED_TEXT, undefined, undefined, 6000, NOTE_WARN);
       return false;
     }
     const coins: readonly CoinChute[] = this.emu.info?.coins ?? (g?.game ? viewFor(g.game.system).coins : []);
@@ -734,14 +734,14 @@ export class Live {
 
   private pays(coin: Parameters<Wallet['pay']>[0]): boolean {
     if (payForCoin(this.wallet, coin)) return true;
-    if (this.wallet && unpriced(coin)) this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
+    if (this.wallet && unpriced(coin)) this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000, NOTE_WARN);
     else this.sayNotEnough(isToken(coin));
     return false;
   }
 
   private sayNotEnough(tokens = false): void {
     if (!this.wallet || !this.wallet.shown()) return;
-    this.stopNote?.notice(tokens ? NOT_ENOUGH_TOKENS_TEXT : NOT_ENOUGH_MONEY_TEXT, undefined, undefined, NOT_ENOUGH_MONEY_MS);
+    this.stopNote?.notice(tokens ? NOT_ENOUGH_TOKENS_TEXT : NOT_ENOUGH_MONEY_TEXT, undefined, undefined, NOT_ENOUGH_MONEY_MS, NOTE_WARN);
   }
 
   private unsetSlot(line: number, w: CoinWiring): boolean {
@@ -809,7 +809,7 @@ export class Live {
   private showCoinsStopped(): void {
     if (this.coinsNoteAway || !this.stopNote || this.idle?.asked) return;
     if (this.stopNote.visible && this.stopNote.text === COINS_STOPPED_TEXT) return;
-    this.stopNote.notice(COINS_STOPPED_TEXT, undefined, () => { this.coinsNoteAway = true; });
+    this.stopNote.notice(COINS_STOPPED_TEXT, undefined, () => { this.coinsNoteAway = true; }, undefined, NOTE_WARN);
   }
 
   coinWiring(): CoinWiring {
@@ -831,7 +831,7 @@ export class Live {
     if (!choices.length) {
       const wired = slot.coins.filter((c) => c.line !== null);
       if (balance && wired.length && wired.every((c) => slotCoinPence(c.coin) === null)) {
-        this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000);
+        this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000, NOTE_WARN);
       } else if (balance && wired.length) this.sayNotEnough(wired.every((c) => isTokenCoin(c.coin)));
       this.effects.coin(acceptor, 'refused');
       return true;
@@ -976,7 +976,7 @@ export class Live {
     this.stop();
     const name = this.holderNames.get(slot) ?? null;
     if (glass) this.busyNotice(glass, slot, name);
-    else this.stopNote?.notice(machineBusyText(name));
+    else this.stopNote?.notice(machineBusyText(name), undefined, undefined, undefined, NOTE_INFO);
   }
 
   private readonly holderNames = new Map<StateSlot, string | null>();
@@ -991,7 +991,7 @@ export class Live {
     const glass = this.busyGlass;
     this.stopNote.notice(machineBusyText(name), slot.watch && glass
       ? { label: WATCH_BUTTON, run: () => { this.startSound(); this.watch(glass); } }
-      : undefined);
+      : undefined, undefined, undefined, NOTE_INFO);
   }
 
   private busyNotice(glass: Glass, slot: StateSlot, holderName: string | null): void {
@@ -999,7 +999,7 @@ export class Live {
     this.busyGlass = glass;
     this.stopNote?.notice(machineBusyText(holderName), slot.watch
       ? { label: WATCH_BUTTON, run: () => { this.startSound(); this.watch(glass); } }
-      : undefined);
+      : undefined, undefined, undefined, NOTE_INFO);
   }
   private busyGlass: Glass | null = null;
 
@@ -1088,7 +1088,7 @@ export class Live {
   }
 
   private watchNotice(line: string): void {
-    this.stopNote?.notice(line, { label: WALK_AWAY_BUTTON, run: () => this.onWalkAway?.() });
+    this.stopNote?.notice(line, { label: WALK_AWAY_BUTTON, run: () => this.onWalkAway?.() }, undefined, undefined, NOTE_INFO);
   }
 
   private watchPaused(w: NonNullable<Live['watching']>, on: boolean): void {
@@ -1102,7 +1102,7 @@ export class Live {
     if (this.watching !== w || w.free) return;
     w.free = true;
     w.paused = false;
-    this.stopNote?.notice(MACHINE_FREE_TEXT, { label: PLAY_BUTTON, run: () => this.playInstead(w) });
+    this.stopNote?.notice(MACHINE_FREE_TEXT, { label: PLAY_BUTTON, run: () => this.playInstead(w) }, undefined, undefined, NOTE_INFO);
   }
 
   private playInstead(w: NonNullable<Live['watching']>): void {
@@ -1200,7 +1200,7 @@ export class Live {
       this.cutOff.pausedForIt = true;
       this.pause();
     }
-    this.stopNote?.notice(connectionLostText(holdMs));
+    this.stopNote?.notice(connectionLostText(holdMs), undefined, undefined, undefined, NOTE_WARN);
   }
 
   private back(slot: StateSlot): void {
@@ -1395,7 +1395,7 @@ export class Live {
         this.claimStats.idleAsked++;
         console.log('[arcade] nobody has played the machine for a while: still playing?');
       }
-      this.stopNote?.notice(stillPlayingText(st.leftMs), { label: CARRY_ON_BUTTON, run: () => this.carryOn(s) }, () => this.carryOn(s));
+      this.stopNote?.notice(stillPlayingText(st.leftMs), { label: CARRY_ON_BUTTON, run: () => this.carryOn(s) }, () => this.carryOn(s), undefined, NOTE_INFO);
       return;
     }
     this.claimStats.idleReleased++;

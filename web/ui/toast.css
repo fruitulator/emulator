@@ -9,10 +9,9 @@
 }
 #stopnote-icon .stopnote-icon-svg {
   display: inline-flex;
-  animation: stopnote-icon-turn 2s cubic-bezier(0.6, 0, 0.4, 1) infinite;
 }
-#stopnote.nb-stopbar--halt #stopnote-icon .stopnote-icon-svg {
-  animation: none;
+#stopnote.nb-stopbar--wait #stopnote-icon .stopnote-icon-svg {
+  animation: stopnote-icon-turn 2s cubic-bezier(0.6, 0, 0.4, 1) infinite;
 }
 @keyframes stopnote-icon-turn {
   0%, 55% { transform: rotate(0); }
@@ -38,14 +37,14 @@
 
 .ui-toasts {
   position: fixed;
-  top: calc(64px + env(safe-area-inset-top));
-  left: 0;
-  right: 0;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  left: 12px;
+  right: 12px;
   z-index: 40;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   pointer-events: none;
 }
 .ui-toasts > .nb-toast {
@@ -53,7 +52,63 @@
 }
 .ui-toasts > .nb-toast > .nb-btn {
   flex: none;
-  align-self: center;
+}
+body:has(#stopnote.open) .ui-toasts {
+  bottom: calc(var(--toast-h, 66px) + 28px + env(safe-area-inset-bottom));
+}
+body:has(.nb-dlcard) .ui-toasts {
+  bottom: calc(var(--dl-h, 54px) + 28px + env(safe-area-inset-bottom));
+}
+body:has(.nb-dlcard):has(#stopnote.open) .ui-toasts {
+  bottom: calc(var(--toast-h, 66px) + var(--dl-h, 54px) + 34px + env(safe-area-inset-bottom));
+}
+body:has(#dpad:not([hidden])):not(.hosting) .nb-toast {
+  background: rgba(18,13,30,.55);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  backdrop-filter: blur(10px) saturate(1.2);
+}
+body:has(#dpad:not([hidden])):not(.hosting) #stopnote {
+  background: rgba(18,13,30,.55);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  backdrop-filter: blur(10px) saturate(1.2);
+}
+@media (prefers-reduced-transparency: reduce) {
+  body:has(#dpad:not([hidden])):not(.hosting) .nb-toast {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: color-mix(in srgb, var(--nb-bg) 94%, var(--nb-accent));
+  }
+  body:has(#dpad:not([hidden])):not(.hosting) #stopnote {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: color-mix(in srgb, var(--nb-bg) 94%, var(--nb-accent));
+  }
+}
+@media (max-width: 859px) {
+  body:has(#dpad:not([hidden])):not(.hosting) .ui-toasts {
+    --pad-b: 24px;
+    --pad-h: 156px;
+    bottom: calc(var(--pad-b) + var(--pad-h) + 12px + env(safe-area-inset-bottom));
+  }
+  body:has(#dpad:not([hidden])):not(.hosting):has(#dpad.at) .ui-toasts { --pad-h: 52px; }
+  body:has(#dpad:not([hidden])):not(.hosting):has(#stopnote.open) .ui-toasts { --pad-b: calc(var(--toast-h, 66px) + 26px); }
+}
+@media (max-width: 819px) {
+  body:has(#dpad:not([hidden])):not(.hosting):has(.nb-dlcard) .ui-toasts { --pad-b: calc(var(--dl-h, 54px) + 26px); }
+  body:has(#dpad:not([hidden])):not(.hosting):has(.nb-dlcard):has(#stopnote.open) .ui-toasts { --pad-b: calc(var(--toast-h, 66px) + var(--dl-h, 54px) + 32px); }
+}
+@media (max-width: 699px) {
+  body:has(#dpad:not([hidden])):not(.hosting) .ui-toasts { --pad-b: 20px; }
+  body:has(#dpad:not([hidden])):not(.hosting) .ui-toasts > .nb-toast { width: 100%; }
+}
+@media (min-aspect-ratio: 1/1) {
+  body:has(#dpad:not([hidden])):not(.hosting):has(#dpad.at) .ui-toasts {
+    top: calc(64px + env(safe-area-inset-top));
+    bottom: auto;
+  }
+  body:has(#dpad:not([hidden])):not(.hosting):has(#dpad.at):has(#stopnote.open) .ui-toasts {
+    top: calc(64px + var(--toast-h, 66px) + 8px + env(safe-area-inset-top));
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .ui-toasts > .nb-toast { animation: none; }
@@ -190,7 +245,7 @@
   #stopnote.leaving {
     animation: toast-fade-out 0.15s linear both;
   }
-  #stopnote-icon .stopnote-icon-svg {
+  #stopnote.nb-stopbar--wait #stopnote-icon .stopnote-icon-svg {
     animation: none;
   }
 }

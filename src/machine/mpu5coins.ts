@@ -43,7 +43,7 @@ export function coinRecordName(rom: Uint8Array, coin: number): string | null {
       if (ch < 0x20 || ch > 0x7e) { s = ''; break; }
       s += String.fromCharCode(ch);
     }
-    if (s && q < end) return s;
+    if (s.trim() && q < end) return s;
   }
   return null;
 }
@@ -57,14 +57,24 @@ function centsLabel(c: number): string {
   return c % 100 === 0 ? `€${c / 100}` : `€${(c / 100).toFixed(2)}`;
 }
 
+function ccTalkValue(code: string): number | null {
+  if (/^\d{3}$/.test(code)) return Number(code);
+  const k = /^(\d{1,2})K(\d?)$/.exec(code);
+  return k ? Number(k[1]) * 1000 + Number(k[2] || 0) * 100 : null;
+}
+
 export function readCoinValue(rom: Uint8Array, coin: number): CoinValue {
   const credits = u16At(rom, coin + 8);
   const name = coinRecordName(rom, coin);
   if (credits === 0) return { pence: 0, cents: null, label: 'token' };
   if (name === null) return { pence: credits, cents: null, label: penceLabel(credits) };
+  const id = /^\s*([A-Z]{2})([0-9K]{3})[A-Z]?\s*$/.exec(name);
+  if (id?.[1] === 'TK') return { pence: 0, cents: null, label: 'token' };
+  const idValue = id ? ccTalkValue(id[2]!) : null;
+  if (id?.[1] === 'EU' && idValue !== null) return { pence: null, cents: idValue, label: centsLabel(idValue) };
   const gbp = /^\s*(\d+)\s*P\s*$/i.exec(name);
-  if (gbp) {
-    const p = Number(gbp[1]);
+  const p = id?.[1] === 'GB' ? idValue : gbp ? Number(gbp[1]) : null;
+  if (p !== null) {
     return p === credits ? { pence: p, cents: null, label: penceLabel(p) } : { pence: null, cents: null, label: name.trim() };
   }
   const eur = /^\s*(\d+)(?:[.,](\d{1,2}))?\s*EU(?:R|RO)?\s*$/i.exec(name);

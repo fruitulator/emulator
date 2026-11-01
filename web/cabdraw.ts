@@ -19,6 +19,8 @@ import {
   reelWinLines,
   segDigitGeometry,
   segLitMask,
+  segZeroOnMask,
+  seg16PointLit,
   segPointLit,
   segLampLit,
   SEG_METRICS,
@@ -1294,12 +1296,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.clip();
       const metrics = s.metrics ?? SEG_METRICS;
       const mask = word >= 0 ? segLitMask(metrics, word) : 0;
-      const zero = s.zeroOn === true;
+      const zero = s.zeroOn === true ? segZeroOnMask(metrics) : 0;
       const level = s.digit !== undefined ? m.layoutDigitLevel?.(s.digit) ?? 0xff : 0xff;
       const segLevel = (i: number): number =>
         s.digit !== undefined && i < 8 ? m.layoutDigitSegLevel(s.digit, i) : level;
       for (let i = 0; i < polys.length; i++) {
-        const lit = zero ? i < 6
+        const lit = zero ? ((zero >> i) & 1) !== 0
           : word >= 0 ? ((mask >> i) & 1) !== 0 : segLampLit(s, i, (n) => m.layoutLamp(n));
         const lv = metrics.seg16 ? level : segLevel(i);
         const p = polys[i];
@@ -1322,7 +1324,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const dp = s.seg[7];
       if (metrics.seg16) {
         if (!metrics.alpha) {
-          ctx.fillStyle = s.dpOn || ((mask >> 16) & 1) ? on : off;
+          ctx.fillStyle = seg16PointLit(s, mask) ? on : off;
           ctx.beginPath();
           ctx.arc(dpX, dpY, dpR, 0, Math.PI * 2);
           ctx.fill();

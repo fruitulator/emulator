@@ -15,14 +15,19 @@ export interface CcTalkFrame {
   data: number[];
 }
 
+export interface CcTalkWire {
+  now: number;
+  lastTxAt: number;
+  frame: number[];
+  queue: { at: number; b: number }[];
+  addresses: Record<number, number>;
+  spoken: number[];
+}
+
 export class CcTalkBus {
   private readonly devices = new Map<number, CcTalkDevice>();
   private readonly home = new Map<CcTalkDevice, number>();
-  private readonly spoken = new Set<CcTalkDevice>();
-  private frame: number[] = [];
-  private now = 0;
-  private lastTxAt = 0;
-  private queue: { at: number; b: number }[] = [];
+  readonly wire: CcTalkWire = { now: 0, lastTxAt: 0, frame: [], queue: [], addresses: {}, spoken: [] };
   readonly log: CcTalkFrame[] = [];
   trace?: (req: CcTalkFrame, reply: number[] | null) => void;
 
@@ -50,44 +55,54 @@ export class CcTalkBus {
   }
 
   spokenTo(dev: CcTalkDevice): boolean {
-    return this.spoken.has(dev);
+    const home = this.home.get(dev);
+    return home !== undefined && this.wire.spoken.includes(home);
+  }
+
+  resync(): void {
+    this.devices.clear();
+    for (const [d, a] of this.home) this.devices.set(this.wire.addresses[a] ?? a, d);
   }
 
   reset(): void {
-    this.frame = [];
-    this.queue = [];
-    this.spoken.clear();
+    this.wire.frame = [];
+    this.wire.queue = [];
+    this.wire.addresses = {};
+    this.wire.spoken = [];
     this.log.length = 0;
     this.devices.clear();
     for (const [d, a] of this.home) { d.reset(); this.devices.set(a, d); }
   }
 
   tx(v: number): void {
-    if (this.frame.length && this.now - this.lastTxAt > this.timing.frameGap) this.frame = [];
-    this.lastTxAt = this.now;
-    const f = this.frame;
+    const w = this.wire;
+    if (w.frame.length && w.now - w.lastTxAt > this.timing.frameGap) w.frame = [];
+    w.lastTxAt = w.now;
+    const f = w.frame;
     f.push(v & 0xff);
     if (f.length >= 5 && f.length === 5 + (f[1] ?? 0)) {
       this.dispatch(f);
-      this.frame = [];
+      w.frame = [];
     } else if (f.length > 260) {
       f.shift();
     }
   }
 
   tick(cycles: number): void {
-    this.now += cycles;
+    this.wire.now += cycles;
   }
 
   eventIn(): number {
-    if (!this.queue.length) return Infinity;
-    const d = this.queue[0].at - this.now;
+    const w = this.wire;
+    if (!w.queue.length) return Infinity;
+    const d = w.queue[0].at - w.now;
     return d < 1 ? 1 : d;
   }
 
   pump(deliver: (b: number) => void, space: () => number = () => 1): void {
-    while (this.queue.length && this.queue[0].at <= this.now && space() > 0) {
-      deliver(this.queue.shift()!.b);
+    const w = this.wire;
+    while (w.queue.length && w.queue[0].at <= w.now && space() > 0) {
+      deliver(w.queue.shift()!.b);
     }
   }
 
@@ -105,15 +120,16 @@ export class CcTalkBus {
         else d.reply(req.header, req.data);
       }
       if (req.header === CC.RESET) {
-        this.devices.clear();
-        for (const [d, a] of this.home) this.devices.set(a, d);
+        this.wire.addresses = {};
+        this.resync();
       }
       this.trace?.(req, null);
       return;
     }
     const dev = this.devices.get(dest);
     if (!dev) { this.trace?.(req, null); return; }
-    this.spoken.add(dev);
+    const devHome = this.home.get(dev);
+    if (devHome !== undefined && !this.wire.spoken.includes(devHome)) this.wire.spoken.push(devHome);
 
     const msg = dev.decodeFrame ? dev.decodeFrame(f) : { header: req.header, data: req.data };
     if (!msg) { this.trace?.(req, null); return; }
@@ -126,6 +142,7 @@ export class CcTalkBus {
       if (home !== undefined && home !== dest) {
         this.devices.delete(dest);
         this.devices.set(home, dev);
+        delete this.wire.addresses[home];
       }
     }
 
@@ -145,13 +162,14 @@ export class CcTalkBus {
     if (msg.header === CC.ADDRESS_CHANGE && msg.data.length >= 1 && msg.data[0] !== 0) {
       this.devices.delete(dest);
       this.devices.set(msg.data[0] & 0xff, dev);
+      if (devHome !== undefined) this.wire.addresses[devHome] = msg.data[0] & 0xff;
     }
   }
 
   private send(bytes: number[]): void {
-    let at = this.now + this.timing.replyDelay;
+    let at = this.wire.now + this.timing.replyDelay;
     for (const b of bytes) {
-      this.queue.push({ at, b: b & 0xff });
+      this.wire.queue.push({ at, b: b & 0xff });
       at += this.timing.byteGap;
     }
   }

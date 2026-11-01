@@ -31,7 +31,7 @@ export function settleSignIn(): void {
   if (!b) return;
   const found = store.byKey(sourceKey(b.host, b.sourceId));
   if (!found) return;
-  showToast(b.ok ? str('arcade.source.signed_in_n', { 0: found.s.name }) : str('sources.err_signin'), b.ok ? { kind: 'ok' } : { error: true });
+  showToast(b.ok ? str('arcade.source.signed_in_n', { 0: found.s.name }) : str('sources.err_signin'), b.ok ? { kind: 'ok' } : { error: true, sticky: true });
 }
 
 export interface GetProgress { (text: string | null, fraction?: number): void }
@@ -70,7 +70,7 @@ export async function getMachineSet(
     for (const g of result.games) if (!g.origin) await putMeta({ ...g, origin: `${sourceKey(idx.host, s.id)}#${m.source.item}` }).catch(() => undefined);
     if (exact) return exact;
     if (result.games.length) return 'other';
-    showToast(str('sources.get_failed', { title, why: result.problems[0]?.reason ?? str('sources.err_download') }), { error: true });
+    showToast(str('sources.get_failed', { title, why: result.problems[0]?.reason ?? str('sources.err_download') }), { error: true, sticky: true });
     return null;
   } catch (e) {
     progress(null);
@@ -79,11 +79,12 @@ export async function getMachineSet(
       const found = store.byKey(m.source.key);
       showToast(getFailedText(e, title), {
         error: true,
+        sticky: true,
         ...(found ? { action: { label: str('sources.sign_in'), run: () => { void startSignIn(store, found.idx, found.s); } } } : {}),
       });
       return null;
     }
-    showToast(e instanceof SourceError ? getFailedText(e, title) : str('sources.get_failed', { title, why: errText(e) }), { error: true });
+    showToast(e instanceof SourceError ? getFailedText(e, title) : str('sources.get_failed', { title, why: errText(e) }), { error: true, sticky: true });
     return null;
   }
 }

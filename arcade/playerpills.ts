@@ -3,6 +3,9 @@ import { namePill } from '../web/ui/avatar';
 import { avatarUrl } from './account';
 import { CANVAS_OVER_GLASS_Z } from './glassflat';
 import { PLAYING_POLL_MS, type MachinePlayer } from './serverwire';
+import type { SocketLike } from './livelink';
+import { RoomLink, roomChannelUrl } from './roomlink';
+import type { RoomMessage } from './serverwire';
 import type { ArcadeServer } from './share';
 
 export interface PillPlayer { name: string; pic: string | null }
@@ -71,41 +74,102 @@ export const PLAYING_QUIET_MS = 5 * 60_000;
 
 const ACTIVITY = ['pointerdown', 'pointermove', 'wheel', 'keydown'] as const;
 
-export function watchPlaying(api: ArcadeServer, arcadeId: string, onPlayers: (p: Map<string, PillPlayer>) => void): () => void {
+function browserSocket(): ((url: string) => SocketLike) | null {
+  return typeof WebSocket === 'undefined' ? null : (url) => new WebSocket(url) as unknown as SocketLike;
+}
+
+export function watchPlaying(
+  api: ArcadeServer, arcadeId: string, onPlayers: (p: Map<string, PillPlayer>) => void,
+  open: ((url: string) => SocketLike) | null = browserSocket(),
+  onMessage?: (m: RoomMessage) => void,
+): () => void {
+  return watchRoom(api, arcadeId, { onPlayers, onMessage, open });
+}
+
+export function watchRoom(
+  api: ArcadeServer, arcadeId: string,
+  o: { onPlayers?: (p: Map<string, PillPlayer>) => void; onMessage?: (m: RoomMessage) => void; open?: ((url: string) => SocketLike) | null },
+): () => void {
+  const { onPlayers, onMessage } = o;
+  const open = o.open === undefined ? browserSocket() : o.open;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let quietTimer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   let asking = false;
   let lastActive = Date.now();
+  let link: RoomLink | null = null;
+  let live = false;
+  const awake = (): boolean => !stopped && document.visibilityState !== 'hidden' && Date.now() - lastActive < PLAYING_QUIET_MS;
   const ask = async (): Promise<void> => {
     if (asking) return;
     if (timer) { clearTimeout(timer); timer = null; }
-    if (stopped || document.visibilityState === 'hidden' || Date.now() - lastActive >= PLAYING_QUIET_MS) return;
+    if (live || !awake() || !onPlayers) return;
     asking = true;
     try {
       const r = await api.playing(arcadeId);
-      if (!stopped && r.ok) onPlayers(pillPlayers(api.base, r.playing));
+      if (!stopped && !live && r.ok) onPlayers?.(pillPlayers(api.base, r.playing));
     } catch (e) {
       console.info('[arcade] who is playing could not be asked', e);
     } finally {
       asking = false;
     }
-    if (!stopped) timer = setTimeout(() => void ask(), PLAYING_POLL_MS);
+    if (!stopped && !live) timer = setTimeout(() => void ask(), PLAYING_POLL_MS);
+  };
+  const closeLink = (): void => {
+    link?.stop();
+    link = null;
+    live = false;
+    if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
+  };
+  const armQuiet = (): void => {
+    quietTimer = setTimeout(() => {
+      quietTimer = null;
+      if (awake()) armQuiet(); else closeLink();
+    }, Math.max(0, lastActive + PLAYING_QUIET_MS - Date.now()));
+  };
+  const wake = (): void => {
+    if (!awake()) return;
+    if (open && !link) {
+      link = new RoomLink(roomChannelUrl(api.base, arcadeId), {
+        up: () => {
+          live = true;
+          if (timer) { clearTimeout(timer); timer = null; }
+        },
+        down: () => {
+          live = false;
+          if (timer === null) void ask();
+        },
+        message: (m) => {
+          if (m.type === 'playing') onPlayers?.(pillPlayers(api.base, m.data.playing));
+          onMessage?.(m);
+        },
+      }, {
+        open, now: () => Date.now(),
+        setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+        setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      });
+      armQuiet();
+      link.start();
+      return;
+    }
+    if ((!link || link.isDown) && timer === null && !asking) void ask();
   };
   const shown = (): void => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') { closeLink(); return; }
     lastActive = Date.now();
-    void ask();
+    wake();
   };
   const active = (): void => {
     lastActive = Date.now();
-    if (timer === null && !asking) void ask();
+    wake();
   };
   document.addEventListener('visibilitychange', shown);
   for (const e of ACTIVITY) window.addEventListener(e, active, { capture: true, passive: true });
-  void ask();
+  wake();
   return () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    closeLink();
     document.removeEventListener('visibilitychange', shown);
     for (const e of ACTIVITY) window.removeEventListener(e, active, { capture: true });
   };

@@ -113,12 +113,22 @@ export const ARCADE_NAME_LIMIT = 40;
 export const ARCADE_DOC_LIMIT = 8 * 1024 * 1024;
 export interface PublishBody { key: string; name: string; public?: boolean; doc?: unknown }
 export const ARCADES_PER_PLAYER = 1;
-export type PublishReply = { ok: true; public: boolean } | { ok: false; why: 'not-owner' | 'gone' | 'bad' | 'limit' | 'taken' };
+export type PublishReply = { ok: true; public: boolean; needRoom?: true; needTraces?: string[] } | { ok: false; why: 'not-owner' | 'gone' | 'bad' | 'limit' | 'taken' };
+export function traceIdOf(data: string, bytes: number): string {
+  let a = 0x811c9dc5;
+  for (let i = 0; i < data.length; i++) a = Math.imul(a ^ data.charCodeAt(i), 0x01000193) >>> 0;
+  return `${bytes}-${a.toString(16)}`;
+}
 export function arcadeNameKey(name: string): string {
   return name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 export interface DeleteBody { key: string }
 export type DeleteReply = { ok: true } | { ok: false; why: 'not-owner' };
+export const STATE_PATH = 'state';
+export interface ArcadeStateReply { ok: true; deleted: boolean }
+export const RESTORE_PATH = 'restore';
+export interface RestoreBody { key: string; name?: string }
+export type RestoreReply = { ok: true } | { ok: false; why: 'not-owner' | 'gone' | 'bad' | 'limit' | 'taken' };
 export interface ArcadeListing {
   id: string; name: string; machines: number; updatedAt: number; viewAt: number; rating: number; ratings: number; visits: number;
   machineIds: string[]; owner?: ArcadeOwner | null;
@@ -139,6 +149,12 @@ export const PLAYING_PATH = 'playing';
 export const PLAYING_POLL_MS = 15_000;
 export interface MachinePlayer { machine: string; id: string; name: string; avatarAt?: number }
 export type PlayingReply = { ok: true; playing: MachinePlayer[] };
+export const ROOM_CHANNEL_PATH = 'channel';
+export const ROOM_PING_MS = 30_000;
+export const ROOM_NAMED_QUERY = 'recordings=named';
+export type RoomMessage =
+  | { type: 'playing'; data: { playing: MachinePlayer[] } }
+  | { type: 'arcade'; data: { at: number; gone: boolean } };
 export const LEADERS_PATH = 'leaders';
 export const LEADERS_SITE_PATH = '/v1/leaders';
 export interface LeaderRow {
@@ -152,7 +168,7 @@ export const VIEW_LIMIT = 192 * 1024;
 export type ViewReply = { ok: true; viewAt: number } | { ok: false; why: 'not-owner' | 'gone' | 'bad' };
 export type ArcadeListReply = { ok: true; arcades: ArcadeListing[] };
 export type ArcadeReply =
-  | { ok: true; arcade: { id: string; name: string; public: boolean; doc: unknown } }
+  | { ok: true; arcade: { id: string; name: string; public: boolean; doc: unknown; at: number } }
   | { ok: false; why: 'gone' };
 
 export const ACCOUNT_PATH = '/v1/account';

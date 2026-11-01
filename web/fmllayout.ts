@@ -220,7 +220,6 @@ function bandReelBorder(
 }
 
 export function digitBlock(c: ParsedComponent): SegDisplay[] {
-  if ((val(c, 'Segment14') ?? 0) !== 0) return [];
   const signed32 = (v: number): number => v | 0;
   const cols = Math.max(0, Math.min(48, val(c, 'Columns') ?? 1));
   const rows = Math.max(0, Math.min(48, val(c, 'Rows') ?? 1));
@@ -265,7 +264,7 @@ export function digitBlock(c: ParsedComponent): SegDisplay[] {
     offset: signed32(val(c, 'Offset') ?? 0) / 10,
     digitAngle: signed32(val(c, 'DigitAngle') ?? 0) / 10,
     style: val(c, 'SelectedTypeId') ?? 0,
-    seg16: false,
+    seg16: (val(c, 'Segment14') ?? 0) !== 0,
     alpha: false,
   };
   const out: SegDisplay[] = [];

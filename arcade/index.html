@@ -741,6 +741,24 @@
         </div>
       </div>
     </div>
+    <script>
+      (function () {
+        var id = new URLSearchParams(location.search).get('arcade');
+        if (id === null) return;
+        var name = '';
+        try {
+          var carried = JSON.parse(sessionStorage.getItem('arcadeEntering') || 'null');
+          sessionStorage.removeItem('arcadeEntering');
+          if (carried && carried.id === id) name = carried.name;
+        } catch (e) {  }
+        var title = document.getElementById('loadingTitle');
+        title.textContent = name || '\u00a0';
+        title.hidden = false;
+        var bar = document.getElementById('loadingBar');
+        bar.hidden = false;
+        bar.style.visibility = 'hidden';
+      })();
+    </script>
     <script type="module" src="./boot.ts"></script>
   </body>
 </html>

@@ -408,7 +408,7 @@ function startGame(
   stopParts = [];
   const damaged = damagedRoms(game);
   if (damaged.length) {
-    showNotice(str('main.n_looks_damaged_by_a', { 0: damaged.join(', ') }), { autoClose: false });
+    showNotice(str('main.n_looks_damaged_by_a', { n: damaged.length }), { autoClose: false, kind: 'warn', list: damaged });
   }
   let machineUp = false;
   let cabinetSettled = false;
@@ -1423,7 +1423,7 @@ async function exportMany(
   const { message, lines, clean } = packReport(result);
   if (n && !result.stopped) status.textContent = str('main.n_games_exported', { 0: n });
   if (clean) {
-    showNotice(message);
+    showNotice(message, { kind: 'ok' });
     return;
   }
   openAlert({ message, lines, buttons: [{ button: pillButton(str('main.ok'), () => undefined), run: () => undefined }] });

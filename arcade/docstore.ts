@@ -70,15 +70,18 @@ export async function getArcade(id: string): Promise<ArcadeDoc | null> {
   return doc;
 }
 
-export async function putArcade(doc: ArcadeDoc, o: { replace?: boolean } = {}): Promise<void> {
+export async function putArcade(doc: ArcadeDoc, o: { replace?: boolean } = {}): Promise<boolean> {
   if (doc.machines.length > ARCADE_MAX_MACHINES) throw new Error(`an arcade holds at most ${ARCADE_MAX_MACHINES} machines`);
   doc.updatedAt = Date.now();
   const d = await db();
-  await new Promise<void>((resolve, reject) => {
-    const tx = d.transaction(ARCADES, 'readwrite');
+  return new Promise<boolean>((resolve, reject) => {
+    const tx = d.transaction([ARCADES, SETTINGS], 'readwrite');
     const store = tx.objectStore(ARCADES);
+    const deleted = tx.objectStore(SETTINGS).get(deletedKey(doc.id));
     const get = store.get(doc.id);
+    let wrote = false;
     get.onsuccess = () => {
+      if (deleted.result) return;
       const was = get.result as ArcadeDoc | undefined;
       if (was && !o.replace) {
         const stored = new Map(was.machines.map((m) => [m.id ?? m.contentHash, m]));
@@ -93,8 +96,9 @@ export async function putArcade(doc: ArcadeDoc, o: { replace?: boolean } = {}): 
         }
       }
       store.put(doc);
+      wrote = true;
     };
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve(wrote);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error ?? new Error('aborted'));
   });
@@ -217,8 +221,26 @@ export async function updateArcadeProps(arcadeId: string, props: Prop[]): Promis
   });
 }
 
+const deletedKey = (id: string): string => `deleted:${id}`;
+
+export async function arcadeDeletedHere(id: string): Promise<boolean> {
+  return !!(await getSetting<number>(deletedKey(id)));
+}
+
+export async function clearArcadeDeleted(id: string): Promise<void> {
+  await op(SETTINGS, 'readwrite', (s) => s.delete(deletedKey(id)));
+}
+
 export async function deleteArcade(id: string): Promise<void> {
-  await op(ARCADES, 'readwrite', (s) => s.delete(id));
+  const d = await db();
+  await new Promise<void>((resolve, reject) => {
+    const tx = d.transaction([ARCADES, SETTINGS], 'readwrite');
+    tx.objectStore(ARCADES).delete(id);
+    tx.objectStore(SETTINGS).put(Date.now(), deletedKey(id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('aborted'));
+  });
   if ((await getSetting<string>('current')) === id) await setSetting('current', null);
 }
 

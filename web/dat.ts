@@ -583,9 +583,17 @@ export const MFME_SEG16_ASCII: readonly number[] = [
 ];
 
 export function segLampLit(s: SegDisplay, i: number, lampOn: (n: number) => boolean): boolean {
-  const n = (s.metrics?.seg16 ?? false) && s.seg.length >= 16 ? 16 : 7;
+  const n = !(s.metrics?.seg16 ?? false) ? 7 : s.block ? 8 : s.seg.length >= 16 ? 16 : 7;
   const lamp = s.seg[i];
   return i < n && lamp !== undefined && lamp >= 0 && lampOn(lamp);
+}
+
+export function segZeroOnMask(m: SegMetrics): number {
+  return m.seg16 ? 0xff : 0x3f;
+}
+
+export function seg16PointLit(s: SegDisplay, mask: number): boolean {
+  return s.dpOn || (!s.block && ((mask >> 16) & 1) !== 0);
 }
 
 export function segPointLit(
@@ -811,7 +819,9 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
     return spin(out);
   };
   if (m.seg16) {
-    const xC = s.left + ((L - s.left) + (R - s.left)) * m.centre / 100;
+    const xC = s.block
+      ? s.block.left + ((L - m.offset - s.block.left) + (R - m.offset - s.block.left)) * m.centre / 100 + m.offset
+      : s.left + ((L - s.left) + (R - s.left)) * m.centre / 100;
     const t2 = 2 * th;
     const segs16 = [
       poly(L + sp + chop, T, L + sp + c2, T + c2, L + th + sp, T + th, xC - h - sp, T + th, xC - sp, T + h, xC - k - sp, T),

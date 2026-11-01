@@ -15,6 +15,8 @@ import { displayTitle } from '../web/gamelist';
 import type { ArcadeMachine } from './machines';
 import type { GameMeta } from '../web/store';
 import { downloadCard, type DownloadCard } from '../web/ui/progress';
+import { NOTE_INFO, NOTE_OK, NOTE_WARN } from '../web/stopnote';
+import { showToast } from '../web/ui/toast';
 import { banksPlan, gridPlan, type RoomPlan, type Stand } from './floor';
 import type { Place } from './doc';
 import { BANK_MARGINS, buildRoom, dimMaterials, lightPool, type Dressing } from './dressing';
@@ -139,6 +141,7 @@ export class Room {
   private turnTo: number | null = null;
   private arrivePitch: number | null = null;
   private focus: Slot | null = null;
+  get focused(): boolean { return this.focus !== null; }
   get playedGlassSaid(): string {
     if (!import.meta.env.DEV) return '';
     const f = this.focus;
@@ -192,6 +195,7 @@ export class Room {
   private getting = new Set<string>();
   onLeave?: () => void;
   private sayWhenArrived: { s: Slot; show: () => void; by: number } | null = null;
+  private otherVersionToast: (() => void) | null = null;
 
   constructor(readonly host: HTMLElement, machines: ArcadeMachine[], opts: { name?: string | null; look?: RoomLook; props?: Prop[] } = {}) {
     this.switches = roomSwitches();
@@ -439,7 +443,7 @@ export class Room {
   }
 
   private look: RoomLook;
-  private readonly name: string | null;
+  private name: string | null;
   private sign: THREE.Mesh | null = null;
   private signSeq = 0;
 
@@ -456,6 +460,12 @@ export class Room {
     if (this.sign) { this.room.group.remove(this.sign); disposeSign(this.sign); }
     this.sign = sign.mesh;
     this.room.group.add(sign.mesh);
+  }
+
+  rename(name: string | null): void {
+    if (name === this.name) return;
+    this.name = name;
+    void this.hangSign();
   }
 
   restyle(look: RoomLook): void {
@@ -616,12 +626,10 @@ export class Room {
   }
 
   goTo(p: Pt): void {
-    this.vendOnArrive = null;
+    this.stopWalk();
     const r = this.walk.route(this.pos, p);
     if (!r) return;
     this.route = r;
-    this.turnTo = null;
-    this.arrivePitch = null;
     const end = r.length ? r[r.length - 1] : { x: this.pos.x, z: this.pos.z };
     let best: Slot | null = null;
     let bestD = FACE_NEAR_M;
@@ -635,13 +643,17 @@ export class Room {
     if (!r.length && this.arriveFace !== null) this.turnTo = this.arriveFace;
   }
 
+  private stopWalk(): void {
+    this.route = [];
+    this.vendOnArrive = null;
+    this.turnTo = null;
+    this.arrivePitch = null;
+  }
+
   private walkStep(dt: number): void {
     const { fwd, side, turn } = walkIntent(this.keys, { walk: this.walkHeld, turn: this.turnHeld });
     if (fwd || side || turn) {
-      this.route = [];
-      this.vendOnArrive = null;
-      this.turnTo = null;
-      this.arrivePitch = null;
+      this.stopWalk();
       this.head.yaw = wrap(this.head.yaw + turn * TURN_SPEED * dt);
       if (fwd || side) {
         const m = walkMove(this.head.yaw, fwd, side, WALK_SPEED * dt);
@@ -888,8 +900,7 @@ export class Room {
       if (Math.hypot(dx, dy) > 6) d.moved = true;
       if (!d.moved) return;
       const k = THREE.MathUtils.degToRad(this.camera.fov) / (this.renderer.domElement.clientHeight || 1);
-      this.turnTo = null;
-      this.arrivePitch = null;
+      this.stopWalk();
       this.head.yaw = wrap(d.yaw + dx * k);
       this.head.pitch = Math.max(-LOOK_DOWN, Math.min(LOOK_UP, d.pitch + dy * k));
     });
@@ -916,6 +927,7 @@ export class Room {
         else {
           const p = this.floorAtNdc(at);
           if (p) this.goTo(p);
+          else this.stopWalk();
         }
       }
     };
@@ -1053,7 +1065,7 @@ export class Room {
       if (!this.slots.includes(s)) return;
       if (got === 'other') {
         m.otherVersion = true;
-        note?.notice(str('arcade.room.different_version', { 0: m.name }), undefined, undefined, NAME_NOTE_MS);
+        this.sayOtherVersion(m.name);
         return;
       }
       if (!got) return;
@@ -1076,6 +1088,8 @@ export class Room {
   walkUp(s: Slot): void {
     this.walkHeld = 0;
     this.turnHeld = 0;
+    this.otherVersionToast?.();
+    this.otherVersionToast = null;
     this.focus = s;
     this.glide = true;
     this.freezeOthers();
@@ -1092,7 +1106,9 @@ export class Room {
         : str('arcade.room.not_in_library', { 0: m.name });
       const get = !m.installing && !m.outOfService && m.source && this.getFromSource
         ? { label: str('arcade.room.get_from_n', { 0: m.source.name }), run: () => { void this.getAndPlay(s); } } : undefined;
-      if (note) this.sayWhenArrived = { s, show: () => note.notice(text, get, undefined, get ? undefined : NAME_NOTE_MS), by: performance.now() + ASK_BY_MS };
+      if (note) this.sayWhenArrived = { s, show: m.otherVersion && !m.installing && !m.outOfService
+        ? () => this.sayOtherVersion(m.name, get)
+        : () => note.notice(text, get, undefined, get ? undefined : NAME_NOTE_MS, m.outOfService && !m.installing ? NOTE_WARN : NOTE_INFO), by: performance.now() + ASK_BY_MS };
       return;
     }
     const built = s.glass.game && s.glass.cab ? Promise.resolve() : s.loaded ? null : this.build(s);
@@ -1118,7 +1134,7 @@ export class Room {
     const show = (): void => {
       arrivedAt = performance.now() - t0;
       if (note.visible) return;
-      if (ready) note.notice(readyText, undefined, undefined, NAME_NOTE_MS);
+      if (ready) note.notice(readyText, undefined, undefined, NAME_NOTE_MS, NOTE_OK);
       else note.notice(connecting, undefined, undefined, READY_WAIT_MS, hourglass);
     };
     const settle = (why: string): void => {
@@ -1127,8 +1143,8 @@ export class Room {
       console.log(`[arcade] walk-up: arrived +${Math.round(arrivedAt)} ms, ${why} +${ms} ms`);
       if (this.focus !== s || !note.visible || note.text !== connecting) return;
       if (why === 'failed') note.dismiss();
-      else if (!this.live.takesCoins()) note.notice(notReadyText, undefined, undefined, NAME_NOTE_MS);
-      else note.notice(readyText, undefined, undefined, NAME_NOTE_MS);
+      else if (!this.live.takesCoins()) note.notice(notReadyText, undefined, undefined, NAME_NOTE_MS, NOTE_WARN);
+      else note.notice(readyText, undefined, undefined, NAME_NOTE_MS, NOTE_OK);
     };
     let poll: ReturnType<typeof setInterval> | null = null;
     onFailed = (): void => settle('failed');
@@ -1147,8 +1163,15 @@ export class Room {
     this.sayWhenArrived = { s, show, by: performance.now() + ASK_BY_MS };
   }
 
+  private sayOtherVersion(name: string, action?: { label: string; run: () => void }): void {
+    this.otherVersionToast?.();
+    this.otherVersionToast = showToast(str('arcade.room.different_version', { 0: name }), { kind: 'warn', sticky: true, action });
+  }
+
   stepBack(): void {
     if (!this.focus) return;
+    this.otherVersionToast?.();
+    this.otherVersionToast = null;
     this.orbitDrag = null;
     this.straighten();
     this.sayWhenArrived = null;

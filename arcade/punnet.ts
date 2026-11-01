@@ -29,7 +29,7 @@ export function arcadeGames(doc: ArcadeDoc, library: readonly GameMeta[]): { gam
 export async function exportArcadeGames(doc: ArcadeDoc, library: readonly GameMeta[]): Promise<void> {
   const { games, missing } = arcadeGames(doc, library);
   if (!games.length) {
-    showToast(str('arcade.punnet.none_of_this_arcade_s'));
+    showToast(str('arcade.punnet.none_of_this_arcade_s'), { kind: 'warn' });
     return;
   }
   const saved = await localStateStore.keys().catch(() => new Set<string>());
@@ -56,6 +56,6 @@ async function finish(chosen: GameMeta[], pending: ReturnType<typeof openPackTar
   }
   if (!result) return;
   const r = packReport(result);
-  if (r.clean) { showToast(r.message); return; }
+  if (r.clean) { showToast(r.message, { kind: 'ok' }); return; }
   openAlert({ message: r.message, lines: r.lines, buttons: [ok()] });
 }

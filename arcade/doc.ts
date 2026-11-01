@@ -8,7 +8,7 @@ import type { StateRec } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import type { MachineLook } from './machines';
 import type { MoneyRecord } from './moneyrecord';
-import type { CreditSince } from './serverwire';
+import { traceIdOf, type CreditSince } from './serverwire';
 import { str } from '../web/i18n';
 import { cellCentre, cellOf, cellRect, GRID, gridGeometry, isDoorway, rectsOverlap, type Rect } from './floor';
 import { DERIVED } from './cabinetsize';
@@ -780,7 +780,5 @@ export function fromBase64(b64: string): Uint8Array {
 }
 
 export function traceId(t: MachineTrace): string {
-  let a = 0x811c9dc5;
-  for (let i = 0; i < t.data.length; i++) a = Math.imul(a ^ t.data.charCodeAt(i), 0x01000193) >>> 0;
-  return `${t.bytes}-${a.toString(16)}`;
+  return traceIdOf(t.data, t.bytes);
 }

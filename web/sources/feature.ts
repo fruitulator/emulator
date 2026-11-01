@@ -119,7 +119,7 @@ export const sources = {
         app?.toGrid();
         view?.showHost(idx.host);
       } catch (e) {
-        showToast(errText(e), { error: true });
+        showToast(errText(e), { error: true, sticky: true });
       }
       return true;
     }

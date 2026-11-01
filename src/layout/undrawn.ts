@@ -91,8 +91,7 @@ export function undrawnLayoutNotes(layout: Uint8Array | undefined): string[] {
   for (const label of dat ?? []) add(label);
   for (const c of dat ? [] : components(layout)) {
     if (capPaintsNothing(c)) blankCaps++;
-    const named = UNDRAWN_TYPES.get(c.type)
-      ?? (c.type === 0x1c && (c.values.get('Segment14') ?? 0) !== 0 ? 'digit block' : undefined);
+    const named = UNDRAWN_TYPES.get(c.type);
     if (named) add(`${named} (0x${c.type.toString(16)})`);
     else if (!hasTagMap(c.type)) add(`unknown (0x${c.type.toString(16)})`);
   }

@@ -15,7 +15,7 @@ import {
 import { dangerRow, closeSheet, confirmInSheet, optionRow, sheetRow, showSheet } from './ui/sheet';
 import { UI_ICONS } from './ui/icons';
 import { orbitLogoOnce } from './ui/logoentrance';
-import { showToast } from './ui/toast';
+import { showToast, type ToastKind } from './ui/toast';
 
 export { closeSheet };
 import { APPLE, primaryModifier } from './shortcuts';
@@ -110,12 +110,10 @@ let view: ViewKey = ((): ViewKey => {
   }
 })();
 
-const pendingDelete = new Map<string, number>();
+const pendingDelete = new Set<string>();
 const pendingToast = new Map<string, () => void>();
 
 function forgetPending(hash: string): void {
-  const t = pendingDelete.get(hash);
-  if (t !== undefined) clearTimeout(t);
   pendingDelete.delete(hash);
   pendingToast.get(hash)?.();
   pendingToast.delete(hash);
@@ -479,14 +477,10 @@ function selectAllOnFocus(input: HTMLInputElement): void {
 }
 
 function deferDelete(g: GameMeta, h: LibraryHandlers): void {
-  const timer = window.setTimeout(() => {
-    pendingDelete.delete(g.hash);
-    pendingToast.delete(g.hash);
-    void h.onDelete(g.hash);
-  }, UNDO_MS);
-  pendingDelete.set(g.hash, timer);
+  pendingDelete.add(g.hash);
   void renderLibrary(h);
   pendingToast.set(g.hash, showToast(str('library.removed_n', { 0: displayTitle(g) }), {
+    kind: 'ok',
     action: {
       label: str('library.undo'),
       run: () => {
@@ -495,6 +489,11 @@ function deferDelete(g: GameMeta, h: LibraryHandlers): void {
       },
     },
     ms: UNDO_MS,
+    onExpire: () => {
+      pendingDelete.delete(g.hash);
+      pendingToast.delete(g.hash);
+      void h.onDelete(g.hash);
+    },
   }));
 }
 
@@ -503,11 +502,13 @@ const NOTICE_MS = 8_000;
 export interface NoticeOptions {
   autoClose?: boolean;
   ms?: number;
+  kind?: ToastKind;
+  list?: readonly string[];
 }
 
 export function showNotice(message: string, opts: NoticeOptions = {}): void {
   const { autoClose = true, ms = NOTICE_MS } = opts;
-  showToast(message, { sticky: !autoClose, ms });
+  showToast(message, { sticky: !autoClose, ms, kind: opts.kind, list: opts.list });
 }
 
 function chooseView(v: ViewKey, lst: GameList): void {

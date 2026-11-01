@@ -1,6 +1,7 @@
 import { unbuiltParts } from '../src/machine/boarddefaults';
 import type { UnbuiltPart } from '../src/machine/boarddefaults';
 import { str } from './i18n';
+import { holdClock } from './ui/holdclock';
 import { UI_ICONS, rowIcon } from './ui/icons';
 
 export interface StopSample {
@@ -135,7 +136,17 @@ export function stopNoteParts(
   return unbuiltParts(boardDefaults ?? []);
 }
 
-const HALT_ICON = { paths: UI_ICONS.warn, label: '' };
+export interface NoteIcon {
+  paths: string;
+  label: string;
+  kind?: NoteKind;
+}
+type NoteKind = 'halt' | 'wait' | 'info' | 'warn' | 'ok';
+
+const HALT_ICON = { paths: UI_ICONS.failed, label: '' };
+export const NOTE_INFO: NoteIcon = { paths: UI_ICONS.info, label: '', kind: 'info' };
+export const NOTE_WARN: NoteIcon = { paths: UI_ICONS.warn, label: '', kind: 'warn' };
+export const NOTE_OK: NoteIcon = { paths: UI_ICONS.tick, label: '', kind: 'ok' };
 
 const HIDE_MS = 240;
 
@@ -153,7 +164,7 @@ export class StopNote {
   private actBtn: HTMLButtonElement | null = null;
   private actRun: (() => void) | null = null;
   private closeRun: (() => void) | null = null;
-  private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  private hideTimer: (() => void) | null = null;
   private closeBtn: HTMLButtonElement | null = null;
   private iconEl: HTMLElement | null = null;
 
@@ -194,6 +205,9 @@ export class StopNote {
       return null;
     }
     if (this.shown && this.reason === reason) return null;
+    this.hideTimer?.();
+    this.hideTimer = null;
+    if (this.closeBtn) this.closeBtn.hidden = false;
     this.restoreButtons();
     this.closeRun = null;
     this.reason = reason;
@@ -208,20 +222,22 @@ export class StopNote {
     action?: { label: string; run: () => void },
     onClose?: () => void,
     hideAfterMs?: number,
-    icon?: { paths: string; label: string },
+    icon?: NoteIcon,
     fixed = false,
   ): void {
+    if (this.shown && this.reason === 'stopped') return;
     this.reason = null;
     this.setIcon(icon ?? null);
-    this.setKind(icon ? 'wait' : null);
+    this.setKind(icon ? icon.kind ?? 'wait' : null);
     this.closeRun = onClose ?? null;
-    if (this.hideTimer !== null) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+    this.hideTimer?.();
+    this.hideTimer = null;
     if (this.closeBtn) this.closeBtn.hidden = hideAfterMs !== undefined || fixed;
     if (hideAfterMs !== undefined) {
-      this.hideTimer = setTimeout(() => {
+      this.hideTimer = holdClock(this.el, hideAfterMs, () => {
         this.hideTimer = null;
         if (this.shown && this.reason === null && this.lastText === text) this.hide();
-      }, hideAfterMs);
+      });
     }
     if (!this.buttonsBefore) {
       this.buttonsBefore = { more: this.moreBtn?.hidden ?? true, state: this.stateBtn?.hidden ?? true };
@@ -265,11 +281,10 @@ export class StopNote {
     el.replaceChildren(rowIcon(icon.paths, 'stopnote-icon-svg', 22));
   }
 
-  private setKind(kind: 'halt' | 'wait' | null): void {
+  private setKind(kind: NoteKind | null): void {
     const el = this.el;
     if (!el) return;
-    el.classList.remove('nb-stopbar--halt');
-    el.classList.remove('nb-stopbar--wait');
+    el.classList.remove('nb-stopbar--halt', 'nb-stopbar--wait', 'nb-stopbar--info', 'nb-stopbar--warn', 'nb-stopbar--ok');
     if (kind) el.classList.add(`nb-stopbar--${kind}`);
   }
 
@@ -313,6 +328,8 @@ export class StopNote {
   }
 
   private hide(): void {
+    this.hideTimer?.();
+    this.hideTimer = null;
     this.actRun = null;
     this.closeRun = null;
     this.shown = false;

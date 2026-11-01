@@ -11,7 +11,7 @@ import { MpuPic, PIC_ACCESS_CYCLES } from '../hw/pic';
 import { Sec } from '../hw/sec';
 import { Sr5iMech, Sch2Hopper, JcmEba, deviceFor, type CcTalkDevice } from '../hw/cctalk';
 import { HopperJitter } from '../hw/hopper';
-import { CcTalkBus } from '../hw/cctalkbus';
+import { CcTalkBus, type CcTalkWire } from '../hw/cctalkbus';
 import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
 import { DataPak, V20_CPU32_DATAPAK_CLOCK } from '../hw/datapak';
 import { BCO_PULSE_MS, BCO_UK, LINE, type BcoUkCoin } from '../hw/cashflow';
@@ -276,6 +276,7 @@ export class Mpu5 implements Bus16, Machine {
     this.barbus.resyncLink();
     this.sim.serial.resync();
     this.duart.resync();
+    this.vendBus?.resync();
     for (const s of this.#panel) this.layoutInput(s.number, s.closed);
   }
 
@@ -1866,6 +1867,7 @@ export class Mpu5 implements Bus16, Machine {
     this.vendMech = mech;
     this.vendHoppers = payers;
     this.ccTalkParts = parts;
+    this.ccTalkWire = bus.wire;
     for (const [address, dev] of Object.entries(parts)) this.keyPart(Number(address), dev);
     mech.onLampWord = (word) => this.mechLamps.write(word);
     this.mechLamps.write(mech.lampWord);
@@ -1915,6 +1917,7 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   ccTalkParts: Record<number, CcTalkDevice> = {};
+  ccTalkWire: CcTalkWire | null = null;
 
   readonly dataPak = new DataPak(V20_CPU32_DATAPAK_CLOCK);
   private dataPakType = 0;
