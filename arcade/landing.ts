@@ -1,3 +1,4 @@
+import { syncOwnArcades } from './ownsync';
 import { helpButton } from '../web/help/help';
 import { listGames, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
@@ -112,8 +113,9 @@ export async function openLanding(): Promise<void> {
     Promise.all(ROWS.map((r) => fetchList(r.sort))),
     serverArcades().catch(() => [] as ArcadeListing[]),
   ]);
-  const mine = all.filter((d) => !deletedIds.has(d.id));
-  const deleted = all.filter((d) => deletedIds.has(d.id));
+  const synced = server && onServer.length ? await syncOwnArcades(server, all, onServer) : all;
+  const mine = synced.filter((d) => !deletedIds.has(d.id));
+  const deleted = synced.filter((d) => deletedIds.has(d.id));
   for (const d of mine) {
     const hashes = fillProgramHashes(d, library);
     const sources = fillDocSources(d, library);

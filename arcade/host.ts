@@ -1,3 +1,5 @@
+import { syncOwnArcades } from './ownsync';
+import { serverArcades } from './account';
 import { helpButton } from '../web/help/help';
 import { listGames, CONTENT_RULE, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
@@ -133,6 +135,11 @@ export async function openHost(): Promise<void> {
   const picking = q.has('add') && !q.has('start');
   const dlg = install || edit || picking ? dialogFrame(picking ? 'host-picker' : '') : null;
   doc = await currentArcade();
+  if (doc) {
+    const server = await arcadeServer();
+    const own = server ? await serverArcades().catch(() => []) : [];
+    if (server && own.some((a) => a.id === doc!.id)) doc = (await syncOwnArcades(server, [doc], own)).find((d) => d.id === doc!.id) ?? doc;
+  }
   if (dlg && !doc) closeDialog();
   if ((install || edit) && doc) {
     await render();

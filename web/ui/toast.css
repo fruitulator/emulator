@@ -374,3 +374,21 @@ body:has(#dpad:not([hidden])):not(.hosting) #stopnote {
     animation: none;
   }
 }
+
+#stopnote > .nb-stopbar__text {
+  min-width: min(14em, 100%);
+}
+#stopnote.actions-row {
+  flex-wrap: wrap;
+}
+#stopnote.actions-row > .nb-stopbar__text {
+  flex: 1 1 0;
+}
+#stopnote.actions-row > #stopnote-close {
+  order: 1;
+}
+#stopnote.actions-row > .nb-stopbar__actions {
+  order: 2;
+  width: 100%;
+  justify-content: flex-end;
+}

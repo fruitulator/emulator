@@ -342,6 +342,11 @@ export class StopNote {
     if (!el) return;
     const shown = [this.actBtn, this.stateBtn, this.moreBtn].filter((b) => b && !b.hidden).length;
     if (shown === 1) el.classList.add('one-action'); else el.classList.remove('one-action');
+    el.classList.remove('actions-row');
+    if (shown >= 1 && el.scrollWidth > el.clientWidth + 1) {
+      el.classList.remove('one-action');
+      el.classList.add('actions-row');
+    }
     const cab = this.cabinet && window.innerWidth >= BAR_PLACED_FROM_PX ? this.cabinet() : null;
     if (!cab) {
       if (this.placed) this.unplace();
