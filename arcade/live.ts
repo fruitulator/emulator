@@ -218,12 +218,12 @@ export class Live {
   private coinFaultNow = false;
   private payoutFaultsAtStart = 0;
   private get freePlay(): boolean {
-    return this.glass?.machine.config?.freePlay === true || this.emu.info?.meterOnlyPayout === true
+    return this.glass?.machine?.config?.freePlay === true || this.emu.info?.meterOnlyPayout === true
       || this.payoutsUnset;
   }
   private get payoutsUnset(): boolean {
     const info = this.emu.info;
-    const c = this.glass?.machine.config;
+    const c = this.glass?.machine?.config;
     return !!info?.unpricedPayouts?.length && !payoutsAnswered(info, c?.payouts, info.unpricedPayouts, c?.notPayouts);
   }
   private get pricing(): Live['wallet'] { return this.freePlay ? null : this.wallet; }
@@ -775,6 +775,7 @@ export class Live {
   }
 
   private pays(coin: Parameters<Wallet['pay']>[0]): boolean {
+    if (this.freePlay) return true;
     if (payForCoin(this.wallet, coin)) return true;
     if (this.wallet && unpriced(coin)) this.stopNote?.notice(COIN_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000, NOTE_WARN);
     else this.sayNotEnough(isToken(coin));
@@ -885,8 +886,9 @@ export class Live {
   private chooseCoin(line: number, acceptor: CabLamp['acceptor'], gate?: CabLamp): boolean {
     const slot = this.coinWiring()[String(line)];
     if (!slot) return false;
-    const balance = this.wallet ? this.wallet.shown() : null;
-    const choices = coinChoices(slot, this.wallet ? (balance ?? { cashPence: 0, tokenPence: 0 }) : null);
+    const priced = this.wallet && !this.freePlay ? this.wallet : null;
+    const balance = priced ? priced.shown() : null;
+    const choices = coinChoices(slot, priced ? (balance ?? { cashPence: 0, tokenPence: 0 }) : null);
     const drop = (c: CoinChoice): void => {
       if (!this.running || this.watching) return;
       const f = this.emu.latestFrame();
@@ -916,7 +918,7 @@ export class Live {
     const refusing = f ? (f.coinRefusing | f.coinLinesShut) >>> 0 : 0;
     const any = slotlessChoices(w, info.slotlessCoins, null, refusing);
     if (any === null) return null;
-    const have = this.wallet ? (this.wallet.shown() ?? { cashPence: 0, tokenPence: 0 }) : null;
+    const have = this.wallet && !this.freePlay ? (this.wallet.shown() ?? { cashPence: 0, tokenPence: 0 }) : null;
     const now = slotlessChoices(w, info.slotlessCoins, have, refusing) ?? [];
     return {
       coins: now.map((c) => ({ label: c.label, bit: c.line })),

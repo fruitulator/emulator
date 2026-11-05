@@ -343,7 +343,7 @@ export class StopNote {
     const shown = [this.actBtn, this.stateBtn, this.moreBtn].filter((b) => b && !b.hidden).length;
     if (shown === 1) el.classList.add('one-action'); else el.classList.remove('one-action');
     el.classList.remove('actions-row');
-    if (shown >= 1 && el.scrollWidth > el.clientWidth + 1) {
+    if (shown === 1 && el.scrollWidth > el.clientWidth + 1) {
       el.classList.remove('one-action');
       el.classList.add('actions-row');
     }

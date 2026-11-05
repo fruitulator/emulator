@@ -375,8 +375,8 @@ body:has(#dpad:not([hidden])):not(.hosting) #stopnote {
   }
 }
 
-#stopnote > .nb-stopbar__text {
-  min-width: min(14em, 100%);
+#stopnote.one-action > .nb-stopbar__text {
+  min-width: min(10em, 100%);
 }
 #stopnote.actions-row {
   flex-wrap: wrap;
