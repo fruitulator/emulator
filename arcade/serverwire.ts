@@ -44,6 +44,7 @@ export interface SaveBody {
   coins?: CoinTally;
   sinceGame?: CreditSince;
   coinsStopped?: boolean;
+  payoutsUnset?: boolean;
   unpricedPaid?: PaidOutput[];
   meterFault?: boolean;
 }
@@ -63,6 +64,7 @@ export interface MachineMoney {
   v: number; total: Ledger; since: number; at: number; restarts: number;
   lost?: LostCredit[];
   coinsStopped?: number;
+  payoutsUnset?: number;
   coinFault?: CoinFault;
 }
 export const MONEY_OP = 'money';

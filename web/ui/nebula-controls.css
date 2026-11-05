@@ -98,7 +98,7 @@
   animation: nb-panel-in .18s cubic-bezier(.2,.8,.2,1); }
 @keyframes nb-panel-in { from { opacity: 0; transform: translateX(-8px); } }
 .nb-panel__title { margin: 0 4px; font: 700 14px/1 var(--nb-font-display); letter-spacing: .2em; text-transform: uppercase; color: var(--nb-text-2); }
-.nb-coins { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.nb-coins { display: grid; grid-template-columns: repeat(auto-fill, 52px); gap: 12px; }
 .nb-row-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-size: 15px; font-weight: 600; }
 .nb-row-toggle .nb-toggle { width: 46px; height: 26px; } .nb-row-toggle .nb-toggle::after { width: 20px; height: 20px; }
 .nb-row-toggle .nb-toggle:checked::after { transform: translateX(20px); }

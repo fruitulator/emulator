@@ -5,6 +5,7 @@ import { str } from '../web/i18n';
 
 export const COIN_SETUP_FAULT_TEXT = str('arcade.coinfault.player');
 export const COIN_SETUP_FAULT_HOST_TEXT = str('arcade.coinfault.host');
+export const PAYOUTS_UNSET_HOST_TEXT = str('arcade.coinfault.payouts_unset_host');
 export const FREE_PLAY_TEXT = str('arcade.coinfault.free_play');
 
 export function paidUnpriced(a: CashLedger | null, b: CashLedger | null): boolean {

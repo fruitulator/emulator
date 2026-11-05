@@ -20,6 +20,7 @@ import type { HostFile } from '../web/hostfiles';
 export interface SaveFault {
   unpricedPaid: PaidOutput[];
   meterFault?: boolean;
+  payoutsUnset?: boolean;
 }
 
 export interface StateSlot {

@@ -15,7 +15,7 @@ import { unplayableReason } from '../web/libimport';
 import { openDialog } from '../web/ui/dialog';
 import { dangerRow, closeSheet, confirmInSheet, escapeCloses, optionRow, sheetRow, showSheet } from '../web/ui/sheet';
 import { statusRow } from '../web/ui/status';
-import { COIN_SETUP_FAULT_HOST_TEXT, outputName } from './coinfault';
+import { COIN_SETUP_FAULT_HOST_TEXT, PAYOUTS_UNSET_HOST_TEXT, outputName } from './coinfault';
 import type { CoinFault } from './serverwire';
 import {
   ARCADE_MAX_MACHINES, FLOOR_CENTRE, FLOOR_COLS, FLOOR_GEOM, FLOOR_ROWS, FLOOR_STEP, addMachine, addProp, aligned, arrange, cannotAdd, distributed, duplicateMachine, facedAll, fits, moveMachine, moveProp, turnedAsGroup, turnedEach, type AlignEdge, type Arranged, type ArrangeTarget,
@@ -1228,12 +1228,14 @@ function machineState(m: DocMachine): 'off' | 'dark' | 'open' {
   return switchedOff(m) ? 'off' : !m.source ? 'dark' : 'open';
 }
 
-function statusLine(m: DocMachine, fault: CoinFault | null = null): HTMLElement {
+function statusLine(m: DocMachine, fault: CoinFault | null = null, payoutsUnset = false): HTMLElement {
   const st = machineState(m);
   const line = el('span', null, { class: `ml-status ml-status--${fault ? 'fault' : st}` });
   const names = fault?.outputs.map(outputName).join(', ');
   const words = fault ? (names ? `${COIN_SETUP_FAULT_HOST_TEXT} \u00b7 ${names}` : COIN_SETUP_FAULT_HOST_TEXT)
-    : st === 'off' ? str('arcade.host.powered_off') : st === 'dark' ? str('arcade.host.visitors_need_this_game') : str('arcade.host.playable_by_everyone');
+    : st === 'off' ? str('arcade.host.powered_off')
+    : payoutsUnset ? PAYOUTS_UNSET_HOST_TEXT
+    : st === 'dark' ? str('arcade.host.visitors_need_this_game') : str('arcade.host.playable_by_everyone');
   const text = el('span', words, { class: 'ml-status-text' });
   if (fault) line.title = words;
   line.append(el('span', null, { class: 'ml-dot', 'aria-hidden': 'true' }), text);
@@ -1247,16 +1249,18 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
   box.append(list);
   const more = (): void => { box.classList.toggle('ml-more', box.scrollTop + box.clientHeight < box.scrollHeight - 1); };
   const faults = new Map<string, CoinFault>();
+  const unset = new Set<string>();
   const fill = (): void => {
-    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null, faults.get(m.id) ?? null)));
+    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null, faults.get(m.id) ?? null, unset.has(m.id))));
     box.hidden = !ms.length;
     more();
   };
   if (serverFlag()) {
     void Promise.all(ms.map(async (m) => {
-      const f = (await serverMoney(d.id, m.id))?.coinFault;
-      if (f) faults.set(m.id, f);
-    })).then(() => { if (faults.size) fill(); });
+      const r = await serverMoney(d.id, m.id);
+      if (r?.coinFault) faults.set(m.id, r.coinFault);
+      if (r?.payoutsUnset !== undefined) unset.add(m.id);
+    })).then(() => { if (faults.size || unset.size) fill(); });
   }
   box.addEventListener('scroll', more);
   new ResizeObserver(more).observe(box);
@@ -1265,12 +1269,12 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
   return [box];
 }
 
-function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null, fault: CoinFault | null = null): HTMLElement {
+function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null, fault: CoinFault | null = null, payoutsUnset = false): HTMLElement {
   const row = el('button', null, { type: 'button', class: `ml-row ml-row--${machineState(m)}`, 'data-id': m.id }) as HTMLButtonElement;
   const thumb = artwork(held?.hasThumb ? held.hash : null, m.name, () => undefined);
   thumb.classList.add('ml-thumb');
   const words = el('span', null, { class: 'ml-words' });
-  words.append(el('span', m.name, { class: 'ml-name' }), statusLine(m, fault));
+  words.append(el('span', m.name, { class: 'ml-name' }), statusLine(m, fault, payoutsUnset));
   if (fault) {
     row.classList.add('ml-row--fault');
     const fix = el('span', null, { class: 'ml-fix', 'aria-hidden': 'true' });

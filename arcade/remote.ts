@@ -326,6 +326,7 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
         ...(coinsStopped !== undefined ? { coinsStopped } : {}),
         ...(saveFault?.unpricedPaid.length ? { unpricedPaid: saveFault.unpricedPaid.map((x) => ({ ...x })) } : {}),
         ...(saveFault?.meterFault ? { meterFault: true } : {}),
+        ...(saveFault && saveFault.payoutsUnset !== undefined ? { payoutsUnset: saveFault.payoutsUnset } : {}),
       };
       const r = await call<SaveReply>('save', 'PUT', body);
       if (!r.ok) throw new Error('the machine was not ours to save');

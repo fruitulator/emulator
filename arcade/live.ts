@@ -95,8 +95,6 @@ const FREE_PLAY_NOTE_MS = 8000;
 
 export const COIN_VALUE_UNKNOWN_TEXT = str('arcade.live.coin_value_not_set');
 
-export const PAYOUT_VALUE_UNKNOWN_TEXT = str('arcade.live.payout_value_not_set');
-
 export function watcherLine(w: { free: boolean; paused: boolean }): 'free' | typeof PLAYER_PAUSED_TEXT | typeof WATCHING_TEXT {
   if (w.free) return 'free';
   return w.paused ? PLAYER_PAUSED_TEXT : WATCHING_TEXT;
@@ -220,7 +218,13 @@ export class Live {
   private coinFaultNow = false;
   private payoutFaultsAtStart = 0;
   private get freePlay(): boolean {
-    return this.glass?.machine.config?.freePlay === true || this.emu.info?.meterOnlyPayout === true;
+    return this.glass?.machine.config?.freePlay === true || this.emu.info?.meterOnlyPayout === true
+      || this.payoutsUnset;
+  }
+  private get payoutsUnset(): boolean {
+    const info = this.emu.info;
+    const c = this.glass?.machine.config;
+    return !!info?.unpricedPayouts?.length && !payoutsAnswered(info, c?.payouts, info.unpricedPayouts, c?.notPayouts);
   }
   private get pricing(): Live['wallet'] { return this.freePlay ? null : this.wallet; }
   private freePlayTold = false;
@@ -321,6 +325,7 @@ export class Live {
     const fault = this.watching ? undefined : {
       unpricedPaid: paidOutputs([...new Set([...this.emu.unpricedPaid, ...meterLines])], this.emu.info),
       ...(meterLines.length ? { meterFault: true } : {}),
+      ...(this.emu.info ? { payoutsUnset: this.payoutsUnset } : {}),
     };
     const free = this.freePlay;
     const p = this.saveChain.then(async () => {
@@ -738,14 +743,6 @@ export class Live {
     }
     if (this.coinsStoppedNow) {
       this.showCoinsStopped();
-      return false;
-    }
-    const info = this.emu.info;
-    if (this.wallet && info?.unpricedPayouts?.length
-      && !payoutsAnswered(info, this.glass?.machine.config?.payouts, info.unpricedPayouts,
-        this.glass?.machine.config?.notPayouts)) {
-      this.wallet.turnedAway();
-      this.stopNote?.notice(PAYOUT_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000, NOTE_WARN);
       return false;
     }
     const g = this.glass;

@@ -17,41 +17,67 @@ import { PANEL_SHOW } from './ui/drawer';
 function button(label: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = coinClass(label);
-  const two = /^(\S+)\s+(\S.*)$/.exec(label.trim());
-  if (two) {
-    const v = document.createElement('span');
-    v.className = 'nb-coin__v';
-    v.textContent = two[1];
-    const w = document.createElement('span');
-    w.className = 'nb-coin__w';
-    w.textContent = two[2];
-    b.append(v, w);
-    b.setAttribute('aria-label', label);
+  const metal = coinMetal(label);
+  const value = label.trim().split(/\s+/)[0] ?? '';
+  b.className = `nb-coin nb-coin--${metal}${/^(50|20)p$/i.test(value) && metal === 'silver' ? ' nb-coin--hept' : ''}${value.length >= 3 ? ' nb-coin--long' : ''}`;
+  const rim = document.createElement('span');
+  rim.className = 'nb-coin__rim';
+  const face = document.createElement('span');
+  face.className = 'nb-coin__face';
+  b.append(rim, face);
+  if (metal === 'token') {
+    tokenSymbol();
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'nb-coin__tok');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#nb-tok');
+    svg.append(use);
+    b.append(svg);
   } else {
-    b.textContent = label;
+    const v = document.createElement('b');
+    v.textContent = value;
+    b.append(v);
   }
+  b.setAttribute('aria-label', label);
   b.addEventListener('click', onClick);
   return b;
 }
 
-function fitCoins(coins: HTMLElement): void {
-  for (const b of coins.querySelectorAll<HTMLElement>(':scope > .nb-coin:not([data-fit])')) {
-    if (b.children.length || !b.firstChild) continue;
-    const room = b.clientWidth * 0.78;
-    if (!room) continue;
-    b.dataset.fit = '';
-    const range = document.createRange();
-    range.selectNodeContents(b);
-    const wide = range.getBoundingClientRect().width;
-    if (wide > room) b.style.fontSize = `${parseFloat(getComputedStyle(b).fontSize) * room / wide}px`;
-  }
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function tokenSymbol(): void {
+  if (document.getElementById('nb-tok')) return;
+  const host = document.createElementNS(SVG_NS, 'svg');
+  host.setAttribute('aria-hidden', 'true');
+  host.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+  host.innerHTML = '<defs>'
+    + '<path id="nb-tok-arc" d="M20 54 A36 36 0 0 1 80 54"/>'
+    + '<clipPath id="nb-tok-face"><circle cx="50" cy="50" r="41"/></clipPath>'
+    + '<linearGradient id="nb-tok-groove" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0" stop-color="#5C4410"/><stop offset=".45" stop-color="#8A6A22"/>'
+    + '<stop offset=".55" stop-color="#E9D28A"/><stop offset="1" stop-color="#C9A94E"/></linearGradient>'
+    + '</defs>'
+    + '<symbol id="nb-tok" viewBox="0 0 100 100">'
+    + '<g clip-path="url(#nb-tok-face)">'
+    + '<rect x="0" y="59" width="100" height="7" fill="url(#nb-tok-groove)"/>'
+    + '<rect x="0" y="70" width="100" height="7" fill="url(#nb-tok-groove)"/>'
+    + '</g>'
+    + '<g font-family="var(--nb-font-display)" font-weight="700" font-size="17" text-anchor="middle">'
+    + '<text fill="rgba(60,40,5,.75)" transform="translate(.9 .9)"><textPath href="#nb-tok-arc" startOffset="50%">TOKEN</textPath></text>'
+    + '<text fill="rgba(255,245,200,.85)" transform="translate(-.6 -.6)"><textPath href="#nb-tok-arc" startOffset="50%">TOKEN</textPath></text>'
+    + '<text fill="#D7B85E"><textPath href="#nb-tok-arc" startOffset="50%">TOKEN</textPath></text>'
+    + '</g></symbol>';
+  document.body.append(host);
 }
 
-function coinClass(label: string): string {
-  if (/token/i.test(label)) return 'nb-coin nb-coin--token';
-  if (/^£\s*[12](\.00)?$/.test(label.trim())) return 'nb-coin';
-  return 'nb-coin nb-coin--silver';
+function coinMetal(label: string): 'gold' | 'silver' | 'bronze' | 'token' {
+  if (/token/i.test(label)) return 'token';
+  const v = label.trim().split(/\s+/)[0] ?? '';
+  if (/^£\s*[12](\.00)?$/.test(v)) return 'gold';
+  if (/^[12]p$/i.test(v)) return 'bronze';
+  return 'silver';
 }
 
 export function coinsPanel(
@@ -95,7 +121,6 @@ function coinsGrid(
     return true;
   };
   if (own) coins.addEventListener(PANEL_SHOW, () => { fill(); });
-  coins.addEventListener(PANEL_SHOW, () => requestAnimationFrame(() => fitCoins(coins)));
   if (fill()) return coins;
   const list = machineCoins(info, view);
   for (const c of list) coins.append(button(c.label, () => onCoin(c)));

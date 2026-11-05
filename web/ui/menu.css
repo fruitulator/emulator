@@ -270,7 +270,7 @@ button.menu-stat {
   color: #fff;
 }
 #menuSub .nb-coins {
-  gap: 16px;
+  gap: 12px;
 }
 #menuSub > .coins-panel,
 #menuSub > .menu-stack:has(> .coins-panel) {
