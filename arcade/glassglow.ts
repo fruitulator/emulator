@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stand } from './floor';
+import { meshPointAtUv, planePointAtUv } from './glasshit';
 
 export const WALL_NEAR_M = 0.6;
 const NEIGHBOUR_MIN_W = 0.5;
@@ -35,9 +36,12 @@ export function glowPlan(stands: readonly Stand[], i: number, box: { minX: numbe
   return { wall, left, right };
 }
 
-const POOL_GAIN = 0.8;
-const WALL_GAIN = 0.5;
-const SPILL_GAIN = 0.45;
+const POOL_GAIN = 0.28;
+const WALL_GAIN = 0.2;
+const SPILL_GAIN = 0.06;
+const HALO_GAIN = 0.1;
+const HALO_REACH_M = 0.13;
+const HALO_PROUD_M = 0.006;
 const MEAN_LOD = 16.0;
 
 const VERT = `
@@ -56,6 +60,7 @@ void main() {
 const FRAG = `
 uniform sampler2D map;
 uniform float dim;
+uniform float fade;
 varying vec2 vUv;
 varying float vShape;
 varying float vGain;
@@ -72,7 +77,7 @@ void main() {
   } else if (vShape < 1.5) {     // the wall: brightest at the cabinet's top, fading up
     a = pow(1.0 - vUv.y, 2.0);
   } else {                       // a spill: from the neighbour's side (u = 0), fading across
-    a = pow(1.0 - vUv.x, 2.0) * (1.0 - vUv.y * 0.5);
+    a = pow(1.0 - vUv.x, 2.0) * sin(vUv.y * 3.14159265);
   }
   // The viewer's brightness (arcade/room.ts \`setBrightness\`): three's
   // exposure, which this hand-written shader takes as the room's materials
@@ -80,19 +85,118 @@ void main() {
 #ifdef TONE_MAPPING
   light *= toneMappingExposure;
 #endif
-  outColor = vec4(oetf(clamp(light * (a * vGain * dim), 0.0, 1.0)), 1.0);
+  outColor = vec4(oetf(clamp(light * (a * vGain * dim * fade), 0.0, 1.0)), 1.0);
 }`;
 
-function glowMaterial(map: THREE.Texture): THREE.ShaderMaterial {
+const HALO_VERT = `
+attribute vec2 aAt;
+attribute vec2 aHalf;
+attribute vec4 aCut;
+varying vec2 vAt;
+varying vec2 vHalf;
+varying vec4 vCut;
+void main() {
+  vAt = aAt;
+  vHalf = aHalf;
+  vCut = aCut;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const HALO_FRAG = `
+uniform sampler2D map;
+uniform float dim;
+uniform float fade;
+varying vec2 vAt;
+varying vec2 vHalf;
+varying vec4 vCut;
+out vec4 outColor;
+vec3 oetf(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+void main() {
+  // The distance outside the glass's rectangle: nothing on the glass itself,
+  // brightest at its edge.
+  vec2 q = abs(vAt) - vHalf;
+  float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0);
+  float a = d <= 0.0 ? 0.0 : pow(max(0.0, 1.0 - d / ${HALO_REACH_M.toFixed(3)}), 2.0);
+  // Gone by a side it stops at, or the end of its strip would show as a line.
+  a *= smoothstep(0.0, ${HALO_REACH_M.toFixed(3)}, min(min(vCut.x, vCut.y), min(vCut.z, vCut.w)));
+  vec3 light = textureLod(map, vec2(0.5, 0.5), ${MEAN_LOD.toFixed(1)}).rgb;
+#ifdef TONE_MAPPING
+  light *= toneMappingExposure;
+#endif
+  outColor = vec4(oetf(clamp(light * (a * ${HALO_GAIN.toFixed(2)} * dim * fade), 0.0, 1.0)), 1.0);
+}`;
+
+function glowMaterial(map: THREE.Texture, vert = VERT, frag = FRAG): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    uniforms: { map: { value: map }, dim: { value: 1 } },
-    vertexShader: VERT,
-    fragmentShader: FRAG,
+    uniforms: { map: { value: map }, dim: { value: 1 }, fade: { value: 1 } },
+    vertexShader: vert,
+    fragmentShader: frag,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor,
+    blendDstAlpha: THREE.OneFactor,
     glslVersion: THREE.GLSL3,
   });
+}
+
+export type HaloRect = readonly [THREE.Vector3, THREE.Vector3, THREE.Vector3, THREE.Vector3];
+
+export function haloRects(glass: readonly THREE.Mesh[], holder: THREE.Object3D): HaloRect[] {
+  holder.updateWorldMatrix(true, false);
+  const toHolder = holder.matrixWorld.clone().invert();
+  const out: HaloRect[] = [];
+  for (const m of glass) {
+    if (!m.visible) continue;
+    m.updateWorldMatrix(true, false);
+    const pts: THREE.Vector3[] = [];
+    for (const [u, v] of [[0, 1], [1, 1], [1, 0], [0, 0]] as const) {
+      const p = meshPointAtUv(m.geometry, u, v) ?? (m.userData.shaped ? planePointAtUv(m.geometry, u, v) : null);
+      if (!p) break;
+      pts.push(p.applyMatrix4(m.matrixWorld).applyMatrix4(toHolder));
+    }
+    if (pts.length === 4) out.push(pts as unknown as HaloRect);
+  }
+  return out;
+}
+
+function haloGeometry(rects: readonly HaloRect[]): THREE.BufferGeometry {
+  const pos: number[] = [], at: number[] = [], half: number[] = [], cut: number[] = [], index: number[] = [];
+  const sides = rects.map(([tl, tr, br, bl]) => [[tl, tr], [tr, br], [br, bl], [bl, tl]].map(([a, b]) => a.clone().add(b).multiplyScalar(0.5)));
+  const reach = (i: number, side: number): number => {
+    const near = sides.some((o, j) => j !== i && o.some((m) => m.distanceTo(sides[i][side]) < HALO_REACH_M));
+    return near ? 0 : HALO_REACH_M;
+  };
+  rects.forEach(([tl, tr, , bl], i) => {
+    const across = tr.clone().sub(tl), down = bl.clone().sub(tl);
+    const hw = across.length() / 2, hh = down.length() / 2;
+    across.normalize();
+    down.normalize();
+    const out = down.clone().cross(across).normalize().multiplyScalar(HALO_PROUD_M);
+    const mid = tl.clone().addScaledVector(across, hw).addScaledVector(down, hh).add(out);
+    const [top, right, foot, left] = [0, 1, 2, 3].map((side) => reach(i, side));
+    for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+      const ax = x < 0 ? -(hw + left) : hw + right;
+      const ay = y < 0 ? -(hh + top) : hh + foot;
+      const p = mid.clone().addScaledVector(across, ax).addScaledVector(down, ay);
+      pos.push(p.x, p.y, p.z);
+      at.push(ax, ay);
+      half.push(hw, hh);
+      cut.push(top ? 100 : ay + hh, right ? 100 : hw - ax, foot ? 100 : hh - ay, left ? 100 : ax + hw);
+    }
+    const b = i * 4;
+    index.push(b, b + 3, b + 1, b + 1, b + 3, b + 2);
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aAt', new THREE.Float32BufferAttribute(at, 2));
+  g.setAttribute('aHalf', new THREE.Float32BufferAttribute(half, 2));
+  g.setAttribute('aCut', new THREE.Float32BufferAttribute(cut, 4));
+  g.setIndex(index);
+  return g;
 }
 
 interface QuadSpec { w: number; h: number; at: THREE.Vector3; rot: THREE.Euler; shape: number; gain: number; flipU?: boolean }
@@ -136,10 +240,11 @@ function quads(specs: readonly QuadSpec[]): THREE.BufferGeometry {
 export interface GlassGlow {
   group: THREE.Group;
   setDim(own: number, left: number, right: number): void;
+  setFade(k: number): void;
   dispose(): void;
 }
 
-export function makeGlow(size: { W: number; H: number; D: number; lowerFront?: number }, own: THREE.Texture, left: THREE.Texture | null, right: THREE.Texture | null, wall: boolean): GlassGlow {
+export function makeGlow(size: { W: number; H: number; D: number; lowerFront?: number }, own: THREE.Texture, left: THREE.Texture | null, right: THREE.Texture | null, wall: boolean, halos: readonly HaloRect[] = [], light = true): GlassGlow {
   const group = new THREE.Group();
   const mats: THREE.ShaderMaterial[] = [];
   let leftMat: THREE.ShaderMaterial | null = null;
@@ -153,7 +258,7 @@ export function makeGlow(size: { W: number; H: number; D: number; lowerFront?: n
   }
   const ownMat = glowMaterial(own);
   mats.push(ownMat);
-  group.add(new THREE.Mesh(quads(ownQuads), ownMat));
+  if (light) group.add(new THREE.Mesh(quads(ownQuads), ownMat));
   const lowerH = size.H * 0.42;
   const spill = (tex: THREE.Texture, side: -1 | 1): void => {
     const m = glowMaterial(tex);
@@ -166,14 +271,23 @@ export function makeGlow(size: { W: number; H: number; D: number; lowerFront?: n
   };
   if (left) spill(left, -1);
   if (right) spill(right, 1);
+  let haloMat: THREE.ShaderMaterial | null = null;
+  if (halos.length) {
+    haloMat = glowMaterial(own, HALO_VERT, HALO_FRAG);
+    haloMat.side = THREE.DoubleSide;
+    mats.push(haloMat);
+    group.add(new THREE.Mesh(haloGeometry(halos), haloMat));
+  }
   for (const c of group.children) { c.frustumCulled = true; c.renderOrder = 2; }
   return {
     group,
     setDim(own, left, right) {
       ownMat.uniforms.dim.value = own;
+      if (haloMat) haloMat.uniforms.dim.value = own;
       if (leftMat) leftMat.uniforms.dim.value = left;
       if (rightMat) rightMat.uniforms.dim.value = right;
     },
+    setFade(k) { for (const m of mats) m.uniforms.fade.value = k; },
     dispose() { group.traverse((o) => { const mesh = o as THREE.Mesh; if (mesh.isMesh) mesh.geometry.dispose(); }); for (const m of mats) m.dispose(); },
   };
 }

@@ -1,5 +1,7 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { HD6303Y } from '../cpu/m6303';
 import type { Bus } from '../cpu/bus';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Pia6821 } from '../hw/pia6821';
 import { Ptm6840 } from '../hw/ptm6840';
 import { Msc1937 } from '../hw/msc1937';
@@ -14,9 +16,9 @@ import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
 import type { AudioSource, CabinetSwitch, CoinChute, CoinWiringStatus, Machine, DigitKind, CashLedger } from './machine';
-import { newCashLedger, dilPlace, dilSwitchLabel, ledgerOutMults } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
-import { locateMpu3Coins, mpu3CoinTable, mpu3Coins, mpu3Payouts, type Mpu3Coin, type Mpu3CoinCode } from './mpu3coins';
+import { locateMpu3Coins, locateMpu3Lockout, mpu3CoinTable, mpu3Coins, mpu3LockRefuses, type Mpu3Coin, type Mpu3CoinCode, type Mpu3Lockout } from './mpu3coins';
 import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
 import type { SlideEffect } from '../layout/fmlconfig';
@@ -99,7 +101,9 @@ export function v20PiaWrite(p: Pia6821, reg: number, v: number): PiaWrite {
 }
 
 export class Mpu3 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'plainInputs', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'tokenOutCache'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'coinCodeCache', 'coinLockCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'plainInputs', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
 
   readonly digitKind: DigitKind = 'byte16';
   readonly clockHz = MPU3_CLOCK;
@@ -160,13 +164,8 @@ export class Mpu3 implements Bus, Machine {
   get meterLevels(): number { return this.meterWord & 0xff; }
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly coinBook = new CoinBook(this.cashLedger, Math.round(1.5 * MPU3_CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly slotCoins = new SlotCoins();
-  private meterInPence: number[] = [];
-  private meterOutPence: number[] = [];
-  private triacInPence: number[] = [];
-  private triacOutPence: number[] = [];
-  private outPriced = false;
-
   private coinRow = 0;
   private coinMask = 0;
   private coinTimer = 0;
@@ -283,47 +282,48 @@ export class Mpu3 implements Bus, Machine {
     meterIn: readonly number[]; meterOut: readonly number[];
     triacIn: readonly number[]; triacOut: readonly number[];
   }): void {
-    const unit = (xs: readonly number[]) => xs.map((x) => Math.max(0, x) * MPU3_METER_UNIT_PENCE);
-    const [mOut, tOut] = ledgerOutMults(
-      { in: [...map.meterIn], out: [...map.meterOut] },
-      { in: [...map.triacIn], out: [...map.triacOut] },
-    );
     this.meterInRaw = [...map.meterIn];
     this.meterOutRaw = [...map.meterOut];
     this.triacInRaw = [...map.triacIn];
     this.triacOutRaw = [...map.triacOut];
-    this.meterInPence = unit(map.meterIn);
-    this.triacInPence = unit(map.triacIn);
-    this.meterOutPence = mOut.map((x) => x * MPU3_METER_UNIT_PENCE);
-    this.triacOutPence = tOut.map((x) => x * MPU3_METER_UNIT_PENCE);
-    this.outPriced = [...this.meterOutPence, ...this.triacOutPence].some((p) => p > 0);
   }
 
-  get moneyPriced(): boolean {
-    return [...this.meterInPence, ...this.meterOutPence, ...this.triacInPence, ...this.triacOutPence]
-      .some((p) => p > 0);
+  private isPayoutTriac(i: number): boolean {
+    return this.slidePence[i] !== null || (this.triacOutRaw[i] ?? 0) > 0;
   }
 
+  get unpricedPayoutLines(): readonly number[] {
+    return Array.from({ length: 10 }, (_, i) => i).filter((i) => {
+      const p = this.slidePence[i];
+      return this.isPayoutTriac(i) && (p === null || p === 'token' || p === 'unpriced');
+    });
+  }
   get tokenPayoutLines(): readonly number[] {
-    return this.outPriced ? [] : this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+    return this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.coinBook.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return Array.from({ length: 10 }, (_, i) => i).filter((i) => this.isPayoutTriac(i)).map((line) => {
+      const p = this.slidePence[line];
+      return {
+        line,
+        kind: p === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof p === 'number' ? p : null,
+      };
+    });
+  }
+  get meterOnlyPayout(): boolean {
+    return this.payoutDevices.length === 0 && this.meterOutRaw.some((x) => x > 0);
   }
   namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
-    this.tokenOutCache = null;
-  }
-
-  private tokenOutCache: number | null = null;
-  private tokenOutBits(): number {
-    if (this.tokenOutCache !== null) return this.tokenOutCache;
-    let bits = 0;
-    for (const p of mpu3Payouts(this.rom) ?? []) {
-      if (!p.triacs || !p.meterBits) continue;
-      let token = true;
-      for (let i = 0; i < 8; i++) if (p.triacs & (1 << i) && this.slidePence[i] !== 'token') token = false;
-      if (token) bits |= p.meterBits;
-    }
-    return (this.tokenOutCache = bits);
+    this.coinBook.setSlides(this.slidePence);
   }
 
   powerCycle(): void {
@@ -549,6 +549,7 @@ export class Mpu3 implements Bus, Machine {
     const rising = word & ~this.triacWord;
     this.triacWord = word;
     this.setLampBits(TRIAC_LAMPS, word, 10);
+    triacSenseRelease(this, rising);
     if (!rising) return;
     for (let i = 0; i < 10; i++) {
       if (!(rising & (1 << i))) continue;
@@ -556,16 +557,8 @@ export class Mpu3 implements Bus, Machine {
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
       const p = this.slidePence[i];
-      if (this.booksMoney && this.triacOutPence[i]) {
-        if (p === 'token') this.coinBook.pay({ token: this.triacOutPence[i]! });
-        else this.coinBook.cashOut(this.triacOutPence[i]!);
-      }
-      if (p === null) continue;
       if (typeof p === 'number') this.slideOutPence += p;
-      if (this.outPriced || !this.booksMoney) continue;
-      if (p === 'token') this.coinBook.payouts.book(this.cashLedger, i);
-      else if (p === 'unpriced') this.cashLedger.unpricedOut++;
-      else this.coinBook.cashOut(p);
+      if (this.isPayoutTriac(i)) { if (this.booksMoney) this.coinBook.tube(i); } else this.coinBook.unnamed(i);
     }
   }
 
@@ -594,9 +587,8 @@ export class Mpu3 implements Bus, Machine {
       this.meterCounts[b]++;
       this.gridTotals.in += this.meterInRaw[b] ?? 0;
       this.gridTotals.out += this.meterOutRaw[b] ?? 0;
-      if (!this.booksMoney) continue;
-      if (this.tokenOutBits() & (1 << b)) this.cashLedger.tokenOutPence += this.meterOutPence[b] ?? 0;
-      else if (this.meterOutPence[b]) this.coinBook.cashOut(this.meterOutPence[b]!);
+      countOutClick(this.outClicks, b, this.meterOutRaw[b]);
+      if (this.booksMoney && (this.meterOutRaw[b] ?? 0) > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
     }
   }
 
@@ -618,6 +610,8 @@ export class Mpu3 implements Bus, Machine {
     const line = 0x100 | (raw & 0x7f);
     const coins = this.programCoins();
     if (coins && !coins.some((c) => c.id === line)) { this.coinsRefused++; return; }
+    const lock = this.coinLock();
+    if (lock && ((!coins && !lock.lines.includes(line)) || this.lockRefuses(lock, line))) { this.coinsRefused++; return; }
     if (coins) this.pend(this.keyOf(line));
     else this.bookDropped(id);
     this.coinRow = row;
@@ -645,6 +639,22 @@ export class Mpu3 implements Bus, Machine {
   private coinCode(): Mpu3CoinCode | null {
     const c = this.coinCodeFound();
     return 'refused' in c ? null : c;
+  }
+
+  private coinLockCache: Mpu3Lockout | null | undefined = undefined;
+  private coinLock(): Mpu3Lockout | null {
+    if (this.coinLockCache === undefined) this.coinLockCache = locateMpu3Lockout(this.rom);
+    return this.coinLockCache;
+  }
+
+  private lockRefuses(lock: Mpu3Lockout, line: number): boolean {
+    return mpu3LockRefuses(lock, line, this.ic3.outB(), this.ic6.outB(), (a) => this.ram[a]!);
+  }
+
+  get coinLinesRead(): readonly number[] {
+    const lines = this.coinLock()?.lines ?? [];
+    const drawn = (id: number): number => (this.plainInputs.includes(id & 0x7f) ? 0 : 1);
+    return [...lines].sort((a, b) => drawn(a) - drawn(b) || a - b);
   }
 
   private coinsCache: { dips: number; coins: Mpu3Coin[] | null } | null = null;
@@ -716,7 +726,7 @@ export class Mpu3 implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private takeId = -1;
@@ -808,39 +818,25 @@ export class Mpu3 implements Bus, Machine {
     const taken = this.priced()?.get(id) ?? null;
     const w = this.wiring;
     if (!w) {
-      if (taken !== null) { this.coinBook.coin(bookedOfSlotCoin(taken)); this.cashLedger.outPence += this.changeFor(id); }
+      if (taken !== null) { this.coinBook.coin(bookedOfSlotCoin(taken)); }
       else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
       return;
     }
     if (!this.booksMoney || w.conflicts.includes(id)) return;
     const c = w.coins.get(id);
     if (c === undefined) {
-      if (taken !== null) { this.coinBook.coin(bookedOfSlotCoin(taken)); this.cashLedger.outPence += this.changeFor(id); }
+      if (taken !== null) { this.coinBook.coin(bookedOfSlotCoin(taken)); }
       else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
       return;
     }
     if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' ? (c.token === null || taken.token === null || c.token === taken.token) : c.token === taken;
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     this.bookCoin(id, c);
   }
 
   private bookCoin(id: number, c: SlotCoin): void {
     this.coinBook.coin(bookedOfSlotCoin(c));
-    this.cashLedger.outPence += this.changeFor(id);
-  }
-
-  private changeFor(id: number): number {
-    if (this.coinCode()?.shape === 'dispatch') return 0;
-    const t = this.coinLineTable;
-    const l = t?.lines.find((x) => x.line === id);
-    if (!t || !l || !l.change.length) return 0;
-    const alt = l.change[0]!;
-    return alt.reduce((s, x) => s + x.count * (x.pence ?? 0), 0);
   }
 
   private coinSlots: number[] = [];

@@ -24,6 +24,7 @@ export const UI_ICONS = {
   cross: '<path d="M6 6l12 12M18 6 6 18"/>',
   failed: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  poster: '<rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="10" cy="8.5" r="1.5"/><path d="m5 17 4.5-4.5 3 3 2.5-2.5 4 4"/>',
   no: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
   trash: '<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6.5 7l1 13h9l1-13"/>',

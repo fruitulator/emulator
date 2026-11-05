@@ -1,9 +1,11 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins } from './coinbook';
 import { ecoinProgramCoins, locateEcoinCoins, type EcoinCoinCode } from './ecoincoins';
+import { lockoutOpen, type CoinLockoutWiring } from '../hw/coinlockout';
 import { Z80, type Z80Io } from '../cpu/z80';
 import { Sn76489 } from '../hw/sn76489';
 import { MeterConfirm } from '../hw/meterconfirm';
@@ -29,7 +31,6 @@ const METER_TICK_TICKS = 3;
 const WATCHDOG = 250_000;
 const TRIAC_OFF_DELAY = 1000;
 const DATAPAK_TURNAROUND = 50_000;
-const METER_UNIT_PENCE = 10;
 
 export const STANDARD_METER_GRID = {
   meterIn: [0, 1, 0, 1, 0, 0, 0, 0],
@@ -40,6 +41,9 @@ export const ELECTROCOIN_REEL_ADJUST = 0;
 const SEC_HOLD = 0x960;
 const COIN_PRESS = Math.round(0.07 * CLOCK);
 const COIN_GAP = Math.round(0.05 * CLOCK);
+
+const COIN_LOCKOUT_PORT = 0x0e;
+const COIN_LOCKOUT: CoinLockoutWiring = { openSense: 1, mask: 0x1f, bits: [] };
 
 const DIGIT_STROBE = [0, 1, 2, 0, 3, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0];
 const SEG_SWIZZLE = Uint8Array.from({ length: 256 }, (_, i) =>
@@ -218,7 +222,7 @@ class EcoinSound {
 }
 
 export class Electrocoin implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'triacOutRaw'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -331,21 +335,71 @@ export class Electrocoin implements Machine {
 
   private readonly ledger = newCashLedger();
   private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly slotCoins = new SlotCoins();
-  private meterOutPence: number[] = [];
+  private triacOutRaw: number[] = [];
   get cashLedger(): CashLedger | undefined {
     return this.ledger;
   }
-  setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+  setMeterMoney(inMult: readonly number[], outMult: readonly number[], triacOut: readonly number[] = []): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
+    this.triacOutRaw = [...triacOut];
   }
 
   private slidePence: SlideEffect[] = [null, null, null, null];
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 4; i++) this.slidePence[i] = slides[i] ?? null;
+    this.coinBook.setSlides(this.slidePence);
   }
+  private isPayoutTriac(i: number): boolean {
+    return this.slidePence[i] !== null || (this.triacOutRaw[i] ?? 0) > 0;
+  }
+  private static readonly HOPPER_LINE = [8, 9];
+  private hopperWired(h: number): boolean {
+    return this.hopperMotor[h] !== NONE;
+  }
+  get unpricedPayoutLines(): readonly number[] {
+    const tubes = [0, 1, 2, 3].filter((i) => {
+      const p = this.slidePence[i];
+      return this.isPayoutTriac(i) && (p === null || p === 'token' || p === 'unpriced');
+    });
+    return [...tubes, ...[0, 1].filter((h) => this.hopperWired(h) && this.hopperPence(h) === null).map((h) => Electrocoin.HOPPER_LINE[h])];
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  get hopperPayoutLines(): readonly number[] {
+    return [0, 1].filter((h) => this.hopperWired(h)).map((h) => Electrocoin.HOPPER_LINE[h]);
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { const out = this.coinBook.rowCoins(this.payoutDevices); [0, 1].forEach((h) => { if (this.hopperWired(h)) out[Electrocoin.HOPPER_LINE[h]!] = this.hoppers[h]!.paid; }); return out; }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [
+      ...[0, 1, 2, 3].filter((i) => this.isPayoutTriac(i)).map((line) => {
+        const p = this.slidePence[line];
+        return {
+          line,
+          kind: p === 'token' ? 'token-tube' as const : 'tube' as const,
+          displayNumber: line + 1,
+          defaultPence: typeof p === 'number' ? p : null,
+        };
+      }),
+      ...[0, 1].filter((h) => this.hopperWired(h)).map((h) => ({
+        line: Electrocoin.HOPPER_LINE[h],
+        kind: 'hopper' as const,
+        displayNumber: h + 1,
+        defaultPence: this.hopperPence(h),
+      })),
+    ];
+  }
+  get meterOnlyPayout(): boolean {
+    return this.payoutDevices.length === 0 && this.meterOutRaw.some((x) => x > 0);
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
   slideOutPence = 0;
   readonly slideEjects = new Uint32Array(4);
 
@@ -405,6 +459,7 @@ export class Electrocoin implements Machine {
     this.sound.reset();
     this.reelBank.reset();
     this.out.fill(0);
+    this.coinLockSeen = false;
     this.meterLatch = 0;
     this.meterBank.reset();
     this.triacNibble = 0;
@@ -523,6 +578,7 @@ export class Electrocoin implements Machine {
     }
     if ((port & 0xff) >= 0x20) return;
     this.out[p] = v;
+    if (p === COIN_LOCKOUT_PORT && lockoutOpen(COIN_LOCKOUT, v) !== 0) this.coinLockSeen = true;
     for (let h = 0; h < 2; h++) {
       const m = this.hopperMotor[h];
       if (m !== NONE && m >> 3 === p) this.hoppers[h].motorDrive(((this.out[p] >> (m & 7)) & 1) === 1);
@@ -541,12 +597,8 @@ export class Electrocoin implements Machine {
     this.meters[i]++;
     this.gridTotals.in += this.meterInRaw[i] ?? 0;
     this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-    const outP = this.meterOutPence[i] ?? 0;
-    if (this.booksMoney && outP) this.coinBook.cashOut(outP);
-  }
-
-  pricesOut(): boolean {
-    return this.meterOutPence.some((x) => x > 0);
+    countOutClick(this.outClicks, i, this.meterOutRaw[i]);
+    if (this.booksMoney && (this.meterOutRaw[i] ?? 0) > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
   }
 
   private bookSlide(i: number): void {
@@ -554,24 +606,26 @@ export class Electrocoin implements Machine {
     this.slideEjects[i]++;
     const p = this.slidePence[i];
     if (typeof p === 'number') this.slideOutPence += p;
-    if (this.pricesOut() || !this.booksMoney) return;
-    if (p === 'token') this.ledger.unpricedTokenOut++;
-    else if (p === 'unpriced') this.ledger.unpricedOut++;
-    else if (p !== null) this.coinBook.cashOut(p);
+    if (this.isPayoutTriac(i)) { if (this.booksMoney) this.coinBook.tube(i); } else this.coinBook.unnamed(i);
   }
 
   private readonly hopperBooked = [0, 0];
+  private hopperPence(h: number): number | null {
+    return this.coinBook.payouts.value(Electrocoin.HOPPER_LINE[h]) ?? this.hopperCoinPence?.[h] ?? Electrocoin.HOPPER_PENCE[h];
+  }
   private bookHoppers(): void {
     for (let h = 0; h < 2; h++) {
       const paid = this.hoppers[h].paid;
       if (paid <= this.hopperBooked[h]) continue;
       const fresh = paid - this.hopperBooked[h];
       this.hopperEjects[h] += fresh;
-      const pence = this.hopperCoinPence?.[h] ?? Electrocoin.HOPPER_PENCE[h];
+      const pence = this.hopperPence(h);
       this.hopperOutPence += fresh * (pence ?? 0);
-      if (!this.pricesOut() && this.booksMoney) {
-        if (pence === null) this.ledger.unpricedOut += fresh;
-        else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(pence);
+      if (this.booksMoney) {
+        if (pence === null) {
+          this.ledger.unpricedOut += fresh;
+          this.coinBook.payouts.noteUnpriced(Electrocoin.HOPPER_LINE[h]);
+        } else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(pence);
       }
       this.hopperBooked[h] = paid;
     }
@@ -763,6 +817,7 @@ export class Electrocoin implements Machine {
     if (line >= 64) return;
     const code = this.coinCode();
     if (code && !code.reads.has(line)) { this.coinsRefused++; return; }
+    if (this.coinsShut) { this.coinsRefused++; return; }
     this.coinRow = line >> 3;
     this.coinMask = 1 << (line & 7);
     this.coinTimer = COIN_PRESS + COIN_GAP;
@@ -845,6 +900,12 @@ export class Electrocoin implements Machine {
 
   coinsRefused = 0;
 
+  private coinLockSeen = false;
+  private get coinsShut(): boolean {
+    return this.coinLockSeen && lockoutOpen(COIN_LOCKOUT, this.out[COIN_LOCKOUT_PORT]) === 0;
+  }
+  get coinRefusing(): number { return this.coinsShut ? 0xffffffff : 0; }
+
   private static readonly JUDGE_WAIT = Math.round(1.5 * CLOCK);
   private judging = false;
   private readonly judgeCount = new Array<number>(64).fill(0);
@@ -901,7 +962,7 @@ export class Electrocoin implements Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookTaken(line: number): void {
@@ -920,11 +981,7 @@ export class Electrocoin implements Machine {
       return;
     }
     if (taken) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || taken.token === null || c.token === taken.token);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     this.bookCoin(c);
   }

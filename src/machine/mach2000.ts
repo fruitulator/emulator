@@ -1,5 +1,7 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { HD6303Y } from '../cpu/m6303';
 import type { Bus } from '../cpu/bus';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Hd6303yRegs } from '../hw/hd6303yregs';
 import { Ay8910 } from '../hw/ay8910';
 import { Mixer } from '../hw/mixer';
@@ -35,7 +37,9 @@ const COIN_GAP = Math.round(0.005 * MACH2000_CLOCK);
 interface CtlReel { pos: number; steps: number; remaining: number; dir: number; present: boolean }
 
 export class Mach2000 implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'now'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'nvram', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'now'];
 
   readonly clockHz = MACH2000_CLOCK;
   readonly cpu: HD6303Y;
@@ -114,6 +118,7 @@ export class Mach2000 implements Machine {
 
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, MACH2000_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
   private meterInRaw: number[] = [];
   private meterOutRaw: number[] = [];
@@ -219,7 +224,13 @@ export class Mach2000 implements Machine {
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
@@ -643,12 +654,14 @@ export class Mach2000 implements Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+      countOutClick(this.outClicks, i, this.meterOutRaw[i]);
     }
   }
 
   private setTriacs(w: number): void {
     const rising = w & ~this.triacWord;
     this.triacWord = w;
+    triacSenseRelease(this, rising);
     for (let i = 0; i < TRIAC_LINES; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;

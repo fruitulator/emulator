@@ -4,7 +4,7 @@ import { byContentKey } from '../web/contentkeys';
 import { holdingLibrary } from './restamp';
 import { machineKeys, machineTitle } from './machinelist';
 import {
-  ARCADE_MAX_MACHINES, fromBase64, fromMachineState, onFloor, switchedOff, toMachineState, traceId, turnOf,
+  ARCADE_MAX_MACHINES, fromBase64, fromMachineState, installNotReady, onFloor, switchedOff, toMachineState, traceId, turnOf, type NotReady,
   type ArcadeDoc, type MachineConfig, type MachineSetup, type MachineSource, type Place,
 } from './doc';
 import { currentArcade, getArcade, getMachineState, putMachineState, updateMachineMoney, updateMachineStats } from './docstore';
@@ -12,14 +12,20 @@ import { addLost, addReading, readCredit, readMoneyRecord, sameRun, startingReco
 import type { CashLedger } from '../src/machine/machine';
 import type { StateStore } from '../web/statestore';
 import { devPlayerForPage, remoteSlot, serverFlag } from './remote';
-import type { CreditSince, RelayBatch } from './serverwire';
+import type { CoinFault, CreditSince, PaidOutput, RelayBatch } from './serverwire';
 import type { Balance, CoinCounts } from './wallet';
 import type { GameConfig } from '../src/machine/registry';
 import type { HostFile } from '../web/hostfiles';
 
+export interface SaveFault {
+  unpricedPaid: PaidOutput[];
+  meterFault?: boolean;
+}
+
 export interface StateSlot {
   load(stamp?: string): Promise<StateRec | null | 'version' | SlotBattery>;
-  save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean): Promise<SaveResult | void>;
+  save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean, fault?: SaveFault): Promise<SaveResult | void>;
+  coinFault?(): CoinFault | null;
   visited?(): void;
   left?(ledger: CashLedger | null): void;
   money?: MoneyHooks;
@@ -206,6 +212,7 @@ export interface ArcadeMachine {
   installing?: boolean;
   otherVersion?: boolean;
   outOfService?: boolean;
+  notReady?: NotReady | null;
   hostFiles?: HostFile[];
   gameConfig?: GameConfig | null;
   versions?: number;
@@ -254,6 +261,7 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
       traceBytes: t ? () => Promise.resolve(fromBase64(t.data)) : undefined,
       held: switchedOff(m) || m.status !== 'installed' ? null : mine,
       outOfService: !!m.outOfService || (m.status === 'installed' && switchedOff(m)),
+      notReady: installNotReady(m),
       ...(m.hostFiles ? { hostFiles: m.hostFiles } : {}),
       ...(m.gameConfig !== undefined ? { gameConfig: m.gameConfig } : {}),
       ...(m.versions !== undefined ? { versions: m.versions } : {}),

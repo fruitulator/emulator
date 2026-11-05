@@ -79,8 +79,9 @@ const openFloor = isHost && doc
     decorate?: (panel: Parameters<typeof decorateSection>[0]['panel']) => DecorateSection,
     props?: (list: Prop[]) => void,
     changed?: () => Promise<boolean>,
-    dialog?: (open: boolean) => void): void => {
-    void import('./host').then((h) => h.openFloorDock({ doc, placed, decorate, props, changed, dialog }));
+    dialog?: (open: boolean) => void,
+    setup?: string): void => {
+    void import('./host').then((h) => h.openFloorDock({ doc, placed, decorate, props, changed, dialog, setup }));
   } : null;
 const floorAsked = new URLSearchParams(location.search).has('floor');
 const testPlayer = serverFlag() ? await devPlayerForPage() : '';
@@ -175,9 +176,10 @@ if (!doc) {
         retake();
       },
     }) : undefined;
-  const floor = openFloor ? (): void => openFloor((p) => { room.rearrange(p); retake(); }, decorate, (list) => { room.setProps(list); retake(); }, async () => { const ok = room.sync(await loadMachines(doc, { visiting: false })); retake(); return ok; },
-    (open) => { room.paused = open; if (!open) live?.look(); }) : undefined;
-  if (floor) hostSpanner(floor);
+  const floor = openFloor ? (setup?: string): void => openFloor((p) => { room.rearrange(p); retake(); }, decorate, (list) => { room.setProps(list); retake(); }, async () => { const ok = room.sync(await loadMachines(doc, { visiting: false })); retake(); return ok; },
+    (open) => { room.paused = open; if (!open) live?.look(); }, setup) : undefined;
+  if (floor) room.live.onFixSetup = (id) => floor(id);
+  if (floor) hostSpanner(() => floor());
   const arcadeId = opened.visiting ? new URLSearchParams(location.search).get('arcade') : null;
   const arcadeApi = arcadeId && server ? await arcadeServer() : null;
   if (arcadeApi && arcadeId) void arcadeApi.visit(arcadeId).catch((e) => console.warn('[arcade] the visit was not counted', e));
@@ -195,13 +197,14 @@ if (!doc) {
         waiting: () => room.paused,
         loading: () => room.locked,
         apply: (next, was) => standRoom(room, next, was, opened.visiting),
-        closed: async (say) => { await room.live.settled().catch(() => undefined); leaveClosedArcade(say); },
+        closed: async () => { await room.live.settled().catch(() => undefined); leaveClosedArcade(); },
       }, opened.at);
       const channel = live;
       watchPlaying(api, doc.id, (p) => { room.setPlaying(p); channel.players(new Set(p.keys())); }, undefined, (m) => channel.message(m));
     }
   }
   const menu = new RoomMenu(room, sound, brightness, menuBtn, isHost, rating);
+  room.live.stopNote?.placeBeside(() => room.cabinetOnScreen());
   menu.update();
   if (floor && floorAsked) floor();
   const padWalk = (id: string, dir: 1 | -1): void => holdPad(byId(id), () => { room.walkHeld = dir; },

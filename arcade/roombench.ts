@@ -1,3 +1,4 @@
+import { allRealism } from './realism';
 import type { Room } from './room';
 import { glassTotals } from './glass';
 import { str } from '../web/i18n';
@@ -12,6 +13,13 @@ const PLAN: { label: string; query: string }[] = [
   { label: str('arcade.roombench.glass_0_attract_still'), query: 'glass=0' },
   { label: str('arcade.roombench.spot_lights_old'), query: 'lights=12&pools=0' },
   { label: str('arcade.roombench.glow_1_glasses_light_their'), query: 'glow=1' },
+  { label: str('arcade.roombench.realism_1'), query: 'realism=1' },
+  { label: str('arcade.roombench.realism_1_rshadow_0'), query: 'realism=1&rshadow=0' },
+  { label: str('arcade.roombench.realism_1_renv_0'), query: 'realism=1&renv=0' },
+  { label: str('arcade.roombench.realism_1_rhalo_0'), query: 'realism=1&rhalo=0' },
+  { label: str('arcade.roombench.realism_1_rglow_0'), query: 'realism=1&rglow=0' },
+  { label: str('arcade.roombench.realism_1_rglass_0'), query: 'realism=1&rglass=0' },
+  { label: str('arcade.roombench.realism_1_rfloor_0'), query: 'realism=1&rfloor=0' },
 ];
 const RUNS = 2;
 const WARM_MS = 15_000;
@@ -24,6 +32,7 @@ const LIVE_PLAN: { label: string; set: Parameters<Room['setLiveSwitches']>[0] }[
   { label: str('arcade.roombench.lamp_0_no_lamp_over'), set: { lamp: false } },
   { label: str('arcade.roombench.dim_0_room_and_other'), set: { dim: false } },
   { label: str('arcade.roombench.dpr_1_1_73_of'), set: { dpr: 1.1 } },
+  { label: str('arcade.roombench.realism_1'), set: { realism: allRealism(true) } },
 ];
 const LIVE_WARM_MS = 3_000;
 const LIVE_MEASURE_MS = 12_000;
@@ -31,7 +40,7 @@ export const LIVE_BENCH_KEY = 'F9';
 
 const KEY = 'fruitulator.arcade.bench';
 const SWITCHES = ['lights', 'pools', 'shade', 'tex', 'aniso', 'dpr', 'aa', 'env', 'glass', 'glasstex',
-  'glassps', 'glassnear', 'freeze', 'dim', 'glow', 'lamp', 'stats'];
+  'glassps', 'glassnear', 'freeze', 'dim', 'glow', 'lamp', 'realism', 'rshadow', 'renv', 'rhalo', 'rglow', 'rfloor', 'rglass', 'stats'];
 
 export interface BenchRun {
   label: string;
@@ -87,6 +96,7 @@ function addressFor(state: BenchState | null, step: number): string {
     return u.href;
   }
   u.searchParams.set('bench', 'run');
+  u.searchParams.set('realism', '0');
   for (const [k, v] of new URLSearchParams(PLAN[state.order[step]].query)) u.searchParams.set(k, v);
   return u.href;
 }
@@ -210,7 +220,7 @@ export async function runLiveBench(room: Room, say: (text: string) => void): Pro
   if (!room.live.running) { say(str('arcade.roombench.live_bench_stand_at_a')); return false; }
   liveBenchRunning = true;
   const sw = room.switches;
-  const before = { focusFreeze: sw.focusFreeze, dim: sw.dim, dpr: sw.dpr, glow: sw.glow, lamp: sw.lamp };
+  const before = { focusFreeze: sw.focusFreeze, dim: sw.dim, dpr: sw.dpr, glow: sw.glow, lamp: sw.lamp, realism: room.realismParts };
   const runs: BenchRun[] = [];
   const startedAt = Date.now();
   try {

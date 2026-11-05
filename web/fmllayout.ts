@@ -13,6 +13,7 @@ import { applyOpaqueBand, reelLightFloor } from './reellight';
 import { boardFilledTray } from '../src/layout/boardreellamps';
 import { parseLayout, type ParsedComponent } from './fmlparse';
 import { mfmeMajor } from '../src/layout/fmlconfig';
+import { alphaColumnsDrawable } from '../src/layout/undrawn';
 import { drawnAngle } from '../src/layout/compangle';
 import { zOf as zAt } from './draworder';
 import { bandArtCells } from '../src/layout/bandcells';
@@ -217,6 +218,12 @@ function bandReelBorder(
       colour: cssArgb((num('BorderColour') ?? 0xff000000) >>> 0),
     },
   };
+}
+
+function alphaNewColumns(c: ParsedComponent): { columns?: number } {
+  if (c.type !== Type.AlphaNew) return {};
+  const n = val(c, 'Columns') ?? 16;
+  return n !== 16 && alphaColumnsDrawable(n, c.width) ? { columns: n } : {};
 }
 
 export function digitBlock(c: ParsedComponent): SegDisplay[] {
@@ -1940,6 +1947,7 @@ export function parseFmlLayout(
         vSpacing: val(disp, 'VerticalSpacing') ?? 4,
         centre: val(disp, 'Centre') ?? 48,
         chop: val(disp, 'Chop') ?? 90,
+        ...alphaNewColumns(disp),
         seg16: !!val(disp, 'Segment16'),
         charset: val(disp, 'Charset'),
         reversed: disp.type === Type.AlphaStrip

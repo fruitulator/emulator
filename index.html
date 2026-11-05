@@ -694,6 +694,7 @@
           right: 0;
           transform: translateX(100%);
           border-radius: var(--nb-r-xl) 0 0 var(--nb-r-xl);
+          box-shadow: var(--nb-shadow-drawer);
         }
         body:has(#stage:not([hidden])) #menu.open {
           transform: none;
@@ -966,14 +967,13 @@
     </div>
     <div id="errorPopup" class="nb-backdrop" hidden>
       <div id="errorBox" class="nb-dialog nb-dialog--error" role="alertdialog" aria-modal="true" aria-labelledby="errorMsg">
-        <div class="nb-dialog__head"><span class="nb-dialog__icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M10.3 4.2 2.6 17.8A2 2 0 0 0 4.3 20.8h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.5M12 17.2h.01"/></svg></span></div>
+        <div class="nb-dialog__head"><span class="nb-dialog__icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></span><h2 id="errorMsg"></h2></div>
         <div class="nb-dialog__body">
-          <p id="errorMsg"></p>
           <div id="errorHint" hidden></div>
-          <div id="errorBtns" class="nb-dialog__actions">
-            <button id="errorDismiss" class="nb-btn" type="button" data-str="index.dismiss">Dismiss</button>
-            <button id="errorAction" class="nb-btn nb-btn--primary" type="button" hidden></button>
-          </div>
+        </div>
+        <div id="errorBtns" class="nb-dialog__actions">
+          <button id="errorDismiss" class="nb-btn nb-dialog__dismiss" type="button" data-str="index.dismiss">Dismiss</button>
+          <button id="errorAction" class="nb-btn nb-btn--primary" type="button" hidden></button>
         </div>
       </div>
     </div>
@@ -988,10 +988,10 @@
             <ul id="importReportFailedList"></ul>
           </details>
           <p id="importReportOrphanNote" class="nb-meta" hidden></p>
-          <div id="importReportBtns" class="nb-dialog__actions">
-            <button id="importReportRemove" class="nb-btn" type="button" hidden data-str="index.remove_failed_imports">Remove failed imports</button>
-            <button id="importReportOk" class="nb-btn nb-btn--primary" type="button" data-str="index.ok">OK</button>
-          </div>
+        </div>
+        <div id="importReportBtns" class="nb-dialog__actions">
+          <button id="importReportRemove" class="nb-btn" type="button" hidden data-str="index.remove_failed_imports">Remove failed imports</button>
+          <button id="importReportOk" class="nb-btn nb-btn--primary" type="button" data-str="index.ok">OK</button>
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { UI_ICONS } from './icons';
 import { str } from '../i18n';
+import { openLayer } from './layer';
 
 export interface Dialog {
   panel: HTMLElement;
@@ -45,18 +46,19 @@ export function openDialog(o: {
   scroll.append(body);
   card.append(bar, scroll);
   panel.append(card);
-  const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } };
+  let closed = false;
   const close = (): void => {
+    if (closed) return;
+    closed = true;
     backdrop.remove();
     panel.remove();
-    document.removeEventListener('keydown', onKey);
+    layer.release();
     o.onClose?.();
   };
   x.addEventListener('click', close);
   backdrop.addEventListener('click', close);
-  document.addEventListener('keydown', onKey);
   document.body.append(backdrop, panel);
-  x.focus({ preventScroll: true });
+  const layer = openLayer([backdrop, panel], { kind: 'dialog', close, focus: x });
   return { panel, body, close };
 }
 
@@ -65,38 +67,74 @@ export interface Alert {
   close(): void;
 }
 
-export function alertIcon(): HTMLElement {
+export type DialogStatus = 'error' | 'warning' | 'info';
+
+const STATUS_GLYPH: Record<DialogStatus, string> = {
+  error: UI_ICONS.cross,
+  warning: UI_ICONS.warn,
+  info: '<path d="M12 17.5V11" stroke-width="2.6"/><path d="M12 7h.01" stroke-width="3.4"/>',
+};
+
+export function alertIcon(status: DialogStatus = 'error'): HTMLElement {
   const tile = document.createElement('span');
-  tile.className = 'nb-dialog__icon';
+  tile.className = status === 'error' ? 'nb-dialog__icon' : `nb-dialog__icon nb-dialog__icon--${status === 'warning' ? 'warn' : 'info'}`;
   tile.setAttribute('aria-hidden', 'true');
-  tile.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${UI_ICONS.warn}</svg>`;
+  tile.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${STATUS_GLYPH[status]}</svg>`;
   return tile;
 }
 
+export function fitActions(row: HTMLElement): void {
+  const fit = (): void => {
+    row.classList.remove('is-stacked');
+    const shown = [...row.children].filter((c) => (c as HTMLElement).offsetParent !== null) as HTMLElement[];
+    const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+    const need = shown.reduce((w, c) => w + c.getBoundingClientRect().width, 0) + gap * Math.max(0, shown.length - 1);
+    if (need > row.clientWidth + 1) row.classList.add('is-stacked');
+  };
+  new ResizeObserver(fit).observe(row);
+  fit();
+}
+
 export function openAlert(o: {
-  message: string; lines?: string[]; buttons: { button: HTMLButtonElement; run: () => void }[]; onClose?: () => void;
-  info?: boolean;
+  message: string; title?: string; steps?: Node[]; note?: string;
+  lines?: string[]; buttons: { button: HTMLButtonElement; run: () => void; dismiss?: boolean }[]; onClose?: () => void;
+  info?: boolean; status?: DialogStatus;
   keysThrough?: boolean;
 }): Alert {
+  const status: DialogStatus = o.status ?? (o.title ? 'warning' : o.info ? 'info' : 'error');
   const root = document.createElement('div');
   root.className = 'ui-alert nb-backdrop';
   const box = document.createElement('div');
-  box.className = o.info ? 'ui-alert-box nb-dialog' : 'ui-alert-box nb-dialog nb-dialog--error';
+  box.className = `ui-alert-box nb-dialog${status === 'error' ? ' nb-dialog--error' : ''}`;
   box.setAttribute('role', 'alertdialog');
   box.setAttribute('aria-modal', 'true');
+  const id = `ui-alert-${Math.random().toString(36).slice(2, 8)}`;
+  const head = document.createElement('div');
+  head.className = 'nb-dialog__head';
+  const h = document.createElement('h2');
+  h.id = `${id}-title`;
+  h.textContent = o.title ?? o.message;
+  head.append(alertIcon(status), h);
+  box.append(head);
+  box.setAttribute('aria-labelledby', h.id);
   const body = document.createElement('div');
   body.className = 'nb-dialog__body';
-  const msg = document.createElement('p');
-  msg.className = 'ui-alert-msg';
-  msg.textContent = o.message;
-  msg.id = `ui-alert-${Math.random().toString(36).slice(2, 8)}`;
-  box.setAttribute('aria-labelledby', msg.id);
-  body.append(msg);
-  if (!o.info) {
-    const head = document.createElement('div');
-    head.className = 'nb-dialog__head';
-    head.append(alertIcon());
-    box.append(head);
+  body.id = `${id}-body`;
+  if (o.title) {
+    const msg = document.createElement('p');
+    msg.className = 'ui-alert-msg';
+    msg.textContent = o.message;
+    body.append(msg);
+  } else h.classList.add('ui-alert-msg');
+  if (o.steps?.length) {
+    const list = document.createElement('ul');
+    list.className = 'ui-alert-steps';
+    for (const s of o.steps) {
+      const li = document.createElement('li');
+      li.append(s);
+      list.append(li);
+    }
+    body.append(list);
   }
   if (o.lines?.length) {
     const hint = document.createElement('div');
@@ -108,18 +146,24 @@ export function openAlert(o: {
     }
     body.append(hint);
   }
+  if (o.note) {
+    const n = document.createElement('p');
+    n.className = 'ui-alert-note';
+    n.textContent = o.note;
+    body.append(n);
+  }
+  if (body.childElementCount) {
+    box.append(body);
+    box.setAttribute('aria-describedby', body.id);
+  }
   const btns = document.createElement('div');
   btns.className = 'ui-alert-btns nb-dialog__actions';
   let closed = false;
-  const onKey = (ev: KeyboardEvent): void => {
-    if (ev.key === 'Escape') { ev.stopPropagation(); close(); return; }
-    if (!o.keysThrough) ev.stopPropagation();
-  };
   const remove = (): void => {
     if (closed) return;
     closed = true;
     root.remove();
-    document.removeEventListener('keydown', onKey, true);
+    layer?.release();
   };
   const close = (): void => {
     if (closed) return;
@@ -128,13 +172,14 @@ export function openAlert(o: {
   };
   for (const b of o.buttons) {
     b.button.addEventListener('click', () => { remove(); b.run(); });
+    if (b.dismiss) b.button.classList.add('nb-dialog__dismiss');
     btns.append(b.button);
   }
-  body.append(btns);
-  box.append(body);
+  if (o.buttons.length) box.append(btns);
   root.append(box);
-  document.addEventListener('keydown', onKey, true);
   document.body.append(root);
-  (o.buttons.find((b) => b.button.classList.contains('nb-btn--primary')) ?? o.buttons[0])?.button.focus({ preventScroll: true });
+  fitActions(btns);
+  const first = (o.buttons.find((b) => b.button.classList.contains('nb-btn--primary')) ?? o.buttons[0])?.button ?? null;
+  const layer = openLayer([root], { kind: 'dialog', close, focus: first, keysThrough: o.keysThrough });
   return { root, close };
 }

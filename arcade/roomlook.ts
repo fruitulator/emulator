@@ -2,7 +2,7 @@ import { str } from '../web/i18n';
 
 export type Panelling = 'wood' | 'planks';
 export type UpperWall = 'woodchip' | 'plaster';
-export type Carpet = 'neon' | 'plush' | 'cord' | 'squares' | 'checker';
+export type Carpet = 'neon' | 'plush' | 'cord' | 'squares' | 'checker' | 'boards' | 'lino' | 'tile';
 export type WindowView = 'harbour' | 'square' | 'oldtown';
 export type NeonMotion = 'still' | 'chase' | 'chase-back' | 'pulse' | 'flicker' | 'cycle';
 
@@ -56,7 +56,14 @@ export const CARPETS: { id: Carpet; label: string; colour: string }[] = [
   { id: 'cord', label: str('arcade.roomlook.cord'), colour: '#6a2030' },
   { id: 'squares', label: str('arcade.roomlook.squares'), colour: '#ffffff' },
   { id: 'checker', label: str('arcade.roomlook.chequers'), colour: '#ffffff' },
+  { id: 'boards', label: str('arcade.roomlook.polished_boards'), colour: '#a89888' },
+  { id: 'lino', label: str('arcade.roomlook.lino'), colour: '#8a7a6a' },
+  { id: 'tile', label: str('arcade.roomlook.tile'), colour: '#848484' },
 ];
+
+export function isHardFloor(c: Carpet): boolean {
+  return c === 'boards' || c === 'lino' || c === 'tile';
+}
 
 export const HOUSE_LOOK: RoomLook = {
   lower: 'wood', lowerColour: '#9a8a7c', upper: 'woodchip', upperColour: '#c08850', rail: '#6a5240',

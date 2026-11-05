@@ -12,7 +12,7 @@ import { InlineEmu } from './emu-inline';
 import { StallWatch } from './stallwatch';
 import { HwBridge } from './hwbridge';
 import type { MachineInfo } from './emu-protocol';
-import { ledgerPayoutPercent, type CashLedger } from './emu-protocol';
+import { meterTotalsPercent, type CashLedger } from './emu-protocol';
 import { buildStamp, logInputLabels, saveBlob, saveFile } from './downloads';
 import { aboutOpen } from './about';
 import { DownloadMenu } from './panelmenu';
@@ -33,7 +33,8 @@ import {
 } from './importer';
 import { exportPunnet, punnetFileName } from './portable';
 import { openExportPicker, openPackTarget, packGames, packReport } from './punnetexport';
-import { openAlert } from './ui/dialog';
+import { fitActions, openAlert } from './ui/dialog';
+import { openLayer, type Layer } from './ui/layer';
 import { mountSettings } from './ui/settings';
 import { pillButton } from './ui/list';
 import { BRIGHT_NEUTRAL, brightnessControl } from './ui/brightness';
@@ -99,7 +100,7 @@ import { fillScreenOn } from './fillpref';
 import { cropViewOn } from './croppref';
 import { reelBandsOn } from './bandspref';
 import { bandsLayout, createReelBands } from './play/bands';
-import { chordCaps, primaryModifier } from './shortcuts';
+import { chordCaps } from './shortcuts';
 import { capsAreSwitches } from './cappulse';
 import {
   decodeState, idleNamedInputs, readSavedOptionKeys, readSavedPanelSwitches, readSavedVirtualDisplay,
@@ -114,7 +115,7 @@ import type { Snapshot } from './snapshot';
 import { Audio } from './audio';
 import { CabinetEffects } from './effects';
 import {
-  StopNote, StopWatch, judgeStop, noteReason, noteText, offersState, stopNoteParts, unbuiltLogText,
+  StopNote, StopWatch, judgeStop, sayCoinLocked, sayCoinRefused, noteReason, noteText, offersState, stopNoteParts, unbuiltLogText,
 } from './stopnote';
 import { stageBelongsOnVeil } from './busystage';
 import {
@@ -127,7 +128,6 @@ import { fadeFromBlack, fadeToBlack } from './ui/fade';
 import { replayOrbitCaption } from './orbit';
 import { isLocked } from './kioskmode';
 import { mountKioskMode } from './kioskmodeui';
-import { moneyInParts, moneyOutParts } from './moneytext';
 
 applyStrings();
 
@@ -232,12 +232,17 @@ function showError(msg: string, action?: ErrorAction): void {
   errorAction.hidden = !action;
   errorPopup.hidden = false;
   (action ? errorAction : errorDismiss).focus();
+  errorLayer ??= openLayer([errorPopup], { kind: 'dialog', close: () => errorDismiss.click() });
 }
+let errorLayer: Layer | null = null;
 
 function dismissError(): void {
   errorPopup.hidden = true;
   errorActionRun = null;
   errorBackRun = null;
+  const l = errorLayer;
+  errorLayer = null;
+  l?.release();
 }
 
 const IMPORTING_KEY = 'fruitulator.importing';
@@ -314,6 +319,8 @@ function reportInterruptedImport(): void {
   showError(str('main.the_page_reloaded_while_n', { 0: name }));
 }
 
+fitActions(document.getElementById('errorBtns')!);
+fitActions(document.getElementById('importReportBtns')!);
 errorDismiss.addEventListener('click', () => {
   const back = errorBackRun;
   dismissError();
@@ -337,6 +344,11 @@ const switchLevels = new SwitchLevels();
 const stopWatch = new StopWatch();
 let quietIsWaiting = false;
 const stopNote = new StopNote(document, () => openSchematic('diagram'), () => void downloadSnapshot());
+stopNote.placeBeside(() => {
+  if (!cabinet || stage.hidden) return null;
+  const r = screenEl.getBoundingClientRect();
+  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+});
 let stopParts: string[] = [];
 class Session {
   boot = 0;
@@ -480,7 +492,7 @@ function startGame(
   void showGame();
 
   awaitingCabinet = true;
-  if (bulbLab.active) bulbLab.disable();
+  if (bulbLab?.active) bulbLab.disable();
   if (cabinet) closeCabinet(cabinet);
   cabinet = null;
   layoutBox = null;
@@ -529,7 +541,7 @@ function startGame(
       stampCabinetCoins();
       refreshKeys?.();
       rebuildMenu?.();
-      if (BULB_LAB_AT_START && !bulbLab.active) {
+      if (BULB_LAB_AT_START && bulbLab && !bulbLab.active) {
         bulbLab.enable(cab);
         openSchematic('bulbs');
       }
@@ -914,11 +926,16 @@ function showImportReport(r: ImportReport): void {
   importReportRemove.hidden = !removable.length;
   importReport.hidden = false;
   importReportOk.focus();
+  reportLayer ??= openLayer([importReport], { kind: 'dialog', close: closeImportReport });
 }
+let reportLayer: Layer | null = null;
 
 function closeImportReport(): void {
   importReport.hidden = true;
   reportRemovable = [];
+  const l = reportLayer;
+  reportLayer = null;
+  l?.release();
 }
 
 importReportOk.addEventListener('click', closeImportReport);
@@ -1165,6 +1182,8 @@ function appReason(r: string): string {
   return r === 'leave' ? 'menu' : r;
 }
 emu.onAutosave = (blob, trigger) => autosave.pushed(blob, trigger);
+
+emu.onCoinRejected = (_bit, refused) => { if (refused) sayCoinRefused(stopNote); };
 
 emu.onCoins = () => {
   stampCabinetCoins();
@@ -1447,9 +1466,13 @@ let libScrollY = 0;
 
 const onPlayScreen = (): boolean => document.body.classList.contains('nb-play');
 
+let screenSwap = 0;
+
 async function showGame(): Promise<void> {
-  if (onPlayScreen()) return;
+  const swap = ++screenSwap;
+  if (onPlayScreen()) { fadeFromBlack(fade); return; }
   await fadeToBlack(fade);
+  if (swap !== screenSwap) return;
   libScrollY = window.scrollY;
   librarySection.hidden = true;
   stage.removeAttribute('data-ready');
@@ -1481,6 +1504,7 @@ function wakePlayMenu(): void {
 window.addEventListener('pointermove', wakePlayMenu, { passive: true });
 
 async function showLibrary(): Promise<void> {
+  const swap = ++screenSwap;
   if (document.fullscreenElement) {
     void document.exitFullscreen().catch(() => {  });
   }
@@ -1498,10 +1522,11 @@ async function showLibrary(): Promise<void> {
   audio.silence();
   hwBridge?.gameUnloaded();
   closeMenu();
-  if (bulbLab.active) bulbLab.disable();
+  if (bulbLab?.active) bulbLab.disable();
   setVfdStrip(null);
   const toOrbit = document.body.classList.contains('orbit-mode');
   await fadeToBlack(fade);
+  if (swap !== screenSwap) return;
   stage.hidden = true;
   stage.removeAttribute('data-ready');
   document.body.classList.remove('nb-play');
@@ -1516,9 +1541,11 @@ async function showLibrary(): Promise<void> {
   }
   librarySection.hidden = false;
   await renderLibrary(libraryHandlers);
+  if (swap !== screenSwap) return;
   window.scrollTo(0, libScrollY);
   if (toOrbit) replayOrbitCaption();
   else await settleArtwork();
+  if (swap !== screenSwap) return;
   fadeFromBlack(fade);
 }
 
@@ -1681,21 +1708,23 @@ schemPanel.tabs = [
     testTone,
     clearRam: clearRamNow,
   }),
-  bulbTab({
-    active: () => bulbLab.active,
-    setActive: (on) => {
-      if (!on) { if (bulbLab.active) bulbLab.disable(); return true; }
-      if (!cabinet) return false;
-      if (!bulbLab.active) bulbLab.enable(cabinet);
-      return true;
-    },
-    setHost: (host) => bulbLab.setHost(host),
-    windows: () => bulbLab.windowCount,
-  }),
-  matrixTab({
-    size: () => viewFor(session.game?.system ?? '').matrix,
-    press: (id, on) => emu.input(id, on),
-  }),
+  ...(import.meta.env.DEV ? [
+    bulbTab({
+      active: () => bulbLab!.active,
+      setActive: (on) => {
+        if (!on) { if (bulbLab!.active) bulbLab!.disable(); return true; }
+        if (!cabinet) return false;
+        if (!bulbLab!.active) bulbLab!.enable(cabinet);
+        return true;
+      },
+      setHost: (host) => bulbLab!.setHost(host),
+      windows: () => bulbLab!.windowCount,
+    }),
+    matrixTab({
+      size: () => viewFor(session.game?.system ?? '').matrix,
+      press: (id, on) => emu.input(id, on),
+    }),
+  ] : []),
 ];
 
 const mobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -1767,40 +1796,26 @@ function buildMenu(info: MachineInfo): void {
     book.hidden = true;
     coinMoney.hidden = true;
     const stat = (label: string): HTMLSpanElement => statRow(book, label);
-    const inV = stat(str('main.money_in'));
-    const outV = stat(str('main.money_out'));
-    const tokOutV = stat(str('main.tokens_out'));
-    const tokOutRowEl = tokOutV.parentElement!;
-    const tokInV = stat(str('main.tokens_in'));
-    const tokInRowEl = tokInV.parentElement!;
-    const pctV = stat(str('main.payout'));
-    const money = (p: number): string =>
-      `${p < 0 ? '-' : ''}£${(Math.abs(p) / 100).toFixed(2)}`;
+    const inV = stat(str('main.total_in'));
+    const outV = stat(str('main.total_out'));
+    const pctV = stat(str('main.current_percentage'));
     refreshMenuLive = () => {
-      void emu.ledger().then((l) => {
-        if (!l) return;
+      void emu.ledger().then(() => {
+        const totals = emu.meterTotals;
+        if (!totals) {
+          book.hidden = true;
+          coinMoney.hidden = true;
+          return;
+        }
         book.hidden = false;
         coinMoney.hidden = false;
-        const rec = moneyWatch.rec;
-        const t = rec ? rec.total : l;
-        const mIn = moneyInParts(t), mOut = moneyOutParts(t);
-        for (const v of [inV, coinInV]) setKvValue(v, mIn.head, mIn.sub);
-        for (const v of [outV, coinOutV]) setKvValue(v, mOut.head, mOut.sub);
-        const tokParts: string[] = [];
-        if (t.tokenOutPence) tokParts.push(money(t.tokenOutPence));
-        if (t.unpricedTokenOut) {
-          tokParts.push(str('main.n_tokens', { n: t.unpricedTokenOut }));
-        }
-        tokOutV.textContent = tokParts.join(' + ');
-        tokOutRowEl.hidden = tokParts.length === 0;
-        const tokInParts: string[] = [];
-        if (t.tokenInPence) tokInParts.push(money(t.tokenInPence));
-        const tokInCount = t.unpricedTokenIn ?? 0;
-        if (tokInCount) tokInParts.push(str('main.n_tokens', { n: tokInCount }));
-        tokInV.textContent = tokInParts.join(' + ');
-        tokInRowEl.hidden = tokInParts.length === 0;
-        const pct = ledgerPayoutPercent(t);
-        pctV.textContent = pct === null ? '\u2014' : `${pct.toFixed(1)}%`;
+        const totalIn = String(totals.in);
+        const totalOut = String(totals.out);
+        for (const v of [inV, coinInV]) setKvValue(v, totalIn, null);
+        for (const v of [outV, coinOutV]) setKvValue(v, totalOut, null);
+        const coinPct = meterTotalsPercent(totals);
+        const pctText = coinPct === null ? '\u2014' : `${coinPct}%`;
+        for (const v of [pctV, coinPctV]) setKvValue(v, pctText, null);
       });
     };
     refreshMenuLive();
@@ -1985,16 +2000,20 @@ function fillKeys(root: HTMLElement): void {
   const own: KeyTableRow[] = [
     showKeysRow(),
     { label: str('main.close_menu'), chords: [chordCaps([], 'Esc')] },
-    { label: str('main.save_snapshot'), chords: [chordCaps(['mod'], 'S'), alt('S')] },
-    { label: str('main.load_snapshot'), chords: [chordCaps(['mod'], 'O'), alt('L')] },
+    { label: str('main.save_snapshot'), chords: [alt('S')] },
+    { label: str('main.load_snapshot'), chords: [alt('L')] },
     { label: str('main.system_status'), chords: [alt('Y')] },
   ];
   if (hasHoverPointer()) own.push({ label: str('main.magnifier'), chords: [['Wheel'], alt('M')] });
   own.push(
     { label: str('main.quit_game'), chords: [alt('Q')] },
-    { label: str('main.dump_reels_to_console'), chords: [alt('D')] },
-    { label: str('main.bulb_lab'), chords: [alt('B')] },
   );
+  if (import.meta.env.DEV) {
+    own.push(
+      { label: str('main.dump_reels_to_console'), chords: [alt('D')] },
+      { label: str('main.bulb_lab'), chords: [alt('B')] },
+    );
+  }
   fillKeyTable(root, [{ title: str('main.fruitulator'), rows: own }]);
 }
 
@@ -2020,8 +2039,9 @@ const VOLUME_KEY = 'fruitulator.volume';
 
 const coinMoney = card();
 coinMoney.hidden = true;
-const coinInV = statRow(coinMoney, str('main.money_in'));
-const coinOutV = statRow(coinMoney, str('main.money_out'));
+const coinInV = statRow(coinMoney, str('main.total_in'));
+const coinOutV = statRow(coinMoney, str('main.total_out'));
+const coinPctV = statRow(coinMoney, str('main.current_percentage'));
 
 const soundBtn = speakerButton();
 soundBtn.id = 'soundBtn';
@@ -2265,7 +2285,7 @@ let benchLast: unknown = null;
 
 let onFirstFrameDrawn: (() => void) | null = null;
 
-const bulbLab = new BulbLab(() => painter.invalidate());
+const bulbLab = import.meta.env.DEV ? new BulbLab(() => painter.invalidate()) : null;
 
 const screenStalls = new StallWatch('screen');
 let stoodDown = false;
@@ -2307,7 +2327,7 @@ function frame(now: number): void {
   lastFrameAt = tFrame;
   if (running) {
     const real = emu.latestFrame();
-    const view = real && bulbLab.active ? bulbLab.view(real, now) : real;
+    const view = real && bulbLab?.active ? bulbLab.view(real, now) : real;
     const tView = BENCH ? performance.now() : t0;
     try {
       if (view) {
@@ -2618,12 +2638,12 @@ function mainReelDriftWatch(m: FrameView, cab: Cabinet): void {
 
 const held = new HeldButtons({
   down: (input) => {
-    emu.input(input, true);
+    emu.control(input, true);
     effects.button(true);
     stopWatch.engage();
   },
   up: (input) => {
-    emu.input(input, false);
+    emu.control(input, false);
     effects.button(false);
   },
 });
@@ -3096,7 +3116,7 @@ function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor'], gate?: CabLamp)
   effects.coinDrop(acceptor, () => {
     const f = emu.latestFrame();
     if (!f || booted !== session.boot) return null;
-    if (gate && gatedOff.has(gate)) return 'locked';
+    if (gate && gatedOff.has(gate)) { sayCoinLocked(stopNote, acceptor); return 'locked'; }
     if (f.coinBusy) {
       return 'refused';
     }
@@ -3166,6 +3186,7 @@ function activate(lp: CabLamp, pointerId: number): void {
   if (lp.acceptor) {
     if (gatedOff.has(lp)) {
       effects.coin(lp.acceptor, 'locked');
+      sayCoinLocked(stopNote, lp.acceptor);
       return;
     }
     const view = viewFor(session.game?.system ?? '');
@@ -3247,28 +3268,16 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   if (playKeys.keyDown(ev)) return;
-  if (primaryModifier(ev) && !ev.altKey && !ev.shiftKey) {
-    const k = ev.key.toLowerCase();
-    if (k === 's' && running) {
-      ev.preventDefault();
-      void downloadSnapshot();
-      return;
-    }
-    if (k === 'o') {
-      ev.preventDefault();
-      snapPicker.click();
-      return;
-    }
-  }
-  if (ev.ctrlKey || ev.metaKey) return;
+  if (!ev.altKey || ev.ctrlKey || ev.metaKey) return;
   const tool = ev.code.startsWith('Key') ? ev.code.slice(3).toLowerCase() : ev.key.toLowerCase();
+  if ('slymq'.includes(tool) || (import.meta.env.DEV && 'db'.includes(tool))) ev.preventDefault();
   if (tool === 's') void downloadSnapshot();
   if (tool === 'l') snapPicker.click();
   if (tool === 'y') toggleSchematic();
   if (tool === 'm' && !stage.hidden) toggleMagnifier();
-  if (tool === 'q' && ev.altKey && !stage.hidden) exitToLibrary();
-  if (ev.altKey && tool === 'd') dumpReels();
-  if (ev.altKey && tool === 'b' && !stage.hidden && cabinet) {
+  if (tool === 'q' && !stage.hidden) exitToLibrary();
+  if (import.meta.env.DEV && tool === 'd') dumpReels();
+  if (bulbLab && tool === 'b' && !stage.hidden && cabinet) {
     if (bulbLab.active && schemPanel.isOpen && schemPanel.tab === 'bulbs') bulbLab.disable();
     else {
       if (!bulbLab.active) bulbLab.enable(cabinet);

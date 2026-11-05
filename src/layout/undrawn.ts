@@ -29,6 +29,12 @@ function undrawnDatParts(layout: Uint8Array | undefined): string[] | null {
 
 const LINE_MAX_TYPES = 4;
 
+const ALPHA_NEW = 0x19;
+
+export function alphaColumnsDrawable(columns: number, width: number): boolean {
+  return columns >= 1 && columns <= width;
+}
+
 function components(layout: Uint8Array | undefined): ParsedComponent[] {
   if (!layout || layout.length === 0) return [];
   try {
@@ -84,13 +90,24 @@ function capPaintsNothing(c: ParsedComponent): boolean {
 }
 
 export function undrawnLayoutNotes(layout: Uint8Array | undefined): string[] {
+  const columns: string[] = [];
   const counts = new Map<string, number>();
   const add = (label: string): void => { counts.set(label, (counts.get(label) ?? 0) + 1); };
   let blankCaps = 0;
+  let slotMapped = 0;
   const dat = undrawnDatParts(layout);
   for (const label of dat ?? []) add(label);
   for (const c of dat ? [] : components(layout)) {
     if (capPaintsNothing(c)) blankCaps++;
+    if (c.slotMappedLamps) slotMapped++;
+    if (c.type === ALPHA_NEW) {
+      const n = c.values.get('Columns') ?? 16;
+      if (n !== 16 && !alphaColumnsDrawable(n, c.width)) {
+        columns.push(`this layout's alpha display states ${n} columns, which cannot be drawn, so it has 16`);
+      } else if (n > 16) {
+        columns.push(`this layout's alpha display states ${n} columns, more than the chip's 16, so the rest stay blank`);
+      }
+    }
     const named = UNDRAWN_TYPES.get(c.type);
     if (named) add(`${named} (0x${c.type.toString(16)})`);
     else if (!hasTagMap(c.type)) add(`unknown (0x${c.type.toString(16)})`);
@@ -106,5 +123,6 @@ export function undrawnLayoutNotes(layout: Uint8Array | undefined): string[] {
     lines.push('this layout has buttons whose own pictures are fully transparent,'
       + ` so they cannot show their lamp: ×${blankCaps}`);
   }
-  return lines;
+  if (slotMapped) lines.push(`this layout numbers some lamps through per-slot tags or a slot map: ×${slotMapped}`);
+  return [...lines, ...columns];
 }

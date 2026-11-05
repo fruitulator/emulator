@@ -1,5 +1,7 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { HD6303Y } from '../cpu/m6303';
 import type { Bus } from '../cpu/bus';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Ptm6840 } from '../hw/ptm6840';
 import { Acia6850 } from '../hw/acia6850';
 import { Ay8910, AY_RATE } from '../hw/ay8910';
@@ -49,6 +51,28 @@ const COIN_HOLD_ROW = Math.round(0.1 * SYS83_CLOCK);
 const COIN_HOLD_LINE = Math.round(0.07 * SYS83_CLOCK);
 const COIN_GAP = Math.round(0.05 * SYS83_CLOCK);
 
+export interface Sys83CoinRecord { readonly line: number; readonly state: number }
+
+export function locateSys83CoinRecords(rom: Uint8Array): Sys83CoinRecord[] {
+  const word = (a: number): number => (rom[a] << 8) | rom[a + 1];
+  for (let a = 0x4000; a < 0xfff0; a++) {
+    if (rom[a] !== 0xc6 || rom[a + 2] !== 0xce || rom[a + 5] !== 0xff) continue;
+    if (rom[a + 8] !== 0xee || rom[a + 9] !== 0x10 || rom[a + 10] !== 0xa6 || rom[a + 11] !== 0) continue;
+    let size = 0;
+    for (let b = a + 12; b < a + 80 && !size; b++) if (rom[b] === 0x86 && rom[b + 2] === 0xbd) size = rom[b + 1];
+    if (size < 0x12) return [];
+    const out: Sys83CoinRecord[] = [];
+    for (let r = word(a + 3); r + 0x12 <= 0x10000; r += size) {
+      const state = word(r);
+      const sw = word(r + 16);
+      if (state >= 0x800 || sw < 0x0c00 || sw >= 0x1c00 || (sw & 0x3f8) !== 0) break;
+      out.push({ line: 0x100 | (((sw >> 10) - 2) << 3) | (sw & 7), state });
+    }
+    return out;
+  }
+  return [];
+}
+
 const lowSet = (latch: number, ctl: number): number => {
   const s = (ctl >> 1) & 7;
   return ((latch & ~(1 << s)) | ((ctl & 1) << s)) & 0xff;
@@ -59,7 +83,9 @@ const highSet = (latch: number, ctl: number): number => {
 };
 
 export class Sys83 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'meterLedgerOut', 'triacLedgerOut', 'nvram'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'meterLedgerOut', 'triacLedgerOut', 'nvram', 'coinRecords'];
 
   readonly clockHz = SYS83_CLOCK;
   readonly cpu: HD6303Y;
@@ -118,6 +144,7 @@ export class Sys83 implements Bus, Machine {
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, SYS83_CLOCK, true);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
 
   private calls = 0;
@@ -132,6 +159,9 @@ export class Sys83 implements Bus, Machine {
   private coinRow = 0;
   private coinMask = 0;
   private coinTimer = 0;
+
+  coinRecords: readonly Sys83CoinRecord[] = [];
+  coinsRefused = 0;
 
   readonly strays = new StrayCounter();
 
@@ -159,6 +189,17 @@ export class Sys83 implements Bus, Machine {
       for (let b = 0; b < 16; b++) if (a & (1 << b)) na |= ADDRESS_DECODE[b];
       this.rom[na] = codec[image[a]];
     }
+    this.coinRecords = locateSys83CoinRecords(this.rom);
+  }
+
+  private coinShut(raw: number): boolean {
+    let line = raw & 0x1ff;
+    if (!(raw & 0x100)) {
+      const mask = raw & 0xff;
+      if (!mask || (mask & (mask - 1))) return false;
+      line = 0x100 | (SYS83_COIN_ROW << 3) | (31 - Math.clz32(mask));
+    }
+    return this.coinRecords.some((r) => r.line === line && (this.ram[r.state] & 8) !== 0);
   }
 
   batteryRam(): Uint8Array { return this.ram.slice(); }
@@ -196,7 +237,17 @@ export class Sys83 implements Bus, Machine {
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+  get meterOnlyPayout(): boolean {
+    return !this.book.hasSlides
+      && (this.meterLedgerOut.some((x) => x > 0) || this.triacLedgerOut.some((x) => x > 0));
+  }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
 
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
 
@@ -461,6 +512,7 @@ export class Sys83 implements Bus, Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+      countOutClick(this.outClicks, i, this.meterOutRaw[i]);
       if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
     }
   }
@@ -471,6 +523,7 @@ export class Sys83 implements Bus, Machine {
     if (!changed) return;
     const rising = word & changed;
     this.triacWord = word;
+    triacSenseRelease(this, rising);
     for (let i = 0; i < TRIAC_LINES; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;
@@ -486,6 +539,7 @@ export class Sys83 implements Bus, Machine {
     if (this.coinTimer > 0) return;
     const raw = id >= 0x100 && id < 0x180 ? id : COIN_RAW[id];
     if (raw === undefined) return;
+    if (this.coinShut(raw)) { this.coinsRefused++; return; }
     if (raw & 0x100) {
       const row = (raw & 0x78) >> 3;
       if (row >= this.matrix.length) return;

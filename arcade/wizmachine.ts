@@ -7,7 +7,7 @@ import {
 import { attractFired, attractWhy, busyByItself, keepable, LampFlips, videoPlaying, type Second } from '../src/machine/attractwindow';
 import { acceptorResolve, acceptorTakesToken, viewFor } from '../web/platform';
 import { controlName } from '../web/controlname';
-import { hasInput, type CabLamp } from '../web/dat';
+import { hasInput, segLampLit, type CabLamp, type SegDisplay } from '../web/dat';
 import { hasOperatedSwitches, layoutNamedInputs, namedInputId } from '../web/switchids';
 import { CONTENT_RULE } from '../web/store';
 import { Glass } from './glass';
@@ -19,7 +19,8 @@ import type { MachineConfig } from './doc';
 import type { Snapshot } from '../web/snapshot';
 import { ATTRACT_WINDOW_S } from './bootdoor';
 import { str } from '../web/i18n';
-import { wiredCoinOn } from '../web/coinask';
+import { slotCoinPence, wiredCoinOn } from '../web/coinask';
+import { costOf } from './wallet';
 import { markedChutes } from './coinwiring';
 
 export const WINDOW_S = ATTRACT_WINDOW_S;
@@ -64,6 +65,20 @@ export type BootFrom =
   | { kind: 'files' }
   | { kind: 'saved' }
   | { kind: 'cycle'; snap: Snapshot | null };
+
+function lampDigits(v: FrameView, segs: readonly SegDisplay[]): string {
+  let out = '';
+  let lit = false;
+  const on = (n: number): boolean => v.layoutLampLevel(n) > 0;
+  for (const s of segs) {
+    if (s.digit !== undefined) continue;
+    let m = 0;
+    for (let i = 0; i < 7; i++) if (segLampLit(s, i, on)) m |= 1 << i;
+    if (m) lit = true;
+    out += m.toString(16).padStart(2, '0');
+  }
+  return lit ? out : '';
+}
 
 export class WizardMachine {
   readonly live = new Live();
@@ -242,6 +257,7 @@ export class WizardMachine {
         t: this.secs.length + 1, reels, ledger, glass, alarm: reading?.verdict === 'ALARM', line: reading?.glass ?? '',
         lamps: this.flips.take(), pics: this.flips.takePictures(),
         ...(this.serial1 >= 0 ? { video: (this.serial1 - this.serial0) >>> 0 } : {}),
+        ...(this.last && this.glass.cab?.segDisplays ? { segs: lampDigits(this.last, this.glass.cab.segDisplays) } : {}),
       };
       this.serial0 = this.serial1;
       if (videoPlaying(s)) this.videoPlay = true;
@@ -280,7 +296,7 @@ export class WizardMachine {
     return this.live.emu.ledger().catch(() => null);
   }
 
-  coinSlot(): { line: number; pence: number | null; from: 'layout' | 'machine' } | null {
+  coinSlot(skip: ReadonlySet<number> = new Set()): { line: number; pence: number | null; from: 'layout' | 'machine' } | null {
     const game = this.glass.game;
     const cab = this.glass.cab;
     const info = this.live.emu.info;
@@ -296,27 +312,39 @@ export class WizardMachine {
       return chutes.find((c) => c.bit === line)?.pence ?? null;
     };
     const creditsNone = (line: number): boolean => info.coinTable?.lines.find((l) => l.line === line)?.credits === 0;
-    const worth = (line: number, pence: number | null): number => (creditsNone(line) ? -2 : pence ?? -1);
+    const chosen = (line: number): boolean => Object.values(wiring).some((s) => s.how === 'asked' && s.coins.some((c) => c.line === line));
+    const worth = (line: number, pence: number | null): number => (creditsNone(line) ? -2 : (chosen(line) ? 1e6 : 0) + (pence ?? -1));
     let best: { line: number; pence: number | null; from: 'layout' } | null = null;
     for (const lp of cab.lamps) {
       if (!lp.acceptor) continue;
       const got = acceptorResolve(view, lp, info.coins, info.coinPort);
-      if (got.kind === 'note' || got.line < 0) continue;
-      if (acceptorTakesToken(view, lp, got.line, info.coins)) continue;
+      if (got.kind === 'note' || got.line < 0 || skip.has(got.line)) continue;
+      if (acceptorTakesToken(view, lp, got.line, info.coins) && !chosen(got.line)) continue;
       const pence = priceOf(got.line);
       if (!best || worth(got.line, pence) > worth(best.line, best.pence)) best = { line: got.line, pence, from: 'layout' };
     }
     if (best) return best;
     for (const c of markedChutes(wiring, info)) {
       const coin = wiredCoinOn(wiring, c.bit);
-      if (typeof coin !== 'number') continue;
+      if (typeof coin !== 'number' || skip.has(c.bit)) continue;
       if (!best || worth(c.bit, coin) > worth(best.line, best.pence)) best = { line: c.bit, pence: coin, from: 'layout' };
     }
     if (best) return best;
-    const coins = chutes.filter((c) => !c.token);
-    if (!coins.length) return null;
+    const listed = chutes.filter((c) => !c.token && !skip.has(c.bit));
+    if (!listed.length) return null;
+    const drawn = listed.filter((c) => info.drawnCoins?.includes(c.bit));
+    const coins = drawn.length && !listed.some((c) => chosen(c.bit)) ? drawn : listed;
     const top = coins.reduce((a, b) => (worth(b.bit, b.pence) > worth(a.bit, a.pence) ? b : a));
     return { line: top.bit, pence: top.pence, from: 'machine' };
+  }
+
+  coinCost(line: number): number {
+    const wired = wiredCoinOn(this.live.coinWiring?.() ?? {}, line);
+    if (wired) return slotCoinPence(wired) ?? -1;
+    if (wired === null) return 0;
+    const g = this.glass.game;
+    const c = (this.live.emu.info?.coins ?? (g ? viewFor(g.system).coins : [])).find((x) => x.bit === line);
+    return costOf(c ?? { label: '' });
   }
 
   async coin(line: number): Promise<void> {

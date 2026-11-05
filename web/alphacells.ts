@@ -18,6 +18,11 @@ export function foldBars(roles: number): number {
   return out;
 }
 
+export function alphaColumnWords(words: readonly number[], columns: number, reversed: boolean): number[] {
+  const from = reversed ? 0 : words.length - columns;
+  return Array.from({ length: columns }, (_, j) => words[from + j] ?? 0);
+}
+
 export function alphaCellRoles(word: number, charset: number | undefined, seg16: boolean): number {
   if (word & CELL_CUSTOM) return bd1Roles(word & 0xffff);
   const code = word & 0x7f;

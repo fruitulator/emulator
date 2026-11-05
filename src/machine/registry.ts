@@ -1,6 +1,7 @@
 import type { Machine } from './machine';
 import { bfmAlphaRoute, v20AlphaServe } from './layoutdisplay';
 import { ledgerOutMults } from './machine';
+import { attachPayoutCheck } from './payoutcheck';
 import { gamFromJson, gamToJson, parseGam, type Gam, type GamJson } from './gam';
 import { gamCcTalkKeys } from './cctalkkeys';
 import {
@@ -67,7 +68,7 @@ import {
   V20_OPTIC_ARMS, MODEL_RELATIONS, MFME_OWN_SPACE, mameIndexForTab, oursFromMfme, parkAtV20PowerUp, type ModelRelation, type OpticFitFailure,
 } from './v20optic';
 import type { Reel } from '../hw/reel';
-import { layoutSwitches, type LayoutSwitch } from './layoutswitches';
+import { layoutInvertedInputs, layoutSwitches, restInvertedInputs, type LayoutSwitch } from './layoutswitches';
 import { readSwitchNames } from './buttonnames';
 import { bfmLedMode } from '../hw/bfmled';
 import { noteBoardDefault } from './boarddefaults';
@@ -82,6 +83,7 @@ import {
 import { parseLayout } from '../layout/fmlparse';
 import { recordOperatorPreset } from './statedlines';
 import { datReelChannels, datReelWiring } from '../layout/datreels';
+import { readTriacSense, type TriacSensed } from '../hw/triacsense';
 import { cabinetCoinPence, cabinetCoinSlots, declaredCoins, layoutInputButtons, layoutInputLettering, parallelNoteChannels } from './layoutcoins';
 import { placeRomPairs } from './pairplacer';
 
@@ -900,6 +902,7 @@ const sys5: Platform = {
     if (Number(game.gam?.settings.get('Protocol')) === 1) m.fitDataport();
     const sys5Layout = decodedLayout(game.layout);
     if (sys5Layout) m.setCoinInterface(readSetting(sys5Layout, 'SYS5', 'Coin Interface') === 'Parallel');
+    if (sys5Layout) m.setSlides(triacSlidePence(sys5Layout, 'SYS5'));
     const sys5Sound = sys5Layout ? readSetting(sys5Layout, 'SYS5', 'Sound Type') : undefined;
     m.setSoundType(sys5Sound === 'Yamaha' || sys5Sound === 'Std' ? sys5Sound : null);
     if (sys5Sound !== 'Yamaha' && sys5Sound !== 'Std') {
@@ -1623,6 +1626,7 @@ const acesp: Platform = {
 
     const layout = decodedLayout(game.layout);
     if (layout) {
+      m.setPayoutSlides(game.layout ? triacSlidePence(game.layout, 'SPACE') : null);
       const meters = meterMoneyMap(layout, 'SPACE');
       if (meters) {
         m.setMeterOutPence(ledgerOutMults({ in: meters.meterIn, out: meters.meterOut })[0].map((mult) => mult * 10));
@@ -2378,14 +2382,6 @@ const epoch: Platform = {
     if (epochMeters) {
       m.setMeterMoney(epochMeters.meterOut, epochMeters.meterIn);
       m.setSecMoneyMap(epochMeters.secOut, epochMeters.secIn);
-      if (m.pricesOutAtSec()) {
-        noteBoardDefault(m, {
-          axis: 'meter',
-          text: 'SEC counter priced at 10p a unit - assumed for this board',
-          ifWrong: 'A cabinet counting its SEC in another unit shows wrong bookkeeping totals.',
-          node: TAILORED_IDS.meters,
-        });
-      }
     }
 
     const nv = game.nvram;
@@ -2471,7 +2467,8 @@ const mps2: Platform = {
     }
 
     const meters = layout ? meterMoneyMap(layout, 'MPS2') : null;
-    if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
+    if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut, meters.triacIn, meters.triacOut);
+    m.setPayoutSlides(layout ? triacSlidePence(layout, 'MPS2') : null);
     m.setLayoutCoins(declaredCoins(game.layout));
     noteUnreadCoinCode(m);
 
@@ -2515,7 +2512,8 @@ const sys80: Platform = {
       ifWrong: 'A cabinet metering in another unit shows wrong bookkeeping totals.',
       node: TAILORED_IDS.meters,
     });
-    if (s80Meters) m.setMeterMoney(s80Meters.meterIn, s80Meters.meterOut);
+    if (s80Meters) m.setMeterMoney(s80Meters.meterIn, s80Meters.meterOut, s80Meters.triacOut);
+    if (payload) m.setPayoutSlides(triacSlidePence(payload, 'SYSTEM80'));
     m.setLayoutCoins(declaredCoins(game.layout), layoutInputButtons(game.layout) ?? [], layoutInputLettering(game.layout) ?? new Map());
     if (m.coinsPricedByPlays) {
       noteBoardDefault(m, {
@@ -2675,7 +2673,8 @@ const proconn: Platform = {
         protocol: Number(game.gam?.settings.get('Protocol') ?? 0) || 0,
       });
       const meters = meterMoneyMap(payload, 'PROCONN');
-      if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
+      if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut, meters.triacOut);
+      m.setSlidePence(triacSlidePence(payload, 'PROCONN') ?? []);
     }
     m.setLayoutCoins(declaredCoins(game.layout));
     noteUnreadCoinCode(m);
@@ -2722,7 +2721,7 @@ const electrocoin: Platform = {
         secKept: fileLevelTags(payload).get(5)?.[0],
       });
       const meters = meterMoneyMap(payload, 'ELECTROCOIN');
-      if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
+      if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut, meters.triacOut);
       else {
         m.setMeterMoney(STANDARD_METER_GRID.meterIn, STANDARD_METER_GRID.meterOut);
         noteBoardDefault(m, {
@@ -2767,13 +2766,9 @@ function phoenixPlatform(system: 'PHOENIX' | 'PHOENIX2'): Platform {
       const payload = decodedLayout(game.layout);
       if (payload) {
         const meters = meterMoneyMap(payload, system);
-        noteBoardDefault(m, {
-          axis: 'meter',
-          text: 'meter pulse priced at 10p - assumed for this board',
-          ifWrong: 'Only bookkeeping totals are affected; play is not.',
-          node: TAILORED_IDS.meters,
-        });
-        if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
+        const slides = triacSlidePence(payload, system);
+        if (slides) m.setSlidePence(slides);
+        if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut, meters.triacOut);
       }
       m.reset();
       game.gam?.reels.forEach((r, i) => m.setReelPosition(i, r.position));
@@ -2881,13 +2876,7 @@ const blackbox: Platform = {
       m.nvramFitted = (pick('NVRAM', { No: 0, Yes: 1 }) ?? 0) === 1;
       m.row5Shift = pick('Test / Run', { C3: 0, C5: 1, C6: 2 }) ?? 1;
       const meters = meterMoneyMap(bbLayout, 'BLACKBOX');
-      noteBoardDefault(m, {
-        axis: 'meter',
-        text: 'meter pulse priced at 2p - assumed for this board',
-        ifWrong: 'A cabinet on another base coin shows wrong bookkeeping totals.',
-        node: TAILORED_IDS.meters,
-      });
-      if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut);
+      if (meters) m.setMeterMoney(meters.meterIn, meters.meterOut, meters.triacOut);
       const slides = triacSlidePence(bbLayout, 'BLACKBOX');
       if (slides) m.setSlidePence(slides);
     }
@@ -2939,14 +2928,6 @@ const mpu3: Platform = {
     }
     m.setLayoutCoins(declaredCoins(game.layout), layoutInputButtons(game.layout) ?? []);
     noteUnreadCoinCode(m);
-    if (!m.moneyPriced) {
-      noteBoardDefault(m, {
-        axis: 'meter',
-        text: 'meters not priced by the layout - money out not booked',
-        ifWrong: 'Payouts are not added to the money-out total; play is not affected.',
-        node: TAILORED_IDS.meters,
-      });
-    }
     m.reset();
     restoreGamReels(m, game, MFME_OWN_SPACE, layoutReelNumbers(game));
     return m;
@@ -3085,6 +3066,8 @@ const electro: Platform = {
     m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const payload = decodedLayout(game.layout);
+    const meterGrid = payload ? meterMoneyMap(payload, 'MACH2000E') : null;
+    if (meterGrid) m.setMeterMoney(meterGrid);
     wireCoinMoney(m, game, payload, 'ELECTRO', 'meters', m.coinSwitchLines, false);
     const payouts = m.payoutParts;
     if (!payouts.length) {
@@ -3411,7 +3394,7 @@ const pclmaxi: Platform = {
       : 0;
     m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
-    const money = payload ? meterMoneyMap(payload, 'PCLMAXI') : null;
+    const money = payload ? meterMoneyMap(payload, 'MACH2000E') : null;
     if (money) m.setMeterMoney(money);
     wireCoinMoney(m, game, payload, 'PCLMAXI', 'meters');
     noteUnreadCoinCode(m);
@@ -3468,7 +3451,7 @@ const igts2000: Platform = {
       refill: { fallback: null, made: false },
     });
     const payload = decodedLayout(game.layout);
-    const money = payload ? meterMoneyMap(payload, 'IGTS2000') : null;
+    const money = payload ? meterMoneyMap(payload, 'MACH2000E') : null;
     if (money) m.setMeterMoney(money);
     wireCoinMoney(m, game, payload, 'IGTS2000', 'meters');
     noteUnreadCoinCode(m);
@@ -3875,6 +3858,20 @@ export function machineFor(game: Game): Machine {
     );
   }
   const m = platform.build(game);
+  const inverted = layoutInvertedInputs(game.layout);
+  if (inverted.length) {
+    m.invertedInputs = new Set(inverted);
+    restInvertedInputs(m);
+  }
+  if ('triacSenseLine' in m && game.layout) {
+    const payload = decodedLayout(game.layout);
+    const sense = payload ? readTriacSense(payload) : null;
+    if (sense) {
+      const sensed = m as unknown as TriacSensed;
+      sensed.triacSenseLine = sense.line;
+      sensed.triacSenseMask = sense.mask;
+    }
+  }
   const stoodIn = absent(game, game.gam?.roms ?? []).length;
   if (stoodIn) {
     noteBoardDefault(m, {
@@ -3894,9 +3891,8 @@ export function machineFor(game: Game): Machine {
   fitReelBounce(m, game);
   noteReelStandIns(m);
   noteBoardTokenLine(m, game);
-  const outByGrid = (m as { pricesOut?: () => boolean }).pricesOut?.() === true;
   const hopperRead = (m as { hopperPriceIsDefault?: () => boolean }).hopperPriceIsDefault?.() === false;
-  if (['ASTRASYSA1', 'ELECTROCOIN', 'EPOCH'].includes(game.system.toUpperCase()) && !outByGrid && !hopperRead) {
+  if (['ASTRASYSA1', 'ELECTROCOIN'].includes(game.system.toUpperCase()) && !hopperRead) {
     noteBoardDefault(m, {
       axis: 'hopper',
       text: `hopper coin priced at £1, the ${game.system} board's default - the cabinet states no denomination`,
@@ -3926,6 +3922,7 @@ export function machineFor(game: Game): Machine {
     const names = readSwitchNames(prog.map((r) => r.bytes));
     if (names) (m as { capNames?: typeof names }).capNames = names;
   }
+  attachPayoutCheck(m);
   return m;
 }
 

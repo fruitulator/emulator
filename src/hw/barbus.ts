@@ -25,7 +25,7 @@ export const MUX_UNIT_BYTES = 48;
 const MUX_LAMPS_PER_UNIT = 192;
 const TYPE_REEL5 = 0x1;
 
-const MAX_FRAME = 48;
+const MAX_FRAME = 261;
 
 const LOG_FRAMES = 256;
 

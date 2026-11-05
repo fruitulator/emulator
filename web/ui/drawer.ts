@@ -1,6 +1,7 @@
 import { backRow, choreograph, menuRow } from './rows';
 import { scrollFromOpen } from './scrollsettle';
 
+import { openLayer, type Layer } from './layer';
 export const PANEL_SHOW = 'menu-panel-show';
 
 export interface DrawerElements {
@@ -17,6 +18,7 @@ export class MenuDrawer {
   private flyRow: HTMLElement | null = null;
   private flyTimer = 0;
   private flyBy: 'hover' | 'click' = 'hover';
+  private layer: Layer | null = null;
 
   constructor(readonly el: DrawerElements) {
     el.backdrop.addEventListener('click', () => this.close());
@@ -55,6 +57,15 @@ export class MenuDrawer {
     void menu.offsetWidth;
     menu.classList.add('open');
     backdrop.classList.add('open');
+    this.layer ??= openLayer([menu, backdrop, this.el.fly], {
+      kind: 'dialog',
+      close: () => this.close(),
+      onEscape: () => {
+        if (!this.el.fly.classList.contains('open')) return false;
+        this.closeFlyout();
+        return true;
+      },
+    });
   }
 
   close(): void {
@@ -64,6 +75,9 @@ export class MenuDrawer {
     menu.classList.remove('open');
     backdrop.classList.remove('open');
     this.closeFlyout();
+    const l = this.layer;
+    this.layer = null;
+    l?.release();
     window.setTimeout(() => {
       if (!menu.classList.contains('open')) {
         menu.hidden = true;

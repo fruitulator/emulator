@@ -1,3 +1,4 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { Z80 } from '../cpu/z80';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { MeterConfirm } from '../hw/meterconfirm';
@@ -97,6 +98,7 @@ export class AceVideo implements Machine {
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, ACEVIDEO_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
 
   private calls = 0;
@@ -341,7 +343,8 @@ export class AceVideo implements Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-      if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
+      countOutClick(this.outClicks, i, this.meterOutRaw[i]);
+            if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
     }
   }
 
@@ -353,7 +356,7 @@ export class AceVideo implements Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      if (this.book.hasSlides) this.book.slide(i);
+            if (this.book.hasSlides) this.book.slide(i);
       else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }
   }
@@ -452,7 +455,17 @@ export class AceVideo implements Machine {
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+  get meterOnlyPayout(): boolean {
+    return !this.book.hasSlides
+      && (this.meterLedgerOut.some((x) => x > 0) || this.triacLedgerOut.some((x) => x > 0));
+  }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
 
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void {
     this.slots.setLines(lines);

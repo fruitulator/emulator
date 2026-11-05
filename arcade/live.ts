@@ -1,6 +1,6 @@
 import { WorkerEmu, type AutosaveBlob } from '../web/emu-client';
 import { getMeta, playCountOf, putMeta } from '../web/store';
-import { readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
+import { payoutsAnswered, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
 import { coinsForLoad, markedChutes, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
 import { openCoinMenu } from '../web/ui/coinmenu';
@@ -28,7 +28,7 @@ import type { HintPlace } from '../web/keyhints';
 import { acceptorResolve, stampCoinInputs, viewFor } from '../web/platform';
 import { hasInput, type CabLamp } from '../web/dat';
 import {
-  HALT_NOTE_TEXT, StopWatch, judgeStop, noteReason, noteText, offersState, stopNoteParts, type StopNote, NOTE_INFO, NOTE_WARN,
+  HALT_NOTE_TEXT, StopWatch, judgeStop, sayCoinLocked, sayCoinRefused, noteReason, noteText, offersState, stopNoteParts, type StopNote, NOTE_ERROR, NOTE_INFO, NOTE_WARN,
 } from '../web/stopnote';
 import { liveValue } from '../web/settings';
 import { logInputLabels } from '../web/downloads';
@@ -39,6 +39,8 @@ import type { ClaimEvents, ClaimResult, MoneyHooks, SlotKeyframe, StateSlot, Vis
 import type { RelayBatch } from './serverwire';
 import { isToken, payForCoin, penceOf, unpriced, type Wallet } from './wallet';
 import { unknownMoneyMoved } from './moneygate';
+import { COIN_SETUP_FAULT_TEXT, FREE_PLAY_TEXT, paidOutputs, paidUnpriced } from './coinfault';
+import { payoutFaultLinesSince } from '../web/emu-protocol';
 import { attractBudgetS, BootDoor, BootWatch } from './bootdoor';
 import type { CashLedger, CoinChute } from '../src/machine/machine';
 import type { MachineInfo } from '../web/emu-protocol';
@@ -89,6 +91,8 @@ const NOT_TAKING_COINS_TEXT = str('arcade.live.not_taking_coins_now');
 const NOT_ENOUGH_MONEY_MS = 2500;
 export const TOKENS_UNCOUNTED_TEXT = str('arcade.live.this_machine_does_not_count');
 
+const FREE_PLAY_NOTE_MS = 8000;
+
 export const COIN_VALUE_UNKNOWN_TEXT = str('arcade.live.coin_value_not_set');
 
 export const PAYOUT_VALUE_UNKNOWN_TEXT = str('arcade.live.payout_value_not_set');
@@ -130,12 +134,12 @@ export class Live {
   private get buttons(): HeldButtons {
     return (this.buttonsMade ??= new HeldButtons({
       down: (b) => {
-        this.emu.input(b, true);
+        this.emu.control(b, true);
         this.effects.button(true);
         this.glass?.heldInputs.add(b);
       },
       up: (b) => {
-        this.emu.input(b, false);
+        this.emu.control(b, false);
         this.effects.button(false);
         this.glass?.heldInputs.delete(b);
       },
@@ -213,6 +217,14 @@ export class Live {
   readonly claimStats = { claims: 0, lost: 0, moved: 0, idleAsked: 0, idleReleased: 0 };
 
   private coinsStoppedNow = false;
+  private coinFaultNow = false;
+  private payoutFaultsAtStart = 0;
+  private get freePlay(): boolean {
+    return this.glass?.machine.config?.freePlay === true || this.emu.info?.meterOnlyPayout === true;
+  }
+  private get pricing(): Live['wallet'] { return this.freePlay ? null : this.wallet; }
+  private freePlayTold = false;
+  onFixSetup: ((machineId: string) => void) | null = null;
   private ledgerAtStart: CashLedger | null = null;
   private coinsNoteAway = false;
   onCoinsStopped: ((stopped: boolean) => void) | null = null;
@@ -238,7 +250,10 @@ export class Live {
       if (r.forwarding) r.slot.relay?.({ session: r.session, inputs, upTo });
     };
     this.emu.onFollowReport = (r) => this.followReport(r);
-    this.emu.onCoinRejected = (bit) => this.wallet?.rejected(bit);
+    this.emu.onCoinRejected = (bit, refused) => {
+      this.wallet?.rejected(bit);
+      if (refused && !this.watching) sayCoinRefused(this.stopNote);
+    };
     this.emu.onHalted = () => {
       this.halted = true;
       if (this.running) this.stopNote?.update('stopped', HALT_NOTE_TEXT, true);
@@ -250,7 +265,7 @@ export class Live {
         if (rv.seq === this.loadSeq && !this.running) void this.start(rv.glass, rv.o);
         return;
       }
-      if (!this.running || this.paused) return;
+      if (!this.running || this.paused || this.runHidden) return;
       if (document.hidden) {
         for (const [p] of this.buttons.entries()) this.release(p);
         this.leaveSave('hidden');
@@ -287,7 +302,7 @@ export class Live {
         const m = this.loaded!;
         const slot = m.slot!;
         const money = this.emu.ledger().catch(() => null);
-        if (slot.left) void money.then((l) => slot.left!(l));
+        if (slot.left && !this.freePlay) void money.then((l) => slot.left!(l));
         const rec = stateRecord(blob, m.hash, undefined, this.emu.info?.system);
         this.settle.saved();
         return this.queueSave(slot, rec, money)
@@ -302,11 +317,17 @@ export class Live {
     const credit = this.credit.value;
     const ws = this.emu.coinWiringStatus;
     const stopped = ws?.state === 'disagrees' ? true : ws?.state === 'calibrated' ? false : undefined;
+    const meterLines = payoutFaultLinesSince(this.emu.payoutFaults, this.payoutFaultsAtStart);
+    const fault = this.watching ? undefined : {
+      unpricedPaid: paidOutputs([...new Set([...this.emu.unpricedPaid, ...meterLines])], this.emu.info),
+      ...(meterLines.length ? { meterFault: true } : {}),
+    };
+    const free = this.freePlay;
     const p = this.saveChain.then(async () => {
-      const l = (await money) ?? null;
+      const l = free ? null : (await money) ?? null;
       const coins = wallet && l ? wallet.takeCoins() : undefined;
       try {
-        const r = await slot.save(rec, l, coins, credit, stopped);
+        const r = await slot.save(rec, l, coins, credit, stopped, fault);
         if (r?.wallet) wallet?.settled(r.wallet, l);
       } catch (e) {
         if (coins) wallet?.putBackCoins(coins);
@@ -326,6 +347,7 @@ export class Live {
       if (this.moneyWatch !== w || seq !== this.loadSeq) return;
       hooks?.start(l);
       this.ledgerAtStart = l;
+      this.payoutFaultsAtStart = this.emu.payoutFaults?.count ?? 0;
       this.credit.mark(l);
       w.pose = reelPose(this.emu.latestFrame()?.reels ?? []);
       w.timer = setInterval(() => {
@@ -367,7 +389,7 @@ export class Live {
   }
 
   private settleSecond(w: NonNullable<Live['settleWatch']>): void {
-    if (this.settleWatch !== w || w.busy || this.paused || this.cutOff || document.hidden) return;
+    if (this.settleWatch !== w || w.busy || this.paused || this.cutOff || this.standsDown) return;
     w.busy = true;
     void this.emu.ledger().then((l) => {
       if (this.settleWatch !== w) return;
@@ -381,7 +403,7 @@ export class Live {
       const v = this.emu.latestFrame();
       if (v && w.layout) w.alarm = classifyGlassCore(w.board, readGlass(v, w.layout, w.surf ?? undefined)).verdict === 'ALARM';
       const at = performance.now();
-      this.wallet?.reading(l);
+      this.pricing?.reading(l);
       if (moved) this.settle.sample(at, { reels: false, money: true, mech: false, alarm: w.alarm, held: false });
       if (this.settle.money(at, moved, !!v?.coinBusy)) this.saveAfterGame('money');
     }, () => undefined).finally(() => { w.busy = false; });
@@ -449,6 +471,8 @@ export class Live {
   }
 
   paused = false;
+  runHidden = false;
+  private get standsDown(): boolean { return document.hidden && !this.runHidden; }
 
   private hostRule: HostRule | null = null;
 
@@ -488,7 +512,7 @@ export class Live {
   resume(): void {
     if (!this.paused) return;
     this.paused = false;
-    if (!this.running || document.hidden) return;
+    if (!this.running || (document.hidden && !this.runHidden)) return;
     this.emu.resume();
     this.audio.machineResumed();
     this.stopWatch.resumed(performance.now());
@@ -603,6 +627,7 @@ export class Live {
         panelSwitches: cfg.panelSwitches,
         ...coinsForLoad(cfg.coins, ownAnswers, null),
         namedPayouts: readPayoutValues(cfg.payouts),
+        payoutMeters: readPayoutMeters(cfg.payoutMeters),
       };
       this.oldCoinAnswers = ownAnswers;
       this.lastStart = { t0, resumed: !!snapshot, why };
@@ -616,6 +641,8 @@ export class Live {
       this.setCoinsStopped(false);
       this.ledgerAtStart = null;
       this.coinsNoteAway = false;
+      this.coinFaultNow = !!slot?.coinFault?.();
+      this.freePlayTold = false;
       if (updated) this.stopNote?.notice(MACHINE_UPDATED_TEXT, undefined, undefined, undefined, UPDATED_HOURGLASS, true);
       const relay = (this.claimed === slot || visit) && slot?.relay ? { at: Date.now() } : undefined;
       let info;
@@ -702,17 +729,34 @@ export class Live {
       this.wallet?.turnedAway();
       return false;
     }
+    if (this.wallet && this.freePlay) return true;
+    if (this.wallet && this.coinFaultNow) {
+      this.wallet.turnedAway();
+      this.coinsNoteAway = false;
+      this.showCoinFault();
+      return false;
+    }
     if (this.coinsStoppedNow) {
       this.showCoinsStopped();
       return false;
     }
-    if (this.wallet && this.emu.info?.unpricedPayouts?.some((l) => !readPayoutValues(this.glass?.machine.config?.payouts)[String(l)])) {
+    const info = this.emu.info;
+    if (this.wallet && info?.unpricedPayouts?.length
+      && !payoutsAnswered(info, this.glass?.machine.config?.payouts, info.unpricedPayouts,
+        this.glass?.machine.config?.notPayouts)) {
       this.wallet.turnedAway();
       this.stopNote?.notice(PAYOUT_VALUE_UNKNOWN_TEXT, undefined, undefined, 6000, NOTE_WARN);
       return false;
     }
     const g = this.glass;
-    if (chosen) return this.pays({ label: chosen.label, bit: line, pence: chosen.pence, token: chosen.token });
+    if (this.wallet && g?.machine.notReady === 'coin') {
+      this.wallet.turnedAway();
+      this.stopNote?.notice(str('arcade.room.n_is_not_ready_the', { 0: g.machine.name }), undefined, undefined, 6000, NOTE_WARN);
+      return false;
+    }
+    if (chosen) {
+      return this.pays({ label: chosen.label, bit: line, pence: chosen.pence, token: chosen.token });
+    }
     const w = this.coinWiring();
     const wired = wiredCoinOn(w, line);
     if (wired) {
@@ -729,7 +773,8 @@ export class Live {
       return false;
     }
     const coins: readonly CoinChute[] = this.emu.info?.coins ?? (g?.game ? viewFor(g.game.system).coins : []);
-    return this.pays(coins.find((c) => c.bit === line) ?? { label: '', bit: line });
+    const door: CoinChute = coins.find((c) => c.bit === line) ?? { label: '', bit: line };
+    return this.pays(door);
   }
 
   private pays(coin: Parameters<Wallet['pay']>[0]): boolean {
@@ -750,7 +795,9 @@ export class Live {
 
   takesCoins(): boolean {
     if (!this.wallet) return true;
+    if (this.freePlay) return true;
     const g = this.glass;
+    if (g?.machine.notReady) return false;
     return takesACoin(this.coinWiring(), this.emu.info, g?.game ? viewFor(g.game.system).coins : []);
   }
 
@@ -765,6 +812,8 @@ export class Live {
   applyPayouts(values: Record<string, number>): void {
     if (!this.running || this.watching) return;
     for (const [line, pence] of Object.entries(values)) this.emu.namePayout(Number(line), pence);
+    this.coinFaultNow = false;
+    void this.emu.ledger().then((l) => { if (this.running) { this.ledgerAtStart = l; this.payoutFaultsAtStart = this.emu.payoutFaults?.count ?? 0; } }, () => undefined);
   }
 
   applyWiring(w: CoinWiring): void {
@@ -773,7 +822,8 @@ export class Live {
     if (coinWiring) this.emu.setCoinWiring(coinWiring);
     for (const [line, coin] of Object.entries(namedCoins)) this.emu.nameCoin(Number(line), coin);
     this.setCoinsStopped(false);
-    void this.emu.ledger().then((l) => { if (this.running) this.ledgerAtStart = l; }, () => undefined);
+    this.coinFaultNow = false;
+    void this.emu.ledger().then((l) => { if (this.running) { this.ledgerAtStart = l; this.payoutFaultsAtStart = this.emu.payoutFaults?.count ?? 0; } }, () => undefined);
     this.stampCoins();
   }
 
@@ -788,9 +838,27 @@ export class Live {
   private checkWiring(r?: CashLedger | null): void {
     if (this.watching) return;
     const s = this.emu.coinWiringStatus;
-    const unknown = !!this.wallet && unknownMoneyMoved(this.ledgerAtStart, r ?? null);
+    const paid = !!this.pricing && (paidUnpriced(this.ledgerAtStart, r ?? null)
+      || (this.emu.payoutFaults?.count ?? 0) > this.payoutFaultsAtStart);
+    if (paid && !this.coinFaultNow) console.warn('[arcade] the machine paid out a coin of no known value; it takes no more coins until its coin setup is changed');
+    if (paid) this.setCoinFault(true);
+    const unknown = !paid && !!this.pricing && unknownMoneyMoved(this.ledgerAtStart, r ?? null);
     if (unknown && !this.coinsStoppedNow) console.warn('[arcade] the machine booked money of no known value; it takes no more coins');
     this.setCoinsStopped(s?.state === 'disagrees' || unknown);
+  }
+
+  private setCoinFault(on: boolean): void {
+    this.coinFaultNow = on;
+    if (on) this.showCoinFault();
+  }
+
+  private showCoinFault(): void {
+    if (this.coinsNoteAway || !this.stopNote || this.idle?.asked) return;
+    if (this.stopNote.visible && this.stopNote.text === COIN_SETUP_FAULT_TEXT) return;
+    const fix = this.onFixSetup;
+    const id = this.glass?.machine.id;
+    const action = fix && id ? { label: str('arcade.host.fix'), run: () => fix(id), icon: UI_ICONS.tool } : undefined;
+    this.stopNote.notice(COIN_SETUP_FAULT_TEXT, action, () => { this.coinsNoteAway = true; }, undefined, NOTE_ERROR);
   }
 
   private setCoinsStopped(on: boolean): void {
@@ -873,7 +941,7 @@ export class Live {
     this.effects.coinDrop(acceptor, () => {
       if (seq !== this.loadSeq) return null;
       if (!here()) { this.wallet?.rejected(line); return null; }
-      if (gate && this.glass?.gatedOff.has(gate)) { this.wallet?.rejected(line); return 'locked'; }
+      if (gate && this.glass?.gatedOff.has(gate)) { this.wallet?.rejected(line); this.sayLocked(acceptor); return 'locked'; }
       const f = this.emu.latestFrame();
       if (f?.coinBusy) { this.wallet?.rejected(line); return 'refused'; }
       this.emu.coin(line);
@@ -901,7 +969,7 @@ export class Live {
     this.bootWatch = new BootWatch(
       new BootDoor(booting, attractBudgetS(glass.machine.board)), this.emu, glass.machine.board, layout,
       layout ? cabinetSurfaces(layout, glass.machine.board) : undefined,
-      () => this.paused || !!this.cutOff || document.hidden,
+      () => this.paused || !!this.cutOff || this.standsDown,
       () => {
         console.log('[arcade] the machine is in attract: it takes coins now');
         if (this.freeVisit) this.restartSave(this.freeVisit);
@@ -1142,6 +1210,7 @@ export class Live {
         panelSwitches: cfg.panelSwitches,
         ...coinsForLoad(cfg.coins, g.machine.hostFiles ? undefined : meta?.coinAnswers, null),
         namedPayouts: readPayoutValues(cfg.payouts),
+        payoutMeters: readPayoutMeters(cfg.payoutMeters),
         snapshot,
         follow: { cycle: k.cycle, seq: k.seq, bufferMs: WATCH_BUFFER_MS },
       });
@@ -1235,7 +1304,7 @@ export class Live {
   }
 
   private revisit(glass: Glass, o: StartOpts): void {
-    if (document.hidden) { this.revisitWhenShown = { glass, o, seq: this.loadSeq }; return; }
+    if (this.standsDown) { this.revisitWhenShown = { glass, o, seq: this.loadSeq }; return; }
     void this.start(glass, o);
   }
 
@@ -1250,7 +1319,7 @@ export class Live {
       if (this.freeVisit !== v) return;
       v.start = l;
       v.last = l;
-      this.wallet?.started(l);
+      this.pricing?.started(l);
       v.timer = setInterval(() => this.visitReading(v), VISIT_POLL_MS);
       this.restartSave(v);
     }, () => undefined);
@@ -1278,7 +1347,7 @@ export class Live {
     v.busy = true;
     void this.emu.ledger().then((l) => {
       if (this.freeVisit !== v || !l) return;
-      this.wallet?.reading(l);
+      this.pricing?.reading(l);
       const moved = moneyMoved(v.last, l);
       v.last = l;
       if (moved) void this.claimVisit(v, 'money');
@@ -1427,7 +1496,13 @@ export class Live {
     if (!this.halted && !this.paused && !this.watching) {
       const reason = noteReason(judgeStop(this.stopWatch, v, performance.now(), { paused: false, quietIsWaiting: this.quietIsWaiting }), this.stopParts);
       if (this.updatedNote && this.coinDoorOpen) this.updatedNote = false;
-      if (!this.idle?.asked && !this.updatedNote && !(this.coinsStoppedNow && !reason)) this.stopNote?.update(reason, reason ? noteText(reason, this.stopParts) : '', offersState(reason, this.stopParts));
+      const fault = !!this.pricing && this.coinFaultNow && !reason;
+      if (this.wallet && this.freePlay && !this.freePlayTold && this.coinDoorOpen && !this.idle?.asked && !this.updatedNote) {
+        this.freePlayTold = true;
+        this.stopNote?.notice(FREE_PLAY_TEXT, undefined, undefined, FREE_PLAY_NOTE_MS, NOTE_INFO);
+      }
+      if (fault && !this.idle?.asked && !this.updatedNote) this.showCoinFault();
+      else if (!this.idle?.asked && !this.updatedNote && !(this.coinsStoppedNow && !reason)) this.stopNote?.update(reason, reason ? noteText(reason, this.stopParts) : '', offersState(reason, this.stopParts));
     }
     const painted = this.glass.paintFrame(v, texMax);
     if (painted && this.lastStart && this.lastStart.paintedAt === undefined) {
@@ -1484,7 +1559,7 @@ export class Live {
     const best = slots.sort((a, b) => pence(b.line) - pence(a.line))[0];
     if (best) {
       const f = this.emu.latestFrame();
-      if (g.gatedOff.has(best.lp)) { if (best.lp.acceptor) this.effects.coin(best.lp.acceptor, 'locked'); return null; }
+      if (g.gatedOff.has(best.lp)) { if (best.lp.acceptor) this.effects.coin(best.lp.acceptor, 'locked'); this.sayLocked(best.lp.acceptor); return null; }
       if (f?.coinBusy) { this.effects.coin(best.lp.acceptor, 'refused'); return null; }
       this.activate(best.lp, pointerId);
       return best.lp;
@@ -1529,6 +1604,10 @@ export class Live {
     this.own.add(pointerId);
   }
 
+  private sayLocked(acceptor: CabLamp['acceptor']): void {
+    if (!this.watching) sayCoinLocked(this.stopNote, acceptor);
+  }
+
   private activate(lp: CabLamp, pointerId: number): void {
     const g = this.glass;
     if (!g?.game) return;
@@ -1538,6 +1617,7 @@ export class Live {
     if (lp.acceptor) {
       if (g.gatedOff.has(lp)) {
         this.effects.coin(lp.acceptor, 'locked');
+        this.sayLocked(lp.acceptor);
         return;
       }
       const got = acceptorResolve(viewFor(g.game.system), lp, this.emu.info?.coins, this.emu.info?.coinPort);
@@ -1572,6 +1652,13 @@ export class Live {
   }
 
   private slotCoin(line: number, acceptor: CabLamp['acceptor'], gate?: CabLamp): void {
+    if (this.wallet && this.coinFaultNow && !this.freePlay) {
+      this.wallet.turnedAway();
+      this.coinsNoteAway = false;
+      this.showCoinFault();
+      this.effects.coin(acceptor, 'refused');
+      return;
+    }
     if (this.coinDoorOpen && this.chooseCoin(line, acceptor, gate)) return;
     const f = this.emu.latestFrame();
     if (!f) return;

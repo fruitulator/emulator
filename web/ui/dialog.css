@@ -149,12 +149,7 @@
 #errorMsg,
 .ui-alert-msg {
   margin: 0;
-  color: var(--nb-text);
-  font: 400 15.5px/1.55 var(--nb-font-body);
   overflow-wrap: anywhere;
-}
-.ui-alert-box:not(:has(> .nb-dialog__head)) > .nb-dialog__body {
-  padding-top: 24px;
 }
 #errorHint,
 .ui-alert-hint {
@@ -162,12 +157,34 @@
   flex-direction: column;
   gap: 6px;
 }
-#errorBtns,
-.ui-alert-btns {
-  margin-top: 6px;
-}
 .ui-alert-hint > p {
   margin: 0;
+}
+#errorBtns,
+.ui-alert-btns {
+  margin-top: 20px;
+}
+.ui-alert-steps {
+  margin: 0;
+  padding-left: 22px;
+}
+.ui-alert-steps > li + li {
+  margin-top: 4px;
+}
+.ui-alert-steps strong {
+  font-weight: 600;
+  color: var(--nb-text);
+}
+.ui-alert-note {
+  margin: 0;
+  font-size: 14px;
+}
+.layer-by-pointer .nb-btn:focus-visible,
+.layer-by-pointer .nb-icon-btn:focus-visible {
+  box-shadow: var(--nb-shadow-inset-hi);
+}
+.layer-by-pointer .nb-btn--primary:focus-visible {
+  box-shadow: var(--nb-shadow-primary);
 }
 
 .ui-dialog.help p { line-height: 1.45; margin: 0 0 10px; }

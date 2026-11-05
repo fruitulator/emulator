@@ -1,3 +1,5 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
+import { TokenPayouts } from './coinbook';
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinWiringStatus, DigitKind } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { Reel } from '../hw/reel';
@@ -111,6 +113,7 @@ export class Sys1 implements Machine {
   private readonly mux = new MuxLamps(this.lamps);
   readonly digits = new Uint16Array(DIGIT_COUNT);
   readonly meters = new Uint32Array(8);
+  get meterCounts(): Uint32Array { return this.meters; }
   private readonly meterBank = new MeterConfirm();
   readonly triacPulses = new Uint32Array(8);
   get triacLevels(): number {
@@ -526,6 +529,7 @@ export class Sys1 implements Machine {
         this.meters[i]++;
         this.gridTotals.in += this.meterInMult[i]!;
         this.gridTotals.out += this.meterOutMult[i]!;
+        countOutClick(this.outClicks, i, this.meterOutMult[i]);
       }
     }
     this.bd1.tick(c);
@@ -608,9 +612,29 @@ export class Sys1 implements Machine {
   }
 
   readonly cashLedger: CashLedger = newCashLedger();
+  private readonly unpricedPaid = new Set<number>();
+  get unpricedPaidLines(): readonly number[] { return [...this.unpricedPaid]; }
 
   private readonly slidePence: SlideEffect[] = new Array(7).fill(null);
   readonly slideEjects = new Uint32Array(7);
+
+  private readonly hostValues = new TokenPayouts();
+  namePayout(line: number, pence: number): void { this.hostValues.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return [...this.payoutLines().keys()].sort((a, b) => a - b).map((line) => {
+      const p = this.payoutOf(line);
+      return { line, kind: p === 'token' || (p !== null && typeof p === 'object') ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1, defaultPence: typeof p === 'number' ? p : null };
+    });
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    for (const d of this.payoutDevices) out[d.line] = this.slideEjects[d.line] ?? 0;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
 
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 7; i++) this.slidePence[i] = slides[i] ?? null;
@@ -621,9 +645,15 @@ export class Sys1 implements Machine {
     if (p === null) return;
     this.slideEjects[i]++;
     if (!this.booksMoney) return;
+    const host = this.hostValues.value(i);
+    if (host !== undefined) {
+      if (p === 'token' || typeof p === 'object') this.cashLedger.tokenOutPence += host;
+      else this.cashLedger.outPence += host;
+      return;
+    }
     if (typeof p === 'number') this.cashLedger.outPence += p;
-    else if (p === 'token') this.cashLedger.unpricedTokenOut++;
-    else if (p === 'unpriced') this.cashLedger.unpricedOut++;
+    else if (p === 'token') { this.cashLedger.unpricedTokenOut++; this.unpricedPaid.add(i); }
+    else if (p === 'unpriced') { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
     else this.cashLedger.tokenOutPence += p.token;
   }
 
@@ -931,7 +961,7 @@ export class Sys1 implements Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, taken: SlotCoin | 0 | null): void {
@@ -941,11 +971,7 @@ export class Sys1 implements Machine {
     if (c === undefined) { this.bookProgramCoin(line, taken); return; }
     if (taken === 0) return;
     if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || c.token === taken.token);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }

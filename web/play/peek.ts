@@ -1,7 +1,7 @@
 import { drumVisibleSymbols } from '../../src/layout/reeldrum';
 import { reelVisibleSymbols, type ReelBand } from '../dat';
 
-export const PEEK_MAX = 0.5;
+export const PEEK_MAX = 0.75;
 
 export const PEEK_RETURN_MS = 160;
 

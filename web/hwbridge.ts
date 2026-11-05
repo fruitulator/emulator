@@ -216,7 +216,7 @@ export class HwBridge {
     switch (msg.type) {
       case 'input':
         if (typeof msg.id === 'number' && typeof msg.down === 'boolean') {
-          this.emu.input(msg.id, msg.down);
+          this.emu.control(msg.id, msg.down);
         }
         break;
       case 'coin': {

@@ -4,7 +4,9 @@ type Role =
   | 'font' | 'bitmap' | 'text' | 'subcount' | 'subtable' | 'nested'
   | 'raw4' | 'raw16' | 'raw24' | 'raw48' | 'raw1536'
   | 'axis'
-  | 'atext' | 'wtext';
+  | 'atext' | 'wtext'
+  | 'lamp1'
+  | 'slotmap';
 
 const FIXED: Partial<Record<Role, number>> = {
   bool: 1, byte: 1, axis: 1, u16: 2, u32: 4, i32: 4, f32: 4, color: 4, subcount: 4,
@@ -167,7 +169,7 @@ const LED_TAGS: Record<number, [Role, string]> = {
   0x03: ['u32', 'SelectedStyleIndex'], 0x04: ['i32', 'SelectedSegmentIndex'],
   0x05: ['bool', 'Led'], 0x06: ['bool', 'NoOutline'], 0x07: ['bool', 'NoShadow'],
   0x36: ['bitmap', 'Overlay'],
-  0x1c: ['u32', ''], 0x38: ['u32', ''], 0x39: ['u32', ''], 0x3b: ['u32', ''],
+  0x1c: ['u32', ''], 0x38: ['subcount', ''], 0x39: ['lamp1', ''], 0x3b: ['u32', ''],
 };
 
 const LED: TagMap = {
@@ -218,6 +220,7 @@ const BUTTON = m({
   0x19: ['bool', 'CoinSelected'],
   0x28: ['atext', 'Label'], 0x1a: ['u32', 'CoinId'],
   0x4c: ['byte', ''],
+  0x0a: ['byte', ''],
 });
 
 const BACKGROUND_INNER = m({
@@ -225,6 +228,7 @@ const BACKGROUND_INNER = m({
   0x08: ['bool', 'TransparencyUseColour'], 0x09: ['color', 'TransparentColour'],
   0x0a: ['i32', 'OffsetX'], 0x0b: ['i32', 'OffsetY'], 0x0c: ['bitmap', 'Tile'],
   0x0d: ['bool', 'Tiled'], 0x0e: ['bool', 'RandomTile'], 0x0f: ['bool', 'TransparencyUseAlpha'],
+  0x02: ['u32', ''], 0x04: ['raw4', ''], 0x05: ['raw4', ''], 0x06: ['byte', ''],
 });
 
 const BACKGROUND = m({
@@ -273,10 +277,10 @@ const ALPHA = m(ALPHA_TAGS, undefined, m(ALPHA_TAGS));
 
 const ALPHANEW = m({
   0x01: ['color', 'OnColour'], 0x02: ['color', 'OffColour'], 0x03: ['color', 'BackgroundColour'],
-  0x04: ['color', ''],
+  0x04: ['u32', 'Columns'],
   0x06: ['f32', 'Thickness'], 0x07: ['f32', 'Spacing'], 0x08: ['f32', 'HorizontalSpacing'],
   0x09: ['f32', 'VerticalSpacing'], 0x0a: ['f32', 'Slant'], 0x0b: ['f32', 'Centre'],
-  0x99: ['f32', 'Chop'], 0x0d: ['color', ''], 0x0e: ['color', ''],
+  0x99: ['f32', 'Chop'], 0x0d: ['u32', ''], 0x0e: ['u32', ''],
   0x05: ['bool', 'ReversedLegacy'],
   0x0c: ['byte', 'Charset'], 0x0f: ['bool', 'Segment16'], 0x40: ['bool', 'Reversed'],
   0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''],
@@ -291,6 +295,11 @@ const SEVENSEG_INNER = m({
   0x1c: ['u32', 'Slant'], 0x1e: ['u32', 'Chop'], 0x1f: ['u32', 'Centre'],
   0x0b: ['bool', 'Programmable'], 0x20: ['byte', 'StyleId'], 0x24: ['byte', ''],
   0x36: ['bitmap', 'Overlay'],
+  0x0c: ['u32', ''], 0x0d: ['u32', ''], 0x0e: ['u32', ''], 0x0f: ['u32', ''],
+  0x10: ['u32', ''], 0x11: ['u32', ''], 0x12: ['u32', ''], 0x13: ['u32', ''],
+  0x14: ['u32', ''], 0x15: ['u32', ''], 0x16: ['u32', ''], 0x17: ['u32', ''],
+  0x18: ['u32', ''], 0x19: ['u32', ''], 0x1a: ['u32', ''], 0x1b: ['u32', ''],
+  0x23: ['u32', ''],
 });
 
 const SEVENSEG = m({
@@ -303,20 +312,22 @@ const CHECKBOX = m({
   0x28: ['atext', 'Label'],
   0x01: ['bool', 'Checked'], 0x02: ['bitmap', 'Image'], 0x36: ['bitmap', 'Overlay'],
   0x27: ['font', 'Font'], 0x3b: ['u32', ''], 0x3f: ['wtext', 'Label'],
+  0x17: ['byte', ''], 0x18: ['u32', ''],
   0x4c: ['byte', ''],
 });
 
 const LABEL = m({
   0x28: ['atext', 'Label'],
   0x3b: ['u32', ''], 0x3f: ['wtext', 'Label'], 0x36: ['bitmap', 'Overlay'],
-  0x39: ['i32', 'Lamp'], 0x01: ['color', 'BackgroundColour'], 0x02: ['bool', 'Transparent'],
+  0x39: ['lamp1', 'Lamp'], 0x01: ['color', 'BackgroundColour'], 0x02: ['bool', 'Transparent'],
   0x27: ['font', 'Font'],
-  0x38: ['u32', ''], 0x1c: ['u32', 'DefinedLampCount'],
+  0x38: ['subcount', ''], 0x1c: ['u32', 'DefinedLampCount'],
 });
 
 const BITMAP_TAGS: Record<number, [Role, string]> = {
   0x01: ['bool', 'Transparent'], 0x02: ['bitmap', 'Image'], 0x03: ['u32', 'StretchMode'],
-  0x08: ['u32', ''], 0x36: ['bitmap', 'Overlay'], 0x33: ['bool', ''], 0x05: ['u32', ''], 0x3b: ['u32', ''],
+  0x08: ['u32', ''], 0x36: ['bitmap', 'Overlay'], 0x33: ['bool', ''], 0x3b: ['u32', ''],
+  0x04: ['bool', 'CustomTransparent'], 0x05: ['color', 'TransparentColour'],
   0x06: ['byte', ''], 0x07: ['u32', ''],
 };
 const BITMAP_C = m(BITMAP_TAGS, undefined, m(BITMAP_TAGS));
@@ -374,7 +385,7 @@ const BASE_TAGS: Record<number, [Role, string]> = {
   0x37: ['u32', ''], 0x3b: ['u32', ''],
   0x48: ['u32', 'EffectId'], 0x49: ['i32', 'CoinNoteId'], 0x4a: ['u32', 'InhibitLamp'],
   0x38: ['subcount', 'SublampCount'], 0x39: ['subtable', 'SublampTable'],
-  0x3a: ['subtable', ''],
+  0x3a: ['slotmap', ''],
   0x27: ['font', 'Font'], 0x28: ['atext', ''], 0x3f: ['wtext', ''],
   0x36: ['bitmap', 'Overlay'],
 };
@@ -426,6 +437,7 @@ const EPOCHMATRIX = m({
   0x01: ['u32', 'Size'],
   0x03: ['color', 'OnColourHi'], 0x04: ['color', 'OffColour'], 0x05: ['color', 'BackgroundColour'],
   0x06: ['color', 'OnColourLo'], 0x07: ['color', 'OnColourMed'],
+  0x02: ['byte', ''],
   0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''],
 });
 
@@ -511,6 +523,7 @@ const PRISMLAMP = m({
   0x38: ['subcount', 'SublampCount'], 0x39: ['subtable', 'SublampTable'],
   0x06: ['u32', 'HorizontalSpacing'], 0x0b: ['u32', 'VerticalSpacing'], 0x09: ['u32', 'Tilt'],
   0x07: ['u32', 'Style'], 0x4c: ['u16', 'IsHorizontal'], 0x0a: ['bool', 'CenterLine'],
+  0x08: ['axis', ''],
 });
 
 const BFMALPHA = m({
@@ -530,6 +543,7 @@ const RGBLED = m({
   0x0b: ['color', 'AdjustedRedGreen'], 0x0c: ['color', 'AdjustedBlue'],
   0x0d: ['color', 'AdjustedRedBlue'], 0x0e: ['color', 'AdjustedRedGreen2'],
   0x0f: ['color', 'AdjustedRedGreenBlue'],
+  0x01: ['raw4', ''], 0x04: ['raw4', ''], 0x05: ['byte', ''],
   0x36: ['bitmap', 'Overlay'], 0x3b: ['u32', ''],
 });
 
@@ -540,19 +554,16 @@ const DISCREEL_TAGS: Record<number, [Role, string]> = {
   0x0a: ['u32', 'OuterH'], 0x0b: ['u32', 'OuterL'], 0x0c: ['u32', 'InnerH'],
   0x0d: ['u32', 'InnerL'], 0x11: ['u32', 'InnerLampSize'],
   0x96: ['u32', 'OptoTab'], 0x97: ['bool', 'LampsEnabled'], 0x98: ['u32', 'NumberOfLamps'],
-  0x99: ['u32', 'Bounce'], 0x38: ['subcount', 'SublampCount'],
-  0x39: ['subtable', 'SublampTable'], 0x07: ['i32', 'LampPositionsOffset'],
+  0x99: ['u32', 'Bounce'], 0x07: ['i32', 'LampPositionsOffset'],
   0x9a: ['bool', 'LampPositionsGapEnabled'], 0x9b: ['i32', 'LampPositionsGap'],
-  0x40: ['bool', 'Reversed'], 0x3c: ['bool', 'InvertedOpto'],
   0x0e: ['bitmap', 'Band'], 0x0f: ['bitmap', 'DiscOverlay'],
   0x10: ['bitmap', 'OuterMask1'], 0x54: ['bitmap', 'OuterMask2'],
   0x33: ['bitmap', 'InnerMask1'], 0x55: ['bitmap', 'InnerMask2'],
-  0x36: ['bitmap', 'Overlay'], 0x1c: ['u32', ''],
-  0x4c: ['byte', ''],
-  0x3b: ['u32', ''],
-  0x3e: ['bool', ''],
   0x12: ['bool', 'Reversed'],
 };
+for (const [lo, hi] of [[0x13, 0x32], [0x34, 0x53], [0x56, 0x95]]) {
+  for (let t = lo; t <= hi; t++) DISCREEL_TAGS[t] = ['u32', ''];
+}
 
 const DISCREEL_HEADER_TAGS: Record<number, [Role, string]> = {
   ...BASE_TAGS,
@@ -645,13 +656,15 @@ const MAPS: Record<number, TagMap> = {
   0x25: DOTLCD, 0x2b: LIGHTSOURCE, 0x2f: COINMASTERVIDEO,
 };
 
+export const TAG_MAPS: Readonly<Record<number, TagMap>> = MAPS;
+export const FIXED_WIDTHS: Readonly<Partial<Record<string, number>>> = FIXED;
+export const BASE_SECTION_TAGS: Readonly<Record<number, [string, string]>> = BASE_TAGS;
+
 export function hasTagMap(type: number): boolean {
   return type in MAPS;
 }
 
 const DELTAS: Record<number, [number, number]> = {
-  0x14: [7, 7],
-  0x22: [2, 2],
 };
 
 export interface ParsedComponent {
@@ -662,6 +675,9 @@ export interface ParsedComponent {
   defaults: Map<string, number>;
   texts: Map<string, string>;
   subs?: number[];
+  baseLampWrites?: BaseLampWrite[];
+  ownLampWrites?: OwnLampWrite[];
+  slotMappedLamps?: boolean;
   orientation?: number;
   raws?: Map<string, { off: number; len: number }>;
   value: Uint8Array;
@@ -728,9 +744,21 @@ function valueLength(d: Uint8Array, o: number, role: Role, sublampCount: number)
     case 'wtext': return o + 4 > d.length ? -1 : 4 + u32(d, o) * 2;
     case 'bitmap':
       return o + 6 > d.length || d[o] !== 0x42 || d[o + 1] !== 0x4d ? -1 : u32(d, o + 2);
-    case 'subtable': return sublampCount * 4;
+    case 'subtable': case 'slotmap': return sublampCount * 4;
+    case 'lamp1': return (sublampCount || 1) * 4;
     default: return -1;
   }
+}
+
+function baseEntry(tag: number, entry: [Role, string] | undefined): [Role, string] | undefined {
+  const base = BASE_TAGS[tag];
+  if (!base || tag === 0x4c || !entry) return entry ?? base;
+  const a = entry[0], b = base[0];
+  const text = (r: Role) => r === 'text' || r === 'atext' || r === 'wtext';
+  const lamps = (r: Role) => r === 'subtable' || r === 'lamp1';
+  const same = a === b || (FIXED[a] !== undefined && FIXED[a] === FIXED[b])
+    || (text(a) && text(b)) || (lamps(a) && lamps(b));
+  return same ? entry : base;
 }
 
 let tagObserver: ((type: number, tag: number, name: string, role: string) => void) | null = null;
@@ -765,6 +793,7 @@ function walkTags(
       return o + 1;
     }
     if (b === 0x00) {
+      inBase = false;
       if (allowSeparator && separators < 16) {
         const next = active.second ?? active;
         const nextTag = d[o + 1];
@@ -791,13 +820,15 @@ function walkTags(
       continue;
     }
 
-    const entry = active.tags[b];
+    const entry = inBase ? baseEntry(b, active.tags[b]) : active.tags[b];
+    if (b === 0x4c) inBase = false;
     if (!entry) {
       if (!c.stop) c.stop = { off: o, tag: b };
       return -1;
     }
     o += 1;
-    const [role, name] = entry;
+    const role = entry[0];
+    const name = inBase ? entry[1] : ownFieldName(c.type, b) ?? entry[1];
     if (tagObserver) tagObserver(c.type, b, name, role);
     const len = valueLength(d, o, role, sublampCount);
     if (len < 0 || o + len > d.length) {
@@ -805,8 +836,11 @@ function walkTags(
       return -1;
     }
 
+    if (inBase && isBaseLampWrite(b, role)) recordBaseLampWrite(c, d, o, b, role, sublampCount, name);
+    if (!inBase) recordOwnLampWrite(c, d, o, b, role);
     if (role === 'subcount') sublampCount = u32(d, o);
     if (role === 'axis' && c.orientation === undefined) c.orientation = d[o];
+    if (role === 'lamp1') c.values.set(name || `#${b.toString(16)}`, i32(d, o));
     if (role === 'subtable') {
       const subs: number[] = [];
       for (let i = 0; i < sublampCount; i++) subs.push(i32(d, o + i * 4));
@@ -859,6 +893,22 @@ function walkTags(
   return o;
 }
 
+export const STRING_TABLE_COUNTS = new Map([[0x43, 8], [0x44, 8], [0x45, 4]]);
+
+export function stringTableSpan(
+  payload: Uint8Array, offset: number, hostTagByte: number, count: number,
+): number {
+  let pos = offset;
+  for (let i = 1; i < count; i++) {
+    if (pos + 4 > payload.length) return pos - offset;
+    const len = u32(payload, pos);
+    if (len > hostTagByte) return pos - offset;
+    if (pos + 4 + len > payload.length) return pos - offset;
+    pos += 4 + len;
+  }
+  return pos - offset;
+}
+
 function componentStart(p: Uint8Array): number {
   let pos = 0;
   while (pos + 8 <= p.length) {
@@ -866,17 +916,137 @@ function componentStart(p: Uint8Array): number {
     const len = u32(p, pos + 4);
     if (tag === 0xffffffff) return pos + 8 + len;
     pos += 8 + len;
-    if (tag === 0x43 || tag === 0x44 || tag === 0x45) {
-      const key = tag & 0xff;
-      while (pos + 4 <= p.length) {
-        const sl = u32(p, pos);
-        if (sl > key) break;
-        if (sl === 0) { pos += 4; break; }
-        pos += 4 + sl;
-      }
-    }
+    const count = STRING_TABLE_COUNTS.get(tag);
+    if (count !== undefined) pos += stringTableSpan(p, pos, tag & 0xff, count);
   }
   return -1;
+}
+
+type BaseLampWrite =
+  | { to: 'table' | 'map'; slot: number; values: number[] }
+  | { to: 'count'; count: number }
+  | { to: 'name'; key: string };
+
+function isBaseLampWrite(tag: number, role: Role): boolean {
+  return (tag >= 0x1d && tag <= 0x26) || (tag >= 0x2c && tag <= 0x35)
+    || role === 'subcount' || role === 'subtable' || role === 'slotmap' || role === 'lamp1';
+}
+
+function recordBaseLampWrite(
+  c: ParsedComponent, d: Uint8Array, o: number, tag: number, role: Role, count: number, name: string,
+): void {
+  const log = (c.baseLampWrites ??= []);
+  if (role === 'slotmap' || (tag >= 0x1d && tag <= 0x26) || (tag >= 0x2c && tag <= 0x35)) c.slotMappedLamps = true;
+  const all = (): number[] => Array.from({ length: role === 'lamp1' ? (count || 1) : count }, (_, i) => i32(d, o + i * 4));
+  if (role === 'subcount') log.push({ to: 'count', count: u32(d, o) });
+  else if (role === 'subtable') log.push({ to: 'table', slot: 0, values: all() });
+  else if (role === 'slotmap') log.push({ to: 'map', slot: 0, values: all() });
+  else if (role === 'lamp1') {
+    log.push({ to: 'table', slot: 0, values: all() });
+    log.push({ to: 'name', key: name || `#${tag.toString(16)}` });
+  } else if (tag <= 0x21) log.push({ to: 'table', slot: tag - 0x1d, values: [i32(d, o)] });
+  else if (tag <= 0x26) log.push({ to: 'map', slot: tag - 0x22, values: [i32(d, o)] });
+  else if (tag <= 0x30) log.push({ to: 'table', slot: tag - 0x2c + 5, values: [i32(d, o)] });
+  else log.push({ to: 'map', slot: tag - 0x31 + 5, values: [i32(d, o)] });
+}
+
+type OwnLampWrite = { to: 'table' | 'map'; slot: number; value: number };
+
+function ownFieldName(type: number, tag: number): string | undefined {
+  return type === 0x05 && tag === 0x0a ? 'Inverted' : undefined;
+}
+
+function recordOwnLampWrite(c: ParsedComponent, d: Uint8Array, o: number, tag: number, role: Role): void {
+  if (role !== 'u32') return;
+  let to: OwnLampWrite['to'];
+  let slot: number;
+  if (c.type === 0x06) {
+    if (tag >= 0x13 && tag <= 0x32) { to = 'table'; slot = tag - 0x13; }
+    else if (tag >= 0x34 && tag <= 0x53) { to = 'map'; slot = tag - 0x34; }
+    else if (tag >= 0x56 && tag <= 0x75) { to = 'table'; slot = tag - 0x56 + 32; }
+    else if (tag >= 0x76 && tag <= 0x95) { to = 'map'; slot = tag - 0x76 + 32; }
+    else return;
+  } else if (c.type === 0x0e && tag >= 0x0c && tag <= 0x1b) {
+    to = 'table';
+    slot = tag - 0x0c;
+  } else {
+    return;
+  }
+  (c.ownLampWrites ??= []).push({ to, slot, value: i32(d, o) });
+  c.slotMappedLamps = true;
+}
+
+const LAMP_TABLE: Record<number, [capacity: number, unset: number]> = {
+  0x03: [0x0f, -2], 0x04: [0x0c, -2], 0x05: [2, -2], 0x06: [0x40, -2], 0x08: [0x3c, -2],
+  0x0a: [1, -2], 0x0e: [0x10, -2], 0x12: [1, -2], 0x1c: [0x30, -1], 0x26: [4, -2],
+  0x27: [4, -2], 0x29: [2, -2], 0x2d: [0x18, -2],
+};
+
+function applyBaseLampWrites(c: ParsedComponent): void {
+  const log = c.baseLampWrites ?? [];
+  const own = c.ownLampWrites;
+  delete c.baseLampWrites;
+  delete c.ownLampWrites;
+  if (!c.slotMappedLamps) return;
+  const reach = Math.max(1, ...log.map((w) => (w.to === 'table' || w.to === 'map' ? w.slot + w.values.length : 0)));
+  const [capacity, unset] = LAMP_TABLE[c.type] ?? [reach, -2];
+  const size = Math.max(capacity, reach);
+  const table = new Array<number>(size).fill(unset);
+  const map = new Array<number>(size).fill(-1);
+  let count = capacity;
+  let key: string | undefined;
+  for (const w of log) {
+    if (w.to === 'count') count = w.count;
+    else if (w.to === 'name') key = w.key;
+    else (w.to === 'table' ? table : map).splice(w.slot, w.values.length, ...w.values);
+  }
+  let result: number[];
+  if (c.type === 0x08 && count === 0x14) {
+    result = table.slice(0, 0x14);
+  } else if (count !== 0 && map[0] !== -1) {
+    result = new Array<number>(capacity).fill(-2);
+    for (let i = 0; i < count && i < size; i++) {
+      const to = map[i];
+      if (to >= 0 && to < capacity) result[to] = table[i];
+    }
+  } else {
+    result = table.slice(0, capacity);
+  }
+  c.subs = result;
+  const lamp = key ?? (c.type === 0x0a ? 'Lamp' : c.type === 0x12 ? '#39' : undefined);
+  if (lamp) c.values.set(lamp, result[0]);
+  if (c.type === 0x06) applyDiscLampWrites(c, result, map, own ?? [], capacity);
+  else if (c.type === 0x0e && own) applySevenSegLampWrites(c, result, own, capacity);
+}
+
+function applyDiscLampWrites(
+  c: ParsedComponent, table: number[], map: number[], own: OwnLampWrite[], capacity: number,
+): void {
+  for (const w of own) (w.to === 'table' ? table : map)[w.slot] = w.value;
+  const count = (c.values.get('NonNullSublampCount') ?? 0) | 0;
+  if (count === 0 || map[0] === -1) {
+    c.subs = table;
+    return;
+  }
+  const rebuilt = new Array<number>(capacity).fill(-2);
+  for (let i = 0; i < count && i < capacity; i++) {
+    const to = map[i];
+    if (to >= 0 && to < capacity) rebuilt[to] = table[i];
+  }
+  c.subs = rebuilt;
+}
+
+function applySevenSegLampWrites(
+  c: ParsedComponent, table: number[], own: OwnLampWrite[], capacity: number,
+): void {
+  let used = (c.values.get('DefinedLampCount') ?? 0) | 0;
+  for (const { slot, value } of own) {
+    if (table[slot] === -2 && value > -2) used = Math.min(used + 1, capacity);
+    else if (table[slot] > -2 && value === -2) used = Math.max(used - 1, 0);
+    table[slot] = value;
+  }
+  c.subs = table;
+  c.values.set('DefinedLampCount', used);
 }
 
 function widenBandReelSublamps(c: ParsedComponent): void {
@@ -931,6 +1101,7 @@ export function parseLayout(p: Uint8Array): ParsedComponent[] {
         const end = walkTags(value, ext, map, c, separated, true);
         if (end >= 0 && end !== value.length && !c.stop) c.stop = { off: end, tag: -1 };
         c.clean = end === value.length;
+        applyBaseLampWrites(c);
         if (type === 0x08) widenBandReelSublamps(c);
         if (type === 0x15) bfmLedSizeFromX(c);
         applyDefaults(c, map);

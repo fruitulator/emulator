@@ -1,11 +1,14 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import type { SlideEffect } from '../layout/fmlconfig';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
 import { locateProconnCoins, proconnCoinOf, proconnCoinTable, proconnRowPattern, type ProconnCoinCode } from './proconncoins';
 import { V20Reels } from './v20reels';
 import { Z80, type Z80Io } from '../cpu/z80';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Z80Ctc } from '../hw/z80ctc';
 import { Z80Pio } from '../hw/z80pio';
 import { Z80DaisyChain } from '../hw/z80daisy';
@@ -34,7 +37,6 @@ const REEL_COUNT = 5;
 export const PROCONN_REEL_ADJUST = 1;
 const REEL_SETTLE = 1000;
 const DATAPAK_TURNAROUND = 50_000;
-const METER_UNIT_PENCE = 10;
 const METER_TICK_INSTRUCTIONS = 50 * 20 * 2;
 
 const PC90_PATTERN = [6, 3, 12, 9];
@@ -154,7 +156,9 @@ class ProconnLcd {
 }
 
 export class Proconn implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['panel', 'panelBitmap', 'switches', 'card', 'sampleBankBlock', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'tokenOutAt'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'panel', 'panelBitmap', 'switches', 'card', 'sampleBankBlock', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'slideNames', 'triacOutRaw'];
 
   readonly digitKind: DigitKind = 'proconn';
   readonly clockHz = CLOCK;
@@ -223,6 +227,7 @@ export class Proconn implements Machine {
   highRamAccesses = 0;
 
   constructor(roms: readonly Uint8Array[], nvram?: Uint8Array) {
+    this.hoppers.forEach((h, n) => { h.onCoin = () => { if (this.booksMoney) this.coinBook.tube(Proconn.HOPPER_LINE[n]!); }; });
     let off = 0;
     for (const r of roms) {
       if (off >= ROM_TOP) break;
@@ -265,17 +270,71 @@ export class Proconn implements Machine {
 
   private readonly ledger = newCashLedger();
   private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly slotCoins = new SlotCoins();
-  private meterOutPence: number[] = [];
+  private slideNames: SlideEffect[] = [];
+  private triacOutRaw: number[] = [];
   get cashLedger(): CashLedger | undefined {
     return this.ledger;
   }
 
-  setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+  setMeterMoney(inMult: readonly number[], outMult: readonly number[], triacOut: readonly number[] = []): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
+    this.triacOutRaw = [...triacOut];
   }
+
+  setSlidePence(slides: readonly SlideEffect[]): void {
+    this.slideNames = [...slides];
+    this.coinBook.setSlides(this.slideNames);
+  }
+
+  private static readonly HOPPER_LINE = [8, 9];
+
+  private isPayoutTriac(i: number): boolean {
+    return this.slideNames[i] != null || (this.triacOutRaw[i] ?? 0) > 0;
+  }
+
+  private get payoutLineList(): number[] {
+    const tubes = Array.from({ length: 7 }, (_, i) => i).filter((i) => this.isPayoutTriac(i));
+    const hoppers = Proconn.HOPPER_LINE.filter((_, h) => this.hopperFitted(h + 1));
+    return [...tubes, ...hoppers];
+  }
+
+  get unpricedPayoutLines(): readonly number[] {
+    return this.payoutLineList.filter((l) => {
+      const p = l < 7 ? this.slideNames[l] : null;
+      return p == null || p === 'token' || p === 'unpriced';
+    });
+  }
+
+  get tokenPayoutLines(): readonly number[] {
+    return this.slideNames.flatMap((s, i) => (s === 'token' && i < 7 ? [i] : []));
+  }
+
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.coinBook.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return this.payoutLineList.map((line) => {
+      if (line >= 8) return { line, kind: 'hopper' as const, displayNumber: line - 7, defaultPence: null };
+      const p = this.slideNames[line];
+      return {
+        line,
+        kind: p === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof p === 'number' ? p : null,
+      };
+    });
+  }
+
+  get meterOnlyPayout(): boolean {
+    return this.payoutDevices.length === 0 && this.meterOutRaw.some((x) => x > 0);
+  }
+
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
 
   setDips(d1: number): void { this.dip1 = d1 & 0xff; }
 
@@ -567,7 +626,12 @@ export class Proconn implements Machine {
       case 3:
         if (chA & 0x7f) {
           const t = a & 0x7f;
-          for (let i = 0; i < 7; i++) if ((t & ~this.triacs) & (1 << i)) this.triacPulses[i]++;
+          triacSenseRelease(this, t & ~this.triacs);
+          for (let i = 0; i < 7; i++) {
+            if (!((t & ~this.triacs) & (1 << i))) continue;
+            this.triacPulses[i]++;
+            if (this.isPayoutTriac(i)) { if (this.booksMoney) this.coinBook.tube(i); } else this.coinBook.unnamed(i);
+          }
           this.triacs = t;
         }
         for (let i = 0; i < 8; i++) this.lamps[0x80 + i] = (a >> i) & 1 ? 0xff : 0;
@@ -603,41 +667,8 @@ export class Proconn implements Machine {
     this.meters[i]++;
     this.gridTotals.in += this.meterInRaw[i] ?? 0;
     this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-    const t = this.tokenOutPulses > 0 ? this.coinCode()?.tokenOut : null;
-    if (t && i === t.meter) {
-      const acc = this.ram[t.acc & (RAM_SIZE - 1)]! | (this.ram[(t.acc + 1) & (RAM_SIZE - 1)]! << 8);
-      this.tokenOutPulses = Math.min(this.tokenOutPulses, acc + 1);
-    }
-    if (t && i === t.meter && this.tokenOutPulses > 0) {
-      this.tokenOutPulses--;
-      if (++this.tokenOutPart >= t.counts) {
-        this.tokenOutPart = 0;
-        const pence = this.coinCode()!.pence ? t.value : t.value * METER_UNIT_PENCE;
-        if (this.booksMoney) {
-          if (pence > 0) this.ledger.tokenOutPence += pence;
-          else this.ledger.unpricedTokenOut++;
-        }
-      }
-      return;
-    }
-    const q = this.meterOutPence[i] ?? 0;
-    if (this.booksMoney && q) this.coinBook.cashOut(q);
-  }
-
-  private tokenOutPulses = 0;
-  private tokenOutPart = 0;
-  private tokenOutAt: number | null = null;
-  private lastPc = -1;
-
-  private tokenOutStep(pc: number): void {
-    const at = this.tokenOutAt ??= this.coinCode()?.tokenOut?.at ?? -1;
-    if (at >= 0 && this.lastPc === at && pc === at + 3) {
-      const code = this.coinCode()!;
-      const t = code.tokenOut!;
-      const r = this.ram[code.route & (RAM_SIZE - 1)]!;
-      if ((r & 0x70) === 0x40 && (r & 0x0f) === t.code) this.tokenOutPulses += t.counts;
-    }
-    this.lastPc = pc;
+    countOutClick(this.outClicks, i, this.meterOutRaw[i]);
+    if (this.booksMoney && (this.meterOutRaw[i] ?? 0) > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
   }
 
   private ayWrite(v: number): void {
@@ -708,7 +739,6 @@ export class Proconn implements Machine {
       }
     }
     this.coinSequencer(c);
-    this.tokenOutStep(this.cpu.pc);
     if (this.judging) this.judgeCoinStep(c);
     this.coinBook.elapse(c);
     if (this.coinTimer > 0) {
@@ -946,7 +976,19 @@ export class Proconn implements Machine {
     const code = this.coinCode();
     if (!code) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; this.creditCode = -1; return; }
     const pc = this.cpu.pc;
-    if (!code.credit) {
+    if (code.counted) {
+      if (pc === code.counted.at) {
+        const hl = this.cpu.hl;
+        const credited = hl - code.counted.bank >= 0 && hl - code.counted.bank < 8;
+        const base = credited ? code.counted.bank : code.counted.other;
+        const k = base >= 0 && hl - base >= 0 && hl - base < 8 ? this.pendingFor(hl - base) : -1;
+        if (k >= 0) {
+          if (credited) this.bookTaken(this.judgeId[k]!);
+          this.judgeId[k] = -1;
+          this.judgeWait[k] = 0;
+        }
+      }
+    } else if (!code.credit) {
       const c = code.coins.find((x) => x.creditAt === pc);
       const k = c ? this.pendingFor(c.code) : -1;
       if (k >= 0) {
@@ -996,7 +1038,7 @@ export class Proconn implements Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookTaken(id: number): void {
@@ -1016,11 +1058,7 @@ export class Proconn implements Machine {
       return;
     }
     if (taken) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || taken.token === null || c.token === taken.token);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     this.bookCoin(c);
   }

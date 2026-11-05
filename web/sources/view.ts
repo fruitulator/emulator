@@ -1,3 +1,4 @@
+import { isSearchChord } from '../shortcuts';
 import { enhanceSelect, type Dropdown } from '../ui/dropdown';
 import { chip, searchBar, sectionHeading, tileCard, tileGrid } from '../ui/list';
 import { showToast } from '../ui/toast';
@@ -96,7 +97,7 @@ export class SourceView {
       this.closeSearch();
     });
     document.addEventListener('keydown', (ev) => {
-      if (ev.key.toLowerCase() !== 'k' || ev.altKey || ev.shiftKey || ev.isComposing || !(ev.metaKey || ev.ctrlKey)) return;
+      if (!isSearchChord(ev)) return;
       if (this.searchBtn.hidden || !this.root.isConnected || this.root.offsetParent === null) return;
       ev.preventDefault();
       this.toggleSearch();

@@ -17,6 +17,7 @@ export interface CoinLine {
 export interface CoinLineTable {
   lines: CoinLine[];
   pricePerCredit: number | null;
+  coinMeterBits?: number[];
   source: string;
 }
 
@@ -74,6 +75,17 @@ function priceCandidates(table: CoinLineTable): number[] {
   return [...out];
 }
 
+export function oneCopyEnd(rom: Uint8Array): number {
+  let loaded = rom.length;
+  const pad = rom[loaded - 1];
+  while (loaded > 0 && rom[loaded - 1] === pad) loaded--;
+  next: for (let period = 0x800; period < loaded; period *= 2) {
+    for (let i = period; i < loaded; i++) if (rom[i] !== rom[i - period]) continue next;
+    return period;
+  }
+  return rom.length;
+}
+
 export const TOKEN_PENCE: readonly number[] = [5, 10, 20, 25, 50, 100];
 
 export const isLive = (l: CoinLine): boolean => l.credits > 0 || l.change.length > 0 || (!!l.token && l.tokenPence !== undefined);
@@ -97,7 +109,7 @@ export function detectCoins(table: CoinLineTable): Map<number, SlotCoin> | Refus
   };
   if (!cash.length) return withTokens(new Map(), table.pricePerCredit, new Map());
   const ids = tubeIds(table);
-  const found = new Map<string, Map<number, SlotCoin>>();
+  const found = new Map<string, { coins: Map<number, SlotCoin>; price: number }>();
   for (const p of priceCandidates(table)) {
     for (const tubes of tubeAssignments(ids)) {
       const coins = new Map<number, number>();
@@ -109,20 +121,24 @@ export function detectCoins(table: CoinLineTable): Map<number, SlotCoin> | Refus
       }
       if (!ok) continue;
       const all = withTokens(coins, p, tubes);
-      found.set(JSON.stringify([...all]), all);
+      found.set(JSON.stringify([...all]), { coins: all, price: p });
     }
   }
   if (found.size === 0) return { refused: 'no single price per credit makes every line a coin' };
   if (found.size > 1) {
+    const all = [...found.values()];
+    const whole = all.filter((f) => f.price >= 1 - EPS);
+    const pool = whole.length ? whole : all;
+    if (pool.length === 1) return pool[0]!.coins;
     const credited = new Set(tokens.filter((l) => l.tokenPence === undefined).map((l) => l.line));
-    const fits = [...found.values()].filter((m) => credited.size > 0 && [...credited].every((line) => {
-      const c = m.get(line);
+    const fits = pool.filter((f) => credited.size > 0 && [...credited].every((line) => {
+      const c = f.coins.get(line);
       return typeof c === 'object' && c.token !== null && TOKEN_PENCE.includes(c.token);
     }));
-    if (fits.length === 1) return fits[0]!;
-    return { refused: `${found.size} prices per credit fit the table equally` };
+    if (fits.length === 1) return fits[0]!.coins;
+    return { refused: `${pool.length} prices per credit fit the table equally` };
   }
-  return [...found.values()][0]!;
+  return [...found.values()][0]!.coins;
 }
 
 export function detectPrices(table: CoinLineTable): Map<number, number> | Refusal {
@@ -325,7 +341,7 @@ export class MeterStepCalibrator {
   state: StepState = 'waiting';
   step: number | null = null;
 
-  constructor(private readonly quiet: number, private readonly firstWait: number, private readonly s: CalibratorState = calibratorState()) {
+  constructor(protected readonly quiet: number, protected readonly firstWait: number, protected readonly s: CalibratorState = calibratorState()) {
     this.state = s.state;
     this.step = s.step;
   }
@@ -362,6 +378,33 @@ export class MeterStepCalibrator {
   get taken(): readonly StepSample[] { return this.s.samples; }
 }
 
+export class PairedMeterCheck extends MeterStepCalibrator {
+  constructor(private readonly unit: number, quiet: number, firstWait: number, s?: CalibratorState) {
+    super(quiet, firstWait, s);
+  }
+
+  override tick(at: number): StepWindow | null {
+    const w = this.s.win;
+    if (!w.open) return null;
+    if (at - w.last < (w.counts > 0 ? this.quiet : this.firstWait)) return null;
+    const closed = { coins: w.coins, counts: w.counts };
+    w.open = false; w.coins = []; w.counts = 0;
+    if (this.state === 'disagrees') return closed;
+    const total = this.s.samples[0] ?? (this.s.samples[0] = { pence: 0, counts: 0 });
+    const pence = closed.coins.reduce<number>((sum, c) => sum + (typeof c === 'number' ? c : 0), 0);
+    if (closed.counts > 0) {
+      total.pence += pence;
+      total.counts += closed.counts;
+      const behind = total.pence - total.counts * this.unit;
+      if (Math.abs(behind) > this.unit + EPS) { this.state = 'disagrees'; this.step = null; } else { this.state = 'calibrated'; this.step = this.unit; }
+      this.s.state = this.state; this.s.step = this.step;
+    } else if (total.pence + pence - total.counts * this.unit <= this.unit + EPS) {
+      total.pence += pence;
+    }
+    return closed;
+  }
+}
+
 export interface CalibratorState {
   samples: StepSample[];
   win: { open: boolean; coins: WatchedCoin[]; counts: number; last: number };
@@ -388,8 +431,14 @@ export interface LineMeasurement {
   inCounts: number;
   outCounts: number;
   meters: number[];
+  secs?: number[];
+  triacs?: number[];
+  chutes?: Record<string, number>;
   refused: boolean;
   seconds: number;
+  repeat?: { drops: number; meters: number[]; secs?: number[]; triacs?: number[] };
+  credit?: boolean;
+  acceptorPence?: number;
   closed: 'quiet' | 'nothing' | 'cap';
 }
 

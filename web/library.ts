@@ -18,7 +18,7 @@ import { orbitLogoOnce } from './ui/logoentrance';
 import { showToast, type ToastKind } from './ui/toast';
 
 export { closeSheet };
-import { APPLE, primaryModifier } from './shortcuts';
+import { chordText, isSearchChord } from './shortcuts';
 import { str } from './i18n';
 import { textField } from './ui/field';
 
@@ -546,9 +546,9 @@ export function wireLibraryControls(h: LibraryHandlers): void {
   const sortSel = document.getElementById('lib-sort') as HTMLSelectElement;
   const lst = grid(h);
 
-  document.getElementById('search-kbd')!.textContent = APPLE ? str('library.k') : str('library.ctrl_k');
-  searchBtn.title = str('library.search_your_games_n', { 0: APPLE ? '⌘K' : 'Ctrl+K' });
-  searchBtn.setAttribute('aria-keyshortcuts', APPLE ? 'Meta+K' : 'Control+K');
+  document.getElementById('search-kbd')!.textContent = chordText(['alt'], 'K');
+  searchBtn.title = str('library.search_your_games_n', { 0: chordText(['alt'], 'K') });
+  searchBtn.setAttribute('aria-keyshortcuts', 'Alt+K');
 
   let returnFocus: HTMLElement | null = null;
   const openSearch = (): void => {
@@ -656,8 +656,7 @@ function gridInFront(): boolean {
 }
 
 function searchChord(ev: KeyboardEvent): boolean {
-  if (ev.key.toLowerCase() !== 'k' || ev.altKey || ev.shiftKey || ev.isComposing) return false;
-  if (!primaryModifier(ev)) return false;
+  if (!isSearchChord(ev)) return false;
   if (!gridInFront()) return false;
   const t = ev.target;
   if (t instanceof HTMLInputElement && t.id !== 'lib-search') return false;

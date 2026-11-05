@@ -3,6 +3,7 @@
   position: fixed;
   inset: 0;
   background: rgba(6, 4, 14, 0.5);
+  transition: background-color 150ms ease;
   z-index: 21;
 }
 #schemBackdrop.clear {
@@ -19,11 +20,10 @@
   max-width: 100vw;
   box-sizing: border-box;
   padding: 26px 28px;
-  border-radius: 28px 0 0 28px;
   display: flex;
   flex-direction: column;
   gap: 22px;
-  overflow: hidden;
+  overflow: visible;
   color: var(--nb-text);
   font-family: var(--nb-font-body);
   transform: translateX(calc(100% + 40px));
@@ -33,9 +33,72 @@
 #schemPanel.open {
   transform: translateX(0);
 }
-@media (max-width: 1099px) {
+#schemPanel.schem-width-anim {
+  transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 200ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  #schemPanel.schem-width-anim {
+    transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@media (max-width: 599px) {
   #schemPanel {
     width: 100vw;
+  }
+}
+
+#schemPanel .edge-resize {
+  position: absolute;
+  left: -8px;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 4;
+  outline: none;
+}
+#schemPanel .edge-resize::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 3px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+  transition: background-color 120ms ease;
+}
+#schemPanel .edge-resize::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  border-radius: 28px 0 0 28px;
+  --edge-line: color-mix(in srgb, var(--nb-accent) 70%, transparent);
+  box-shadow: inset 2px 0 0 var(--edge-line), inset 2px 0 8px var(--edge-line);
+  mask-image: linear-gradient(to right, #000 12px, transparent 24px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+#schemPanel .edge-resize:hover::before,
+#schemPanel .edge-resize.dragging::before,
+#schemPanel .edge-resize:focus-visible::before {
+  background: rgba(255, 255, 255, 0.5);
+}
+#schemPanel .edge-resize:hover::after,
+#schemPanel .edge-resize.dragging::after,
+#schemPanel .edge-resize:focus-visible::after {
+  opacity: 1;
+}
+@media (max-width: 599px) {
+  #schemPanel .edge-resize {
+    display: none;
   }
 }
 
@@ -134,6 +197,7 @@
   min-height: 0;
   display: flex;
   gap: 24px;
+  overflow: hidden;
 }
 #schemPanel .schem-rail {
   flex: none;
@@ -310,18 +374,19 @@
 #schemPanel .schem-scroll {
   position: relative;
   overflow: hidden;
-  flex: 1 1 auto;
-  min-height: 220px;
+  flex: none;
+  -webkit-user-select: none;
+  user-select: none;
   touch-action: pan-y;
   border-radius: 20px;
-  background-color: #0b1838;
-  box-shadow: inset 0 0 0 1px rgba(150, 190, 255, 0.25), 0 20px 40px -20px rgba(0, 0, 0, 0.8);
+  background-color: var(--bp-paper);
+  box-shadow: var(--bp-edge), 0 20px 40px -20px rgba(0, 0, 0, 0.8);
 }
 #schemPanel .schem-scroll[data-grab="1"] { touch-action: none; cursor: grab; }
 #schemPanel .schem-scroll.schem-grabbing { cursor: grabbing; }
 #schemPanel .schem-scroll:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 1.5px var(--nb-violet-hi), 0 20px 40px -20px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 0 0 1.5px var(--nb-violet-hi), inset 0 0 80px rgba(0, 0, 0, 0.45), 0 20px 40px -20px rgba(0, 0, 0, 0.8);
 }
 #schemPanel .schem-none {
   flex: 1 1 auto;
@@ -334,8 +399,8 @@
   text-align: center;
   padding: 24px 28px;
   border-radius: 20px;
-  background: #0b1838;
-  box-shadow: inset 0 0 0 1px rgba(150, 190, 255, 0.25), 0 20px 40px -20px rgba(0, 0, 0, 0.8);
+  background: var(--bp-sheet);
+  box-shadow: var(--bp-edge), 0 20px 40px -20px rgba(0, 0, 0, 0.8);
 }
 #schemPanel .schem-none h3 {
   margin: 0;
@@ -752,7 +817,57 @@
   border-top: 0;
 }
 
-@media (max-width: 720px) {
+#schemPanel.schem-compact .schem-title {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+#schemPanel.schem-compact6 .schem-title {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+#schemPanel.schem-compact .schem-id {
+  grid-column: 1 / -1;
+}
+
+#schemPanel.schem-narrow .schem-main {
+  gap: 14px;
+}
+#schemPanel.schem-narrow .schem-rail {
+  width: 48px;
+}
+#schemPanel.schem-narrow .schem-tab {
+  justify-content: center;
+  padding: 12px 0;
+}
+#schemPanel.schem-narrow .schem-tab span {
+  display: none;
+}
+#schemPanel.schem-narrow .schem-action span {
+  display: none;
+}
+#schemPanel.schem-narrow .schem-action {
+  width: 36px;
+  padding: 0;
+}
+#schemPanel.schem-narrow .dip.nb-group {
+  grid-template-columns: minmax(0, 1fr);
+}
+#schemPanel.schem-narrow .schem-legend {
+  margin-left: 0;
+}
+#schemPanel.schem-narrow .log-row {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0 10px;
+  padding: 3px 16px;
+}
+#schemPanel.schem-narrow .log-t {
+  text-align: left;
+}
+#schemPanel.schem-narrow .log-text {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 599px) {
   #schemPanel .schem-main {
     flex-direction: column;
     gap: 18px;

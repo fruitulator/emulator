@@ -294,7 +294,7 @@ if(v & 0x80)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
 if((v & 0xc0) == 0x40 || (v & 0xc0) == 0x80)
 	cpu.ccr = (cpu.ccr | (F_V)) & 0xff;
-v <<= 1;
+v = u8(v << (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -309,7 +309,7 @@ if(v & 0x8000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
 if((v & 0xc000) == 0x4000 || (v & 0xc000) == 0x8000)
 	cpu.ccr = (cpu.ccr | (F_V)) & 0xff;
-v <<= 1;
+v = u16(v << (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -322,9 +322,9 @@ export function doShal32(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-if((v & 0xc0000000) == 0x40000000 || (v & 0xc0000000) == 0x80000000)
+if((v & 0xc0000000) == 0x40000000 || ((v & 0xc0000000) >>> 0) == 0x80000000)
 	cpu.ccr = (cpu.ccr | (F_V)) & 0xff;
-v <<= 1;
+v = u32(v << (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -337,11 +337,11 @@ export function doShar8(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 1)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 1;
+v = u8(v >> (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(v & 0x40) {
-	v |= 0x80;
+	v = u8(v | (0x80));
 	cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
 }
 return u8(v);
@@ -352,11 +352,11 @@ export function doShar16(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 1)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 1;
+v = u16(v >> (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(v & 0x4000) {
-	v |= 0x8000;
+	v = u16(v | (0x8000));
 	cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
 }
 return u16(v);
@@ -367,11 +367,11 @@ export function doShar32(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 1)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>>= 1;
+v = u32(v >>> (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(v & 0x40000000) {
-	v |= 0x80000000;
+	v = u32(v | (0x80000000));
 	cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
 }
 return u32(v);
@@ -382,7 +382,7 @@ export function doShll8(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v <<= 1;
+v = u8(v << (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -395,7 +395,7 @@ export function doShll16(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x8000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v <<= 1;
+v = u16(v << (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -408,7 +408,7 @@ export function doShll32(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v <<= 1;
+v = u32(v << (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -421,7 +421,7 @@ export function doShlr8(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 1)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 1;
+v = u8(v >> (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 return u8(v);
@@ -432,7 +432,7 @@ export function doShlr16(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 1)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 1;
+v = u16(v >> (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 return u16(v);
@@ -443,7 +443,7 @@ export function doShlr32(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 1)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>>= 1;
+v = u32(v >>> (1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 return u32(v);
@@ -457,7 +457,7 @@ if(v & 0x40)
 if((v & 0xc0) == 0x40 || (v & 0xc0) == 0x80 ||
 	(v & 0x60) == 0x20 || (v & 0x60) == 0x40)
 	cpu.ccr = (cpu.ccr | (F_V)) & 0xff;
-v <<= 2;
+v = u8(v << (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -473,7 +473,7 @@ if(v & 0x4000)
 if((v & 0xc000) == 0x4000 || (v & 0xc000) == 0x8000 ||
 	(v & 0x6000) == 0x2000 || (v & 0x6000) == 0x4000)
 	cpu.ccr = (cpu.ccr | (F_V)) & 0xff;
-v <<= 2;
+v = u16(v << (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -486,10 +486,10 @@ export function doShal232(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-if((v & 0xc0000000) == 0x40000000 || (v & 0xc0000000) == 0x80000000 ||
+if((v & 0xc0000000) == 0x40000000 || ((v & 0xc0000000) >>> 0) == 0x80000000 ||
 	(v & 0x60000000) == 0x20000000 || (v & 0x60000000) == 0x40000000)
 	cpu.ccr = (cpu.ccr | (F_V)) & 0xff;
-v <<= 2;
+v = u32(v << (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -502,11 +502,11 @@ export function doShar28(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 2)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 2;
+v = u8(v >> (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(v & 0x20) {
-	v |= 0xc0;
+	v = u8(v | (0xc0));
 	cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
 }
 return u8(v);
@@ -517,11 +517,11 @@ export function doShar216(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 2)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 2;
+v = u16(v >> (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(v & 0x2000) {
-	v |= 0xc000;
+	v = u16(v | (0xc000));
 	cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
 }
 return u16(v);
@@ -532,11 +532,11 @@ export function doShar232(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 2)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>>= 2;
+v = u32(v >>> (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(v & 0x20000000) {
-	v |= 0xc0000000;
+	v = u32(v | (0xc0000000));
 	cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
 }
 return u32(v);
@@ -547,7 +547,7 @@ export function doShll28(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v <<= 2;
+v = u8(v << (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -560,7 +560,7 @@ export function doShll216(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x4000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v <<= 2;
+v = u16(v << (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -573,7 +573,7 @@ export function doShll232(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v <<= 2;
+v = u32(v << (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -586,7 +586,7 @@ export function doShlr28(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 2)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 2;
+v = u8(v >> (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 return u8(v);
@@ -597,7 +597,7 @@ export function doShlr216(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 2)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>= 2;
+v = u16(v >> (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 return u16(v);
@@ -608,7 +608,7 @@ export function doShlr232(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 2)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v >>>= 2;
+v = u32(v >>> (2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 return u32(v);
@@ -619,7 +619,7 @@ export function doRotl8(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 1) | (v >> 7);
+v = u8((v << 1) | (v >> 7));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -632,7 +632,7 @@ export function doRotl16(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x8000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 1) | (v >> 15);
+v = u16((v << 1) | (v >> 15));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -645,7 +645,7 @@ export function doRotl32(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 1) | (v >>> 31);
+v = u32((v << 1) | (v >>> 31));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -658,7 +658,7 @@ export function doRotr8(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x01)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 7) | (v >> 1);
+v = u8((v << 7) | (v >> 1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -671,7 +671,7 @@ export function doRotr16(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x0001)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 15) | (v >> 1);
+v = u16((v << 15) | (v >> 1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -684,7 +684,7 @@ export function doRotr32(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x00000001)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 31) | (v >>> 1);
+v = u32((v << 31) | (v >>> 1));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -698,7 +698,7 @@ let c = u8(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 1) | c;
+v = u8((v << 1) | c);
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -712,7 +712,7 @@ let c = u16(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x8000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 1) | c;
+v = u16((v << 1) | c);
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -726,7 +726,7 @@ let c = u32(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x80000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 1) | c;
+v = u32((v << 1) | c);
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -740,7 +740,7 @@ let c = u8(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x01)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v >> 1) | (c << 7);
+v = u8((v >> 1) | (c << 7));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -754,7 +754,7 @@ let c = u8(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x0001)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v >> 1) | (c << 15);
+v = u16((v >> 1) | (c << 15));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -768,7 +768,7 @@ let c = u8(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x00000001)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v >>> 1) | (c << 31);
+v = u32((v >>> 1) | (c << 31));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -781,7 +781,7 @@ export function doRotl28(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 2) | (v >> 6);
+v = u8((v << 2) | (v >> 6));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -794,7 +794,7 @@ export function doRotl216(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x4000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 2) | (v >> 14);
+v = u16((v << 2) | (v >> 14));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -807,7 +807,7 @@ export function doRotl232(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 2) | (v >>> 30);
+v = u32((v << 2) | (v >>> 30));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -820,7 +820,7 @@ export function doRotr28(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x02)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 6) | (v >> 2);
+v = u8((v << 6) | (v >> 2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -833,7 +833,7 @@ export function doRotr216(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x0002)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 14) | (v >> 2);
+v = u16((v << 14) | (v >> 2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -846,7 +846,7 @@ export function doRotr232(cpu: H8, v: number): number {
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x00000002)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 30) | (v >>> 2);
+v = u32((v << 30) | (v >>> 2));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -860,7 +860,7 @@ let c = u8(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 2) | (c << 1) | (v >> 7);
+v = u8((v << 2) | (c << 1) | (v >> 7));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -874,7 +874,7 @@ let c = u16(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x4000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 2) | (c << 1) | (v >> 15);
+v = u16((v << 2) | (c << 1) | (v >> 15));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -888,7 +888,7 @@ let c = u32(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x40000000)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v << 2) | (c << 1) | (v >>> 31);
+v = u32((v << 2) | (c << 1) | (v >>> 31));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -902,7 +902,7 @@ let c = u8(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x02)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v >> 2) | (c << 6) | (v << 7);
+v = u8((v >> 2) | (c << 6) | (v << 7));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s8(v) < 0)
@@ -916,7 +916,7 @@ let c = u16(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x0002)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v >> 2) | (c << 14) | (v << 15);
+v = u16((v >> 2) | (c << 14) | (v << 15));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s16(v) < 0)
@@ -930,7 +930,7 @@ let c = u32(cpu.ccr & F_C ? 1 : 0);
 cpu.ccr = (cpu.ccr & (~(F_N|F_V|F_Z|F_C))) & 0xff;
 if(v & 0x00000002)
 	cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
-v = (v >>> 2) | (c << 30) | (v << 31);
+v = u32((v >>> 2) | (c << 30) | (v << 31));
 if(!v)
 	cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;
 else if(s32(v) < 0)
@@ -2414,7 +2414,7 @@ function op_divxu_w_r16h_r32l(cpu: H8): void {
   cpu.tmp1 = (cpu.r32r(cpu.ir[0])) >>> 0;
   cpu.tmp2 = (cpu.r16r(cpu.ir[0] >> 4)) >>> 0;
   cpu.ccr = (cpu.ccr & (~(F_Z|F_N))) & 0xff;
-  if(cpu.tmp2 & 0x80)
+  if(cpu.tmp2 & 0x8000)
     cpu.ccr = (cpu.ccr | (F_N)) & 0xff;
   if(!cpu.tmp2) {
     cpu.ccr = (cpu.ccr | (F_Z)) & 0xff;

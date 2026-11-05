@@ -4,7 +4,7 @@ import { surfaceMaterial } from './roomtextures';
 import viewHarbour from './views/harbour.jpg?url';
 import viewSquare from './views/square.jpg?url';
 import viewOldtown from './views/oldtown.jpg?url';
-import { copyLook, HOUSE_LOOK, type RoomLook } from './roomlook';
+import { copyLook, HOUSE_LOOK, isHardFloor, type RoomLook } from './roomlook';
 import { VIEW_EYE_DEFAULT, viewParallax } from './windowview';
 import { str } from '../web/i18n';
 
@@ -86,8 +86,17 @@ const WASH_CANDELA = 9;
 const WASH_ANGLE = 0.8;
 
 const CARPET_GLOW = 0.35;
+const HARD_FLOOR_GLOW = 0.1;
 
 const CARPET_TILE_M = 2.0;
+
+const REALISM_LEAN_X = -0.12;
+const REALISM_LEAN_Z = -0.24;
+const SHADOW_PX = 2048;
+const SHADOW_TOP_M = 2.3;
+const HALO_WALL_M = 0.9;
+const HALO_CEILING_M = 0.7;
+const HALO_LEVEL = 0.2;
 
 const NEON = ['#ff2fb0', '#23c8ff', '#ffe03a'];
 
@@ -322,6 +331,8 @@ export interface Dressing {
   door: { box: THREE.Box3; stand: { x: number; z: number } };
   tick(t: number, eye?: THREE.Vector3): void;
   motion: boolean;
+  floor: THREE.Mesh;
+  setRealism(o: { shadow: boolean; halos: boolean; picture?: boolean }): void;
   dim(k: number): void;
 }
 
@@ -346,7 +357,7 @@ export function dimMaterials(root: THREE.Object3D, k: number): void {
   });
 }
 
-interface Tube { mat: THREE.MeshBasicMaterial; len: number; base: THREE.Color; chase: THREE.Texture | null; mesh: THREE.Mesh }
+interface Tube { mat: THREE.MeshBasicMaterial; len: number; base: THREE.Color; chase: THREE.Texture | null; mesh: THREE.Mesh; halo: THREE.MeshBasicMaterial | null; haloMesh: THREE.Object3D | null }
 
 const CHASE_M = 0.45;
 const CHASE_MPS = 0.9;
@@ -583,7 +594,7 @@ void main() {`)
       }`);
   };
   const laid = (l: RoomLook): THREE.Material => (l.carpet === 'neon' ? carpetMat
-    : surfaceMaterial(l.carpet, W, D, renderer, l.carpetColour, 0, CARPET_GLOW));
+    : surfaceMaterial(l.carpet, W, D, renderer, l.carpetColour, 0, isHardFloor(l.carpet) ? HARD_FLOOR_GLOW : CARPET_GLOW));
   const carpet = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(-Math.PI / 2), laid(look));
   carpet.position.set(cx, 0, cz);
   group.add(carpet);
@@ -718,7 +729,7 @@ void main() {`)
     m.rotation.y = rotY;
     group.add(m);
     m.visible = look.neonOn;
-    tubes.push({ mat, len, base: new THREE.Color(col), chase: null, mesh: m });
+    tubes.push({ mat, len, base: new THREE.Color(col), chase: null, mesh: m, halo: null, haloMesh: null });
   };
   tube(W - 0.4, look.neon[0], cx, minZ + 0.04, 0);
   tube(W - 0.4, look.neon[1], cx, maxZ - 0.04, 0);
@@ -735,8 +746,10 @@ void main() {`)
   };
   setChase(look.neonMotion === 'chase' || look.neonMotion === 'chase-back');
 
+  let relief: THREE.DirectionalLight | null = null;
   if (sw.pools) {
     const down = new THREE.DirectionalLight(WASH_COLOUR, RELIEF_INTENSITY);
+    relief = down;
     down.position.set(cx + 0.01, CEILING + 6, cz + 0.02);
     down.target.position.set(cx, 0, cz);
     group.add(down, down.target);
@@ -749,6 +762,7 @@ void main() {`)
   key.target.position.set(cx, 0, cz);
   group.add(key, key.target);
 
+  let halosOn = false;
   let now = copyLook(look);
   const restyle = (next: RoomLook): void => {
     const wallPieces = (pieces: typeof lowers, kind: RoomLook['lower'] | RoomLook['upper'], was: string, tint: string, h: number): void => {
@@ -767,6 +781,7 @@ void main() {`)
     doorway.leafMat.color.set(next.rail);
     doorway.leafMat.emissive.set(next.rail);
     tubes.forEach((t, i) => { t.base.set(next.neon[i]); t.mat.color.copy(t.base); t.mesh.visible = next.neonOn; });
+    if (halosOn) showHalos();
     if (next.window !== now.window) viewOn(next.window);
     setChase(next.neonMotion === 'chase' || next.neonMotion === 'chase-back');
     if (next.carpet === 'neon' && (next.carpetGround !== now.carpetGround || next.carpetInks.join() !== now.carpetInks.join())) {
@@ -809,18 +824,128 @@ void main() {`)
           tb.mat.color.setHSL((hsl.h + ts / CYCLE_S) % 1, hsl.s, hsl.l).multiplyScalar(dimK);
         }
       });
+      if (halosOn) showHalos();
     },
     dim(k: number): void {
       dimK = k;
       for (const l of lightsBase) l.light.intensity = l.base * k;
       dimMaterials(group, k);
       for (const tb of tubes) tb.mat.color.copy(tb.base).multiplyScalar(k);
+      if (halosOn) showHalos();
     },
+    setRealism,
+    floor: carpet,
   };
   const lightsBase: { light: THREE.Light; base: number }[] = [];
   group.traverse((o) => { const l = o as THREE.Light; if (l.isLight) lightsBase.push({ light: l, base: l.intensity }); });
   let dimK = 1;
   return dressing;
+
+  function showHalos(): void {
+    for (const t of tubes) {
+      if (!t.halo || !t.haloMesh) continue;
+      t.halo.color.copy(t.mat.color).multiplyScalar(1 / Math.max(dimK, 1e-3));
+      t.haloMesh.visible = t.mesh.visible;
+    }
+  }
+
+  function makeHalos(): void {
+    const ramp = haloRamp();
+    tubes.forEach((t) => {
+      const mat = new THREE.MeshBasicMaterial({
+        map: ramp, transparent: true, opacity: HALO_LEVEL, depthWrite: false, blending: THREE.AdditiveBlending,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+      });
+      t.halo = mat;
+      const yaw = t.mesh.rotation.y;
+      const into = (cx - t.mesh.position.x) * Math.sin(yaw) + (cz - t.mesh.position.z) * Math.cos(yaw) > 0 ? 1 : -1;
+      const at = new THREE.Group();
+      at.position.copy(t.mesh.position);
+      at.rotation.y = yaw;
+      const h = HALO_WALL_M + 0.25;
+      const wallStrip = new THREE.Mesh(new THREE.PlaneGeometry(t.len + 0.5, h), mat);
+      wallStrip.position.set(0, 0.25 - h / 2, -into * 0.03);
+      wallStrip.rotation.y = into > 0 ? 0 : Math.PI;
+      at.add(wallStrip);
+      const ceil = new THREE.Mesh(new THREE.PlaneGeometry(t.len + 0.5, HALO_CEILING_M), mat);
+      ceil.rotation.order = 'YXZ';
+      ceil.rotation.y = into > 0 ? Math.PI : 0;
+      ceil.rotation.x = Math.PI / 2;
+      ceil.position.set(0, 0.25 - 0.006, into * (HALO_CEILING_M / 2 - 0.04));
+      at.add(ceil);
+      group.add(at);
+      t.haloMesh = at;
+    });
+    dimMaterials(group, dimK);
+  }
+
+  function setRealism(o: { shadow: boolean; halos: boolean; picture?: boolean }): void {
+    const caster = relief ?? key;
+    const casting = caster.castShadow;
+    const lean = o.shadow && !o.picture;
+    const up = caster.position.y - caster.target.position.y;
+    if (caster === relief) {
+      caster.position.x = caster.target.position.x + (lean ? REALISM_LEAN_X * up : 0.01);
+      caster.position.z = caster.target.position.z + (lean ? REALISM_LEAN_Z * up : 0.02);
+    }
+    if (o.shadow && !casting) fitShadow(caster, { minX, maxX, minZ, maxZ });
+    caster.castShadow = o.shadow;
+    carpet.receiveShadow = o.shadow;
+    caster.shadow.intensity = o.picture ? 0 : 1;
+    if (!o.shadow && casting && caster.shadow.map) { caster.shadow.dispose(); caster.shadow.map = null; }
+    if (o.halos && !tubes[0].halo) makeHalos();
+    halosOn = o.halos && !o.picture;
+    if (halosOn) showHalos();
+    else for (const t of tubes) if (t.haloMesh) t.haloMesh.visible = false;
+  }
+}
+
+let haloTex: THREE.Texture | null = null;
+function haloRamp(): THREE.Texture {
+  if (!haloTex) {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 64;
+    const g = c.getContext('2d')!;
+    const v = g.createLinearGradient(0, 0, 0, 64);
+    v.addColorStop(0, '#fff');
+    v.addColorStop(0.25, '#777');
+    v.addColorStop(0.6, '#1c1c1c');
+    v.addColorStop(1, '#000');
+    g.fillStyle = v;
+    g.fillRect(0, 0, 64, 64);
+    g.globalCompositeOperation = 'multiply';
+    const h = g.createLinearGradient(0, 0, 64, 0);
+    h.addColorStop(0, '#000');
+    h.addColorStop(0.03, '#fff');
+    h.addColorStop(0.97, '#fff');
+    h.addColorStop(1, '#000');
+    g.fillStyle = h;
+    g.fillRect(0, 0, 64, 64);
+    haloTex = new THREE.CanvasTexture(c);
+    haloTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  return haloTex;
+}
+
+function fitShadow(light: THREE.DirectionalLight, b: { minX: number; maxX: number; minZ: number; maxZ: number }): void {
+  const view = new THREE.Matrix4().lookAt(light.position, light.target.position, new THREE.Vector3(0, 1, 0)).setPosition(light.position).invert();
+  const cam = light.shadow.camera;
+  let l = Infinity, r = -Infinity, t = -Infinity, u = Infinity, near = Infinity, far = -Infinity;
+  for (const x of [b.minX, b.maxX]) for (const y of [0, SHADOW_TOP_M]) for (const z of [b.minZ, b.maxZ]) {
+    const p = new THREE.Vector3(x, y, z).applyMatrix4(view);
+    l = Math.min(l, p.x); r = Math.max(r, p.x);
+    u = Math.min(u, p.y); t = Math.max(t, p.y);
+    near = Math.min(near, -p.z); far = Math.max(far, -p.z);
+  }
+  cam.left = l; cam.right = r; cam.top = t; cam.bottom = u;
+  cam.near = Math.max(0.1, near - 0.5);
+  cam.far = far + 0.5;
+  cam.updateProjectionMatrix();
+  light.shadow.mapSize.set(SHADOW_PX, SHADOW_PX);
+  light.shadow.bias = -0.0006;
+  light.shadow.normalBias = 0.015;
+  light.shadow.radius = 4;
 }
 
 let poolTex: THREE.Texture | null = null;

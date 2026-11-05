@@ -1,6 +1,8 @@
 import { unbuiltParts } from '../src/machine/boarddefaults';
+import { isNoteId } from '../src/machine/effects';
 import type { UnbuiltPart } from '../src/machine/boarddefaults';
 import { str } from './i18n';
+import { BAR_PLACED_FROM_PX, barClearance, placeBar, type CabinetBox } from './ui/barplace';
 import { holdClock } from './ui/holdclock';
 import { UI_ICONS, rowIcon } from './ui/icons';
 
@@ -141,11 +143,12 @@ export interface NoteIcon {
   label: string;
   kind?: NoteKind;
 }
-type NoteKind = 'halt' | 'wait' | 'info' | 'warn' | 'ok';
+type NoteKind = 'halt' | 'wait' | 'info' | 'warn' | 'error' | 'ok';
 
 const HALT_ICON = { paths: UI_ICONS.failed, label: '' };
 export const NOTE_INFO: NoteIcon = { paths: UI_ICONS.info, label: '', kind: 'info' };
 export const NOTE_WARN: NoteIcon = { paths: UI_ICONS.warn, label: '', kind: 'warn' };
+export const NOTE_ERROR: NoteIcon = { paths: UI_ICONS.failed, label: '', kind: 'error' };
 export const NOTE_OK: NoteIcon = { paths: UI_ICONS.tick, label: '', kind: 'ok' };
 
 const HIDE_MS = 240;
@@ -167,6 +170,13 @@ export class StopNote {
   private hideTimer: (() => void) | null = null;
   private closeBtn: HTMLButtonElement | null = null;
   private iconEl: HTMLElement | null = null;
+  private cabinet: (() => CabinetBox | null) | null = null;
+  private placed = false;
+  private anchor: CabinetBox | null = null;
+  private following = false;
+  private asking = false;
+  private dim: HTMLElement | null = null;
+  private lastToastH = '';
 
   constructor(
     root: Document | HTMLElement = document,
@@ -196,6 +206,16 @@ export class StopNote {
     });
   }
 
+  placeBeside(cabinet: () => CabinetBox | null): void {
+    this.cabinet = cabinet;
+    if (!this.el) return;
+    this.dim = document.createElement('div');
+    this.dim.id = 'stopnote-dim';
+    this.dim.hidden = true;
+    this.el.before(this.dim);
+    window.addEventListener('resize', () => { if (this.shown) this.position(true); });
+  }
+
   update(reason: NoteReason | null, text: string, offerState = false): string | null {
     if (reason !== null) { this.setIcon(reason === 'stopped' ? HALT_ICON : null); this.setKind(reason === 'stopped' ? 'halt' : null); }
     if (reason !== 'stopped') this.dismissed.delete('stopped');
@@ -211,6 +231,7 @@ export class StopNote {
     this.restoreButtons();
     this.closeRun = null;
     this.reason = reason;
+    this.asking = reason === 'stopped';
     this.offering = offerState;
     if (this.stateBtn) this.stateBtn.hidden = !offerState;
     this.show(text);
@@ -219,14 +240,16 @@ export class StopNote {
 
   notice(
     text: string,
-    action?: { label: string; run: () => void },
+    action?: { label: string; run: () => void; icon?: string },
     onClose?: () => void,
     hideAfterMs?: number,
     icon?: NoteIcon,
     fixed = false,
   ): void {
     if (this.shown && this.reason === 'stopped') return;
+    if (this.shown && this.asking && hideAfterMs !== undefined) return;
     this.reason = null;
+    this.asking = !!action;
     this.setIcon(icon ?? null);
     this.setKind(icon ? icon.kind ?? 'wait' : null);
     this.closeRun = onClose ?? null;
@@ -245,12 +268,15 @@ export class StopNote {
     this.actRun = action?.run ?? null;
     if (this.actBtn) {
       this.actBtn.hidden = !action;
-      if (action) this.actBtn.textContent = action.label;
+      if (action?.icon) this.actBtn.replaceChildren(rowIcon(action.icon, 'stopnote-act-icon', 16), action.label);
+      else if (action) this.actBtn.textContent = action.label;
     }
     if (this.moreBtn) this.moreBtn.hidden = true;
     if (this.stateBtn) this.stateBtn.hidden = true;
     this.offering = false;
+    const again = this.shown && hideAfterMs !== undefined;
     this.show(text, hideAfterMs !== undefined);
+    if (again) this.pulse();
   }
 
   dismiss(): void {
@@ -284,7 +310,7 @@ export class StopNote {
   private setKind(kind: NoteKind | null): void {
     const el = this.el;
     if (!el) return;
-    el.classList.remove('nb-stopbar--halt', 'nb-stopbar--wait', 'nb-stopbar--info', 'nb-stopbar--warn', 'nb-stopbar--ok');
+    el.classList.remove('nb-stopbar--halt', 'nb-stopbar--wait', 'nb-stopbar--info', 'nb-stopbar--warn', 'nb-stopbar--error', 'nb-stopbar--ok');
     if (kind) el.classList.add(`nb-stopbar--${kind}`);
   }
 
@@ -296,18 +322,108 @@ export class StopNote {
     if (!this.el) return;
     const el = this.el;
     if (wasUp && el.classList.contains('open')) {
-      document.documentElement.style.setProperty('--toast-h', `${el.offsetHeight}px`);
+      this.position(false);
       return;
     }
     el.hidden = false;
+    this.position(true);
     el.classList.remove('leaving', 'settled');
     if (passing) el.classList.add('passing'); else el.classList.remove('passing');
     requestAnimationFrame(() => {
       if (!this.shown) return;
       el.classList.add('open');
-      document.documentElement.style.setProperty('--toast-h', `${el.offsetHeight}px`);
+      this.publishHeight();
     });
     el.addEventListener?.('animationend', this.onAnnounceEnd);
+  }
+
+  private position(fresh: boolean): void {
+    const el = this.el;
+    if (!el) return;
+    const shown = [this.actBtn, this.stateBtn, this.moreBtn].filter((b) => b && !b.hidden).length;
+    if (shown === 1) el.classList.add('one-action'); else el.classList.remove('one-action');
+    const cab = this.cabinet && window.innerWidth >= BAR_PLACED_FROM_PX ? this.cabinet() : null;
+    if (!cab) {
+      if (this.placed) this.unplace();
+    } else {
+      if (fresh || !this.anchor) this.anchor = cab;
+      this.placed = true;
+      el.classList.add('over-glass');
+      el.classList.toggle('asking', this.asking);
+      el.style.setProperty('right', 'auto');
+      el.style.setProperty('bottom', 'auto');
+      el.style.setProperty('margin', '0');
+      const actions = el.querySelector<HTMLElement>('.nb-stopbar__actions');
+      if (actions) {
+        el.classList.remove('stack-actions');
+        if (shown > 1 && actions.scrollWidth > actions.clientWidth) el.classList.add('stack-actions');
+      }
+      const at = placeBar(
+        { width: window.innerWidth, height: window.innerHeight }, this.anchor,
+        { width: el.offsetWidth, height: el.offsetHeight },
+      );
+      el.style.left = `${at.left}px`;
+      el.style.top = `${at.top}px`;
+      this.showDim(this.asking ? cab : null);
+      this.follow();
+    }
+    this.publishHeight();
+  }
+
+  private showDim(cab: CabinetBox | null): void {
+    const d = this.dim;
+    if (!d) return;
+    if (!cab) { d.classList.remove('open'); return; }
+    d.style.left = `${cab.left}px`;
+    d.style.top = `${cab.top}px`;
+    d.style.width = `${cab.right - cab.left}px`;
+    d.style.height = `${cab.bottom - cab.top}px`;
+    d.style.clipPath = cab.outline
+      ? `polygon(${cab.outline.map((p) => `${p.x - cab.left}px ${p.y - cab.top}px`).join(',')})`
+      : '';
+    if (d.hidden) {
+      d.hidden = false;
+      void d.offsetWidth;
+    }
+    d.classList.add('open');
+  }
+
+  private follow(): void {
+    if (this.following) return;
+    this.following = true;
+    const tick = (): void => {
+      if (!this.shown || !this.placed) { this.following = false; return; }
+      const cab = this.cabinet && window.innerWidth >= BAR_PLACED_FROM_PX ? this.cabinet() : null;
+      if (!cab) this.position(true);
+      else this.showDim(this.asking ? cab : null);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  private unplace(): void {
+    const el = this.el;
+    this.placed = false;
+    this.anchor = null;
+    this.showDim(null);
+    if (!el) return;
+    el.classList.remove('over-glass', 'asking', 'stack-actions');
+    for (const p of ['left', 'right', 'top', 'bottom', 'margin']) el.style.removeProperty(p);
+  }
+
+  private publishHeight(): void {
+    const el = this.el;
+    if (!el) return;
+    const h = `${this.placed ? barClearance(el.offsetTop + el.offsetHeight) : el.offsetHeight}px`;
+    if (h === this.lastToastH) return;
+    this.lastToastH = h;
+    document.documentElement.style.setProperty('--toast-h', h);
+  }
+
+  private pulse(): void {
+    const el = this.el;
+    if (!el?.animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    el.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.03)' }, { transform: 'scale(1)' }], { duration: 160, easing: 'ease-out' });
   }
 
   private readonly onAnnounceEnd = (e: AnimationEvent): void => {
@@ -334,6 +450,8 @@ export class StopNote {
     this.closeRun = null;
     this.shown = false;
     this.lastText = '';
+    this.asking = false;
+    this.showDim(null);
     if (!this.el) { this.restoreButtons(); return; }
     const el = this.el;
     if (el.classList.contains('open')) el.classList.add('leaving');
@@ -343,8 +461,23 @@ export class StopNote {
       el.classList.remove('leaving', 'settled');
       el.classList.remove('passing');
       el.hidden = true;
+      if (this.dim) this.dim.hidden = true;
       this.setIcon(null);
       this.restoreButtons();
     }, HIDE_MS);
   }
+}
+
+const COIN_REFUSED_MS = 6000;
+
+export function sayCoinRefused(note: StopNote | null | undefined): void {
+  if (!note) return;
+  const text = str('stopnote.coin_refused');
+  if (note.visible && !note.passing) return;
+  note.notice(text, undefined, undefined, COIN_REFUSED_MS, NOTE_WARN);
+}
+
+export function sayCoinLocked(note: StopNote | null | undefined, acceptor: { note?: number } | undefined): void {
+  if (acceptor?.note !== undefined && isNoteId(acceptor.note)) return;
+  sayCoinRefused(note);
 }

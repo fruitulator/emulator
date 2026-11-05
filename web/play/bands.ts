@@ -349,7 +349,7 @@ export function paintBand(
     const half = Math.ceil(w / cw / 2) + 1;
     const base = Math.round(row);
     for (let k = base - half; k <= base + half; k++) {
-      cell(ctx, src, wrap(k, n), cx + (k - row) * cw - cw / 2, 0, cw, h, badges);
+      cell(ctx, src, wrap(k, n), cx - (k - row) * cw - cw / 2, 0, cw, h, badges);
     }
     for (const [a, b] of outside(0, w, [[cx - (win * cw) / 2, cx + (win * cw) / 2]])) if (dimOutside) dim(ctx, a, 0, b - a, h);
     drum(ctx, 0, 0, w, h, false);

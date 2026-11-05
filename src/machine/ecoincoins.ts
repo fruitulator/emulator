@@ -1,4 +1,4 @@
-import type { CoinLine, CoinLineTable, Refusal, SlotCoin } from './coinwiring';
+import { oneCopyEnd, type CoinLine, type CoinLineTable, type Refusal, type SlotCoin } from './coinwiring';
 import { detectCoins } from './coinwiring';
 import { Z80 } from '../cpu/z80';
 
@@ -19,7 +19,9 @@ export interface EcoinCoinCode {
 
 function find(rom: Uint8Array, pat: readonly number[], from = 0, to = rom.length): number[] {
   const out: number[] = [];
-  for (let i = from; i + pat.length <= to; i++) {
+  const copy = oneCopyEnd(rom);
+  const last = from < copy ? copy - 1 : Infinity;
+  for (let i = from; i + pat.length <= to && i <= last; i++) {
     let ok = true;
     for (let j = 0; j < pat.length; j++) if (pat[j]! >= 0 && rom[i + j] !== pat[j]) { ok = false; break; }
     if (ok) out.push(i);

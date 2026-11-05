@@ -1,6 +1,7 @@
 import { helpButton, openHelp } from '../web/help/help';
 import { configOf } from '../src/machine/registry';
-import type { CashLedger } from '../src/machine/machine';
+import type { CashLedger, PayoutRow } from '../src/machine/machine';
+import type { MachineInfo } from '../web/emu-protocol';
 import type { Snapshot } from '../web/snapshot';
 import { UI_ICONS } from '../web/ui/icons';
 import { card, checkRow } from '../web/ui/rows';
@@ -11,6 +12,7 @@ import { checkItem, checklist, statusIcon, MARK_LABEL, type Mark } from '../web/
 import { stepHeader, type StepHeader } from '../web/ui/steps';
 import { expandSection } from '../web/ui/section';
 import { enhanceSelect } from '../web/ui/dropdown';
+import { openLayer } from '../web/ui/layer';
 import type { ArcadeMachine } from './machines';
 import { machineTitle } from './machinelist';
 import { cabinetModels, styleModel } from './cabinets';
@@ -19,17 +21,20 @@ import { controlNaming } from '../web/controlname';
 import { viewFor } from '../web/platform';
 import { invalidateRec } from './cache';
 import {
-  configDigest, fromBase64, fromMachineState, machineById, removeMachine, toBase64, toMachineState, type ArcadeDoc, type CheckResult, type DocMachine, type MachineConfig,
+  configDigest, fromBase64, fromMachineState, machineById, removeMachine, toBase64, toMachineState, type ArcadeDoc, type CheckResult, type CoinStepCache, type DocMachine, type MachineConfig,
 } from './doc';
+import { boardStamp } from '../web/boardstamp';
 import { syncArcade } from './share';
 import { decodeTrace, layoutDigest } from './trace';
 import { putArcade } from './docstore';
-import { moneyTrust, NO_BOOKKEEPING, PAYOUT_UNVERIFIED, unpricedMoved } from './moneygate';
+import { NO_BOOKKEEPING, unknownMoneyMoved, unpricedMoved } from './moneygate';
+import { paidOutputs, payoutKindLabel } from './coinfault';
+import type { CoinFault } from './serverwire';
 import type { CabLamp } from '../web/dat';
 import { alarmsUnseen, attractBudgetS, buttonsOnly, hostGate, lookNext, TRACE_S, WizardMachine, type BootFrom } from './wizmachine';
 import { TRACE_FPS } from './trace';
 import { COINS_STOPPED_HOST_TEXT, el, exitButton, iconButton } from './host';
-import { serverMoney } from './moneyrecord';
+import { clearServerFault, serverMoney } from './moneyrecord';
 import { DressPreview, type GlassPlay } from './dresspreview';
 import { FlatZoom } from './flatzoom';
 import { TEX_WHOLE } from './glass';
@@ -41,9 +46,12 @@ import { listGames } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import { PlayPointer } from '../web/play/pointer';
 import { str } from '../web/i18n';
-import { coinTicks } from '../web/ui/coinsetup';
-import { editedSlot, markedSlots, readCoinWiring, readPayoutValues, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
-import { coinsTaken, markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
+import { coinGrid, coinTicks, slotCards } from '../web/ui/coinsetup';
+import { segSwitch } from '../web/ui/segswitch';
+import { editedSlot, isTokenCoin, markedSlots, readCoinWiring, payoutsAnswered, readPayoutMeters, readPayoutValues, readNotPayoutLines, CASH_COINS, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
+import { acceptorSlots, coinLineSlots, type AcceptorSlot, type DrawnSlot } from '../web/coinslots';
+import { penceOf } from './wallet';
+import { coinsTaken, hostCoinsTaken, lineCoins, markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 import { definitionOf, keepCoinAnswers } from './hostset';
 
 declare const __BUILD_ID__: string;
@@ -66,6 +74,8 @@ const STEP_DESC = [
 
 const COINS_STOPPED_HOST_NOTE_WIZARD = str('arcade.wizard.two_coins_did_not_match');
 
+const PAID_JUST_NOW_MS = 10_000;
+
 const BOOT_CHECKS: { id: string; name: string }[] = [
   { id: 'boot', name: str('arcade.wizard.boots') },
   { id: 'attract', name: str('arcade.wizard.reaches_attract') },
@@ -79,6 +89,9 @@ const ALL_CHECKS = [...BOOT_CHECKS, ...TEST_CHECKS];
 
 const CREDIT_PENCE = 100;
 const COINS_MAX = 20;
+const COIN_BOOK_MS = 10_000;
+const COIN_BOOK_LEARNING_MS = 45_000;
+const LEDGER_QUIET_MS = 2_000;
 const TEST_TYPICAL_S = 8;
 
 const pounds = (p: number): string => `£${(p / 100).toFixed(2)}`;
@@ -86,6 +99,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, 
 
 export async function openWizard(
   root: HTMLElement, doc: ArcadeDoc, id: string, mode: 'add' | 'edit', back: () => void,
+  startAt: 'fill' | null = null,
 ): Promise<void> {
   const row = machineById(doc, id);
   root.replaceChildren();
@@ -101,19 +115,14 @@ export async function openWizard(
   name.append(heading, sub);
   let w: Wizard | null = null;
   let exited = false;
-  const onKey = (ev: KeyboardEvent): void => {
-    if (ev.key !== 'Escape' || ev.defaultPrevented || ev.repeat) return;
-    ev.preventDefault();
-    leave();
-  };
   const leave = (): void => {
     if (exited) return;
     exited = true;
-    document.removeEventListener('keydown', onKey);
+    layer.release();
     w?.dispose();
     back();
   };
-  document.addEventListener('keydown', onKey);
+  const layer = openLayer([root], { kind: 'dialog', close: leave, keysThrough: true });
   root.setAttribute('role', 'dialog');
   root.setAttribute('aria-modal', 'true');
   heading.id = 'wzTitle';
@@ -142,7 +151,7 @@ export async function openWizard(
       load: async () => (mode === 'edit' && row.state ? fromMachineState(row.state, held.hash) : null),
       save: async (rec) => { row.state = toMachineState(rec); },
     },
-  });
+  }, startAt);
   await w.start();
 }
 
@@ -159,7 +168,6 @@ const VIEW_LABEL: Record<ViewMode, string> = { flat: str('arcade.wizard.flat'), 
 
 const NEEDS_TEXT = str('arcade.wizard.the_machine_is_waiting_for');
 const NEEDS_STATE = str('arcade.wizard.waiting_for_your_input');
-const NEEDS_TEXT_LOOK = str('arcade.wizard.the_machine_isn_t_showing_look');
 const NEEDS_STATE_LOOK = str('arcade.wizard.not_at_attract_yet');
 
 const ATTRACT_HINT_S = 30;
@@ -168,6 +176,18 @@ function oneCheck(mark: Mark, title: string, note?: string | null): HTMLElement 
   const ul = checklist();
   ul.append(checkItem(mark, title, note));
   return ul;
+}
+
+function payoutRow(name: string, value: string | null, control: HTMLElement, mark: HTMLElement | null = null, note: string | null = null): HTMLElement {
+  const row = el('div', null, { class: 'coin-payout' });
+  const label = el('div', null, { class: 'coin-payout-name' });
+  const line = el('span', name, { class: 'coin-payout-label' });
+  if (mark) line.prepend(mark, ' ');
+  if (value) line.append(' ', el('span', value, { class: 'coin-payout-value' }));
+  label.append(line);
+  if (note) label.append(el('p', note, { class: 'coin-slot-note' }));
+  row.append(label, control);
+  return row;
 }
 
 function wizSection(name: string, body: HTMLElement): HTMLElement {
@@ -262,26 +282,33 @@ class Wizard {
   private preTest: Snapshot | null = null;
   private preview: DressPreview | null = null;
   private refillOn = false;
+  private cached: CoinStepCache | null = null;
   private draft: MachineConfig;
   private alert: Alert | null = null;
   private needHost = false;
   private attractSkipped = false;
-  private hostSawAlarm = false;
   private needsLook = false;
   private needsShown = false;
   private needsAlert: Alert | null = null;
 
   constructor(private readonly root: HTMLElement, private readonly doc: ArcadeDoc,
     private readonly m: DocMachine, private readonly mode: 'add' | 'edit', private readonly back: () => void,
-    am: ArcadeMachine) {
+    am: ArcadeMachine, startAt: 'fill' | null = null) {
     this.wm = new WizardMachine(am);
     this.canvas = this.wm.glass.texCanvas;
     this.wm.live.gateHost(() => this.hands());
+    this.wm.live.runHidden = true;
     this.wm.live.onCoinsStopped = () => { if (!this.gone() && this.step === FILL) this.render(); };
     this.offs.push(() => { this.wm.live.onCoinsStopped = null; });
     this.canvas.className = 'glass';
-    this.step = mode === 'edit' ? 1 : 0;
+    this.step = mode === 'edit' ? (startAt === 'fill' ? FILL : 1) : 0;
+    if (this.step === FILL) this.settled = true;
     this.draft = cloneConfig(m.config);
+    void serverMoney(doc.id, m.id).then((r) => {
+      if (!r?.coinFault || this.gone()) return;
+      this.serverFault = r.coinFault;
+      if (this.step === FILL) this.render();
+    });
   }
 
   private async save(): Promise<void> {
@@ -343,11 +370,22 @@ class Wizard {
   private needsYou(force = false): void {
     if (!this.needHost || this.gone() || (!force && (this.needsShown || this.alert || this.step === LOOK))) return;
     this.needsShown = true;
-    this.showAlert(this.needsLook ? NEEDS_TEXT_LOOK : NEEDS_TEXT, [], [
-      ...(this.needsLook ? [{ label: str('arcade.wizard.it_shows_an_alarm'), kind: 'secondary' as const, run: () => this.hostAlarm() }] : []),
-      { label: str('arcade.wizard.install_without_attract'), kind: 'secondary', run: () => this.skipAttract() },
-      { label: str('arcade.wizard.ok'), kind: 'primary', run: () => undefined },
-    ], true, true);
+    const skip = str('arcade.wizard.skip');
+    const [before, after] = str('arcade.wizard.if_it_shows_an_alarm_or', { 0: '|' }).split('|');
+    const alarm = document.createDocumentFragment();
+    alarm.append(before, el('strong', skip), after);
+    this.showAlert(str('arcade.wizard.the_machine_hasn_t_reached'), [], [
+      { label: skip, kind: 'secondary', run: () => this.skipAttract() },
+      { label: str('arcade.wizard.keep_waiting'), kind: 'primary', run: () => undefined },
+    ], true, true, {
+      title: str('arcade.wizard.not_ready_to_install_yet'),
+      steps: [
+        document.createTextNode(str('arcade.wizard.if_it_has_credits_play')),
+        document.createTextNode(str('arcade.wizard.if_it_s_asking_for')),
+        alarm,
+      ],
+      note: str('arcade.wizard.this_check_clears_when_the'),
+    });
     this.needsAlert = this.alert;
   }
 
@@ -360,12 +398,6 @@ class Wizard {
     this.hostDone();
     if (this.booted) { this.rec = 'done'; this.recChanged(); } else this.render();
     void this.save();
-  }
-
-  private hostAlarm(): void {
-    this.hostSawAlarm = true;
-    this.hostDone();
-    this.render();
   }
 
   private hostDone(): void {
@@ -430,6 +462,7 @@ class Wizard {
     foot.append(this.backBtn, this.nextBtn);
     panel.append(this.panelTitle, this.panelDesc, this.panel, foot);
     wrap.append(left, panel);
+    this.watchFade(wrap);
     const top = this.root.querySelector('.wz-head');
     if (top) top.after(this.steps.root);
     else this.root.append(this.steps.root);
@@ -443,6 +476,7 @@ class Wizard {
       return;
     }
     if (this.gone()) return;
+    if (this.mode === 'edit') { this.useCache(); this.render(); }
     this.wirePointer();
     this.loop();
     await this.runBoot();
@@ -510,6 +544,7 @@ class Wizard {
     this.steps.set(this.step, (i) => this.done(i),
       (i) => !this.moving && this.canGo(i) && (i < this.step || this.done(i)));
     this.panel.replaceChildren();
+    this.panel.classList.toggle('wz-panel-body--fill', this.step === FILL);
     if (this.step !== FILL) this.slotMarks.replaceChildren();
     if (this.step !== LOOK) { this.fitView?.dispose(); this.fitView = null; this.dressSeq++; this.live3d.cancel(); }
     this.panelTitle.textContent = STEPS[this.step];
@@ -754,7 +789,7 @@ class Wizard {
       const r = this.result(c.id);
       const mark: Mark = r?.pass === true ? 'pass' : r?.pass === false ? 'fail' : running === c.id ? 'running' : 'pending';
       const note = r?.note || (mark === 'running' ? this.runNote : mark === 'pending' ? pendingNote : null);
-      const row = checkItem(mark, c.name, note || null);
+      const row = r?.skipped ? checkItem('pending', c.name, note || null, str('arcade.wizard.skipped')) : checkItem(mark, c.name, note || null);
       row.classList.add('wiz-check');
       if (mark === 'fail') this.reopens(row, BOOT_CHECKS.some((b) => b.id === c.id) ? 'boot' : 'test');
       box.append(row);
@@ -791,18 +826,17 @@ class Wizard {
       return r?.pass === false ? [r.note ? `${c.name}: ${r.note}` : c.name] : [];
     });
     this.showAlert(str('arcade.wizard.self_test_failed'), lines, [
-      { label: str('arcade.wizard.try_again'), kind: 'primary', run: () => { void (kind === 'boot' ? this.runBoot(false) : this.runTest()); } },
-      { label: str('arcade.wizard.reboot'), kind: 'secondary', run: () => { void (kind === 'boot' ? this.runBoot(true) : this.rebootAndTest()); } },
-      ...(kind === 'test' && !this.noCoinSlot ? [{ label: str('arcade.wizard.skip_test'), kind: 'secondary' as const, run: () => this.skipTest() }] : []),
-      { label: str('arcade.host.exit'), kind: 'secondary', run: () => this.back() },
       ...(kind === 'boot' && this.mode === 'edit' ? [{ label: str('arcade.wizard.remove'), kind: 'secondary' as const, run: () => this.askRemove() }] : []),
+      ...(kind === 'test' && !this.noCoinSlot ? [{ label: str('arcade.wizard.skip_test'), kind: 'secondary' as const, run: () => this.skipTest() }] : []),
+      { label: str('arcade.wizard.reboot'), kind: 'secondary', run: () => { void (kind === 'boot' ? this.runBoot(true) : this.rebootAndTest()); } },
+      { label: str('arcade.wizard.try_again'), kind: 'primary', run: () => { void (kind === 'boot' ? this.runBoot(false) : this.runTest()); } },
     ]);
   }
 
   private askRemove(): void {
     this.showAlert(str('arcade.host.delete_n_from_this_arcade', { 0: this.wm.glass.machine.name }), [str('arcade.host.its_settings_and_stats_go')], [
       { label: str('arcade.host.yes_delete_it'), kind: 'primary', run: () => { void this.removeAndLeave(); } },
-      { label: str('arcade.host.keep_it'), kind: 'secondary', run: () => this.selfTestFailed('boot') },
+      { label: str('arcade.host.keep_it'), kind: 'secondary', dismiss: true, run: () => this.selfTestFailed('boot') },
     ]);
   }
 
@@ -815,19 +849,22 @@ class Wizard {
   }
 
   private showAlert(message: string, lines: string[],
-    buttons: { label: string; kind: 'primary' | 'secondary'; run: () => void }[], info = false, keysThrough = false): void {
+    buttons: { label: string; kind: 'primary' | 'secondary'; run: () => void; dismiss?: boolean }[], info = false, keysThrough = false,
+    words: { title?: string; steps?: Node[]; note?: string } = {}): void {
     const old = this.alert;
     this.alert = null;
     old?.close();
     const a = openAlert({
-      message, lines, keysThrough, info,
-      buttons: buttons.map((b) => ({ button: actionButton(b.label, b.kind, () => undefined), run: () => { this.alert = null; b.run(); } })),
+      message, lines, keysThrough, info, ...words,
+      buttons: buttons.map((b) => ({ button: actionButton(b.label, b.kind, () => undefined), dismiss: b.dismiss, run: () => { this.alert = null; b.run(); } })),
       onClose: () => { this.alert = null; this.render(); },
     });
     this.alert = a;
   }
 
   private async rebootAndTest(): Promise<void> {
+    if (this.busy) return;
+    this.freshValidation(TEST_CHECKS);
     await this.runBoot(true);
     if (this.booted && this.step === FINISH && this.testCanRun()) await this.runTest();
   }
@@ -836,13 +873,14 @@ class Wizard {
 
   private running: string | null = null;
 
-  private setCheck(id: string, pass: boolean | null, note: string): void {
+  private setCheck(id: string, pass: boolean | null, note: string, skipped = false): void {
     if (this.gone() || this.testStop) return;
     this.ran.add(id);
     const v = this.m.validation!;
     const c = v.checks.find((x) => x.id === id)!;
     c.pass = pass;
     c.note = note;
+    if (skipped) c.skipped = true; else delete c.skipped;
     this.running = null;
     this.runNote = '';
     this.render();
@@ -884,7 +922,6 @@ class Wizard {
     this.reboot = this.mode === 'edit' && this.startedOnce === 0 && this.bootPassedBefore();
     this.booted = false;
     this.attractSnap = null;
-    this.hostSawAlarm = false;
     this.freshValidation(BOOT_CHECKS);
     const wm = this.wm;
     try {
@@ -925,10 +962,10 @@ class Wizard {
             this.render();
           }
         }
-        return wm.attract() || this.attractSkipped || this.hostSawAlarm;
+        return wm.attract() || this.attractSkipped;
       };
       let found = await wm.until(waiting, budget, () => this.gone());
-      while (!found && !this.gone() && wm.reading?.verdict !== 'ALARM' && !this.hostSawAlarm) {
+      while (!found && !this.gone() && wm.reading?.verdict !== 'ALARM') {
         if (wm.selfBusy()) {
           found = await wm.until(waiting, budget, () => this.gone());
           continue;
@@ -941,11 +978,6 @@ class Wizard {
       }
       this.hostDone();
       if (this.gone()) return;
-      if (this.hostSawAlarm && !wm.attract()) {
-        this.setCheck('attract', false, str('arcade.wizard.you_saw_an_alarm_on_it'));
-        this.setCheck('alarm', false, str('arcade.wizard.you_saw_an_alarm_on_it'));
-        return;
-      }
       if (!found) {
         this.setCheck('attract', false, str('arcade.wizard.the_machine_is_showing_an', { 0: wm.reading?.matched ?? '' }));
         return;
@@ -976,7 +1008,7 @@ class Wizard {
   }
 
   private renderConfig(): void {
-    const info = this.wm.live.emu.info;
+    const info = this.info();
     if (!info) {
       this.panel.append(el('p', str('arcade.wizard.the_machine_is_not_running'), { class: 'host-note' }));
       return;
@@ -1129,7 +1161,7 @@ class Wizard {
     if (reopen) {
       state.setAttribute('role', 'button');
       state.tabIndex = 0;
-      state.title = reopen === 'needs' ? (this.needsLook ? NEEDS_TEXT_LOOK : NEEDS_TEXT) : str('arcade.wizard.show_try_again_and_reboot');
+      state.title = reopen === 'needs' ? NEEDS_TEXT : str('arcade.wizard.show_try_again_and_reboot');
     } else {
       state.removeAttribute('role');
       state.removeAttribute('tabindex');
@@ -1471,14 +1503,25 @@ class Wizard {
     if (this.wm.live.running) this.wm.refillSwitch()?.set(false);
   }
 
+  private watchFade(body: HTMLElement): void {
+    const fade = (): void => {
+      for (const box of [this.panel, body]) {
+        const scrolls = getComputedStyle(box).overflowY !== 'visible';
+        const on = this.step === FILL && scrolls;
+        box.classList.toggle('wz-more-above', on && box.scrollTop > 1);
+        box.classList.toggle('wz-more-below', on && box.scrollHeight - box.clientHeight - box.scrollTop > 1);
+      }
+    };
+    this.panel.addEventListener('scroll', fade, { passive: true });
+    body.addEventListener('scroll', fade, { passive: true });
+    new ResizeObserver(fade).observe(body);
+    new MutationObserver(fade).observe(this.panel, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  }
+
   private renderFill(): void {
-    const v = moneyTrust(this.m.board);
     const money = checklist();
-    money.append(v.trust === 'billable'
-      ? checkItem('pass', str('arcade.wizard.money_in_and_out_are'))
-      : v.trust === 'untrusted' ? checkItem('warn', PAYOUT_UNVERIFIED)
-        : checkItem('warn', NO_BOOKKEEPING));
-    if (this.unpriced) money.append(checkItem('warn', str('arcade.wizard.some_payouts_cannot_be_counted')));
+    const meterOnly = this.keepFreePlay();
+    if (this.unpriced || meterOnly) money.append(checkItem('warn', str('arcade.wizard.some_payouts_cannot_be_counted')));
     const fill = card();
     const refill = this.wm.live.running ? this.wm.refillSwitch() : null;
     if (refill) {
@@ -1487,23 +1530,101 @@ class Wizard {
       fill.append(r);
     }
     const g = wizSection;
-    this.panel.append(g(str('arcade.wizard.money'), money));
-    if (fill.childElementCount) this.panel.append(g(str('arcade.wizard.fill'), fill));
+    const { row: freeRow, box: freeBox } = checkRow(str('arcade.wizard.free_play'), (on) => {
+      for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
+        if (on) c.freePlay = true;
+        else delete c.freePlay;
+      }
+      void this.save();
+      for (const sec of moneyOut) sec.hidden = on;
+      this.nav(undefined, this.coinsWired());
+      this.renderStrip();
+    });
+    freeBox.checked = this.m.config.freePlay === true;
+    freeBox.disabled = meterOnly;
+    const moneyBox = card();
+    moneyBox.append(freeRow);
+    if (money.childElementCount) moneyBox.append(money);
+    this.panel.append(g(str('arcade.wizard.money'), moneyBox));
+    const moneyOut: HTMLElement[] = [];
+    const out = (el: HTMLElement): HTMLElement => { el.hidden = this.m.config.freePlay === true; moneyOut.push(el); return el; };
+    if (fill.childElementCount) this.panel.append(out(g(str('arcade.wizard.fill'), fill)));
     this.slotMarks.replaceChildren();
     const coins = this.renderCoins();
-    if (coins) this.panel.append(g(str('arcade.wizard.coins'), coins));
+    if (coins) this.panel.append(out(g(str('arcade.wizard.coins_in'), coins)));
+    const payouts = this.renderPayouts();
+    if (payouts) this.panel.append(out(g(str('arcade.wizard.payouts'), payouts)));
     this.nav(undefined, this.coinsWired());
+  }
+
+  private keepFreePlay(): boolean {
+    if (this.info()?.meterOnlyPayout !== true) return false;
+    if (this.m.config.freePlay !== true) {
+      for (const c of [this.m.config, this.draft, this.wm.machine.config]) c.freePlay = true;
+      void this.save();
+    }
+    return true;
   }
 
   private wiringRun: 'no' | 'running' | 'done' = 'no';
 
   private serverCoinsStopped: boolean | null = null;
+  private serverFault: CoinFault | null = null;
+
+  private info(): MachineInfo | null {
+    return (this.wm.live.running ? this.wm.live.emu.info : null) ?? this.cached?.info ?? null;
+  }
+
+  private refusing(): number {
+    const f = this.wm.live.running ? this.wm.live.emu.latestFrame() : null;
+    if (f) return (f.coinRefusing | f.coinLinesShut) >>> 0;
+    return this.cached?.refusing ?? 0;
+  }
+
+  private stepKey(): string | null {
+    const game = this.wm.glass.game;
+    return game ? `${this.m.contentHash}|${configDigest(this.m.config)}|${boardStamp(game.system)}` : null;
+  }
+
+  private useCache(): void {
+    const c = this.m.coinStep;
+    const key = this.stepKey();
+    if (!c || !key || c.key !== key || this.wiringRun !== 'no') return;
+    const game = this.wm.glass.game;
+    const cab = this.wm.glass.cab;
+    if (!game || !cab) return;
+    this.cached = c;
+    if (c.drawnAsked) {
+      const counted = new Set(c.drawnCounted);
+      this.drawn = coinLineSlots(cab.lamps, viewFor(game.system), c.info, c.drawnAsked).filter((p) => p.acceptor || counted.has(p.line));
+      this.drawnFound = { asked: [...c.drawnAsked], counted: [...c.drawnCounted] };
+    }
+    for (const [line, credits] of c.hostCredits) this.hostCredits.set(line, credits);
+    for (const line of c.hostDead) this.hostDead.add(line);
+    if (c.slotless) this.slotless = [...c.slotless];
+    this.wiringRun = 'done';
+  }
+
+  private keepCache(): void {
+    const info = this.wm.live.running ? this.wm.live.emu.info : null;
+    const key = this.stepKey();
+    if (!info || !key) { delete this.m.coinStep; return; }
+    this.m.coinStep = {
+      key, info: structuredClone(info), refusing: this.refusing(),
+      drawnAsked: this.drawnFound ? [...this.drawnFound.asked] : null,
+      drawnCounted: this.drawnFound ? [...this.drawnFound.counted] : [],
+      slotless: this.slotless ? [...this.slotless] : null,
+      hostCredits: [...this.hostCredits],
+      hostDead: [...this.hostDead],
+    };
+  }
 
   private wireSlots(): WireSlot[] {
     const game = this.wm.glass.game;
     const cab = this.wm.glass.cab;
-    if (!game || !cab || !this.wm.live.running) return [];
-    return slotsToWire(cab.lamps, viewFor(game.system), this.wm.live.emu.info);
+    const info = this.info();
+    if (!game || !cab || !info) return [];
+    return slotsToWire(cab.lamps, viewFor(game.system), info);
   }
 
   private wiring(): CoinWiring {
@@ -1514,28 +1635,29 @@ class Wizard {
 
   private slotlessLines(): number[] {
     if (this.slotless) return this.slotless;
-    const info = this.wm.live.emu.info;
+    const info = this.info();
     if (!this.wm.live.running || !info?.slotlessCoins?.length) return [];
     if (this.wireSlots().length && this.wiringRun !== 'done') return [];
     const f = this.wm.live.emu.latestFrame();
     if (!f) return [];
-    this.slotless = slotlessToWire(info, (f.coinRefusing | f.coinLinesShut) >>> 0, this.wiring());
+    this.slotless = slotlessToWire(info, this.refusing(), this.wiring()).filter((l) => !this.hostDead.has(l));
     return this.slotless;
   }
 
   private coinsWired(): boolean {
     const w = this.wiring();
-    const valued = readPayoutValues(this.m.config.payouts);
+    const free = this.m.config.freePlay === true;
     return this.wiringRun !== 'running'
-      && (this.wm.live.emu.info?.tokenPayouts ?? []).every((l) => valued[String(l)])
-      && this.wireSlots().every((s) => (w[String(s.line)]?.coins.some((c) => c.line !== null) ?? false))
-      && this.slotlessLines().every((l) => w[String(l)] !== undefined)
+      && (free || this.info()?.meterOnlyPayout !== true)
+      && (free || payoutsAnswered(this.payoutAsk(), this.m.config.payouts, undefined, this.m.config.notPayouts))
+      && (free || this.wireSlots().every((s) => (w[String(s.line)]?.coins.some((c) => c.line !== null) ?? false)))
+      && (free || this.slotlessLines().every((l) => w[String(l)] !== undefined))
       && !this.markDrafts.length
       && markedSlots(w).every(({ slot }) => slot.checked === true);
   }
 
   private setWiring(w: CoinWiring): void {
-    const info = this.wm.live.emu.info;
+    const info = this.info();
     const placed = info ? wiringFinder.mapAsked(w, info) : w;
     const coins = Object.keys(placed).length ? placed : undefined;
     for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
@@ -1549,6 +1671,21 @@ class Wizard {
   private async findWiring(): Promise<void> {
     if (this.wiringRun !== 'no' || this.booting || this.testing) return;
     const info = this.wm.live.emu.info;
+    if (info?.unpricedCoins) {
+      this.wiringRun = 'running';
+      if (this.step === FILL) this.render();
+      try { await this.readHostCoins(info.unpricedCoins); } finally {
+        this.wiringRun = 'done';
+        if (!this.gone() && this.step === FILL) this.render();
+      }
+      return;
+    }
+    if (info && !info.unpricedCoins && !this.drawn) {
+      this.wiringRun = 'running';
+      if (this.step === FILL) this.render();
+      await this.findDrawn().catch((e) => { console.warn('[arcade] the coin slots could not be measured', e); });
+      this.drawn ??= [];
+    }
     let need = this.wireSlots().map((s) => s.line).filter((l) => !this.wiring()[String(l)]);
     if (!info || !need.length) {
       this.wiringRun = 'done';
@@ -1582,31 +1719,87 @@ class Wizard {
     }
   }
 
-  private slotNotes(s: SlotWiring | undefined, found: boolean): HTMLElement[] {
-    const out: HTMLElement[] = [];
-    if (found && s?.how === 'measured') out.push(el('span', str('arcade.wizard.if_one_of_these_is'), { class: 'coin-slot-note' }));
-    if (!s) return out;
-    const lost = unplacedCoins(s);
-    if (lost.length && lost.length === s.coins.length) {
-      out.push(el('span', str('arcade.wizard.this_machine_takes_one_coin'), { class: 'coin-slot-note warn' }));
-    } else if (lost.length) {
-      out.push(el('span', str('arcade.wizard.players_won_t_be_offered', { 0: lost.map(slotCoinLabel).join(', '), 1: lost.length === 1 ? 'it' : 'them' }), { class: 'coin-slot-note warn' }));
+  private drawn: DrawnSlot[] | null = null;
+  private drawnFound: { asked: number[]; counted: number[] } | null = null;
+
+  private async findDrawn(): Promise<void> {
+    const info = this.wm.live.emu.info;
+    const game = this.wm.glass.game;
+    const cab = this.wm.glass.cab;
+    if (!info || !game || !cab) { this.drawn = []; return; }
+    const f = this.wm.live.emu.latestFrame();
+    const refusing = f ? (f.coinRefusing | f.coinLinesShut) >>> 0 : 0;
+    const open = (l: number): boolean => !(l >= 0 && l < 32 && ((refusing >>> l) & 1) === 1);
+    const lines = [...new Set([
+      ...lineCoins(info, refusing, this.wiring()).map((x) => x.line),
+      ...(info.coinTable ? [] : (info.coins ?? []).map((c) => c.bit).filter(open)),
+      ...(info.unnamedCoins ?? []),
+    ])];
+    const parts = coinLineSlots(cab.lamps, viewFor(game.system), info, lines);
+    const plain = parts.filter((p) => !p.acceptor).map((p) => p.line);
+    const counted = new Set<number>();
+    if (plain.length) {
+      const got = await this.wm.live.emu.measureCoins(plain);
+      for (const l of plain) if (markedCounted(got?.result, l) === 'counted') counted.add(l);
     }
-    return out;
+    this.drawn = parts.filter((p) => p.acceptor || counted.has(p.line));
+    this.drawnFound = { asked: lines, counted: [...counted] };
+  }
+
+  private hostCredits = new Map<number, number>();
+  private hostDead = new Set<number>();
+
+  private async readHostCoins(lines: readonly { line: number; credits: number | null }[]): Promise<void> {
+    for (const c of lines) if (c.credits) this.hostCredits.set(c.line, c.credits);
+    const unknown = lines.filter((c) => c.credits === null).map((c) => c.line);
+    if (!unknown.length) return;
+    const got = await this.wm.live.emu.measureCoins(unknown).catch((e) => {
+      console.warn('[arcade] the coin lines could not be measured', e);
+      return null;
+    });
+    const m = got?.result;
+    if (!m || 'refused' in m) return;
+    for (const line of unknown) {
+      const verdict = markedCounted(m, line);
+      if (verdict === 'not-counted') this.hostDead.add(line);
+      const l = m.lines.find((x) => x.line === line);
+      const pulses = l ? Math.max(0, ...l.meters.map((v, i) => v - (m.control.meters[i] ?? 0))) : 0;
+      if (verdict === 'counted' && pulses > 0) this.hostCredits.set(line, pulses);
+    }
+  }
+
+  private coinTakes(line: number): ReadonlySet<number> | null {
+    const info = this.info();
+    return info?.unpricedCoins ? hostCoinsTaken(this.hostCredits, this.wiring(), line, this.wireSlots().map((s) => s.line)) : coinsTaken(info);
+  }
+
+  private measuredNote(slots: readonly WireSlot[]): HTMLElement | null {
+    const w = this.wiring();
+    return slots.some((s) => w[String(s.line)]?.how === 'measured')
+      ? el('p', str('arcade.wizard.if_one_of_these_is'), { class: 'coin-slot-note' })
+      : null;
+  }
+
+  private slotWarning(s: SlotWiring | undefined): string | null {
+    if (!s) return null;
+    const lost = unplacedCoins(s);
+    if (!lost.length) return null;
+    return lost.length === s.coins.length
+      ? str('arcade.wizard.this_machine_takes_one_coin')
+      : str('arcade.wizard.players_won_t_be_offered', { 0: lost.map(slotCoinLabel).join(', '), 1: lost.length === 1 ? 'it' : 'them' });
   }
 
   private renderCoins(): HTMLElement | null {
     const slots = this.wireSlots();
     const marking = this.markOffer();
-    const tokenOuts = this.wm.live.emu.info?.tokenPayouts ?? [];
-    if (!slots.length && !this.wm.live.emu.info?.slotlessCoins?.length && !marking && !tokenOuts.length) return null;
+    const info = this.info();
+    if (!slots.length && !info?.slotlessCoins?.length && !marking && !info?.tokenPayouts?.length && !info?.cashPayouts?.length && !info?.payoutRows?.length && !(info && !info.unpricedCoins && (this.wm.live.running || !!this.cached))) return null;
     if (this.wiringRun === 'no') { queueMicrotask(() => { void this.findWiring(); }); }
-    const box = card();
     if (this.wiringRun !== 'done') {
+      const box = card();
       box.append(oneCheck('running', str('arcade.wizard.checking_which_coins_the_machine')));
       return box;
     }
-    const w = this.wiring();
     if (this.serverCoinsStopped === null) {
       this.serverCoinsStopped = false;
       void serverMoney(this.doc.id, this.m.id).then((r) => {
@@ -1615,56 +1808,296 @@ class Wizard {
         if (this.step === FILL) this.render();
       });
     }
-    if (this.serverCoinsStopped || this.wm.live.coinsStopped || this.wm.coinsStopped()) box.append(oneCheck('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE_WIZARD));
-    slots.forEach((slot, i) => {
-      const name = slots.length === 1 ? str('arcade.wizard.coin_slot') : str('arcade.wizard.coin_slot_n', { 0: i + 1 });
-      const now = w[String(slot.line)];
-      const found = now?.how === 'detected' || now?.how === 'measured';
-      const head = el('div', null, { class: 'coin-slot-head' });
-      head.append(
-        el('span', name, { class: 'row-label' }),
-        el('span', found
-          ? str('arcade.wizard.found_on_the_machine_n', { 0: [...new Set(now.coins.map((c) => slotCoinLabel(c.coin)))].join(', ') })
-          : str('arcade.wizard.which_coins_does_this_slot'), { class: 'nb-meta' }),
-      );
-      const ticks = coinTicks({
-        takes: coinsTaken(this.wm.live.emu.info),
-        label: name,
-        start: now?.coins.map((c) => c.coin) ?? [],
-        onChange: (coins: SlotCoin[]) => {
-          const next = this.wiring();
-          if (coins.length) next[String(slot.line)] = editedSlot(next[String(slot.line)], slot.line, coins);
-          else delete next[String(slot.line)];
-          this.setWiring(next);
-          if (this.serverCoinsStopped) { this.serverCoinsStopped = false; this.render(); }
-          this.nav(undefined, this.coinsWired());
-          this.renderStrip();
-          notes.replaceChildren(...this.slotNotes(this.wiring()[String(slot.line)], found));
-        },
+    const body = el('div', null, { class: 'coin-step' });
+    if (this.serverCoinsStopped || this.wm.live.coinsStopped || this.wm.coinsStopped()) {
+      const stopped = card();
+      stopped.append(oneCheck('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE_WIZARD));
+      body.append(stopped);
+    }
+    if (info?.unpricedCoins) {
+      if (slots.length) body.append(this.renderCoinGrid(slots));
+    } else {
+      const cards = this.renderSlots();
+      if (cards) body.append(cards);
+    }
+    const rest = card();
+    this.renderSlotless(rest);
+    if (marking) this.renderMarked(rest);
+    if (rest.childElementCount) body.append(rest);
+    return body.childElementCount ? body : null;
+  }
+
+  private slotsWired = false;
+
+  private slotCoinsNow = new Map<number, SlotCoin[]>();
+
+  private slotTokenWorth = new Map<number, number | null>();
+
+  private renderSlots(): HTMLElement | null {
+    const info = this.info();
+    if (!info) return null;
+    const coinOf = new Map<number, SlotCoin>(lineCoins(info, this.refusing(), this.wiring()).map((c) => [c.line, c.coin]));
+    if (!info.coinTable) {
+      for (const c of info.coins ?? []) {
+        const p = penceOf(c);
+        if (coinOf.has(c.bit)) continue;
+        if (c.token) coinOf.set(c.bit, { token: p > 0 ? p : null });
+        else if (p > 0) coinOf.set(c.bit, p);
+      }
+    }
+    const takes = new Set<number>();
+    let takesToken = false;
+    for (const c of coinOf.values()) {
+      if (isTokenCoin(c)) takesToken = true;
+      else takes.add(c);
+    }
+
+    const sameKind = (a: SlotCoin, b: SlotCoin): boolean => (isTokenCoin(a) ? isTokenCoin(b) : a === b);
+    const slots = acceptorSlots([...this.wireSlots(), ...(this.drawn ?? [])], coinOf);
+    const unnamed = (info.unnamedCoins ?? []).filter((l) => !coinOf.has(l));
+    const lineFor = (s: AcceptorSlot, c: SlotCoin): number | null => {
+      const match = (l: number): boolean => { const o = coinOf.get(l); return o !== undefined && sameKind(c, o); };
+      return s.lines.find(match) ?? [...coinOf.keys()].find(match) ?? (isTokenCoin(c) ? null : s.lines.find((l) => unnamed.includes(l)) ?? unnamed[0] ?? null);
+    };
+
+    const w = this.wiring();
+    const kindOf = (s: AcceptorSlot): boolean => {
+      const own = w[String(s.key)]?.coins ?? [];
+      return own.length ? own.every((c) => isTokenCoin(c.coin)) : s.token;
+    };
+    const startOf = (s: AcceptorSlot): SlotCoin[] => {
+      const had = this.slotCoinsNow.get(s.key);
+      if (had) return had;
+      const out: SlotCoin[] = [];
+      const add = (c: SlotCoin): void => { if (!out.some((o) => sameKind(o, c))) out.push(c); };
+      const own = w[String(s.key)]?.coins ?? [];
+      for (const c of own) add(c.coin);
+      const lineCoinsOf = (l: number): SlotCoin[] => {
+        const at = w[String(l)];
+        return at ? at.coins.map((c) => c.coin) : coinOf.has(l) ? [coinOf.get(l)!] : [];
+      };
+      for (const l of s.parts) if (l !== s.key || !own.length) lineCoinsOf(l).forEach(add);
+      for (const x of slots) {
+        for (const l of x.lines) {
+          if (l === x.key || x.parts.includes(l)) continue;
+          for (const c of lineCoinsOf(l)) {
+            if (!w[String(l)] && slots.some((y) => (w[String(y.key)]?.coins ?? []).some((o) => sameKind(o.coin, c)))) continue;
+            if (slots.find((y) => kindOf(y) === isTokenCoin(c)) === s) add(c);
+          }
+        }
+      }
+      return out.filter((c) => isTokenCoin(c) === kindOf(s));
+    };
+    const now = (i: number): readonly SlotCoin[] => this.slotCoinsNow.get(slots[i]!.key) ?? startOf(slots[i]!);
+    const worthOf = (i: number): number | null => {
+      const s = slots[i]!;
+      if (this.slotTokenWorth.has(s.key)) return this.slotTokenWorth.get(s.key) ?? null;
+      for (const c of w[String(s.key)]?.coins ?? []) if (isTokenCoin(c.coin) && c.coin.token) return c.coin.token;
+      for (const c of startOf(s)) if (isTokenCoin(c) && c.token) return c.token;
+      return null;
+    };
+
+    const wireSlot = (i: number, coins: readonly SlotCoin[]): void => {
+      const s = slots[i]!;
+      const next = this.wiring();
+      const wired = (c: SlotCoin, line: number, k: number): { coin: SlotCoin; line: number } => ({ coin: isTokenCoin(c) ? { token: worthOf(k) } : c, line });
+      next[String(s.key)] = {
+        coins: coins.flatMap((c) => { const l = lineFor(s, c); return l === null ? [] : [wired(c, l, i)]; }),
+        how: 'detected',
+      };
+      const takenAnywhere = (c: SlotCoin): boolean => slots.some((x, j) => (j === i ? coins : now(j)).some((o) => sameKind(o, c)));
+      for (const l of s.parts) {
+        if (l === s.key) continue;
+        const own = coinOf.get(l);
+        const on = own !== undefined && coins.some((c) => sameKind(c, own));
+        next[String(l)] = on ? { coins: [wired(own!, l, i)], how: 'detected' } : { coins: [], how: 'detected' };
+      }
+      for (const x of slots) {
+        for (const l of x.lines) {
+          if (l === x.key || x.parts.includes(l)) continue;
+          const own = coinOf.get(l);
+          if (own !== undefined && takenAnywhere(own)) delete next[String(l)];
+          else next[String(l)] = { coins: [], how: 'detected' };
+        }
+      }
+      this.setWiring(next);
+    };
+    const footer = (i: number, coins: readonly SlotCoin[]): Node | null => {
+      if (!coins.some(isTokenCoin)) return null;
+      const sel = el('select', null, { class: 'coin-token-value', 'aria-label': str('coinask.what_the_token_is_worth') }) as HTMLSelectElement;
+      sel.append(el('option', str('coinask.no_value'), { value: '' }));
+      for (const p of TOKEN_VALUES) sel.append(el('option', cashLabel(p), { value: String(p) }));
+      const v = worthOf(i);
+      sel.value = v !== null && TOKEN_VALUES.includes(v) ? String(v) : '';
+      const wrap = el('span', null, { class: 'coin-meter-value' });
+      wrap.append(sel);
+      enhanceSelect(sel, { small: true, unset: true });
+      sel.addEventListener('change', () => {
+        this.slotTokenWorth.set(slots[i]!.key, sel.value ? Number(sel.value) : null);
+        wireSlot(i, now(i));
+        this.nav(undefined, this.coinsWired());
+        this.renderStrip();
       });
-      const notes = el('div', null, { class: 'coin-slot-notes' });
-      notes.append(...this.slotNotes(now, found));
-      const row = el('div', null, { class: 'coin-slot' });
-      row.append(head, ticks.root, notes);
-      box.append(row);
-      if (slots.length > 1) this.glassMark(i + 1, slot, row);
+      return wrap;
+    };
+    const lost = (i: number, coins: readonly SlotCoin[]): SlotCoin[] => coins.filter((c) => lineFor(slots[i]!, c) === null);
+    if (!slots.length) return null;
+    const grid = slotCards({
+      slots: slots.map((s) => ({ start: startOf(s) })),
+      takes: unnamed.length ? null : takes.size ? takes : coinsTaken(info),
+      token: takesToken,
+      lost,
+      warning: (i, coins) => {
+        const l = lost(i, coins);
+        return l.length ? str('arcade.wizard.players_won_t_be_offered', { 0: l.map(slotCoinLabel).join(', '), 1: l.length === 1 ? 'it' : 'them' }) : null;
+      },
+      footer,
+      onChange: (i, coins) => {
+        this.slotCoinsNow.set(slots[i]!.key, coins);
+        wireSlot(i, coins);
+        if (this.serverCoinsStopped) { this.serverCoinsStopped = false; this.render(); return; }
+        this.nav(undefined, this.coinsWired());
+        this.renderStrip();
+      },
     });
-    this.renderSlotless(box);
-    if (marking) this.renderMarked(box);
-    this.renderTokenPayouts(box, tokenOuts);
+    slots.forEach((s, i) => { if (s.part) this.glassMark(i + 1, s.part, grid.cards[i]); });
+    if (!this.slotsWired) {
+      this.slotsWired = true;
+      slots.forEach((s, i) => { wireSlot(i, startOf(s)); });
+    }
+    return grid.root;
+  }
+
+  private renderCoinGrid(slots: readonly WireSlot[]): HTMLElement {
+    const w = this.wiring();
+    const lineOf = (i: number): string => String(slots[i].line);
+    const grid = coinGrid({
+      slots: slots.map((slot) => {
+        const start = w[String(slot.line)]?.coins.map((c) => c.coin) ?? [];
+        const takes = this.coinTakes(slot.line);
+        return { start, takes };
+      }),
+      lost: (i) => {
+        const s = this.wiring()[lineOf(i)];
+        return s ? unplacedCoins(s) : [];
+      },
+      warning: (i) => this.slotWarning(this.wiring()[lineOf(i)]),
+      onChange: (i, coins) => {
+        const next = this.wiring();
+        if (coins.length) next[lineOf(i)] = editedSlot(next[lineOf(i)], slots[i].line, coins);
+        else delete next[lineOf(i)];
+        this.setWiring(next);
+        if (this.serverCoinsStopped) { this.serverCoinsStopped = false; this.render(); }
+        this.nav(undefined, this.coinsWired());
+        this.renderStrip();
+        if (this.info()?.unpricedCoins) this.render();
+      },
+    });
+    if (slots.length > 1) slots.forEach((slot, i) => { this.glassMark(i + 1, slot, grid.rows[i]); });
+    const group = grid.root;
+    const note = this.measuredNote(slots);
+    if (note) group.append(note);
+    return group;
+  }
+
+  private payoutDevicesShown(): NonNullable<MachineInfo['payoutDevices']> {
+    const info = this.info();
+    const own = info?.payoutDevices ?? [];
+    if (!own.length) return [];
+    const listed = new Set(own.map((d) => d.line));
+    const lines = [...new Set([
+      ...(this.serverFault?.outputs.map((o) => o.line) ?? []),
+      ...Object.keys(readPayoutValues(this.m.config.payouts)).map(Number),
+    ])].filter((l) => !listed.has(l)).sort((a, b) => a - b);
+    const named = new Map((this.serverFault?.outputs ?? []).map((o) => [o.line, o]));
+    const extra = paidOutputs(lines, info).map((o) => named.get(o.line) ?? o)
+      .map((o) => ({ line: o.line, kind: o.kind, displayNumber: o.n, defaultPence: null }));
+    return [...own, ...extra];
+  }
+
+  private payoutAsk(): MachineInfo | null {
+    const info = this.info();
+    return info?.payoutDevices?.length ? { ...info, payoutDevices: this.payoutDevicesShown() } : info;
+  }
+
+  private renderPayouts(): HTMLElement | null {
+    if (this.wiringRun !== 'done') return null;
+    const info = this.info();
+    const box = card();
+    box.classList.add('coin-payouts');
+    if (info?.payoutDevices?.length) {
+      this.renderPayoutDevices(box, this.payoutDevicesShown());
+      this.renderPayoutRows(box, info.payoutRows ?? []);
+      return box.childElementCount ? box : null;
+    }
+    this.renderTokenPayouts(box, info?.tokenPayouts ?? [], true);
+    this.renderTokenPayouts(box, info?.cashPayouts ?? [], false);
+    this.renderPayoutRows(box, info?.payoutRows ?? []);
     return box.childElementCount ? box : null;
   }
 
-  private renderTokenPayouts(box: HTMLElement, lines: readonly number[]): void {
-    lines.forEach((line, i) => {
-      const name = lines.length === 1 ? str('arcade.wizard.token_payout') : str('arcade.wizard.token_payout_n', { 0: i + 1 });
+  private renderPayoutDevices(box: HTMLElement, devices: readonly NonNullable<MachineInfo['payoutDevices']>[number][]): void {
+    const counts = new Map<string, number>();
+    for (const d of devices) counts.set(d.kind, (counts.get(d.kind) ?? 0) + 1);
+    const seen = new Map<string, number>();
+    for (const device of devices) {
+      const n = (seen.get(device.kind) ?? 0) + 1;
+      seen.set(device.kind, n);
+      const base = payoutKindLabel(device.kind);
+      const number = device.displayNumber ?? device.line + 1;
+      const name = counts.get(device.kind) === 1
+        ? base
+        : `${base} ${number}`;
       const sel = document.createElement('select');
       sel.className = 'coin-token-value';
       sel.setAttribute('aria-label', name);
       const none = document.createElement('option');
       none.value = '';
       none.textContent = str('coinask.no_value');
-      sel.append(none, ...TOKEN_VALUES.map((p) => {
+      const token = device.kind.includes('token');
+      sel.append(none, ...(token ? TOKEN_VALUES : CASH_COINS).map((p) => {
+        const o = document.createElement('option');
+        o.value = String(p);
+        o.textContent = cashLabel(p);
+        return o;
+      }));
+      const values = readPayoutValues(this.m.config.payouts);
+      sel.value = String(values[String(device.line)] ?? device.defaultPence ?? '');
+      sel.addEventListener('change', () => {
+        const next = readPayoutValues(this.m.config.payouts);
+        if (sel.value) next[String(device.line)] = Number(sel.value);
+        else delete next[String(device.line)];
+        const nextNotPayouts = readNotPayoutLines(this.m.config.notPayouts).filter((line) => line !== device.line);
+        for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
+          if (Object.keys(next).length) c.payouts = { ...next };
+          else delete c.payouts;
+          if (nextNotPayouts.length) c.notPayouts = nextNotPayouts;
+          else delete c.notPayouts;
+        }
+        if (this.wm.live.running) this.wm.live.emu.namePayout(device.line, Number(sel.value) || 0);
+        void this.save();
+        this.nav(undefined, this.coinsWired());
+        this.renderStrip();
+      });
+      const faulty = this.serverFault?.outputs.some((o) => o.line === device.line) ?? false;
+      const wrong = faulty && sel.value !== '' ? str('arcade.wizard.value_looks_wrong') : null;
+      box.append(payoutRow(name, null, sel, faulty ? statusIcon('warn') : null, wrong));
+      enhanceSelect(sel, { small: true });
+    }
+  }
+
+  private renderTokenPayouts(box: HTMLElement, lines: readonly number[], token: boolean): void {
+    lines.forEach((line, i) => {
+      const name = token
+        ? (lines.length === 1 ? str('arcade.wizard.token_payout') : str('arcade.wizard.token_payout_n', { 0: i + 1 }))
+        : (lines.length === 1 ? str('arcade.host.money_out') : str('arcade.wizard.triac_n_money_out', { 0: line + 1 }));
+      const sel = document.createElement('select');
+      sel.className = 'coin-token-value';
+      sel.setAttribute('aria-label', name);
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = str('coinask.no_value');
+      sel.append(none, ...(token ? TOKEN_VALUES : CASH_COINS).map((p) => {
         const o = document.createElement('option');
         o.value = String(p);
         o.textContent = cashLabel(p);
@@ -1675,22 +2108,113 @@ class Wizard {
         const next = readPayoutValues(this.m.config.payouts);
         if (sel.value) next[String(line)] = Number(sel.value);
         else delete next[String(line)];
+        const nextNotPayouts = readNotPayoutLines(this.m.config.notPayouts).filter((candidate) => candidate !== line);
         for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
           if (Object.keys(next).length) c.payouts = { ...next };
           else delete c.payouts;
+          if (nextNotPayouts.length) c.notPayouts = nextNotPayouts;
+          else delete c.notPayouts;
         }
-        this.wm.live.applyPayouts(next);
+        if (this.wm.live.running) this.wm.live.emu.namePayout(line, Number(sel.value) || 0);
         void this.save();
         this.nav(undefined, this.coinsWired());
         this.renderStrip();
       });
-      const head = el('div', null, { class: 'coin-slot-head' });
-      head.append(el('span', name, { class: 'row-label' }));
-      const row = el('div', null, { class: 'coin-slot' });
-      row.append(head, sel);
-      box.append(row);
+      box.append(payoutRow(name, null, sel));
       enhanceSelect(sel, { small: true });
     });
+  }
+
+  private renderPayoutRows(box: HTMLElement, rows: readonly PayoutRow[]): void {
+    if (!rows.length) return;
+    let meters = 0;
+    const ticks = rows.map((r) => this.renderPayoutRow(box, r, r.kind === 'meter' ? ++meters : 0));
+    this.watchPayouts(box, ticks);
+  }
+
+  private renderPayoutRow(parent: HTMLElement, r: PayoutRow, n: number): HTMLElement {
+    const key = String(r.line);
+    let row: HTMLElement;
+    if (r.kind === 'meter') {
+      const name = str('arcade.wizard.payout_n', { 0: n });
+      const value = `\u00b7 ${cashLabel(r.pence ?? 0)}`;
+      const seg = segSwitch({
+        label: `${name} ${value}`,
+        options: [{ value: 'cash', text: str('arcade.wizard.cash') }, { value: 'token', text: str('coinask.token') }],
+        value: (readPayoutMeters(this.m.config.payoutMeters)[key] ?? r.token) ? 'token' : 'cash',
+        onChange: (v) => {
+          const token = v === 'token';
+          const next = { ...readPayoutMeters(this.m.config.payoutMeters), [key]: token };
+          for (const c of [this.m.config, this.draft, this.wm.machine.config]) c.payoutMeters = { ...next };
+          if (this.wm.live.running) this.wm.live.emu.setPayoutMeter(r.line, token);
+          void this.save();
+        },
+      });
+      row = payoutRow(name, value, seg);
+      parent.append(row);
+    } else {
+      const name = str('arcade.wizard.output_n', { 0: r.line + 1 });
+      const sel = document.createElement('select');
+      sel.className = 'coin-token-value';
+      sel.setAttribute('aria-label', name);
+      const option = (value: string, text: string): HTMLOptionElement => {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = text;
+        return o;
+      };
+      sel.append(
+        option('', str('coinask.no_value')),
+        option('not-payout', str('arcade.wizard.not_a_payout')),
+        ...TOKEN_VALUES.map((p) => option(String(p), str('coinask.n_token', { 0: cashLabel(p) }))),
+      );
+      const values = readPayoutValues(this.m.config.payouts);
+      const notPayouts = readNotPayoutLines(this.m.config.notPayouts);
+      const hasValue = values[key] !== undefined;
+      const isNotPayout = notPayouts.includes(r.line);
+      sel.value = hasValue === isNotPayout ? '' : isNotPayout ? 'not-payout' : String(values[key]);
+      sel.addEventListener('change', () => {
+        const next = readPayoutValues(this.m.config.payouts);
+        const nextNotPayouts = readNotPayoutLines(this.m.config.notPayouts).filter((line) => line !== r.line);
+        const explicitlyNotPayout = sel.value === 'not-payout';
+        if (sel.value && !explicitlyNotPayout) next[key] = Number(sel.value);
+        else delete next[key];
+        if (explicitlyNotPayout) nextNotPayouts.push(r.line);
+        for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
+          if (Object.keys(next).length) c.payouts = { ...next };
+          else delete c.payouts;
+          if (nextNotPayouts.length) c.notPayouts = [...nextNotPayouts].sort((a, b) => a - b);
+          else delete c.notPayouts;
+        }
+        if (this.wm.live.running) this.wm.live.emu.namePayout(r.line, Number(sel.value) || 0);
+        void this.save();
+      });
+      row = payoutRow(name, null, sel);
+      parent.append(row);
+      enhanceSelect(sel, { small: true });
+    }
+    const tick = el('span', str('arcade.wizard.paid_just_now'), { class: 'nb-meta' });
+    tick.hidden = true;
+    row.querySelector('.coin-payout-name')!.append(tick);
+    return tick;
+  }
+
+  private watchPayouts(rows: HTMLElement, ticks: readonly HTMLElement[]): void {
+    let last: readonly number[] | null = null;
+    const until = ticks.map(() => 0);
+    const timer = setInterval(() => {
+      if (!rows.isConnected) { clearInterval(timer); return; }
+      if (!this.wm.live.running) return;
+      void this.wm.live.emu.ledger().then(() => {
+        const now = this.wm.live.emu.payoutCounts;
+        const t = performance.now();
+        ticks.forEach((tick, i) => {
+          if (last && (now[i] ?? 0) > (last[i] ?? 0)) until[i] = t + PAID_JUST_NOW_MS;
+          tick.hidden = t >= until[i]!;
+        });
+        last = now;
+      }, () => undefined);
+    }, 500);
   }
 
   private glassMark(n: number | string, at: { left: number; top: number; width: number; height: number }, row?: HTMLElement): HTMLElement | null {
@@ -1728,7 +2252,7 @@ class Wizard {
         el('span', str('arcade.wizard.which_coin_is_this'), { class: 'row-sub' }),
       );
       const ticks = coinTicks({
-        takes: coinsTaken(this.wm.live.emu.info),
+        takes: this.coinTakes(line),
         label: name,
         single: true,
         start: now?.coins.map((c) => c.coin) ?? [],
@@ -1742,6 +2266,7 @@ class Wizard {
           if (this.serverCoinsStopped) { this.serverCoinsStopped = false; this.render(); }
           this.nav(undefined, this.coinsWired());
           this.renderStrip();
+          if (this.info()?.unpricedCoins) this.render();
         },
       });
       const row = el('div', null, { class: 'coin-slot' });
@@ -1757,14 +2282,14 @@ class Wizard {
   private markables(): MarkableButton[] {
     const game = this.wm.glass.game;
     const cab = this.wm.glass.cab;
-    if (!game || !cab || !this.wm.live.running) return [];
+    if (!game || !cab || !this.info()) return [];
     return markableButtons(cab.lamps, viewFor(game.system), new Set(markedSlots(this.wiring()).map((m) => m.line)));
   }
 
   private markOffer(): boolean {
     if (!this.markables().length) return false;
     if (markedSlots(this.wiring()).length || this.markDrafts.length) return true;
-    return !this.wireSlots().length && !this.wm.live.emu.info?.slotlessCoins?.length && !this.wm.coinSlot();
+    return !this.wireSlots().length && !this.info()?.slotlessCoins?.length && !this.wm.coinSlot();
   }
 
   private checkMarked(line: number): void {
@@ -1808,7 +2333,7 @@ class Wizard {
   private renderMarked(box: HTMLElement): void {
     const buttons = this.markables();
     const game = this.wm.glass.game;
-    const info = this.wm.live.emu.info;
+    const info = this.info();
     if (!game || !info) return;
     const view = viewFor(game.system);
     const names = new Map<number, string>();
@@ -1851,7 +2376,7 @@ class Wizard {
       pick.append(sel);
       enhanceSelect(sel, { small: true });
       const ticks = coinTicks({
-        takes: coinsTaken(this.wm.live.emu.info),
+        takes: coinsTaken(this.info()),
         label: name, single: true, noUnused: true,
         start: r.coin === null ? [] : [r.coin],
         onChange: (coins: SlotCoin[]) => {
@@ -1978,22 +2503,36 @@ class Wizard {
     }
   }
 
-  private async coinAndStart(): Promise<void> {
+  private async ledgerSettled(from: CashLedger | null, stop: () => boolean): Promise<CashLedger | null> {
+    let last = from;
+    let seen = JSON.stringify(from);
+    let changed = performance.now();
+    for (const tEnd = changed + COIN_BOOK_LEARNING_MS; performance.now() < tEnd && performance.now() - changed < LEDGER_QUIET_MS && !stop();) {
+      await sleep(300);
+      last = await this.wm.ledger();
+      const now = JSON.stringify(last);
+      if (now !== seen) { seen = now; changed = performance.now(); }
+    }
+    return last;
+  }
+
+  private async coinAndStart(skip: ReadonlySet<number> = new Set()): Promise<void> {
     const wm = this.wm;
     const stop = (): boolean => this.testStop;
     this.running = 'coin';
     this.render();
-    const slot = wm.coinSlot();
-    const noBooks = moneyTrust(this.m.board).trust === 'none';
-    const before = (await wm.ledger()) ?? (noBooks ? { inPence: 0 } as CashLedger : null);
-    if (!before) { this.setCheck('coin', false, str('arcade.wizard.this_machine_keeps_no_money')); return; }
+    const slot = wm.coinSlot(skip);
+    const ledger0 = await wm.ledger();
+    const noBooks = ledger0 === null;
+    const before = ledger0 ?? ({ inPence: 0 } as CashLedger);
     const shownBefore = new Set(wm.secs.map((s) => s.line));
+    const segsBefore = new Set(wm.secs.map((s) => s.segs ?? ''));
     const secsAtCoin = wm.secs.length;
     let after: CashLedger | null = before;
     let coins = 0;
     let wrong: number | null = null;
-    const booked = (l: CashLedger | null): number => (l ? l.inPence - before.inPence : 0);
-    const newOnGlass = (): boolean => wm.secs.slice(secsAtCoin).some((s) => s.line.trim() !== '' && !shownBefore.has(s.line));
+    const booked = (l: CashLedger | null): number => (l ? l.inPence + l.tokenInPence - before.inPence - before.tokenInPence : 0);
+    const newOnGlass = (): boolean => wm.secs.slice(secsAtCoin).some((s) => (s.line.trim() !== '' && !shownBefore.has(s.line)) || (!!s.segs && !segsBefore.has(s.segs)));
     if (!slot) {
       this.askCoin = true;
       this.say(str('arcade.wizard.put_a_coin_in_on_the_machine'), 'warn');
@@ -2004,8 +2543,7 @@ class Wizard {
         after = await wm.ledger();
         if (booked(after) > 0 || (noBooks && newOnGlass())) break;
       }
-      await sleep(600);
-      after = await wm.ledger();
+      after = await this.ledgerSettled(after, stop);
       this.askCoin = false;
       this.renderStrip();
     } else while (!stop() && coins < (noBooks ? 1 : COINS_MAX) && booked(after) < CREDIT_PENCE) {
@@ -2016,14 +2554,14 @@ class Wizard {
       await wm.coin(slot.line);
       coins++;
       let took = false;
-      for (const tEnd = performance.now() + 10_000; performance.now() < tEnd && !took && !stop();) {
+      const learning = !noBooks && wm.live.emu.coinWiringStatus?.state === 'waiting';
+      for (const tEnd = performance.now() + (learning ? COIN_BOOK_LEARNING_MS : COIN_BOOK_MS); performance.now() < tEnd && !took && !stop();) {
         await sleep(300);
         after = await wm.ledger();
         took = booked(after) > was;
       }
       if (!took) { if (noBooks) await sleep(1500); break; }
-      await sleep(600);
-      after = await wm.ledger();
+      after = await this.ledgerSettled(after, stop);
       const d = booked(after) - was;
       if (slot.pence != null && d !== slot.pence) { wrong = d; break; }
     }
@@ -2043,22 +2581,41 @@ class Wizard {
     await wm.until(() => wm.secs.length >= secsAtCoin + 2, 4000, stop);
     if (stop()) return;
     const readable = wm.glassReadable();
-    const glassMoved = !readable || newOnGlass();
+    let glassMoved = !readable || newOnGlass();
+    if (!glassMoved && slot && moneyMoved && after) {
+      after = await this.ledgerSettled(after, stop);
+      const paid = after ? after.outPence - before.outPence : 0;
+      if (paid > 0 && paid === booked(after)) {
+        const others = new Set(skip).add(slot.line);
+        if (wm.coinSlot(others)) return this.coinAndStart(others);
+        glassMoved = true;
+      }
+    }
     if (!moneyMoved && noBooks) {
       this.setCheck('coin', glassMoved, str('arcade.wizard.1_coin_n_n', { 0: NO_BOOKKEEPING, 1: (!readable ? str('arcade.wizard.no_display_on_this_cabinet') : glassMoved ? str('arcade.wizard.the_display_changed') : str('arcade.wizard.the_display_showed_nothing_new')) }));
       if (!glassMoved) return;
     } else {
+      if (!moneyMoved && unknownMoneyMoved(before, after)) { this.setCheck('coin', false, str('arcade.live.coin_value_not_set')); return; }
       if (!moneyMoved) { this.setCheck('coin', false, str('arcade.wizard.no_money_booked_after_a')); return; }
+      if (slot && wm.coinCost(slot.line) < 0) { this.setCheck('coin', false, str('arcade.live.coin_value_not_set')); return; }
       if (wrong !== null && slot) {
         this.setCheck('coin', false, str('arcade.wizard.a_n_coin_booked_n', { 0: pounds(slot.pence!), 1: pounds(wrong) }));
         return;
       }
       const money = !slot ? str('arcade.wizard.money_put_in_by_you', { money: pounds(booked(after)) })
-        : (slot.pence == null ? str('arcade.wizard.money_from_coins_unpriced', { money: pounds(booked(after)), n: coins }) : str('arcade.wizard.money_from_coins', { money: pounds(booked(after)), n: coins }));
+        : str('arcade.wizard.money_from_coins', { money: pounds(booked(after)), n: coins });
       this.setCheck('coin', glassMoved, !glassMoved
         ? str('arcade.wizard.n_but_the_display_showed', { 0: money })
         : readable ? money : str('arcade.wizard.n_no_display_on_this', { 0: money }));
       if (!glassMoved) return;
+    }
+    if (!wm.layout?.reelCount) {
+      this.setCheck('spin', true, str('arcade.wizard.no_reels_on_this_machine'), true);
+      return;
+    }
+    if (wm.glass.cab?.videoScreen) {
+      this.setCheck('spin', true, str('arcade.wizard.the_game_is_played_on_the_screen'), true);
+      return;
     }
     this.running = 'spin';
     this.runNote = str('arcade.wizard.waiting_for_the_reels_to');
@@ -2096,11 +2653,6 @@ class Wizard {
         : caps.length ? str('arcade.wizard.the_reels_did_not_move', { 0: caps[0].name }) : str('arcade.wizard.no_start_press_moved_the'));
   }
 
-  private trust(): DocMachine['money'] {
-    const t = moneyTrust(this.m.board).trust;
-    return t === 'billable' && this.unpriced ? 'untrusted' : t;
-  }
-
   private blockers(): string[] {
     const why: string[] = [];
     const v = this.m.validation;
@@ -2118,13 +2670,13 @@ class Wizard {
     const sum = checklist();
     sum.classList.add('wiz-checks');
     const line = (mark: Mark, text: string): void => { sum.append(checkItem(mark, text)); };
-    line(this.booted || this.bootPassedBefore() ? 'pass' : 'fail', str('arcade.wizard.boots_into_attract_with_no'));
+    line(this.booted || this.bootPassedBefore() ? 'pass' : this.booting ? 'running' : 'fail', str('arcade.wizard.boots_into_attract_with_no'));
     line(this.settled || this.mode === 'edit' ? 'pass' : 'pending', str('arcade.wizard.settings_chosen'));
-    const tm = moneyTrust(this.m.board);
-    line(tm.trust === 'billable' ? 'pass' : 'warn', tm.trust === 'none' ? NO_BOOKKEEPING
-      : tm.trust === 'untrusted' ? PAYOUT_UNVERIFIED : str('arcade.wizard.books_money_in_and_out'));
     this.checkRows(sum, TEST_CHECKS, this.running, !this.booted ? str('arcade.wizard.runs_once_step_1_has') : null);
-    if (this.m.validation?.skipped && this.testPassed()) line('warn', str('arcade.wizard.test_skipped_installing_without_it'));
+    if (this.m.validation?.skipped && this.testPassed()) {
+      line('warn', str('arcade.wizard.test_skipped_installing_without_it'));
+      line('warn', str('arcade.room.n_is_not_ready_the', { 0: this.wm.glass.machine.name }));
+    }
     this.panel.append(sum);
     this.failedNote('test');
     const why = this.blockers();
@@ -2153,7 +2705,7 @@ class Wizard {
       const m = this.m;
       m.status = 'installed';
       m.installedAt ??= Date.now();
-      m.money = this.trust();
+      delete m.money;
       m.gameConfig = g.game ? configOf(g.game) : null;
       if (g.game) {
         const def = await definitionOf(g.game);
@@ -2168,8 +2720,13 @@ class Wizard {
         cabinetStyle: g.cabinetStyle,
       };
       m.balance.push({ at: Date.now(), kind: m.balance.some((b) => b.kind === 'float') ? 'reading' : 'float', ledger: reading });
+      this.keepCache();
       this.finishValidation();
       await this.save();
+      if (this.serverFault) {
+        await clearServerFault(this.doc.id, m.id);
+        this.serverFault = null;
+      }
       void syncArcade(this.doc);
       const hash = this.wm.machine.held?.hash;
       if (hash) await invalidateRec(hash);
@@ -2187,6 +2744,10 @@ function cloneConfig(c: MachineConfig): MachineConfig {
   return {
     optionKeys: { ...(c.optionKeys ?? {}) }, panelSwitches: { ...(c.panelSwitches ?? {}) },
     ...(c.coins ? { coins: structuredClone(c.coins) } : {}),
+    ...(c.payouts ? { payouts: { ...c.payouts } } : {}),
+    ...(c.notPayouts ? { notPayouts: [...c.notPayouts] } : {}),
+    ...(c.payoutMeters ? { payoutMeters: { ...c.payoutMeters } } : {}),
+    ...(c.freePlay ? { freePlay: true } : {}),
   };
 }
 
@@ -2195,5 +2756,9 @@ function normConfig(c: MachineConfig): MachineConfig {
     ...(c.optionKeys && Object.keys(c.optionKeys).length ? { optionKeys: { ...c.optionKeys } } : {}),
     ...(c.panelSwitches && Object.keys(c.panelSwitches).length ? { panelSwitches: { ...c.panelSwitches } } : {}),
     ...(c.coins && Object.keys(c.coins).length ? { coins: structuredClone(c.coins) } : {}),
+    ...(c.payouts && Object.keys(c.payouts).length ? { payouts: { ...c.payouts } } : {}),
+    ...(c.notPayouts?.length ? { notPayouts: [...c.notPayouts] } : {}),
+    ...(c.payoutMeters && Object.keys(c.payoutMeters).length ? { payoutMeters: { ...c.payoutMeters } } : {}),
+    ...(c.freePlay ? { freePlay: true } : {}),
   };
 }

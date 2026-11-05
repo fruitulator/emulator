@@ -1,6 +1,8 @@
+import { observePayouts } from '../src/machine/payoutcheck';
+import { restInvertedInputs } from '../src/machine/layoutswitches';
 import type { Machine, NamedCoin } from '../src/machine/machine';
 import { slotlessLines, type CoinLineTable, type CoinMeasurement } from '../src/machine/coinwiring';
-import { measureCoinLines } from '../src/machine/coinmeasure';
+import { measureCoinLines, type CreditWatch } from '../src/machine/coinmeasure';
 import { applyState, captureState } from './snapshot';
 import { readCoinWiring, type CoinWiring } from './coinask';
 import type { FrameLayout } from '../src/machine/framestate';
@@ -38,8 +40,17 @@ export function offerNote(m: Machine, billType: number, parallel = false): strin
 
 export const MAX_CATCHUP_SECONDS = 0.1;
 
+export function payoutLinesNeedingHostAnswer(m: Pick<Machine, 'unpricedPayoutLines' | 'tokenPayoutLines' | 'payoutRows'>): number[] {
+  return [...new Set([
+    ...(m.unpricedPayoutLines ?? []),
+    ...(m.tokenPayoutLines ?? []),
+    ...(m.payoutRows?.flatMap((row) => row.kind === 'output' ? [row.line] : []) ?? []),
+  ])];
+}
+
 export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): MachineInfo {
   const system = game.system;
+  const payoutLines = payoutLinesNeedingHostAnswer(m);
   const buttons = viewFor(system).playButtons;
   const sourced = buttons.filter((b) => b.certain);
   if (sourced.length && !m.capNames?.size) {
@@ -116,10 +127,36 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       : {}),
     ...(m.coinChutes ? { coins: m.coinChutes.map((c) => ({ ...c })) } : {}),
     ...(m.unnamedCoinLines?.length ? { unnamedCoins: [...m.unnamedCoinLines] } : {}),
+    ...(m.unpricedCoinLines?.length ? { unpricedCoins: m.unpricedCoinLines.map((c) => ({ ...c })) } : {}),
     ...(m.uncountedCoinLines?.length ? { uncountedCoins: [...m.uncountedCoinLines] } : {}),
-    ...(m.unpricedPayoutLines?.length || m.tokenPayoutLines?.length
-      ? { unpricedPayouts: [...(m.unpricedPayoutLines ?? m.tokenPayoutLines ?? [])] } : {}),
+    ...(payoutLines.length ? { unpricedPayouts: payoutLines } : {}),
+    ...(m.meterNameOffset ? { meterNameOffset: m.meterNameOffset } : {}),
     ...(m.namePayout && m.tokenPayoutLines?.length ? { tokenPayouts: [...m.tokenPayoutLines] } : {}),
+    ...(m.payoutDevices?.length
+      ? { payoutDevices: m.payoutDevices.map((d) => ({ ...d })) }
+      : ((m.unpricedPayoutLines?.length || m.tokenPayoutLines?.length || m.hopperPayoutLines?.length)
+        ? {
+            payoutDevices: [
+              ...(m.unpricedPayoutLines ?? [])
+                .filter((line) => !m.tokenPayoutLines?.includes(line))
+                .map((line) => ({
+                  line,
+                  kind: m.hopperPayoutLines?.includes(line) ? 'hopper' as const : 'tube' as const,
+                })),
+              ...(m.hopperPayoutLines ?? [])
+                .filter((line) => !m.unpricedPayoutLines?.includes(line) && !m.tokenPayoutLines?.includes(line))
+                .map((line) => ({ line, kind: 'hopper' as const })),
+              ...(m.tokenPayoutLines ?? []).map((line) => ({
+                line,
+                kind: m.hopperPayoutLines?.includes(line) ? 'token-hopper' as const : 'token-tube' as const,
+              })),
+            ],
+          }
+        : {})),
+    ...(m.namePayout && m.unpricedPayoutLines?.some((l) => !m.tokenPayoutLines?.includes(l))
+      ? { cashPayouts: m.unpricedPayoutLines.filter((l) => !m.tokenPayoutLines?.includes(l)) } : {}),
+    ...(m.payoutRows?.length ? { payoutRows: m.payoutRows.map((r) => ({ ...r })) } : {}),
+    ...(m.meterOnlyPayout ? { meterOnlyPayout: true } : {}),
     ...(m.nameCoin ? { namesCoins: true } : {}),
     ...coinTableInfo(m),
     ...slotCoinLinesOf(game, m, resolved),
@@ -313,9 +350,14 @@ export function applyNamedCoins(m: Machine, named: Record<string, NamedCoin> | u
   for (const [line, coin] of Object.entries(named)) m.nameCoin(Number(line), coin);
 }
 
-export function applyNamedPayouts(m: Machine, named: Record<string, number> | undefined): void {
+export function applyNamedPayouts(m: Pick<Machine, 'namePayout'>, named: Record<string, number> | undefined): void {
   if (!named || !m.namePayout) return;
   for (const [line, pence] of Object.entries(named)) m.namePayout(Number(line), pence);
+}
+
+export function applyPayoutMeters(m: Machine, answers: Record<string, boolean> | undefined): void {
+  if (!answers || !m.setPayoutMeter) return;
+  for (const [line, token] of Object.entries(answers)) m.setPayoutMeter(Number(line), token);
 }
 
 export function applyCoinWiring(m: Machine, wiring: CoinWiring | undefined): void {
@@ -333,7 +375,9 @@ function slotCoinLinesOf(game: Game, m: Machine, resolved: readonly { line: numb
   for (const r of resolved) if (r.kind !== 'note' && r.line >= 0) drawn.add(r.line);
   for (const b of inputs) { const line = coinInputLine(view, b, chutes); if (line >= 0) drawn.add(line); }
   const table = m.coinLineTable;
-  return { drawnCoins: [...drawn].sort((a, b) => a - b), slotlessCoins: table ? slotlessLines(table, drawn) : [] };
+  const host = m.unpricedCoinLines;
+  const slotless = host ? host.map((c) => c.line).filter((l) => !drawn.has(l)) : table ? slotlessLines(table, drawn) : [];
+  return { drawnCoins: [...drawn].sort((a, b) => a - b), slotlessCoins: slotless };
 }
 
 function coinTableInfo(m: Machine): { coinTable?: CoinLineTable; coinTableRefusal?: string } {
@@ -347,6 +391,7 @@ function coinTableInfo(m: Machine): { coinTable?: CoinLineTable; coinTableRefusa
 export function powerCycleOrThrow(m: Machine): void {
   if (!m.powerCycle) throw new Error('this board cannot be restarted with its memory kept');
   m.powerCycle();
+  restInvertedInputs(m);
 }
 
 export interface BlankRebuildSettings {
@@ -388,13 +433,14 @@ export interface MeasureSettings {
 
 export function measureRunningCoins(
   build: (game: Game) => Machine, game: Game, live: Machine, name: string, o: MeasureSettings,
-  lines: readonly number[], at: Date,
+  lines: readonly number[], at: Date, credit?: CreditWatch,
 ): CoinMeasurement {
   const snap = captureState(live, name);
   return measureCoinLines(() => {
     const m = build(game);
     applyOptionKeyState(m, o.optionKeys);
     applyState(m, snap);
+    restInvertedInputs(m);
     applyPanelSwitchState(m, o.panelSwitches);
     applyNamedCoins(m, o.namedCoins);
     if (o.noRegions) {
@@ -403,7 +449,7 @@ export function measureRunningCoins(
     if (o.wasm === false) (m as { useInterpreter?: () => void }).useInterpreter?.();
     else if (o.wasm === true) (m as { useWasmCore?: () => void }).useWasmCore?.();
     return m;
-  }, lines, at);
+  }, lines, at, undefined, credit);
 }
 
 export function measureLogLine(r: CoinMeasurement, wallMs: number): string {
@@ -438,17 +484,23 @@ export const MIN_PRESS_SECONDS = 0.1;
 export class InputDwell {
   private readonly owed = new Map<number, number>();
   private readonly waiting = new Set<number>();
+  private readonly restLevel = new Map<number, boolean>();
 
-  press(m: Machine, id: number): void {
+  press(m: Machine, id: number, level = true): void {
     this.waiting.delete(id);
     this.owed.set(id, Math.round(m.clockHz * MIN_PRESS_SECONDS));
-    m.layoutInput(id, true);
+    this.restLevel.set(id, !level);
+    m.layoutInput(id, level);
   }
 
   release(m: Machine, id: number): void {
     if ((this.owed.get(id) ?? 0) > 0) { this.waiting.add(id); return; }
     this.owed.delete(id);
-    m.layoutInput(id, false);
+    m.layoutInput(id, this.restLevel.get(id) ?? false);
+  }
+
+  pressControl(m: Machine, id: number): void {
+    this.press(m, id, !m.invertedInputs?.has(id));
   }
 
   ran(m: Machine, cycles: number): void {
@@ -457,19 +509,22 @@ export class InputDwell {
       const now = left - cycles;
       if (now > 0) { this.owed.set(id, now); continue; }
       this.owed.delete(id);
-      if (this.waiting.delete(id)) m.layoutInput(id, false);
+      if (this.waiting.delete(id)) m.layoutInput(id, this.restLevel.get(id) ?? false);
     }
   }
 
   clear(): void {
     this.owed.clear();
     this.waiting.clear();
+    this.restLevel.clear();
   }
 }
 
 export const COIN_SPACING_SECONDS = 0.33;
 
 export const COIN_QUEUE_MAX = 10;
+
+const VERDICT_SECONDS = 4;
 
 export type CoinEvent = 'in' | 'queued' | 'dropped' | 'refused' | 'returned';
 
@@ -507,6 +562,7 @@ export class CoinPacer {
   }
 
   ran(m: Machine, cycles: number): void {
+    this.judged(m, cycles);
     if (this.owed > 0) this.owed -= cycles;
     if (this.queue.length && this.owed <= 0 && !m.coinBusy) this.deliver(m, this.queue.shift()!);
   }
@@ -518,6 +574,28 @@ export class CoinPacer {
   clear(): void {
     this.returnAll();
     this.owed = 0;
+    this.inFlight.length = 0;
+    this.refusals = undefined;
+  }
+
+  private readonly inFlight: { bit: number; left: number }[] = [];
+  private refusals: number | undefined;
+
+  private judged(m: Machine, cycles: number): void {
+    const n = m.coinsRefused;
+    if (n !== undefined && this.refusals !== undefined && n > this.refusals) {
+      let rejected = false;
+      for (let i = n - this.refusals; i > 0 && this.inFlight.length; i--) {
+        this.log('refused', this.inFlight.shift()!.bit);
+        rejected = true;
+      }
+      if (rejected) this.returnAll();
+    }
+    this.refusals = n;
+    for (let i = this.inFlight.length - 1; i >= 0; i--) {
+      this.inFlight[i]!.left -= cycles;
+      if (this.inFlight[i]!.left <= 0) this.inFlight.splice(i, 1);
+    }
   }
 
   private returnAll(): void {
@@ -531,7 +609,9 @@ export class CoinPacer {
     m.insertCoin(bit);
     const refused = refusing || (before !== undefined && m.coinsRefused !== before);
     this.log(refused ? 'refused' : 'in', bit);
-    if (refused) this.returnAll();
+    this.refusals = m.coinsRefused;
+    if (refused) { this.returnAll(); return; }
+    this.inFlight.push({ bit, left: Math.round(m.clockHz * VERDICT_SECONDS) });
   }
 }
 
@@ -554,6 +634,7 @@ export function regionStats(m: Machine | null): { compiled: number; refused: num
 export function runBudget(m: Machine, budget: number, benchStep: boolean): number {
   if (!benchStep) {
     m.run(budget);
+    observePayouts(m, budget / m.clockHz);
     return 0;
   }
   let steps = 0;
@@ -562,6 +643,7 @@ export function runBudget(m: Machine, budget: number, benchStep: boolean): numbe
     done += m.step();
     steps++;
   }
+  observePayouts(m, budget / m.clockHz);
   return steps;
 }
 

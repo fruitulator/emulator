@@ -3,7 +3,8 @@ import { kioskRow } from '../kioskmodeui';
 import { onKioskMode } from '../kioskmode';
 import { UI_ICONS } from './icons';
 import { closeSheet, showSheet, valueRow } from './sheet';
-import { closeSideCard, escapeSideCard } from './sidecard';
+import { closeSideCard } from './sidecard';
+import { openLayer } from './layer';
 import { languageRow } from './langpick';
 import { themeRow } from './themepick';
 
@@ -83,29 +84,14 @@ export function mountSettings(btn: HTMLButtonElement, o: { onLocked?: () => void
     el.style.top = `${Math.round(b.bottom + 8)}px`;
     el.style.right = `${Math.round(document.documentElement.clientWidth - b.right)}px`;
     btn.setAttribute('aria-expanded', 'true');
-    const outside = (e: PointerEvent): void => {
-      const t = e.target as Element;
-      if (el.contains(t) || btn.contains(t) || t.closest?.('.nb-theme-card, .lang-card')) return;
-      closeMenu();
-    };
-    const key = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return;
-      e.stopImmediatePropagation();
-      e.preventDefault();
-      if (escapeSideCard()) return;
-      closeMenu();
-      btn.focus();
-    };
     const resize = (): void => closeMenu();
-    addEventListener('pointerdown', outside, true);
-    addEventListener('keydown', key, true);
     addEventListener('resize', resize);
-    menu = { el, off: () => {
-      removeEventListener('pointerdown', outside, true);
-      removeEventListener('keydown', key, true);
-      removeEventListener('resize', resize);
-    } };
     (el.querySelector('button') as HTMLElement | null)?.focus();
+    const layer = openLayer([el], { kind: 'menu', close: closeMenu, returnTo: btn });
+    menu = { el, off: () => {
+      removeEventListener('resize', resize);
+      layer.release();
+    } };
   };
 
   btn.addEventListener('click', () => {

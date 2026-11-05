@@ -7,8 +7,8 @@ export const ROOM_SETTLE_MAX_MS = 10_000;
 
 export const ARCADE_CLOSED_FLAG = 'closed';
 
-export function leaveClosedArcade(say: boolean): void {
-  location.href = say ? `/arcade/?${ARCADE_CLOSED_FLAG}` : '/arcade/';
+export function leaveClosedArcade(): void {
+  location.href = `/arcade/?${ARCADE_CLOSED_FLAG}`;
 }
 
 export interface RoomStanding { name: string; machines: string; look: string; props: string }
@@ -42,7 +42,7 @@ export interface RoomLiveHooks {
   waiting(): boolean;
   loading(): boolean;
   apply(next: ArcadeDoc, was: RoomStanding): Promise<void>;
-  closed(say: boolean): void | Promise<void>;
+  closed(): void | Promise<void>;
 }
 
 export class RoomLive {
@@ -53,7 +53,6 @@ export class RoomLive {
   private latest: ArcadeDoc | null = null;
   private played: ReadonlySet<string> = new Set();
   private gone = false;
-  private say = true;
   private busy = false;
   private again = false;
   private left = false;
@@ -63,7 +62,6 @@ export class RoomLive {
   message(m: RoomMessage): void {
     if (m.type !== 'arcade') return;
     if (m.data.gone) {
-      if (!this.gone) this.say = !this.h.atMachine();
       this.gone = true;
       this.look();
       return;
@@ -108,7 +106,7 @@ export class RoomLive {
     if (this.left || this.h.atMachine() || this.h.waiting()) return;
     if (this.gone) {
       this.left = true;
-      await this.h.closed(this.say);
+      await this.h.closed();
       return;
     }
     if (!this.latest || this.h.loading()) return;

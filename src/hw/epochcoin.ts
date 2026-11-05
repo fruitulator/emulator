@@ -229,6 +229,54 @@ export function findEpochCodeLines(rom: Uint8Array): number[] | null {
   return null;
 }
 
+export function findEpochCoinInhibits(
+  rom: Uint8Array, records: readonly EpochCoinRecord[],
+): (number | null)[] | null {
+  const walk = findPattern(rom, [
+    0x7a, 0x03, 0x00, null, null, null, 0x0a, 0xa3, 0x01, 0x00, 0x6f, 0x32, 0x00, 0x04, 0x0a, 0xa0,
+    0x01, 0x00, 0x6b, 0x22, 0x00, 0xfe, null, null, 0x1f, 0xa0, 0x4f, null, 0x6e, 0x3a, 0x00, 0x08,
+  ]);
+  if (walk < 0) return null;
+  const table = be32(rom, walk + 2) & 0xffffff;
+
+  const block = (bit: number): (number | null)[] => [
+    0x0c, 0xab, 0xeb, bit, 0x0c, 0xba, 0xaa, 0x00, 0x47, 0x0e, 0x6b, 0x22, 0x00, null, null, null,
+  ];
+  const outputs: (number | null)[] = [];
+  for (let at = findPattern(rom, block(1)); at >= 0 && !outputs.length; at = findPattern(rom, block(1), at + 2)) {
+    const found: (number | null)[] = [];
+    for (let i = 0; i < 6; i++) {
+      const a = at + 0x2a * i;
+      if (a + 16 > rom.length || findPattern(rom.subarray(a, a + 16), block(1 << i)) !== 0) break;
+      const word = be32(rom, a + 12) & 0xffffff;
+      if (word + 2 > rom.length) break;
+      const n = be16(rom, word) - 1;
+      found.push(n >> 3 === 2 ? 1 << (n & 7) : null);
+    }
+    if (found.length === 6) outputs.push(...found);
+  }
+  if (!outputs.length) return null;
+
+  const channel = new Map<number, number>();
+  for (let i = 0; i < 16; i++) {
+    const row = table + 16 * i;
+    if (row + 16 > rom.length || !rom[row] || channel.has(rom[row])) break;
+    channel.set(rom[row], rom[row + 8]);
+  }
+  return records.map((r) => {
+    const bits = channel.get(r.codes[0]);
+    if (!bits) return null;
+    let mask = 0;
+    for (let i = 0; i < 8; i++) {
+      if (!(bits >> i & 1)) continue;
+      const out = outputs[i];
+      if (out === null || out === undefined) return null;
+      mask |= out;
+    }
+    return mask;
+  });
+}
+
 export interface EpochHopperCoin {
   pence: number;
   token: boolean;

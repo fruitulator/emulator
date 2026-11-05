@@ -17,6 +17,13 @@ export interface RoomSwitches {
   dim: boolean;
   glow: boolean;
   lamp: boolean;
+  realism: boolean | null;
+  rShadow: boolean;
+  rEnv: boolean;
+  rHalo: boolean;
+  rGlow: boolean;
+  rFloor: boolean;
+  rGlass: boolean;
 }
 
 export const WASH_DEFAULT = 0;
@@ -38,6 +45,7 @@ export const DEFAULT_SWITCHES: Readonly<RoomSwitches> = Object.freeze<RoomSwitch
   lights: WASH_DEFAULT, pools: true, shade: true, textures: true, aniso: 8, dpr: null, aa: true, env: true,
   glass: GLASS_DEFAULT, glassTex: GLASS_TEX_DEFAULT, glassPs: GLASS_PS_DEFAULT, glassNearMs: GLASS_NEAR_MS_DEFAULT,
   glassPresent: true, focusFreeze: true, dim: true, glow: false, lamp: true,
+  realism: null, rShadow: true, rEnv: true, rHalo: true, rGlow: true, rFloor: true, rGlass: true,
 });
 
 const defaults = (): RoomSwitches => ({ ...DEFAULT_SWITCHES });
@@ -70,6 +78,13 @@ function parseSwitches(search: string): RoomSwitches {
     dim: q.get('dim') !== '0',
     glow: q.get('glow') === '1',
     lamp: q.get('lamp') !== '0',
+    realism: q.get('realism') === '1' ? true : q.get('realism') === '0' ? false : null,
+    rShadow: q.get('rshadow') !== '0',
+    rEnv: q.get('renv') !== '0',
+    rHalo: q.get('rhalo') !== '0',
+    rGlow: q.get('rglow') !== '0',
+    rFloor: q.get('rfloor') !== '0',
+    rGlass: q.get('rglass') !== '0',
   };
 }
 
@@ -96,5 +111,12 @@ export function switchesSaid(s: RoomSwitches): string {
   if (!s.dim) on.push('dim=0');
   if (s.glow) on.push('glow=1');
   if (!s.lamp) on.push('lamp=0');
+  if (s.realism !== null) on.push(`realism=${s.realism ? 1 : 0}`);
+  if (!s.rShadow) on.push('rshadow=0');
+  if (!s.rEnv) on.push('renv=0');
+  if (!s.rHalo) on.push('rhalo=0');
+  if (!s.rGlow) on.push('rglow=0');
+  if (!s.rFloor) on.push('rfloor=0');
+  if (!s.rGlass) on.push('rglass=0');
   return on.length ? on.join(' ') : 'defaults';
 }

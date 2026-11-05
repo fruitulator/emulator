@@ -1,3 +1,7 @@
+.pc-card.nb-dialog {
+  padding: 0;
+  border-radius: var(--nb-r-xl);
+}
 .pc-card {
   width: min(var(--pc-w, 400px), calc(100vw - 32px));
   box-sizing: border-box;

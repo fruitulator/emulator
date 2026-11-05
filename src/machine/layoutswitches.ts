@@ -1,7 +1,7 @@
 import { decryptFml, isEncryptedFml } from '../layout/fml';
 import { parseLayout } from '../layout/fmlparse';
 import { datCheckboxes, datCheckboxesFromDfm } from '../layout/datreels';
-import type { CabinetSwitch } from './machine';
+import type { CabinetSwitch, Machine } from './machine';
 
 export interface LayoutSwitch {
   number: number;
@@ -10,6 +10,8 @@ export interface LayoutSwitch {
 }
 
 const CHECKBOX_COMPONENT = 0x14;
+const LAMP_COMPONENT = 0x04;
+const BUTTON_COMPONENT = 0x05;
 
 export function layoutSwitches(layout: Uint8Array | undefined): LayoutSwitch[] {
   if (!layout || layout.length === 0) return [];
@@ -46,6 +48,30 @@ export function layoutSwitchesFromPayload(payload: Uint8Array): LayoutSwitch[] {
 
 function sortSwitches(out: LayoutSwitch[]): LayoutSwitch[] {
   return out.sort((a, b) => a.number - b.number);
+}
+
+export function layoutInvertedInputs(layout: Uint8Array | undefined): number[] {
+  if (!layout || layout.length === 0) return [];
+  let comps;
+  try {
+    const payload = isEncryptedFml(layout) ? decryptFml(layout) : layout;
+    if (isDfm(payload)) return [];
+    comps = parseLayout(payload);
+  } catch {
+    return [];
+  }
+  const lines = new Set<number>();
+  for (const c of comps) {
+    if (!c.values.get('Inverted') || c.values.get('CoinSelected')) continue;
+    if (c.type !== BUTTON_COMPONENT && !(c.type === LAMP_COMPONENT && c.values.get('#17'))) continue;
+    const line = c.values.get('ButtonNumber') ?? 0;
+    if (line >= 0 && line < 0xff) lines.add(line);
+  }
+  return [...lines].sort((a, b) => a - b);
+}
+
+export function restInvertedInputs(m: Machine): void {
+  for (const id of m.invertedInputs ?? []) m.layoutInput(id, true);
 }
 
 function isDfm(payload: Uint8Array): boolean {

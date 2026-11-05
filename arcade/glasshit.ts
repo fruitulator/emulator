@@ -43,7 +43,7 @@ export function glassPointAt(
   return { x, y, scale: px / height };
 }
 
-function shown(o: THREE.Object3D): boolean {
+export function shown(o: THREE.Object3D): boolean {
   for (let x: THREE.Object3D | null = o; x; x = x.parent) if (!x.visible) return false;
   return true;
 }

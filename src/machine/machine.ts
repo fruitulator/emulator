@@ -13,6 +13,13 @@ export interface CoinWiringStatus {
   totals?: { pence: number; counts: number; unit: number };
 }
 
+export interface PayoutRow {
+  kind: 'meter' | 'output';
+  line: number;
+  pence: number | null;
+  token: boolean;
+}
+
 export type NamedCoin = number | { token: number } | 'token';
 
 export interface CoinChute {
@@ -101,6 +108,11 @@ export interface CashLedger {
   unpricedTokenIn: number;
 }
 
+export interface MeterTotals {
+  readonly in: number;
+  readonly out: number;
+}
+
 export function newCashLedger(): CashLedger {
   return {
     inPence: 0,
@@ -181,6 +193,7 @@ export interface Machine {
   layoutDigitLevel?(n: number): number;
   layoutDigitSegLevel?(n: number, seg: number): number;
   layoutInput(id: number, on: boolean): void;
+  invertedInputs?: ReadonlySet<number>;
   readonly quietIsWaiting?: boolean;
   boardDefaults?: import('./boarddefaults').BoardDefault[];
   pinHostClock?(at: Date | null): void;
@@ -193,14 +206,36 @@ export interface Machine {
   readonly uncountedCoinLines?: readonly number[];
   readonly unpricedPayoutLines?: readonly number[];
   readonly tokenPayoutLines?: readonly number[];
+  readonly payoutDevices?: readonly {
+    line: number;
+    kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper';
+    displayNumber?: number;
+    defaultPence?: number | null;
+  }[];
+  readonly hopperPayoutLines?: readonly number[];
   namePayout?(line: number, pence: number): void;
+  readonly payoutRows?: readonly PayoutRow[];
+  setPayoutMeter?(line: number, token: boolean): void;
+  readonly payoutCounts?: readonly number[];
+  readonly unpricedPaidLines?: readonly number[];
+  readonly rowCoins?: Readonly<Record<number, number>>;
+  readonly outMeterClicks?: Readonly<Record<number, number>>;
+  readonly unnamedPulses?: Readonly<Record<number, number>>;
+  payoutCheck?: import('./payoutcheck').PayoutCheck;
+  readonly meterOnlyPayout?: boolean;
   readonly coinPortLines?: CoinPortLines;
   readonly coinLockHarnessRead?: boolean;
   readonly coinsRefused?: number;
+  readonly acceptedPence?: number;
   readonly unnamedCoinLines?: readonly number[];
+  readonly unpricedCoinLines?: readonly { line: number; credits: number | null }[];
   readonly coinLineTable?: CoinLineTable | null;
   readonly coinLineTableRefusal?: string | null;
   setCoinWiring?(w: CoinWiring): void;
+  readonly secPulses?: ArrayLike<number>;
+  readonly triacTicks?: ArrayLike<number>;
+  readonly chutePence?: ArrayLike<number>;
+  readonly meterNameOffset?: number;
   readonly coinWiringStatus?: CoinWiringStatus;
   nameCoin?(line: number, coin: NamedCoin): void;
   insertNote?(type: number): NoteResult;
@@ -209,7 +244,7 @@ export interface Machine {
   readonly noteReaderFitted?: boolean;
   readonly reelDriftBase?: number;
   readonly cashLedger?: CashLedger;
-  readonly meterTotals?: { readonly in: number; readonly out: number };
+  readonly meterTotals?: MeterTotals;
   drainSerial?(): { ch: number; bytes: number[] }[];
 
   restoredStateFault?(): string | null;

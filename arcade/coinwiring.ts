@@ -1,10 +1,11 @@
 import type { MachineInfo } from '../web/emu-protocol';
 import type { Emu } from '../web/emu-client';
 import { markableLine, viewFor, type PlatformView } from '../web/platform';
-import { wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, slotCoinPence, type CoinWiring } from '../web/coinask';
+import { CASH_COINS, wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, slotCoinPence, type CoinWiring, type SlotCoin } from '../web/coinask';
 import { hasInput, type CabLamp } from '../web/dat';
 import type { NamedCoin } from '../src/machine/machine';
 import { detectCoins, detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
+import { penceOf } from './wallet';
 
 export type { WireSlot } from '../web/coinslots';
 
@@ -47,6 +48,25 @@ export function coinsTaken(info: MachineInfo | null | undefined): ReadonlySet<nu
   return out.size ? out : null;
 }
 
+export function hostCoinsTaken(
+  credits: ReadonlyMap<number, number>, w: CoinWiring, line: number,
+  needed: readonly number[] = [],
+): ReadonlySet<number> | null {
+  const mine = credits.get(line);
+  if (!mine) return null;
+  for (const [k, s] of Object.entries(w)) {
+    if (Number(k) === line) continue;
+    const c = credits.get(Number(k));
+    const v = s.coins.length ? slotCoinPence(s.coins[0].coin) : null;
+    if (c && v !== null) return new Set([(v * mine) / c]);
+  }
+  const fits = (v: number): boolean => needed.every((l) => {
+    const c = credits.get(l);
+    return l === line || !c || CASH_COINS.includes((v * c) / mine);
+  });
+  return new Set(CASH_COINS.filter((v) => v % mine === 0 && fits(v)));
+}
+
 export function measureLines(req: WiringRequest): number[] {
   const chutes = req.info.coins ?? viewFor(req.info.system).coins;
   const out = new Set<number>(req.slots);
@@ -68,6 +88,26 @@ export function slotlessToWire(info: MachineInfo | null, refusing: number, w: Co
     for (const c of s.coins) if (c.line !== null) carried.add(c.line);
   }
   return all.filter((l) => w[String(l)] !== undefined || (!(maskOn && locked(l)) && !carried.has(l)));
+}
+
+export function lineCoins(info: MachineInfo | null, refusing: number, w: CoinWiring): { line: number; coin: SlotCoin }[] {
+  const table = info?.coinTable;
+  if (!info || !table) return [];
+  const all = table.lines.filter(isLive).map((l) => l.line);
+  const open = slotlessToWire({ ...info, slotlessCoins: all }, refusing, {});
+  const lines = all.filter((l) => open.includes(l) || w[String(l)] !== undefined);
+  const read = detectCoins(table);
+  const door: readonly { label: string; bit: number; pence?: number | null; token?: boolean }[] = info.coins ?? viewFor(info.system).coins;
+  const out: { line: number; coin: SlotCoin }[] = [];
+  for (const line of lines) {
+    const r = read instanceof Map ? read.get(line) : undefined;
+    if (r !== undefined) { out.push({ line, coin: r }); continue; }
+    const d = door.find((c) => c.bit === line);
+    const p = d ? penceOf(d) : 0;
+    if (d?.token) out.push({ line, coin: { token: p > 0 ? p : null } });
+    else if (p > 0) out.push({ line, coin: p });
+  }
+  return out;
 }
 
 export function wiringFor(configCoins: unknown, oldAnswers: unknown, info: MachineInfo | null): CoinWiring {
@@ -108,8 +148,9 @@ export function takesACoin(
   w: CoinWiring, info: MachineInfo | null | undefined, platformCoins: readonly { bit: number }[] = [],
 ): boolean {
   if (!unsetCoinLines(w, info).length) return true;
-  for (const s of Object.values(w)) if (s.coins.some((c) => c.line !== null && slotCoinPence(c.coin) !== null)) return true;
-  const lines = new Set<number>([
+  const read = info?.unpricedCoins?.length ? new Set(info.unpricedCoins.map((c) => c.line)) : null;
+  for (const s of Object.values(w)) if (s.coins.some((c) => c.line !== null && (!read || read.has(c.line)) && slotCoinPence(c.coin) !== null)) return true;
+  const lines = read ?? new Set<number>([
     ...(info?.coins ?? platformCoins).map((c) => c.bit),
     ...(info?.drawnCoins ?? []),
     ...(info?.slotlessCoins ?? []),

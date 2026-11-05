@@ -1,4 +1,5 @@
 import type { Bus16 } from '../cpu/bus68k';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { CabinetSwitch, CoinWiringStatus, Machine, DigitKind, NoteResult } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
@@ -26,6 +27,7 @@ import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
 import type { LayoutSwitch } from './layoutswitches';
 import { StatedLines } from './statedlines';
 import { CurveMux } from '../hw/curvemux';
+import { TokenPayouts } from './coinbook';
 
 export const CPU_CLOCK = 8_000_000;
 const DUART_CLOCK = 3_686_400;
@@ -85,12 +87,6 @@ export class Impact implements Bus16, Machine {
   private payoutWord = 0;
   private slideState = 0;
   readonly slidePulses = new Uint32Array(4);
-  private coinLeft = false;
-  heldOutPulses = 0;
-  private coinHasLeft(): boolean {
-    if (!this.coinLeft && (this.hopper1.paid > 0 || this.hopper2.paid > 0)) this.coinLeft = true;
-    return this.coinLeft;
-  }
   get triacLevels(): number {
     return this.slideState & 0x0f;
   }
@@ -100,6 +96,13 @@ export class Impact implements Bus16, Machine {
 
   private readonly hopper1 = new Hopper(CPU_CLOCK, Impact.HOPPER1_WAVEFORM);
   private readonly hopper2 = new Hopper(CPU_CLOCK, Impact.HOPPER2_WAVEFORM);
+  private readonly hopperPaid = [0, 0];
+  private readonly hopperCoinPence: [number | null, number | null] = [null, null];
+  private readonly tokenPayouts = new TokenPayouts();
+  private readonly cashPayouts = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] {
+    return [...new Set([...this.cashPayouts.unpricedLines, ...this.tokenPayouts.unpricedLines])].sort((a, b) => a - b);
+  }
 
   readonly cashLedger = newCashLedger();
   private readonly meterState = [false, false, false, false, false, false, false, false];
@@ -112,7 +115,6 @@ export class Impact implements Bus16, Machine {
   }
   private readonly meterInMult = [0, 0, 0, 0, 0, 0, 0, 0];
   private readonly meterOutMult = [0, 0, 0, 0, 0, 0, 0, 0];
-  private meterLedgerMult = [0, 0, 0, 0, 0, 0, 0, 0];
   readonly meterTotals = { in: 0, out: 0 };
 
   readonly sec = new Sec();
@@ -121,7 +123,6 @@ export class Impact implements Bus16, Machine {
   private secOutMult: number[] = [];
   private secLedgerMult: number[] = [];
   readonly secTotals = { in: 0, out: 0 };
-  private static readonly SEC_UNIT_PENCE = 10;
 
   readonly duart = new Mc68681({
     irqChanged: () => this.updateIrq(),
@@ -391,6 +392,7 @@ export class Impact implements Bus16, Machine {
     this.ssp.onReply = (bytes) => this.sspReply(bytes);
     this.ssp.onCredit = (channel) => {
       const pence = SSP_CHANNEL_PENCE[channel - 1] ?? 0;
+      this.acceptedPence += pence;
       if (this.wiring) {
         this.wiring.check.coin(this.booksMoney ? pence : undefined, this.wiringState.now);
         if (!this.booksMoney) return;
@@ -565,6 +567,7 @@ export class Impact implements Bus16, Machine {
   }
 
   coinsRefused = 0;
+  acceptedPence = 0;
 
   private bookProgramCoin(b: number, taken: ProgramCoin): void {
     if (taken === null) {
@@ -657,9 +660,7 @@ export class Impact implements Bus16, Machine {
     return { state: w.check.state, step: w.check.step, conflicts: [...w.conflicts], totals: { ...w.check.totals, unit: w.check.unit } };
   }
 
-  private get booksMoney(): boolean {
-    return this.wiring?.check.state !== 'disagrees';
-  }
+  private get booksMoney(): boolean { return true; }
 
   private checks(line: number, pence: number | null): boolean {
     const set = this.wiring!.checked;
@@ -791,8 +792,49 @@ export class Impact implements Bus16, Machine {
     this.hoppersWord = word & 0xff;
   }
 
+  get hopperPayoutLines(): readonly number[] { return [4, 5]; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.slidePence.forEach((s, i) => { if (s !== null) out[i] = this.slidePulses[i] ?? 0; });
+    if (this.hopper1Fitted) out[4] = this.hopper1.paid;
+    if (this.hopper2Fitted) out[5] = this.hopper2.paid;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.slidePence.forEach((s, i) => { if (s === null) out[i] = this.slidePulses[i] ?? 0; });
+    return out;
+  }
+  private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [
+      ...this.slidePence.flatMap((effect, line) => effect === null ? [] : [{
+        line,
+        kind: effect === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof effect === 'number' ? effect : null,
+      }]),
+      ...(this.hopper1Fitted ? [{ line: 4, kind: 'hopper' as const, displayNumber: 1, defaultPence: this.hopperCoinPence[0] }] : []),
+      ...(this.hopper2Fitted ? [{ line: 5, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1] }] : []),
+    ];
+  }
+
   setTriacSlides(slides: SlideEffect[]): void {
     for (let i = 0; i < 4; i++) this.slidePence[i] = slides[i] ?? null;
+  }
+
+  get unpricedPayoutLines(): readonly number[] {
+    return this.slidePence.flatMap((s, i) => (s === 'unpriced' || (s === null && !this.judgedByMeters) ? [i] : []));
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  namePayout(line: number, pence: number): void {
+    this.tokenPayouts.name(line, pence);
+    this.cashPayouts.name(line, pence);
   }
 
   private mechType = 0;
@@ -817,7 +859,7 @@ export class Impact implements Bus16, Machine {
   }
 
   private relayLedgerMults(): void {
-    [this.meterLedgerMult, this.secLedgerMult] = ledgerOutMults(
+    [, this.secLedgerMult] = ledgerOutMults(
       { in: this.meterInMult, out: this.meterOutMult },
       { in: this.secInMult, out: this.secOutMult },
     );
@@ -845,8 +887,6 @@ export class Impact implements Bus16, Machine {
     if (outMult && !this.booksMoney) { this.secTotals.out += outMult * delta; return; }
     if (outMult) {
       this.secTotals.out += outMult * delta;
-      if (!this.coinHasLeft()) { if (this.secLedgerMult[meter]) this.heldOutPulses += delta; return; }
-      this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Impact.SEC_UNIT_PENCE;
     }
   }
 
@@ -885,7 +925,6 @@ export class Impact implements Bus16, Machine {
   }
 
   powerCycle(): void {
-    this.coinHasLeft();
     this.nvram = this.ram.slice();
     this.reset();
   }
@@ -900,6 +939,8 @@ export class Impact implements Bus16, Machine {
     this.ppi.reset();
     this.hopper1.reset();
     this.hopper2.reset();
+    this.hopperPaid[0] = 0;
+    this.hopperPaid[1] = 0;
     this.vfd.reset();
     resetReelsInPlace(this.reels);
     this.lampMux.reset();
@@ -1005,7 +1046,15 @@ export class Impact implements Bus16, Machine {
     for (let i = 0; rising !== 0; i++, rising >>= 1) {
       if (!(rising & 1)) continue;
       this.slidePulses[i]++;
-      this.coinLeft = true;
+      const effect = this.slidePence[i];
+      const named = this.cashPayouts.value(i) ?? this.tokenPayouts.value(i);
+      if (named !== undefined) {
+        if (effect === 'token') this.cashLedger.tokenOutPence += named;
+        else this.cashLedger.outPence += named;
+      } else if (effect === 'token') this.tokenPayouts.book(this.cashLedger, i);
+      else if (effect === 'unpriced') this.cashPayouts.bookCash(this.cashLedger, i);
+      else if (effect === null) { if (!this.judgedByMeters) this.cashPayouts.bookCash(this.cashLedger, i); }
+      else this.cashLedger.outPence += effect;
     }
 
     if (this.secFitted) {
@@ -1024,8 +1073,6 @@ export class Impact implements Bus16, Machine {
     this.duart.setIP(4, this.meterState.some(Boolean) ? 0 : 1);
   }
 
-  private static readonly METER_CASH_OUT = 1;
-  private static readonly METER_TOKEN_OUT = 3;
   private static readonly METER_UNIT_PENCE = 10;
 
   private tickMeters(cycles: number): void {
@@ -1038,23 +1085,9 @@ export class Impact implements Bus16, Machine {
     this.meterCount[id]++;
     this.meterTotals.in += this.meterInMult[id];
     this.meterTotals.out += this.meterOutMult[id];
-    if (this.wiring) {
-      if (this.wiring.cashIn.has(id)) this.wiring.check.count(1, this.wiringState.now);
-      if (!this.booksMoney) return;
-    }
-    const outMeter = this.meterMapStated
-      ? (this.meterLedgerMult[id] ?? 0) > 0 || (id === Impact.METER_TOKEN_OUT
-        && this.meterOutMult[Impact.METER_CASH_OUT] > 0 && !this.meterOutMult[id] && !this.meterInMult[id])
-      : id === Impact.METER_CASH_OUT || id === Impact.METER_TOKEN_OUT;
-    if (outMeter && !this.coinHasLeft()) { this.heldOutPulses++; return; }
-    if (this.meterMapStated) {
-      this.cashLedger.outPence += (this.meterLedgerMult[id] ?? 0) * Impact.METER_UNIT_PENCE;
-      if (id === Impact.METER_TOKEN_OUT && this.meterOutMult[Impact.METER_CASH_OUT] > 0
-        && !this.meterOutMult[id] && !this.meterInMult[id]) {
-        this.cashLedger.tokenOutPence += Impact.METER_UNIT_PENCE;
-      }
-    } else if (id === Impact.METER_CASH_OUT) this.cashLedger.outPence += Impact.METER_UNIT_PENCE;
-    else if (id === Impact.METER_TOKEN_OUT) this.cashLedger.tokenOutPence += Impact.METER_UNIT_PENCE;
+    countOutClick(this.outClicks, id, this.meterOutMult[id]);
+    if (this.wiring && this.wiring.cashIn.has(id)) this.wiring.check.count(1, this.wiringState.now);
+    if (this.wiring && !this.booksMoney) return;
   }
 
   private volumeW(v: number): void {
@@ -1319,6 +1352,7 @@ export class Impact implements Bus16, Machine {
 
     this.hopper1.tick(cycles);
     this.hopper2.tick(cycles);
+    this.bookHopperPayouts();
 
     if (this.wiring) this.tickWiring(cycles);
 
@@ -1329,6 +1363,7 @@ export class Impact implements Bus16, Machine {
           this.coinCycles[i] = 0;
           this.coinstate |= this.coinMasks[i] || 1 << i;
         }
+
       }
     }
 
@@ -1337,6 +1372,27 @@ export class Impact implements Bus16, Machine {
     this.upd.tick(cycles, CPU_CLOCK);
 
     return cycles;
+  }
+
+  private bookHopperPayouts(): void {
+    const paid = [this.hopper1.paid, this.hopper2.paid];
+    if (!this.booksMoney) return;
+    for (let i = 0; i < paid.length; i++) {
+      const fresh = paid[i] - this.hopperPaid[i];
+      if (fresh > 0) {
+        const value = this.hopperCoinPence[i];
+        if (value === null) {
+          const named = this.cashPayouts.value(4 + i);
+          if (named === undefined) {
+            this.cashLedger.unpricedOut += fresh;
+            this.cashPayouts.noteUnpriced(4 + i);
+          } else this.cashLedger.outPence += fresh * named;
+        } else {
+          this.cashLedger.outPence += fresh * value;
+        }
+      }
+      this.hopperPaid[i] = paid[i];
+    }
   }
 
   run(cycles: number): number {

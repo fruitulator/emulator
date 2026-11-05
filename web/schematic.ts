@@ -4,6 +4,8 @@ import type {
 import { envelope, frameDuty, levelFromRatio } from '../src/machine/schematic';
 import type { FrameView } from '../src/machine/framestate';
 import type { DownloadMenu } from './panelmenu';
+import { EdgeResize } from './ui/edgeresize';
+import { openLayer, type Layer } from './ui/layer';
 import { str } from './i18n';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -299,6 +301,7 @@ function digitKey(v: FrameView): string | null {
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 4;
 const ZOOM_PAD = 12;
+const FRAME_MIN = 240;
 const CAN_ZOOM = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
   && CSS.supports('zoom', '1.5');
 
@@ -385,7 +388,27 @@ class DiagramStage {
     this.measure();
   }
 
+  private sizeFrame(): void {
+    const body = this.el.parentElement;
+    const availW = this.el.clientWidth - ZOOM_PAD * 2;
+    if (!body || availW <= 0 || body.clientHeight <= 0) return;
+    let others = 0;
+    let n = 0;
+    for (const c of body.children) {
+      if (c === this.el) continue;
+      others += (c as HTMLElement).offsetHeight;
+      n++;
+    }
+    const room = Math.max(FRAME_MIN, body.clientHeight - others - n * (parseFloat(getComputedStyle(body).rowGap) || 0));
+    const fitted = this.h * clamp(availW / this.w, ZOOM_MIN, 1) + ZOOM_PAD * 2;
+    const zoomedIn = !this.following && this.scale > this.fitScale + 0.001;
+    const height = `${Math.round(zoomedIn ? room : clamp(fitted, FRAME_MIN, room))}px`;
+    if (this.el.style.height !== height) this.el.style.height = height;
+  }
+
   private measure(): void {
+    if (this.el.parentElement) this.ro?.observe(this.el.parentElement);
+    this.sizeFrame();
     const availW = this.el.clientWidth - ZOOM_PAD * 2;
     const availH = this.el.clientHeight - ZOOM_PAD * 2;
     if (availW <= 0 || availH <= 0) return;
@@ -489,6 +512,7 @@ class DiagramStage {
   }
 
   private apply(): void {
+    this.sizeFrame();
     const cw = this.el.clientWidth;
     const ch = this.el.clientHeight;
     const sw = this.w * this.scale;
@@ -514,6 +538,11 @@ export interface PanelTab {
   clearScrim?: boolean;
 }
 
+const PANEL_WIDTH = 1240;
+const PANEL_WIDTH_STORE = 'fruitulator.systemPanelWidth';
+const PANEL_NARROW = 760;
+const PANEL_SIX_TILES = 900;
+
 export const DIAGRAM_TAB = 'diagram';
 
 const DIAGRAM_ICON = 'M4 5h6v5H4zM14 14h6v5h-6zM14 5h6v5h-6zM7 10v4.5a2 2 0 0 0 2 2h5M17 10v4';
@@ -529,6 +558,8 @@ export class SchematicPanel {
   private panes = new Map<string, HTMLElement>();
   private rail = new Map<string, HTMLButtonElement>();
   private mounted = new Set<string>();
+  private readonly edge: EdgeResize;
+  private resetTimer = 0;
 
   constructor(
     private readonly panel: HTMLElement,
@@ -536,8 +567,39 @@ export class SchematicPanel {
     private readonly poll: () => Promise<Record<string, number> | null>,
     private readonly stats: () => PanelStats,
   ) {
-    panel.classList.add('nb-sheet');
+    panel.classList.add('nb-sheet', 'nb-sheet--right');
     backdrop.addEventListener('click', () => this.close());
+    this.edge = new EdgeResize({
+      storeKey: PANEL_WIDTH_STORE,
+      defaultWidth: PANEL_WIDTH,
+      label: str('schematic.system_panel'),
+      onWidth: (width, animate) => this.applyWidth(width, animate),
+    });
+    panel.append(this.edge.handle);
+    this.edge.sync();
+  }
+
+  private applyWidth(width: number | null, animate: boolean): void {
+    const { panel } = this;
+    window.clearTimeout(this.resetTimer);
+    panel.classList.toggle('schem-width-anim', animate);
+    if (animate) {
+      this.resetTimer = window.setTimeout(() => panel.classList.remove('schem-width-anim'), 220);
+    }
+    panel.style.width = width === null ? '' : `${width}px`;
+    panel.classList.toggle('schem-compact', width !== null && width < PANEL_WIDTH);
+    panel.classList.toggle('schem-compact6', width !== null && width < PANEL_WIDTH && width >= PANEL_SIX_TILES);
+    const narrow = width !== null && width < PANEL_NARROW;
+    if (narrow !== panel.classList.contains('schem-narrow')) {
+      panel.classList.toggle('schem-narrow', narrow);
+      this.stage?.fit();
+    }
+    this.syncScrim();
+  }
+
+  private syncScrim(): void {
+    const tab = this.tabs.find((t) => t.id === this.current);
+    this.backdrop.classList.toggle('clear', this.edge.narrowed || tab?.clearScrim === true);
   }
 
   get isOpen(): boolean {
@@ -563,8 +625,11 @@ export class SchematicPanel {
     this.backdrop.hidden = false;
     this.showTab(tab ?? this.current, true);
     requestAnimationFrame(() => this.panel.classList.add('open'));
+    this.layer = openLayer([this.panel, this.backdrop], { kind: 'dialog', close: () => this.close() });
     this.onToggle?.(true);
   }
+
+  private layer: Layer | null = null;
 
   get tab(): string {
     return this.current;
@@ -583,7 +648,7 @@ export class SchematicPanel {
       btn.tabIndex = k === id ? 0 : -1;
     }
     const tab = this.tabs.find((t) => t.id === id);
-    this.backdrop.classList.toggle('clear', tab?.clearScrim === true);
+    this.syncScrim();
     if (id === DIAGRAM_TAB) {
       this.stage?.fit();
       this.view?.reveal();
@@ -615,6 +680,9 @@ export class SchematicPanel {
     this.backdrop.classList.remove('clear');
     this.panel.classList.remove('open');
     this.backdrop.hidden = true;
+    const l = this.layer;
+    this.layer = null;
+    l?.release();
     window.setTimeout(() => {
       if (!this.panel.classList.contains('open')) this.panel.hidden = true;
     }, 320);
@@ -760,6 +828,7 @@ export class SchematicPanel {
       btn.setAttribute('role', 'tab');
       btn.setAttribute('aria-controls', `schem-pane-${t.id}`);
       btn.title = t.label;
+      btn.setAttribute('aria-label', t.label);
       const icon = el('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
       icon.append(el('path', { d: t.icon }));
       const label = document.createElement('span');
@@ -791,7 +860,7 @@ export class SchematicPanel {
     });
     main.append(rail, panes);
 
-    this.panel.append(bar, main);
+    this.panel.append(this.edge.handle, bar, main);
     if (this.menu) this.panel.append(this.menu.popover);
   }
 

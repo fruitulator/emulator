@@ -1,6 +1,8 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { M68000 } from '../cpu/m68000';
 import type { Bus16 } from '../cpu/bus68k';
 import { Mcs51 } from '../cpu/mcs51';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Mc68681 } from '../hw/mc68681';
 import { I8279 } from '../hw/i8279';
 import { Ym2413 } from '../hw/ym2413';
@@ -59,7 +61,9 @@ export class M1VideoScreen {
 }
 
 export class M1Video implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'dataPakEcho', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'nvram', 'dataPakEcho', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
 
   readonly clockHz = M1VIDEO_CLOCK;
   readonly cpu: M68000;
@@ -112,6 +116,7 @@ export class M1Video implements Bus16, Machine {
 
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, M1VIDEO_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
   private meterInRaw: number[] = [];
   private meterOutRaw: number[] = [];
@@ -224,10 +229,17 @@ export class M1Video implements Bus16, Machine {
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
+
   setMeterMoney(map: {
     meterIn: readonly number[]; meterOut: readonly number[];
     triacIn: readonly number[]; triacOut: readonly number[];
@@ -642,6 +654,7 @@ export class M1Video implements Bus16, Machine {
     const w = this.duart.outputs() & 0xff;
     const rising = w & ~this.triacWord;
     this.triacWord = w;
+    triacSenseRelease(this, rising);
     for (let i = 0; i < TRIAC_LINES; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;
@@ -691,6 +704,7 @@ export class M1Video implements Bus16, Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+      countOutClick(this.outClicks, i, this.meterOutRaw[i]);
     }
   }
 

@@ -26,6 +26,131 @@
     order: 2;
   }
 }
+@media (min-width: 600px) {
+  #stopnote {
+    pointer-events: none;
+  }
+  #stopnote button,
+  #stopnote.asking {
+    pointer-events: auto;
+  }
+}
+@media (min-width: 600px) {
+  #stopnote {
+    --bar-icon: clamp(32px, 2.2vw, 56px);
+    font-size: clamp(15px, calc(0.9vw + 4px), 28px);
+    line-height: 1.4;
+    max-width: min(clamp(440px, 34vw, 900px), calc(100vw - 32px));
+    padding: 0.8em 0.933em;
+    gap: 0.8em;
+  }
+  #stopnote:has(> .nb-stopbar__icon:not([hidden])) {
+    padding-left: 0.8em;
+  }
+  #stopnote > .nb-stopbar__icon {
+    width: var(--bar-icon);
+    height: var(--bar-icon);
+  }
+  #stopnote > .nb-stopbar__icon .stopnote-icon-svg {
+    width: 56%;
+    height: 56%;
+  }
+  #stopnote > .nb-stopbar__icon svg {
+    width: 100%;
+    height: 100%;
+    stroke-width: 2;
+  }
+  #stopnote:has(> .nb-stopbar__icon:not([hidden])) > .nb-stopbar__text {
+    padding-top: max(0px, calc((var(--bar-icon) - 1.4em) / 2));
+  }
+  #stopnote > .nb-icon-btn {
+    font-size: inherit;
+    width: 1.867em;
+    height: 1.867em;
+  }
+  #stopnote:has(> .nb-stopbar__icon:not([hidden])) > .nb-icon-btn {
+    margin-top: max(0px, calc((var(--bar-icon) - 1.867em) / 2));
+  }
+  #stopnote > .nb-icon-btn svg {
+    flex: none;
+    width: 0.933em;
+    height: 0.933em;
+  }
+  #stopnote .nb-stopbar__actions {
+    gap: 0.533em;
+  }
+  #stopnote .nb-stopbar__actions .nb-btn {
+    font-size: 1em;
+    min-height: 2.4em;
+    padding: 0.533em 1.067em;
+  }
+}
+#stopnote.over-glass {
+  flex-wrap: wrap;
+}
+#stopnote.over-glass > .nb-stopbar__text {
+  flex: 1 1 0;
+}
+#stopnote.over-glass > #stopnote-close {
+  order: 1;
+}
+#stopnote.over-glass > .nb-stopbar__actions {
+  order: 2;
+  width: 100%;
+  flex-wrap: nowrap;
+}
+#stopnote.over-glass.stack-actions > .nb-stopbar__actions {
+  flex-direction: column;
+}
+#stopnote.over-glass.stack-actions > .nb-stopbar__actions > .nb-btn {
+  width: 100%;
+}
+#stopnote.one-action {
+  flex-wrap: nowrap;
+}
+#stopnote.one-action > .nb-stopbar__text {
+  flex: 1 1 0;
+}
+#stopnote.one-action > .nb-stopbar__actions {
+  order: 0;
+  flex: none;
+  width: auto;
+  align-self: center;
+}
+#stopnote.one-action > #stopnote-close {
+  order: 0;
+}
+#stopnote.one-action > .nb-stopbar__actions > .nb-btn {
+  flex: none;
+}
+#stopnote-act:has(> .stopnote-act-icon) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.stopnote-act-icon {
+  display: inline-flex;
+  flex: none;
+}
+#stopnote-dim {
+  position: fixed;
+  z-index: 14;
+  background: rgba(6, 4, 14, 0.45);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s linear;
+}
+#stopnote-dim.open {
+  opacity: 1;
+}
+#stopnote-dim[hidden] {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #stopnote-dim {
+    transition: none;
+  }
+}
 #stopnote[hidden],
 #stopnote [hidden],
 #soundnote[hidden] {

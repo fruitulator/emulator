@@ -1,10 +1,11 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { placeRomFlat } from './pairplacer';
 import { HD6303Y } from '../cpu/m6303';
 import type { Bus } from '../cpu/bus';
 import { Pia6821 } from '../hw/pia6821';
 import { Reel } from '../hw/reel';
 import type { AudioSource, CabinetSwitch, CoinChute, CoinWiringStatus, Machine, MachineDisplay, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults } from './machine';
+import { newCashLedger } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
@@ -24,8 +25,6 @@ const NMI_CYCLES = 10_000;
 const IRQ_CYCLES = 2_000;
 const METER_TICK_SLICES = 1000;
 const METER_HOLD_TICKS = 5;
-const METER_UNIT_PENCE = 2;
-
 const EM_REEL_CYCLES = 6000;
 
 const SEGMENTS = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f, 0, 0, 0, 0, 0xb4, 0];
@@ -48,7 +47,7 @@ const COIN_TAIL = Math.floor(BLACKBOX_CLOCK * 0.005);
 const COIN_HOLD_LINE = Math.floor(BLACKBOX_CLOCK * 0.07);
 
 export class BlackBox implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'triacOutRaw'];
 
   readonly digitKind: DigitKind = 'byte16';
   readonly clockHz = BLACKBOX_CLOCK;
@@ -78,21 +77,55 @@ export class BlackBox implements Bus, Machine {
   readonly meterCounts = new Uint32Array(8);
   readonly cashLedger = newCashLedger();
   private readonly coinBook = new CoinBook(this.cashLedger, Math.round(1.5 * BLACKBOX_CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly slotCoins = new SlotCoins();
-  private meterOutPence: number[] = [];
+  private triacOutRaw: number[] = [];
 
-  setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+  setMeterMoney(inMult: readonly number[], outMult: readonly number[], triacOut: readonly number[] = []): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
+    this.triacOutRaw = [...triacOut];
   }
 
+  private isPayoutTriac(i: number): boolean {
+    return this.slidePence[i] !== null || (this.triacOutRaw[i] ?? 0) > 0;
+  }
+  get unpricedPayoutLines(): readonly number[] {
+    return Array.from({ length: 16 }, (_, i) => i).filter((i) => {
+      const p = this.slidePence[i];
+      return this.isPayoutTriac(i) && (p === null || p === 'token' || p === 'unpriced');
+    });
+  }
   get tokenPayoutLines(): readonly number[] {
-    return this.meterOutPence.some((p) => p) ? [] : this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+    return this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.coinBook.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return Array.from({ length: 16 }, (_, i) => i).filter((i) => this.isPayoutTriac(i)).map((line) => {
+      const p = this.slidePence[line];
+      return {
+        line,
+        kind: p === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof p === 'number' ? p : null,
+      };
+    });
+  }
+  get meterOnlyPayout(): boolean {
+    return this.payoutDevices.length === 0 && this.meterOutRaw.some((x) => x > 0);
   }
   namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
+
+  private coinIn(c: Parameters<CoinBook['coin']>[0]): void {
+    this.coinBook.coin(c);
+  }
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 16; i++) this.slidePence[i] = slides[i] ?? null;
+    this.coinBook.setSlides(this.slidePence);
   }
 
   private readonly pia: Pia6821;
@@ -222,6 +255,10 @@ export class BlackBox implements Bus, Machine {
     this.coinMask = 0;
     this.coinTimer = 0;
     this.coinParts = [];
+    this.judgeId.fill(-1);
+    this.judgeWait.fill(0);
+    this.judging = false;
+    this.digitMoves.fill(0);
     this.coinBook.reset();
     resetReelsInPlace(this.reelSet);
     this.tone.reset();
@@ -339,7 +376,10 @@ export class BlackBox implements Bus, Machine {
     if (page === 0x100) { if (this.stepperReels) this.stepReel(v); return; }
     if (page === 0x180) { if (this.stepperReels) this.dirLatch = (this.dirLatch & ~(1 << a)) | (d << a); return; }
     const digit = DIGIT_PAGE[page];
-    if (digit !== undefined) this.digits[digit] = SEGMENTS[v];
+    if (digit !== undefined) {
+      if (this.judging && this.digits[digit] !== SEGMENTS[v]) this.digitMoves[digit]!++;
+      this.digits[digit] = SEGMENTS[v];
+    }
     const lamp = LAMP_PAGE[page];
     if (lamp !== undefined) this.lamps[lamp + a] = d;
     if (this.soundType !== null) {
@@ -438,18 +478,16 @@ export class BlackBox implements Bus, Machine {
     const rising = word & ~this.triacWord;
     this.triacWord = word;
     if (rising === 0) return;
-    const metered = this.meterOutPence.some((p) => p);
     for (let i = 0; i < 16; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;
       const p = this.slidePence[i];
-      if (p === null) continue;
-      this.slideEjects[i]++;
-      if (typeof p === 'number') this.slideOutPence += p;
-      if (metered || !this.booksMoney) continue;
-      if (p === 'token') this.coinBook.payouts.book(this.cashLedger, i);
-      else if (p === 'unpriced') this.cashLedger.unpricedOut++;
-      else this.coinBook.cashOut(p);
+      if (this.isPayoutTriac(i)) {
+        this.slideEjects[i]++;
+        if (typeof p === 'number') this.slideOutPence += p;
+        this.coinSign = true;
+        if (this.booksMoney) this.coinBook.tube(i);
+      } else this.coinBook.unnamed(i);
     }
   }
 
@@ -457,7 +495,10 @@ export class BlackBox implements Bus, Machine {
     const rising = word & ~this.meterWord;
     for (let b = 0; b < 8; b++) {
       const bit = 1 << b;
-      if (rising & bit) this.meterHold[b] = METER_HOLD_TICKS;
+      if (rising & bit) {
+        this.meterHold[b] = METER_HOLD_TICKS;
+        this.coinSign = true;
+      }
       else if (this.meterWord & bit && !(word & bit)) this.meterHold[b] = 0;
     }
     this.meterWord = word;
@@ -470,9 +511,8 @@ export class BlackBox implements Bus, Machine {
       this.meterCounts[b]++;
       this.gridTotals.in += this.meterInRaw[b] ?? 0;
       this.gridTotals.out += this.meterOutRaw[b] ?? 0;
-      if (!this.booksMoney) continue;
-      const outP = this.meterOutPence[b] ?? 0;
-      if (outP) this.coinBook.cashOut(outP);
+      countOutClick(this.outClicks, b, this.meterOutRaw[b]);
+      if (this.booksMoney && (this.meterOutRaw[b] ?? 0) > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
     }
   }
 
@@ -488,8 +528,8 @@ export class BlackBox implements Bus, Machine {
     if (parts.some((p) => p.row >= this.matrix.length)) return;
     this.coinParts = parts.slice(1);
     this.pressCoinPart(parts[0]!);
-    if (code) this.pend(id);
-    else this.bookDropped(id);
+    if (!this.judging) { this.coinSign = false; this.digitMoves.fill(0); }
+    this.pend(id);
   }
 
   private bookDropped(id: number): void {
@@ -497,9 +537,9 @@ export class BlackBox implements Bus, Machine {
     if (w) {
       if (!this.booksMoney || w.conflicts.includes(id)) return;
       const c = w.coins.get(id);
-      if (c !== undefined) { this.coinBook.coin(bookedOfSlotCoin(c)); return; }
+      if (c !== undefined) { this.coinIn(bookedOfSlotCoin(c)); return; }
     }
-    this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
+    this.coinIn(slotOrNoteCoin(this.slotCoins, id));
   }
 
   private pressCoinPart(p: { row: number; mask: number; direct: boolean }): void {
@@ -553,8 +593,16 @@ export class BlackBox implements Bus, Machine {
 
   get coinChutes(): readonly CoinChute[] | undefined {
     const coins = this.priced();
-    if (!coins) return undefined;
     const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
+    if (!coins) {
+      if (!this.drawnCoins.length) return undefined;
+      return this.drawnCoins.map((bit): CoinChute => {
+        const c = this.slotCoins.coinOn(bit);
+        if (typeof c === 'number') return { label: label(c), bit, pence: c };
+        if (c !== null && c !== 'token') return { label: `${label(c.token)} token`, bit, pence: c.token, token: true };
+        return { label: `Coin id ${bit}`, bit };
+      });
+    }
     return [...coins].map(([bit, coin]): CoinChute => (typeof coin === 'number'
       ? { label: label(coin), bit, pence: coin }
       : { label: coin.token === null ? 'Token' : `${label(coin.token)} token`, bit, pence: coin.token, token: true }))
@@ -578,7 +626,7 @@ export class BlackBox implements Bus, Machine {
 
   private judgeCoinStep(cycles: number): void {
     const code = this.coinCode();
-    if (!code) { this.judgeId.fill(-1); this.judgeWait.fill(0); this.judging = false; return; }
+    if (!code) { this.judgeUnread(cycles); return; }
     if (this.cpu.pc === code.take) {
       const at = (this.ram[code.ptr & 0x7f]! << 8) | this.ram[(code.ptr + 1) & 0x7f]!;
       const rec = code.records.find((r) => r.at === at || r.alts.some((a) => a.at === at));
@@ -612,6 +660,40 @@ export class BlackBox implements Bus, Machine {
     this.judging = any;
   }
 
+  private coinSign = false;
+  private readonly digitMoves = new Array<number>(16).fill(0);
+
+  private judgeUnread(cycles: number): void {
+    let any = false;
+    const sign = this.coinSign;
+    let oldest = -1;
+    for (let k = 0; k < this.judgeId.length; k++) {
+      if (this.judgeId[k]! < 0) continue;
+      if (oldest < 0 || this.judgeWait[k]! < this.judgeWait[oldest]!) oldest = k;
+    }
+    if (sign && oldest >= 0) {
+      this.bookDropped(this.judgeId[oldest]!);
+      this.judgeId[oldest] = -1;
+      this.judgeWait[oldest] = 0;
+      this.coinSign = false;
+    }
+    for (let k = 0; k < this.judgeId.length; k++) {
+      if (this.judgeId[k]! < 0) continue;
+      this.judgeWait[k] = this.judgeWait[k]! - cycles;
+      if (this.judgeWait[k]! <= 0) {
+        if (this.digitMoves.some((n) => n > 0 && n <= BlackBox.DIGIT_FLICKER)) this.bookDropped(this.judgeId[k]!);
+        else this.coinsRefused++;
+        this.judgeId[k] = -1;
+        this.judgeWait[k] = 0;
+        continue;
+      }
+      any = true;
+    }
+    this.judging = any;
+  }
+
+  private static readonly DIGIT_FLICKER = 8;
+
   private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
   private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
 
@@ -629,7 +711,7 @@ export class BlackBox implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookTaken(id: number): void {
@@ -637,29 +719,25 @@ export class BlackBox implements Bus, Machine {
     const taken = line === null ? null : this.priced()?.get(line) ?? null;
     const w = this.wiring;
     if (!w) {
-      if (taken) this.coinBook.coin(bookedOfSlotCoin(taken));
-      else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
+      if (taken) this.coinIn(bookedOfSlotCoin(taken));
+      else this.coinIn(slotOrNoteCoin(this.slotCoins, id));
       return;
     }
     if (!this.booksMoney || w.conflicts.includes(id)) return;
     const c = w.coins.get(id) ?? (line === null ? undefined : w.coins.get(line));
     if (c === undefined) {
-      if (taken) this.coinBook.coin(bookedOfSlotCoin(taken));
-      else this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
+      if (taken) this.coinIn(bookedOfSlotCoin(taken));
+      else this.coinIn(slotOrNoteCoin(this.slotCoins, id));
       return;
     }
     if (taken) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || taken.token === null || c.token === taken.token);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     this.bookCoin(c);
   }
 
   private bookCoin(c: SlotCoin): void {
-    this.coinBook.coin(bookedOfSlotCoin(c));
+    this.coinIn(bookedOfSlotCoin(c));
   }
 
   private coinSlots: number[] = [];

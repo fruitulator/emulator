@@ -96,6 +96,9 @@
 .card.card-in {
   animation: card-in 0.42s cubic-bezier(0.22, 0.75, 0.3, 1) both;
 }
+body.cards-scrolling .card {
+  pointer-events: none;
+}
 .art {
   position: relative;
   aspect-ratio: 4 / 5;

@@ -285,6 +285,7 @@ export class Sru extends Sys80 {
 
   private readonly gross = newCashLedger();
   private readonly book = new CoinBook(this.gross, CHANGE_GAP);
+  override get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   override get cashLedger(): CashLedger | undefined {
     return this.coinPence.some((p) => p !== null) || this.slides.some((s) => s !== null)
       ? this.gross
@@ -316,9 +317,13 @@ export class Sru extends Sys80 {
     this.chuteCache = null;
   }
 
-  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
-  get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
-  namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  override get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+  override get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  override get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  override get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
+  protected override meterOutUnpriced = false;
+  override get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  override namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
 
   nameCoin(line: number, coin: NamedCoin): void {
     const i = line - 20;

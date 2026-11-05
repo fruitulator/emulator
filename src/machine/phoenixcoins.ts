@@ -1,4 +1,4 @@
-import type { CoinLineTable, Refusal } from './coinwiring';
+import { oneCopyEnd, type CoinLineTable, type Refusal } from './coinwiring';
 import { COIN_RAW } from './coinraw';
 import { Z180 } from '../cpu/z180';
 
@@ -48,7 +48,8 @@ export interface PhxCoinCode {
 
 function find(rom: Uint8Array, pat: readonly number[], from = 0, to = ROM_TOP): number[] {
   const out: number[] = [];
-  const end = Math.min(to, rom.length) - pat.length;
+  const copy = oneCopyEnd(rom);
+  const end = Math.min(Math.min(to, rom.length) - pat.length, from < copy ? copy - 1 : Infinity);
   outer: for (let i = from; i <= end; i++) {
     for (let j = 0; j < pat.length; j++) if (pat[j]! >= 0 && rom[i + j] !== pat[j]) continue outer;
     out.push(i);

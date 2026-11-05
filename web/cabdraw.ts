@@ -52,7 +52,7 @@ import {
   atlasGlyph, alphaAtlasIntensity,
 } from './alphaatlas';
 import { alphaNewGeom, drawAlphaNew, type AlphaNewStyle } from './alphanew';
-import { alphaCellRoles, CELL_CUSTOM } from './alphacells';
+import { alphaCellRoles, alphaColumnWords, CELL_CUSTOM } from './alphacells';
 import {
   BFM_ALPHA_DEFAULT_INK, BFM_ALPHA_DEFAULT_OFF_LEVEL, bfmAlphaCell, bfmAlphaLayers, bfmAlphaOrder,
 } from './bfmalpha';
@@ -73,6 +73,7 @@ import { drawLightSource } from './lightsource';
 import { paintCheckBox } from './checkbox';
 import { prismBothLitPlan } from './prismplan';
 import { peekable } from './play/peek';
+import { multiplyImage } from './multiply';
 
 const EPOCH_ALPHA_PANEL_BYTES = 32;
 const BFM_COLOUR_LED_COLOURS = ['', '#ff0000', '#00ff00', '#ffff00'];
@@ -199,6 +200,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
 
   let vfdBd1Style: AlphaNewStyle | null = null;
   let vfdSeg16 = true;
+  let vfdColumns = 16;
 
   let vfdCharset: number | undefined;
 
@@ -1236,12 +1238,16 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const H = p.height;
       const hw = W >> 1;
       const hh = H >> 1;
-      const half = (img: CanvasImageSource, near: boolean): void => {
+      const half = (img: CanvasImageSource & { width: number; height: number }, near: boolean, multiply = false): void => {
+        const put = (sx: number, sy: number, sw: number, sh: number, dx: number, dy: number): void => {
+          if (multiply) multiplyImage(ctx, img, sx, sy, sw, sh, dx, dy, sw, sh);
+          else ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh);
+        };
         if (p.horizontal) {
-          if (near) ctx.drawImage(img, 0, 0, W, hh, p.left, p.top, W, hh);
-          else ctx.drawImage(img, 0, hh, W, H - hh, p.left, p.top + hh, W, H - hh);
-        } else if (near) ctx.drawImage(img, 0, 0, hw, H, p.left, p.top, hw, H);
-        else ctx.drawImage(img, hw, 0, W - hw, H, p.left + hw, p.top, W - hw, H);
+          if (near) put(0, 0, W, hh, p.left, p.top);
+          else put(0, hh, W, H - hh, p.left, p.top + hh);
+        } else if (near) put(0, 0, hw, H, p.left, p.top);
+        else put(hw, 0, W - hw, H, p.left + hw, p.top);
       };
       const at = (level: number, draw: () => void): void => {
         if (level <= 0) return;
@@ -1251,19 +1257,14 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       };
       const maskFor1 = p.style !== 0 ? p.mask1 : p.mask2;
       const maskFor2 = p.style !== 0 ? p.mask2 : p.mask1;
-      const shade = (draw: () => void): void => {
-        ctx.globalCompositeOperation = 'multiply';
-        draw();
-        ctx.globalCompositeOperation = 'source-over';
-      };
       if (state === 1) {
         at(l1, () => ctx.drawImage(f.lamp1, p.left, p.top));
-        if (maskFor1) shade(() => ctx.drawImage(maskFor1, p.left, p.top, W, H));
+        if (maskFor1) multiplyImage(ctx, maskFor1, p.left, p.top, W, H);
         return;
       }
       if (state === 2) {
         at(l2, () => ctx.drawImage(f.lamp2, p.left, p.top));
-        if (maskFor2) shade(() => ctx.drawImage(maskFor2, p.left, p.top, W, H));
+        if (maskFor2) multiplyImage(ctx, maskFor2, p.left, p.top, W, H);
         return;
       }
       for (const s of prismBothLitPlan(p.style)) {
@@ -1271,7 +1272,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         const face = s.face === 1 ? f.lamp1 : f.lamp2;
         at(s.third ? Math.floor(lv / 3) : lv, () => half(face, s.near));
         const mask = s.face === 1 ? maskFor1 : maskFor2;
-        if (s.mask && mask) shade(() => half(mask, s.near));
+        if (s.mask && mask) half(mask, s.near, true);
       }
     }
   }
@@ -1475,8 +1476,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.beginPath();
       for (const c of cl.clips) ctx.rect(c.left, c.top, c.width, c.height);
       ctx.clip();
-      ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(cl.canvas, cl.bbox.left, cl.bbox.top);
+      multiplyImage(ctx, cl.canvas, cl.bbox.left, cl.bbox.top);
       ctx.restore();
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -1559,9 +1559,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       });
       lx.globalAlpha = 1;
     }
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(fl.canvas, floor.left, floor.top);
-    ctx.globalCompositeOperation = 'source-over';
+    multiplyImage(ctx, fl.canvas, floor.left, floor.top);
     return true;
   }
 
@@ -1920,9 +1918,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
 
   function drawDrumShading(reel: ReelBand, left = reel.left, width = reel.width): void {
     if (!reel.gradient) return;
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(reel.gradient, left, reel.top, width, reel.height);
-    ctx.globalCompositeOperation = 'source-over';
+    multiplyImage(ctx, reel.gradient, left, reel.top, width, reel.height);
   }
 
   function displayText(m: FrameView): string {
@@ -1975,8 +1971,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       }
     };
     if (vfdBd1Style) {
-      const masks = words.map((w) => alphaCellRoles(w, vfdCharset, vfdSeg16));
-      drawAlphaNew(ctx, masks, alphaNewGeom(vfdBd1Style, 16, r.width, r.height, vfdSeg16),
+      const masks = alphaColumnWords(words, vfdColumns, vfdReversed)
+        .map((w) => alphaCellRoles(w, vfdCharset, vfdSeg16));
+      drawAlphaNew(ctx, masks, alphaNewGeom(vfdBd1Style, vfdColumns, r.width, r.height, vfdSeg16),
         vfdBd1Style, r.left, r.top, disp.duty ?? 31);
       return;
     }
@@ -2133,6 +2130,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     vfdReversed = false;
     vfdBd1Style = null;
     vfdSeg16 = true;
+    vfdColumns = 16;
     vfdCharset = undefined;
     vfdDots = null;
   }
@@ -2170,6 +2168,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     if (!cab.vfd) vfdReversed = virtualReversed;
     vfdCharset = cab.vfdColours?.charset;
     vfdSeg16 = cab.vfdColours?.seg16 ?? true;
+    vfdColumns = cab.vfdColours?.columns ?? 16;
     vfdBd1Style = cab.vfdColours && cab.vfdColours.charset !== undefined
       ? {
           on: argbToCss(cab.vfdColours.on),

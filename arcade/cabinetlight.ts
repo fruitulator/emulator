@@ -9,6 +9,8 @@ export interface CabinetDress {
 
 export const ENV_INTENSITY = 0.15;
 
+export const REALISM_ENV_INTENSITY = 1.1;
+
 const envCache = new WeakMap<THREE.WebGLRenderer, THREE.Texture>();
 
 export function cabinetEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
@@ -21,6 +23,27 @@ export function cabinetEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture
     envCache.set(renderer, t);
   }
   return t;
+}
+
+export function captureRoomEnv(renderer: THREE.WebGLRenderer, scene: THREE.Scene, at: THREE.Vector3): THREE.WebGLRenderTarget {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const target = pmrem.fromScene(scene, 0.02, 0.05, 60, { position: at });
+  pmrem.dispose();
+  return target;
+}
+
+export function swapEnvironment(group: THREE.Object3D, shared: Set<object> | undefined, env: THREE.Texture, level: number): void {
+  shared?.add(env);
+  group.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      const std = m as THREE.MeshStandardMaterial;
+      if (!std.isMeshStandardMaterial || !std.envMap) continue;
+      std.envMapIntensity = level;
+      if (std.envMap !== env) { std.envMap = env; std.needsUpdate = true; }
+    }
+  });
 }
 
 export function cabinetDress(renderer: THREE.WebGLRenderer, env = true): CabinetDress {

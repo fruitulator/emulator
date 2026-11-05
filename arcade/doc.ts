@@ -4,6 +4,7 @@ import { footprintAt, newPropId, posterArt, PROP_WALL_GAP, propFootprint, propKi
 import type { CashLedger } from '../src/machine/machine';
 import type { GameConfig } from '../src/machine/registry';
 import type { HostFile } from '../web/hostfiles';
+import type { MachineInfo } from '../web/emu-protocol';
 import type { StateRec } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import type { MachineLook } from './machines';
@@ -47,6 +48,13 @@ export interface MachineConfig {
   panelSwitches?: Record<string, boolean>;
   coins?: CoinWiring;
   payouts?: Record<string, number>;
+  notPayouts?: number[];
+  payoutMeters?: Record<string, boolean>;
+  freePlay?: boolean;
+  meterValues?: Record<string, unknown>;
+  tokenMeters?: (number | string)[];
+  unusedMeters?: (number | string)[];
+  silentCoinLines?: number[];
 }
 
 export interface MachineSetup extends Partial<MachineLook> {
@@ -68,6 +76,7 @@ export interface CheckResult {
   id: string;
   pass: boolean | null;
   note: string;
+  skipped?: true;
 }
 
 export interface Validation {
@@ -77,6 +86,26 @@ export interface Validation {
   passed: boolean;
   checks: CheckResult[];
   skipped?: boolean;
+}
+
+export type NotReady = 'coin' | 'play';
+
+export function installNotReady(m: Pick<DocMachine, 'notReady' | 'validation'>): NotReady | null {
+  if (m.notReady) return m.notReady;
+  const v = m.validation;
+  if (!v?.skipped) return null;
+  return v.checks.some((c) => c.id === 'coin' && c.pass === true) ? 'play' : 'coin';
+}
+
+export interface CoinStepCache {
+  key: string;
+  info: MachineInfo;
+  drawnAsked: number[] | null;
+  drawnCounted: number[];
+  slotless: number[] | null;
+  refusing: number;
+  hostCredits: [number, number][];
+  hostDead: number[];
 }
 
 export type MoneyTrust = 'billable' | 'untrusted' | 'none';
@@ -158,6 +187,7 @@ export interface DocMachine {
   gameConfig?: GameConfig | null;
   hostFiles?: HostFile[];
   versions?: number;
+  coinStep?: CoinStepCache;
   config: MachineConfig;
   setup: MachineSetup;
   detected?: MachineDetected;
@@ -168,6 +198,7 @@ export interface DocMachine {
   state?: MachineState | null;
   installedAt?: number;
   outOfService?: boolean;
+  notReady?: NotReady;
   stats?: MachineStats | null;
   moneyRecord?: MoneyRecord | null;
   place?: Place | null;
@@ -535,6 +566,7 @@ export function duplicateMachine(doc: ArcadeDoc, id: string, place?: Place | nul
   if (src.detected !== undefined) copy.detected = structuredClone(src.detected);
   if (src.money !== undefined) copy.money = src.money;
   if (src.validation !== undefined) copy.validation = structuredClone(src.validation);
+  if (src.coinStep !== undefined) copy.coinStep = structuredClone(src.coinStep);
   if (src.status === 'installed') copy.installedAt = Date.now();
   doc.machines.push(copy);
   return copy;

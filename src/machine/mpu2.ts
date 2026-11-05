@@ -1,5 +1,6 @@
 import { HD6303Y } from '../cpu/m6303';
 import type { Bus } from '../cpu/bus';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Pia6821 } from '../hw/pia6821';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { OneBitSpeaker } from '../hw/speaker';
@@ -40,7 +41,9 @@ const COIN_GAP = Math.round(0.05 * MPU2_CLOCK);
 export const enum Mpu2ReelType { Solenoid = 0, Stepper = 1 }
 
 export class Mpu2 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'triacInRaw', 'triacOutRaw', 'triacLedgerOut'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'triacInRaw', 'triacOutRaw', 'triacLedgerOut'];
 
   readonly clockHz = MPU2_CLOCK;
   readonly cpu: HD6303Y;
@@ -69,6 +72,7 @@ export class Mpu2 implements Bus, Machine {
   private triacWord = 0;
   private readonly triacCount = new Int32Array(TRIAC_LINES);
   readonly triacPulses = new Uint32Array(TRIAC_LINES);
+  readonly triacTicks = new Uint32Array(TRIAC_LINES);
   get triacLevels(): number { return this.triacWord; }
   private triacInRaw: number[] = [];
   private triacOutRaw: number[] = [];
@@ -77,6 +81,7 @@ export class Mpu2 implements Bus, Machine {
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, MPU2_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
 
   solenoidDir = 0;
@@ -151,13 +156,26 @@ export class Mpu2 implements Bus, Machine {
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  get outMeterClicks(): Readonly<Record<number, number>> { return {}; }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
 
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
 
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
   get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+  get meterOnlyPayout(): boolean {
+    return !this.book.hasSlides && this.triacLedgerOut.some((x) => x > 0);
+  }
 
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
+
+  private triacRise(i: number): void {
+    if ((this.triacInRaw[i] ?? 0) > 0 || (this.triacOutRaw[i] ?? 0) > 0) {
+      this.triacTicks[i]++;
+    }
+  }
 
   setTriacMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.triacInRaw = [...inMult];
@@ -397,12 +415,14 @@ export class Mpu2 implements Bus, Machine {
     else if (word & changed & 0x20) this.solenoidDir = 1;
     const rising = word & changed;
     this.triacWord = word;
+    triacSenseRelease(this, rising);
     for (let i = 0; i < TRIAC_LINES; i++) {
       if (!(changed & (1 << i))) continue;
       this.triacCount[i] = this.triacCount[i] === 0 ? TRIAC_CONFIRM_TICKS : 0;
       if (rising & (1 << i)) {
         this.gridTotals.in += this.triacInRaw[i] ?? 0;
         this.gridTotals.out += this.triacOutRaw[i] ?? 0;
+        this.triacRise(i);
         if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
       }
     }

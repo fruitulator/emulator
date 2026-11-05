@@ -1,4 +1,5 @@
 import { ROM_UNPLACED, placeRomFlat } from './pairplacer';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, Machine, OptionKey, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
@@ -6,7 +7,9 @@ import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import { StatedLines } from './statedlines';
 import type { SlideEffect } from '../layout/fmlconfig';
+import { TokenPayouts } from './coinbook';
 import { M6809 } from '../cpu/m6809';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Bd1 } from '../hw/bd1';
 import { Dm01 } from '../hw/dm01';
 import { Sc2Dongle, dongleTableFromRom } from '../hw/sc2dongle';
@@ -64,7 +67,9 @@ export interface IoAccess {
 }
 
 export class Sc2 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'cabinetLines', 'coinTablesCache', 'programMem', 'dmBusySwitch'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'nvram', 'wiring', 'coinSlots', 'cabinetLines', 'coinTablesCache', 'programMem', 'dmBusySwitch'];
   readonly cpu: M6809;
   readonly ram = new Uint8Array(RAM_SIZE);
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -216,16 +221,11 @@ export class Sc2 implements Bus, Machine {
     for (let i = 0; i < 6; i++) this.slidePence[i] = slides[i] ?? null;
   }
 
-  private static readonly METER_UNIT_PENCE = 10;
-  private static readonly METER_CASH_IN = 1;
   private static readonly METER_CASH_OUT = 2;
-  private static readonly METER_TOKEN_OUT = 4;
   private static readonly METER_TICK_INSTRUCTIONS = 1000;
   private static readonly METER_LINES = 0x3f;
-  private static readonly SLIDE_PENDING_CYCLES = 5 * CPU_CLOCK;
   private ledgerClock = 0;
   metersLive = false;
-  private readonly pendingOut = { pence: 0, unpriced: 0, tokenPence: 0, deadline: 0 };
 
   private tickMeters(n: number): void {
     const confirmed = this.meterBank.advance(n, Sc2.METER_TICK_INSTRUCTIONS);
@@ -233,49 +233,11 @@ export class Sc2 implements Bus, Machine {
   }
 
   private meterConfirmed(b: number): void {
+    this.metersLive = true;
     this.meterCounts[b]++;
     this.meterTotals.in += this.meterInMult[b];
     this.meterTotals.out += this.meterOutMult[b];
-    this.meterHeld(b);
-  }
-
-  private meterHeld(bit: number): void {
-    if (this.meterMapStated) {
-      const out = this.meterLedgerMult[bit] ?? 0;
-      if (out || this.meterInMult[bit] > 0) this.metersLive = true;
-      if (out) {
-        if (this.booksMoney) this.cashLedger.outPence += out * Sc2.METER_UNIT_PENCE;
-        this.pendingOut.pence = 0;
-        this.pendingOut.unpriced = 0;
-      } else if (bit === Sc2.METER_TOKEN_OUT && this.meterOutMult[Sc2.METER_CASH_OUT] > 0
-        && !(this.meterInMult[bit] > 0)) {
-        this.metersLive = true;
-        if (this.booksMoney) this.cashLedger.tokenOutPence += Sc2.METER_UNIT_PENCE;
-        this.pendingOut.tokenPence = 0;
-      }
-      return;
-    }
-    if (bit === Sc2.METER_CASH_IN) { this.metersLive = true; return; }
-    if (bit === Sc2.METER_CASH_OUT) {
-      this.metersLive = true;
-      if (this.booksMoney) this.cashLedger.outPence += Sc2.METER_UNIT_PENCE;
-      this.pendingOut.pence = 0;
-      this.pendingOut.unpriced = 0;
-    } else if (bit === Sc2.METER_TOKEN_OUT) {
-      this.metersLive = true;
-      if (this.booksMoney) this.cashLedger.tokenOutPence += Sc2.METER_UNIT_PENCE;
-      this.pendingOut.tokenPence = 0;
-    }
-  }
-
-  private commitPendingOut(): void {
-    const p = this.pendingOut;
-    if (this.booksMoney) {
-      this.cashLedger.outPence += p.pence;
-      this.cashLedger.unpricedOut += p.unpriced;
-      this.cashLedger.tokenOutPence += p.tokenPence;
-    }
-    p.pence = 0; p.unpriced = 0; p.tokenPence = 0; p.deadline = 0;
+    countOutClick(this.outClicks, b, this.meterMapStated ? this.meterOutMult[b] : b === Sc2.METER_CASH_OUT ? 1 : 0);
   }
 
   readonly meterTotals = { in: 0, out: 0 };
@@ -310,15 +272,45 @@ export class Sc2 implements Bus, Machine {
     return { meters, from: 'layout' };
   }
 
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return this.slidePence.flatMap((s, line) => s === null ? [] : [{ line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null }]);
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return this.meterMapStated ? outClicksOf(this.outClicks, this.meterOutMult) : { [Sc2.METER_CASH_OUT]: this.outClicks[Sc2.METER_CASH_OUT] ?? 0 }; }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    for (const d of this.payoutDevices) out[d.line] = this.slideEjects[d.line] ?? 0;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    const rows = new Set(this.payoutDevices.map((d) => d.line));
+    const out: Record<number, number> = {};
+    this.slideEjects.forEach((n, i) => { if (n && !rows.has(i)) out[i] = n; });
+    return out;
+  }
+  private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
+
+  private readonly payoutNames = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
+  get unpricedPayoutLines(): readonly number[] {
+    const blank = !this.judgedByMeters;
+    return this.slidePence.flatMap((s, i) => (s === 'unpriced' || (s === null && blank) ? [i] : []));
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.slidePence.flatMap((s, i) => (s === 'token' ? [i] : []));
+  }
+  namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
+
   private bookSlide(i: number): void {
-    if (!this.metersLive) {
-      const price = this.slidePence[i];
-      const p = this.pendingOut;
-      if (typeof price === 'number') p.pence += price;
-      else if (price === 'token') p.tokenPence += Sc2.COIN_PENCE[Sc2.TOKEN_LINE];
-      else p.unpriced++;
-      p.deadline = this.ledgerClock + Sc2.SLIDE_PENDING_CYCLES;
-    }
+    const price = this.slidePence[i];
+    const named = this.payoutNames.value(i);
+    if (named !== undefined) {
+      if (price === 'token') this.cashLedger.tokenOutPence += named;
+      else this.cashLedger.outPence += named;
+    } else if (typeof price === 'number') this.cashLedger.outPence += price;
+    else if (price === 'token') this.payoutNames.book(this.cashLedger, i);
+    else if (price === null && this.judgedByMeters) {  }
+    else this.payoutNames.bookCash(this.cashLedger, i);
     this.meterTotals.in += this.triacInMult[i];
     this.meterTotals.out += this.triacOutMult[i];
   }
@@ -617,7 +609,7 @@ export class Sc2 implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, taken: SlotCoin | null): void {
@@ -629,11 +621,7 @@ export class Sc2 implements Bus, Machine {
       return;
     }
     if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || c.token === taken.token);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
@@ -951,6 +939,7 @@ export class Sc2 implements Bus, Machine {
             this.slideFiring |= bit;
             this.slideEjects[slide]++;
             this.bookSlide(slide);
+            triacSenseRelease(this, bit);
           }
         } else {
           this.slideFiring &= ~bit;
@@ -1018,7 +1007,6 @@ export class Sc2 implements Bus, Machine {
     const cycles = this.cpu.step();
     this.tickMeters(1);
     this.ledgerClock += cycles;
-    if (this.pendingOut.deadline && this.ledgerClock >= this.pendingOut.deadline) this.commitPendingOut();
 
     if (this.ackDue > 0) this.ackDue -= cycles;
     if (this.alphaBusyCycles > 0) this.alphaBusyCycles -= cycles;

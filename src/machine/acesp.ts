@@ -1,6 +1,8 @@
 import type { Bus } from '../cpu/bus';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { CabinetSwitch, CoinWiringStatus, Machine, MachineDisplay, DigitKind } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
+import { TokenPayouts } from './coinbook';
 import type { BoardPart } from './parts';
 import { HD6303Y } from '../cpu/m6303';
 import { Pia6821 } from '../hw/pia6821';
@@ -88,7 +90,7 @@ export interface AceSpInputs {
 }
 
 export class AceSp implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult', 'sampleClock', 'dongleFitted', 'dongleKey'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'coinCodeCache', 'programMem', 'coinSlots', 'wiring', 'meterInMult', 'meterOutMult', 'triacInMult', 'triacOutMult', 'sampleClock', 'dongleFitted', 'dongleKey', 'payoutSlides'];
   readonly digitKind: DigitKind = 'space';
   readonly cpu: HD6303Y;
 
@@ -403,11 +405,41 @@ export class AceSp implements Bus, Machine {
     return this.audioMix;
   }
 
-  private static readonly COIN_DWELL = Math.floor(E_CLOCK * 0.06);
+  private static readonly COIN_DWELL = Math.floor(E_CLOCK * 0.1);
   private coinCycles = 0;
   private coinMask = 0;
 
   readonly cashLedger = newCashLedger();
+  private readonly payoutNames = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
+  private payoutSlides: readonly (number | 'token' | 'unpriced' | null)[] = [];
+  get unpricedPayoutLines(): readonly number[] {
+    return this.payoutSlides.flatMap((effect, line) => effect === 'unpriced' || effect === null ? [line] : []);
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.payoutSlides.flatMap((effect, line) => effect === 'token' ? [line] : []);
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.payoutSlides.forEach((_, i) => { out[i] = this.slidePulses[i] ?? 0; });
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return this.payoutSlides.map((effect, line) => ({
+      line,
+      kind: effect === 'token' ? 'token-tube' as const : 'tube' as const,
+      displayNumber: line + 1,
+      defaultPence: typeof effect === 'number' ? effect : null,
+    }));
+  }
+  namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
+  setPayoutSlides(slides: readonly (number | 'token' | 'unpriced' | null)[] | null): void {
+    this.payoutSlides = Array.from({ length: 4 }, (_, line) => slides?.[line] ?? null);
+  }
 
   private coinLinePence: (number | null)[] = [...COIN_PENCE];
 
@@ -667,7 +699,7 @@ export class AceSp implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private get tokenBookedAtDrop(): boolean {
@@ -686,11 +718,7 @@ export class AceSp implements Bus, Machine {
     if (v === 0) return;
     const taken = v === null ? null : this.programCoin(bit, v);
     if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || c.token === taken.token);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
@@ -1105,11 +1133,10 @@ export class AceSp implements Bus, Machine {
     this.meterPulses[b]++;
     this.gridTotals.in += this.meterInMult[b]!;
     this.gridTotals.out += this.meterOutMult[b]!;
+    countOutClick(this.outClicks, b, this.meterOutMult[b]);
     if (!this.booksMoney) return;
     const role = ACE_METER_ROLES[b];
-    if (role === 'token-out') this.cashLedger.tokenOutPence += this.meterOutPence[b] ?? 0;
-    else if (role === 'token-in') { if (!this.tokenBookedAtDrop) this.cashLedger.tokenInPence += this.meterInPence[b] ?? 0; }
-    else if (role !== 'cash-in') this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
+    if (role === 'token-in' && !this.tokenBookedAtDrop) this.cashLedger.tokenInPence += this.meterInPence[b] ?? 0;
   }
 
   private tickMeters(n: number): void {
@@ -1127,6 +1154,16 @@ export class AceSp implements Bus, Machine {
         this.slidePulses[b]++;
         this.gridTotals.in += this.triacInMult[b]!;
         this.gridTotals.out += this.triacOutMult[b]!;
+        if (this.booksMoney) {
+          const named = this.payoutNames.value(b);
+          const effect = this.payoutSlides[b];
+          if (named !== undefined) {
+            if (effect === 'token') this.cashLedger.tokenOutPence += named;
+            else this.cashLedger.outPence += named;
+          } else if (effect === 'token') this.payoutNames.book(this.cashLedger, b);
+          else if (typeof effect === 'number') this.cashLedger.outPence += effect;
+          else this.payoutNames.bookCash(this.cashLedger, b);
+        }
       }
     }
     this.prevMeterByte = meters;

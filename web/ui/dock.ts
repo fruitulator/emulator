@@ -43,6 +43,7 @@ export function openDock(o: {
     if (e.key !== 'Escape' || !open) return;
     if ((e.target as Element | null)?.closest?.('.dd.open, .dd-list.open')) return;
     if (document.querySelector('#sheet.open')) return;
+    if (document.querySelector('.ui-alert')) return;
     e.stopImmediatePropagation();
     e.preventDefault();
     if (o.onEscape?.()) return;

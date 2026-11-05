@@ -1,4 +1,5 @@
 import { Z80 } from '../cpu/z80';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Z80Ctc } from '../hw/z80ctc';
 import { Z80DaisyChain } from '../hw/z80daisy';
 import { Ay8910 } from '../hw/ay8910';
@@ -35,7 +36,9 @@ const COIN_GAP = Math.round(0.1 * MMM_CLOCK);
 const TRIAC_LINES = 13;
 
 export class Mmm implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'triacInRaw', 'triacOutRaw', 'triacLedgerOut'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'triacInRaw', 'triacOutRaw', 'triacLedgerOut', 'chuteSeen', 'cashOutPence', 'cashOutAt'];
 
   readonly digitKind: DigitKind = 'byte16';
   readonly clockHz = MMM_CLOCK;
@@ -69,6 +72,7 @@ export class Mmm implements Machine {
 
   private triacWord = 0;
   readonly triacPulses = new Uint32Array(TRIAC_LINES);
+  readonly triacTicks = new Uint32Array(TRIAC_LINES);
   get triacLevels(): number { return this.triacWord; }
   private triacInRaw: number[] = [];
   private triacOutRaw: number[] = [];
@@ -77,6 +81,7 @@ export class Mmm implements Machine {
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, MMM_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
 
   private serialCount = 0;
@@ -140,13 +145,42 @@ export class Mmm implements Machine {
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
+  get meterOnlyPayout(): boolean {
+    return !this.book.hasSlides && this.triacLedgerOut.some((x) => x > 0);
+  }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  get outMeterClicks(): Readonly<Record<number, number>> { return {}; }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
 
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
 
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
 
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
+
+  private get chuteLines(): number[] {
+    return this.book.slides.flatMap((s, i) => (typeof s === 'number' || s === 'unpriced' ? [i] : []));
+  }
+  private readonly chuteSeen: (number | undefined)[] = [];
+  get chutePence(): readonly number[] { return Array.from({ length: TRIAC_LINES }, (_, i) => this.chuteSeen[i] ?? 0); }
+  private cashOutPence = 0;
+  private cashOutAt = -Infinity;
+
+  private triacRise(i: number): void {
+    this.triacTicks[i]++;
+  }
+
+  private chutePulse(i: number, seen: number): void {
+    const sl = this.book.slides[i] ?? null;
+    if (sl === null) { this.book.unnamed(i); return; }
+    if (sl !== 'token' && seen) {
+      this.book.lineCoins[i] = (this.book.lineCoins[i] ?? 0) + 1;
+      this.book.cashOut(seen);
+    } else this.book.slide(i);
+  }
 
   setTriacMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.triacInRaw = [...inMult];
@@ -175,6 +209,7 @@ export class Mmm implements Machine {
     this.ay.reset();
     this.ctc.reset();
     this.dataPak.reset();
+    this.dataPak.onCashOut = (pence) => { this.cashOutPence = pence; this.cashOutAt = this.cpu.cycles; };
     this.triacWord = 0;
     this.strobe = 0;
     this.writesLeft = 0;
@@ -296,13 +331,21 @@ export class Mmm implements Machine {
   private setTriacs(word: number): void {
     const rising = word & ~this.triacWord;
     this.triacWord = word;
+    triacSenseRelease(this, rising);
     if (!rising) return;
     for (let i = 0; i < TRIAC_LINES; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      if (this.book.hasSlides) this.book.slide(i);
+      this.triacRise(i);
+      let seen = 0;
+      if (this.chuteLines.includes(i) && this.cpu.cycles - this.cashOutAt <= MMM_CLOCK / 20) {
+        seen = this.cashOutPence;
+        this.cashOutAt = -Infinity;
+        if (seen) this.chuteSeen[i] = seen;
+      }
+      if (this.book.hasSlides) this.chutePulse(i, seen);
       else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }
   }

@@ -3,7 +3,7 @@ import {
   type ArcadeSort, type ArcadeVisitReply, type LeadersReply, type PlayingReply, type RatingReply,
   type ArcadeListReply, type ArcadeListing, type ArcadeReply, type DeleteReply, type PublishBody, type PublishReply, type RestoreReply, type ArcadeStateReply,
 } from './serverwire';
-import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, placeAll, readMachineSource, traceId, type ArcadeDoc, type DocMachine } from './doc';
+import { ARCADE_DOC_VERSION, ARCADE_FORMAT, FLOOR_STEP, fromMachineState, installNotReady, placeAll, readMachineSource, traceId, type ArcadeDoc, type DocMachine } from './doc';
 import { arcadeDeletedHere, clearArcadeDeleted, getArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
 import { readHostFiles } from '../web/hostfiles';
 import { readRoomLook } from './roomlook';
@@ -24,8 +24,9 @@ export function roomDoc(d: ArcadeDoc): ArcadeDoc {
     if (m.hostFiles?.length) out.hostFiles = m.hostFiles;
     if (m.versions !== undefined) out.versions = m.versions;
     if (m.detected !== undefined) out.detected = m.detected;
-    if (m.money !== undefined) out.money = m.money;
     if (m.outOfService) out.outOfService = true;
+    const notReady = installNotReady(m);
+    if (notReady) out.notReady = notReady;
     if (m.programHash) out.programHash = m.programHash;
     if (m.formerContentHashes?.length) out.formerContentHashes = m.formerContentHashes;
     if (m.source) out.source = m.source;

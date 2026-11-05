@@ -650,7 +650,7 @@ function lcg(seed: number): () => number {
 }
 
 export class Electro implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['circuit', 'payouts', 'soundOwners', 'soundIndex', 'boxOf'];
+  static readonly snapshotConfig: readonly string[] = ['circuit', 'payouts', 'soundOwners', 'soundIndex', 'boxOf', 'meterInRaw', 'meterOutRaw'];
 
   readonly clockHz = ELECTRO_CLOCK;
   readonly quietIsWaiting = true;
@@ -679,6 +679,7 @@ export class Electro implements Machine {
 
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, ELECTRO_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
   private coinSteps: number[] = [];
   private coinLine = -1;
@@ -1407,8 +1408,13 @@ export class Electro implements Machine {
   }
 
   private confirmMeters(confirmed: number): void {
-    for (let i = 0; i < 16; i++) if (confirmed & (1 << i)) this.meterCounts[i]++;
+    for (let i = 0; i < 16; i++) {
+      if (!(confirmed & (1 << i))) continue;
+      this.meterCounts[i]++;
+    }
   }
+
+  setMeterMoney(_map: { meterIn: readonly number[]; meterOut: readonly number[] }): void {}
 
   insertCoin(id: number): void {
     if (this.coinTimer > 0) return;

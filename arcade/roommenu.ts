@@ -1,5 +1,5 @@
 import { MenuDrawer } from '../web/ui/drawer';
-import { card, choreograph, menuRow, sliderRow } from '../web/ui/rows';
+import { card, checkRow, choreograph, menuRow, sliderRow } from '../web/ui/rows';
 import { UI_ICONS, rowIcon } from '../web/ui/icons';
 import { starPicker } from '../web/ui/stars';
 import { showToast } from '../web/ui/toast';
@@ -12,6 +12,7 @@ import { appendItems, appendMenuFoot, disabledItems, menuItems, saveState, type 
 import { StopNote } from '../web/stopnote';
 import type { Glass } from './glass';
 import type { Room } from './room';
+import { REALISM_PARTS, writeRealism, type RealismPart } from './realism';
 import type { RoomSound, SoundView } from './roomsound';
 import type { BrightnessControl } from '../web/ui/brightness';
 import { str } from '../web/i18n';
@@ -167,6 +168,30 @@ export class RoomMenu {
     return sound;
   }
 
+  private realismCard(): HTMLElement {
+    const labels: Record<RealismPart, string> = {
+      shadows: str('arcade.roommenu.realism_shadows'),
+      reflections: str('arcade.roommenu.realism_reflections'),
+      halos: str('arcade.roommenu.realism_halos'),
+      glow: str('arcade.roommenu.realism_glow'),
+      floor: str('arcade.roommenu.realism_floor'),
+      sheen: str('arcade.roommenu.realism_sheen'),
+    };
+    const panel = card();
+    for (const part of REALISM_PARTS) {
+      const row = checkRow(labels[part], (on) => {
+        const parts = { ...this.room.realismParts, [part]: on };
+        writeRealism(parts);
+        this.room.setRealism(parts);
+      });
+      row.box.checked = this.room.realismParts[part];
+      panel.append(row.row);
+    }
+    const c = card();
+    c.append(this.drawer.navRow(str('arcade.roommenu.realism'), UI_ICONS.neon, panel));
+    return c;
+  }
+
   private rateCard(r: { get: () => Promise<number | null>; set: (stars: number) => Promise<boolean> }): HTMLElement {
     const c = card();
     const row = document.createElement('div');
@@ -207,7 +232,7 @@ export class RoomMenu {
     sub.replaceChildren();
     this.drawer.closeSubmenu();
     this.drawer.closeFlyout();
-    content.append(this.soundCard());
+    content.append(this.soundCard(), this.realismCard());
     appendItems(content, disabledItems(this.ids), (label, icon, panel) => this.drawer.navRow(label, icon, panel));
     if (!this.host && this.rating) content.lastElementChild?.before(this.rateCard(this.rating));
     const out = card();
@@ -229,7 +254,7 @@ export class RoomMenu {
     this.drawer.closeSubmenu();
     this.drawer.closeFlyout();
 
-    content.append(this.soundCard());
+    content.append(this.soundCard(), this.realismCard());
 
     appendItems(content, menuItems(this.actions(g), { info, view, system: game.system }, this.ids),
       (label, icon, panel) => this.drawer.navRow(label, icon, panel));

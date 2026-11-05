@@ -1,4 +1,6 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { Scmp } from '../cpu/scmp';
+import { triacSenseRelease } from '../hw/triacsense';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { OneBitSpeaker } from '../hw/speaker';
@@ -57,7 +59,9 @@ const COIN_HOLD_LINE = Math.round(0.075 * PCLMAXI_CLOCK);
 const COIN_GAP = Math.round(0.005 * PCLMAXI_CLOCK);
 
 export class PclMaxi implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'nvram', 'opticMode', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'nvram', 'opticMode', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
 
   readonly clockHz = PCLMAXI_CLOCK;
   readonly cpu: Scmp;
@@ -92,6 +96,7 @@ export class PclMaxi implements Machine {
 
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, PCLMAXI_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
   private meterInRaw: number[] = [];
   private meterOutRaw: number[] = [];
@@ -166,7 +171,13 @@ export class PclMaxi implements Machine {
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
+  get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
   setCoinSlots(lines: Iterable<readonly [number, BookedCoin]>): void { this.slots.setLines(lines); }
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
@@ -348,6 +359,7 @@ export class PclMaxi implements Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+      countOutClick(this.outClicks, i, this.meterOutRaw[i]);
     }
   }
 
@@ -355,6 +367,7 @@ export class PclMaxi implements Machine {
     w &= 0xfff;
     const rising = w & ~this.triacWord;
     this.triacWord = w;
+    triacSenseRelease(this, rising);
     for (let i = 0; i < TRIAC_LINES; i++) {
       if (!(rising & (1 << i))) continue;
       this.triacPulses[i]++;

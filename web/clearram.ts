@@ -19,7 +19,7 @@ export function askClearRam(): Promise<boolean> {
       message: CLEAR_RAM_QUESTION,
       lines: [...CLEAR_RAM_LINES],
       buttons: [
-        { button: actionButton(CLEAR_RAM_KEEP, 'secondary', () => undefined), run: () => answer(false) },
+        { button: actionButton(CLEAR_RAM_KEEP, 'secondary', () => undefined), run: () => answer(false), dismiss: true },
         { button: actionButton(CLEAR_RAM_YES, 'primary', () => undefined), run: () => answer(true) },
       ],
       onClose: () => answer(false),

@@ -1,6 +1,7 @@
 import type { Bus16 } from '../cpu/bus68k';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { AudioSource, CabinetSwitch, CoinPortLines, CoinWiringStatus, Machine, DigitKind } from './machine';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import { M68000 } from '../cpu/m68000';
@@ -24,6 +25,8 @@ import { COIN_RAW } from './coinraw';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import { locateSys5Coins, locateSys5Meters, sys5CoinTable, sys5DryCall, SYS5_RAM_BASE, type Sys5CoinCode, type Sys5Meters } from './sys5coins';
 import { StrayCounter } from './strayaccess';
+import { CoinBook } from './coinbook';
+import type { SlideEffect } from '../layout/fmlconfig';
 
 export function sys5SlotLine(c: Pick<DeclaredCoin, 'line' | 'note' | 'button' | 'token'>, port: CoinPortLines): number {
   if (c.line !== null) return c.line;
@@ -480,10 +483,6 @@ export class Sys5 implements Bus16, Machine {
     const c = this.codeFound().c;
     return 'refused' in c ? null : c;
   }
-  private programMeters(): Sys5Meters | null {
-    const c = this.codeFound().meters;
-    return 'refused' in c ? null : c;
-  }
   get programReadsCoins(): boolean { return this.coinCode() !== null; }
 
   get coinLineTable(): CoinLineTable | null {
@@ -522,7 +521,7 @@ export class Sys5 implements Bus16, Machine {
       const gated = code.gates.some((g) => this.ram[g - SYS5_RAM_BASE] !== 0);
       const refill = gated ? false : this.refillMade(code) === true;
       code.lines.forEach((l, k) => {
-        if (gated || refill || this.ramWord(code.enable + 2 * k) === 0) m |= 1 << l.line;
+        if (gated || refill || this.lineLocked(code, k)) m |= 1 << l.line;
       });
     }
     this.refusingCache = { at: this.cycles, mask: m };
@@ -537,13 +536,24 @@ export class Sys5 implements Bus16, Machine {
   private readonly judgeCount = new Array(16).fill(0);
   private readonly judgeWait = new Array(16).fill(0);
 
+  private scanIndex(code: Sys5CoinCode): number {
+    return 'reg' in code.index ? this.cpu.d[code.index.reg]! & 0xffff
+      : this.ramWord((this.cpu.a[6]! + code.index.local) >>> 0);
+  }
+
+  private lineLocked(code: Sys5CoinCode, k: number): boolean {
+    if (!code.enablePointers) return this.ramWord(code.enable + 2 * k) === 0;
+    const o = code.enable + 4 * k;
+    const p = ((this.ramWord(o) << 16) | this.ramWord(o + 2)) >>> 0;
+    return this.ramWord(p) !== 0;
+  }
+
   private judgeCoinStep(cycles: number): void {
     const code = this.coinCode();
     if (!code) { this.judgeCount.fill(0); this.judgeWait.fill(0); this.judging = false; return; }
     const pc = this.cpu.pc;
     if (pc === code.accept || pc === code.refill) {
-      const k = this.cpu.d[4]! & 0xffff;
-      const l = code.lines[k];
+      const l = code.lines[this.scanIndex(code)];
       if (l && this.judgeCount[l.line]! > 0) {
         this.judgeCount[l.line] = this.judgeCount[l.line]! - 1;
         this.refusingCache = null;
@@ -588,7 +598,7 @@ export class Sys5 implements Bus16, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, taken: SlotCoin): void {
@@ -600,11 +610,7 @@ export class Sys5 implements Bus16, Machine {
       else this.cashLedger.tokenInPence += taken.token ?? 0;
       return;
     }
-    const agrees = typeof c === 'number'
-      ? typeof taken === 'number' && taken === c
-      : typeof taken === 'object' && (c.token === null || c.token === taken.token);
-    this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-    if (!agrees) return;
+    this.wiringState.state = 'calibrated';
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
     this.cashLedger.tokenInPence += c.token;
@@ -751,49 +757,65 @@ export class Sys5 implements Bus16, Machine {
 
   private payoutMask = 0;
   readonly payoutPulses = new Uint32Array(8);
+  private readonly payoutBook = new CoinBook(this.cashLedger, 0);
+  get unpricedPaidLines(): readonly number[] { return this.payoutBook.unpricedPaidLines; }
+
+  setSlides(slides: readonly SlideEffect[] | null): void {
+    this.payoutBook.setSlides(slides);
+  }
+
+  get tokenPayoutLines(): readonly number[] { return this.payoutBook.tokenSlides; }
+  private get tubeLines(): number[] {
+    return Array.from({ length: this.coinInterfaceParallel ? 8 : 4 }, (_, i) => i);
+  }
+  get unpricedPayoutLines(): readonly number[] {
+    return this.tubeLines.filter((i) => {
+      const s = this.payoutBook.slides[i] ?? null;
+      return s === null || s === 'token' || s === 'unpriced';
+    });
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.payoutBook.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.payoutBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return this.tubeLines.map((line) => {
+      const s = this.payoutBook.slides[line] ?? null;
+      return {
+        line,
+        kind: s === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof s === 'number' ? s : null,
+      };
+    });
+  }
+  namePayout(line: number, pence: number): void { this.payoutBook.payouts.name(line, pence); }
 
   private drivePayout(w: number): void {
     const line = (w >> 4) & (this.coinInterfaceParallel ? 7 : 3);
     const mask = (w & 0x0f) === 0x0c ? 1 << line : 0;
     let rising = mask & ~this.payoutMask;
     this.payoutMask = mask;
-    for (let i = 0; rising !== 0; i++, rising >>= 1) if (rising & 1) this.payoutPulses[i]++;
+    for (let i = 0; rising !== 0; i++, rising >>= 1) {
+      if (rising & 1) {
+        this.payoutPulses[i]++;
+        if (this.booksMoney) this.payoutBook.tube(i);
+      }
+    }
   }
 
-  private meterOutPence: number[] = [];
-  private tokenOutMeter = -1;
-
   setMeterMoney(outMult: readonly number[], inMult: readonly number[] = []): void {
-    this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * Sys5.METER_UNIT_PENCE);
-    const outs = outMult.flatMap((x, i) => (x ? [i] : []));
-    this.tokenOutMeter = outs.length > 1 ? outs[1] : -1;
     for (let i = 0; i < 8; i++) {
       this.meterInMult[i] = inMult[i] ?? 0;
       this.meterOutMult[i] = outMult[i] ?? 0;
     }
   }
 
-  static readonly METER_UNIT_PENCE = 10;
-
   private bookMeter(b: number): void {
     this.gridTotals.in += this.meterInMult[b] ?? 0;
     this.gridTotals.out += this.meterOutMult[b] ?? 0;
-    if (!this.booksMoney) return;
-    const pm = this.programMeters();
-    if (pm) {
-      if (b === pm.cashOut) this.cashLedger.outPence += Sys5.METER_UNIT_PENCE;
-      else if (b === pm.tokenOut) this.cashLedger.tokenOutPence += Sys5.METER_UNIT_PENCE;
-      return;
-    }
-    const p = this.meterOutPence[b] ?? 0;
-    if (!p) return;
-    noteBoardDefault(this, {
-      axis: 'meter',
-      text: 'the program\'s meter map was not read - money out is priced by the layout\'s meter grid',
-      ifWrong: 'A meter the grid names wrongly books play or refills as money paid out.',
-    });
-    if (b === this.tokenOutMeter) this.cashLedger.tokenOutPence += p;
-    else this.cashLedger.outPence += p;
+    countOutClick(this.outClicks, b, this.meterOutMult[b]);
   }
 
   private latchReelLamps(): void {

@@ -2,6 +2,7 @@ import { machineFor, type Game } from '../src/machine/registry';
 import type { Machine } from '../src/machine/machine';
 import type { Recorder, Recording } from '../src/machine/replay';
 import { recordInto } from '../src/machine/replay';
+import { restInvertedInputs } from '../src/machine/layoutswitches';
 import type { Schematic } from '../src/machine/schematic';
 import {
   captureFrame, frameLayoutFor, type FrameLayout,
@@ -12,7 +13,7 @@ import { stampVersion } from './play/savedversion';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { Follower, diffPaths, followBudget, settleSound, signalsOf, snapshotHash, type Check, type RelayInput } from './relay';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyPayoutMeters, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
@@ -111,7 +112,7 @@ function pushAutosave(now: number, trigger: AutosaveTrigger): void {
 
 const dwell = new InputDwell();
 const coins = new CoinPacer((event, bit) => {
-  if (coinRejected(event)) post({ type: 'coin-rejected', epoch, bit });
+  if (coinRejected(event)) post({ type: 'coin-rejected', epoch, bit, refused: event === 'refused' });
   if (!machine) return;
   diagLog.add('coin', coinLogLine(event, coinName(machine, bit)));
 });
@@ -264,7 +265,7 @@ let loadedFrom: ({ game: Game } & MeasureSettings) | null = null;
 let settingNotes: string[] = [];
 
 function coinsKey(m: Machine): string {
-  return (m.coinChutes ?? []).map((c) => `${c.bit}:${c.label}`).join('|');
+  return `${(m.coinChutes ?? []).map((c) => `${c.bit}:${c.label}`).join('|')};${(m.unpricedCoinLines ?? []).map((c) => c.line).join()}`;
 }
 
 function postCoinsIfChanged(m: Machine): void {
@@ -272,7 +273,8 @@ function postCoinsIfChanged(m: Machine): void {
   const key = coinsKey(m);
   if (key === sentCoins) return;
   sentCoins = key;
-  post({ type: 'coins', epoch, coins: m.coinChutes.map((c) => ({ ...c })) });
+  const host = m.unpricedCoinLines;
+  post({ type: 'coins', epoch, coins: m.coinChutes.map((c) => ({ ...c })), ...(host?.length ? { unpriced: host.map((c) => ({ ...c })), unnamed: [...(m.unnamedCoinLines ?? [])] } : {}) });
 }
 
 function load(req: Extract<EmuRequest, { type: 'load' }>): void {
@@ -308,10 +310,11 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
     gameVariant = req.game.variant;
     gateSeen = gatesOf(req.snapshot);
     applyOptionKeyState(m, req.optionKeys);
-    if (req.snapshot) applyState(m, req.snapshot);
+    if (req.snapshot) { applyState(m, req.snapshot); restInvertedInputs(m); }
     applyPanelSwitchState(m, req.panelSwitches);
     applyNamedCoins(m, req.namedCoins);
     applyNamedPayouts(m, req.namedPayouts);
+    applyPayoutMeters(m, req.payoutMeters);
     applyCoinWiring(m, req.coinWiring);
     if (req.powerCycle) powerCycleOrThrow(m);
     layout = frameLayoutFor(req.game.system, m, req.game.layout);
@@ -378,7 +381,7 @@ function measureCoins(req: Extract<EmuRequest, { type: 'measure-coins' }>): EmuR
   const t0 = performance.now();
   let result;
   try {
-    result = measureRunningCoins(machineFor, loadedFrom.game, m, gameName, loadedFrom, req.lines, new Date());
+    result = measureRunningCoins(machineFor, loadedFrom.game, m, gameName, loadedFrom, req.lines, new Date(), req.credit);
   } catch (e) {
     console.warn('[emu] coin measuring failed', e);
     result = { refused: (e as Error).message || 'the machine could not be copied' };
@@ -459,7 +462,7 @@ function handle(req: EmuRequest): void {
     case 'input':
       diagLog.add('input', `${req.on ? 'press' : 'release'} ${inputName(req.id)}`);
       if (req.on) diagWatch.pressed();
-      if (req.on) dwell.press(m, req.id);
+      if (req.on) { if (req.control) dwell.pressControl(m, req.id); else dwell.press(m, req.id); }
       else dwell.release(m, req.id);
       break;
     case 'coin':
@@ -470,6 +473,9 @@ function handle(req: EmuRequest): void {
       break;
     case 'name-payout':
       m.namePayout?.(req.line, req.pence);
+      break;
+    case 'payout-meter':
+      m.setPayoutMeter?.(req.line, req.token);
       break;
     case 'gate-seen':
       gateSeen = gatesOf({ gates: req.lamps });
@@ -602,7 +608,16 @@ function handle(req: EmuRequest): void {
     case 'ledger': {
       const l = m.cashLedger;
       const w = m.coinWiringStatus;
-      post({ type: 'ledger-result', id: req.id, ledger: l ? { ...l } : null, ...(w ? { wiring: { ...w, conflicts: [...w.conflicts] } } : {}) });
+      post({
+        type: 'ledger-result',
+        id: req.id,
+        ledger: l ? { ...l } : null,
+        ...(m.meterTotals ? { meterTotals: { ...m.meterTotals } } : {}),
+        ...(w ? { wiring: { ...w, conflicts: [...w.conflicts] } } : {}),
+        ...(m.payoutCounts ? { payoutCounts: [...m.payoutCounts] } : {}),
+        ...(m.unpricedPaidLines?.length ? { unpricedPaid: [...m.unpricedPaidLines] } : {}),
+        ...(m.payoutCheck ? { payoutFaults: { count: m.payoutCheck.faultCount, faults: m.payoutCheck.faults.map((f) => ({ lines: [...f.lines], why: f.why })) } } : {}),
+      });
       break;
     }
     case 'io-activity':

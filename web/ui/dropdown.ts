@@ -1,4 +1,5 @@
 import { revealNearest, scrollFromOpen } from './scrollsettle';
+import { openLayer, type Layer } from './layer';
 
 export interface Dropdown {
   root: HTMLElement;
@@ -7,6 +8,8 @@ export interface Dropdown {
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
+
+let seq = 0;
 
 function chevron(): SVGSVGElement {
   const svg = document.createElementNS(SVG, 'svg');
@@ -44,7 +47,8 @@ export function enhanceSelect(
   o: { small?: boolean; icon?: string; name?: (choice: string) => string;
     icons?: (value: string) => string | undefined;
     extra?: HTMLElement[];
-    popover?: { align?: 'end'; within?: () => HTMLElement | null; minWidth?: number; maxHeight?: number } } = {},
+    popover?: { align?: 'end'; within?: () => HTMLElement | null; minWidth?: number; maxHeight?: number };
+    unset?: boolean } = {},
 ): Dropdown {
   const root = document.createElement('div');
   root.className = 'dd';
@@ -56,14 +60,15 @@ export function enhanceSelect(
   btn.setAttribute('aria-expanded', 'false');
   const value = document.createElement('span');
   value.className = 'dd-value';
-  value.id = `${select.id}-value`;
+  const base = select.id || `dd-${++seq}`;
+  value.id = `${base}-value`;
   const pillIcon = o.icon || o.icons ? leadIcon(o.icon ?? '') : null;
   if (pillIcon) btn.append(pillIcon);
   btn.append(value, chevron());
 
   const list = document.createElement('ul');
   list.className = 'dd-list nb-menu';
-  list.id = `${select.id}-list`;
+  list.id = `${base}-list`;
   list.setAttribute('role', 'listbox');
   list.tabIndex = -1;
 
@@ -78,10 +83,18 @@ export function enhanceSelect(
     list.setAttribute('aria-label', label);
   }
 
-  const opts = [...select.options].map((opt, i) => {
+  const heading = o.unset ? [...select.options].find((opt) => opt.value === '') : undefined;
+  if (heading) {
+    const li = document.createElement('li');
+    li.className = 'dd-head nb-menu__heading';
+    li.setAttribute('role', 'presentation');
+    li.textContent = heading.text;
+    list.append(li);
+  }
+  const opts = [...select.options].filter((opt) => opt !== heading).map((opt, i) => {
     const li = document.createElement('li');
     li.className = 'dd-opt';
-    li.id = `${select.id}-opt-${i}`;
+    li.id = `${base}-opt-${i}`;
     li.setAttribute('role', 'option');
     li.dataset.value = opt.value;
     li.style.setProperty('--d', `${i * 30}ms`);
@@ -109,17 +122,24 @@ export function enhanceSelect(
 
   let open = false;
   let active = 0;
+  let layer: Layer | null = null;
+
+  const chosen = (): number => opts.findIndex((li) => li.dataset.value === select.value);
 
   function refresh(): void {
     const i = Math.max(0, select.selectedIndex);
-    value.textContent = select.options[i]?.text ?? '';
+    const unset = !!heading && select.value === '';
+    btn.classList.toggle('dd-btn--unset', unset);
+    if (unset) value.replaceChildren(Object.assign(document.createElement('span'), { className: 'dd-unset-mark' }));
+    else value.textContent = select.options[i]?.text ?? '';
     if (pillIcon && o.icons) pillIcon.innerHTML = iconMarkup(o.icons(select.options[i]?.value ?? '') ?? '');
     if (o.name) {
-      const name = o.name(value.textContent);
+      const name = o.name(unset ? heading!.text : value.textContent ?? '');
       btn.setAttribute('aria-label', name);
       list.setAttribute('aria-label', name);
     }
-    opts.forEach((li, k) => li.setAttribute('aria-selected', String(k === i)));
+    const lit = chosen();
+    opts.forEach((li, k) => li.setAttribute('aria-selected', String(k === lit)));
   }
 
   function setActive(i: number): void {
@@ -134,7 +154,7 @@ export function enhanceSelect(
     const box = p?.within?.()?.getBoundingClientRect() ?? { top: 0, left: 0, right: innerWidth, bottom: innerHeight };
     const gap = 6;
     const edge = 8;
-    list.style.minWidth = `${Math.max(r.width, p?.minWidth ?? 172)}px`;
+    list.style.minWidth = `${Math.max(r.width, p?.minWidth ?? 160)}px`;
     if (p?.maxHeight) list.style.maxHeight = `${p.maxHeight}px`;
     const w = list.offsetWidth;
     const h = list.offsetHeight;
@@ -163,8 +183,9 @@ export function enhanceSelect(
     root.classList.add('open');
     list.classList.add('open');
     btn.setAttribute('aria-expanded', 'true');
-    setActive(Math.max(0, select.selectedIndex));
+    setActive(Math.max(0, chosen()));
     list.focus({ preventScroll: true });
+    layer = openLayer([list], { kind: 'menu', close: () => hide(true), focus: list, returnTo: btn });
     scrollFromOpen(list);
     revealNearest(list, opts[active]);
     document.addEventListener('pointerdown', onOutside, true);
@@ -182,6 +203,9 @@ export function enhanceSelect(
     document.removeEventListener('pointerdown', onOutside, true);
     removeEventListener('scroll', onMove, true);
     removeEventListener('resize', onMove);
+    const l = layer;
+    layer = null;
+    l?.release();
     if (refocus) btn.focus({ preventScroll: true });
     setTimeout(() => {
       if (open) return;

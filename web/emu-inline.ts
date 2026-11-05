@@ -1,15 +1,18 @@
+import type { PayoutFaults } from './emu-protocol';
 import { machineFor, type Game } from '../src/machine/registry';
-import type { CoinChute, CoinWiringStatus, Machine, NamedCoin } from '../src/machine/machine';
+import type { CoinChute, CoinWiringStatus, Machine, MeterTotals, NamedCoin } from '../src/machine/machine';
 import type { CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
+import type { CreditWatch } from '../src/machine/coinmeasure';
 import type { Recorder, Recording } from '../src/machine/replay';
 import { recordInto } from '../src/machine/replay';
+import { restInvertedInputs } from '../src/machine/layoutswitches';
 import {
   FrameView, captureFrame, frameLayoutFor, type FrameLayout,
 } from '../src/machine/framestate';
 import { applyState, captureState, captureStateRaw } from './snapshot';
 import { gatesOf, stampGates } from './play/gates';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyPayoutMeters, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
@@ -35,7 +38,7 @@ export class InlineEmu implements Emu {
   private benchStep = false;
   private readonly dwell = new InputDwell();
   private readonly coins = new CoinPacer((event, bit) => {
-    if (coinRejected(event)) this.onCoinRejected?.(bit);
+    if (coinRejected(event)) this.onCoinRejected?.(bit, event === 'refused');
     this.log.add('coin', coinLogLine(event, this.coinName(bit)));
   });
   private recorder: Recorder | null = null;
@@ -65,11 +68,16 @@ export class InlineEmu implements Emu {
   onHalted?: (message: string) => void;
   onAutosave?: (blob: AutosaveBlob, trigger: AutosaveTrigger) => void;
   onSerial?: (events: { ch: number; bytes: number[] }[]) => void;
-  onCoinRejected?: (bit: number) => void;
+  onCoinRejected?: (bit: number, refused: boolean) => void;
   onCoins?: (coins: CoinChute[]) => void;
 
   get info(): MachineInfo | null {
     return this.infoValue;
+  }
+
+  get meterTotals(): MeterTotals | null {
+    const totals = this.machine?.meterTotals;
+    return totals ? { ...totals } : null;
   }
 
   load(opts: EmuLoadOptions): Promise<MachineInfo> {
@@ -94,10 +102,11 @@ export class InlineEmu implements Emu {
       this.gameName = opts.game.name;
       this.gates = gatesOf(opts.snapshot);
       applyOptionKeyState(m, opts.optionKeys);
-      if (opts.snapshot) applyState(m, opts.snapshot);
+      if (opts.snapshot) { applyState(m, opts.snapshot); restInvertedInputs(m); }
       applyPanelSwitchState(m, opts.panelSwitches);
       applyNamedCoins(m, opts.namedCoins);
       applyNamedPayouts(m, opts.namedPayouts);
+      applyPayoutMeters(m, opts.payoutMeters);
       applyCoinWiring(m, opts.coinWiring);
       if (opts.powerCycle) powerCycleOrThrow(m);
       this.layout = frameLayoutFor(opts.game.system, m, opts.game.layout);
@@ -206,14 +215,18 @@ export class InlineEmu implements Emu {
     this.benchMaxGapMs = 0;
   }
 
-  input(id: number, on: boolean): void {
+  input(id: number, on: boolean, control = false): void {
     const m = this.machine;
     if (!m) return;
     const label = this.inputLabels[id];
     this.log.add('input', `${on ? 'press' : 'release'} ${label ? `${label} (${id})` : `input ${id}`}`);
     if (on) this.diagWatch.pressed();
-    if (on) this.dwell.press(m, id);
+    if (on) { if (control) this.dwell.pressControl(m, id); else this.dwell.press(m, id); }
     else this.dwell.release(m, id);
+  }
+
+  control(id: number, on: boolean): void {
+    this.input(id, on, true);
   }
 
   coin(bit: number): void {
@@ -238,6 +251,23 @@ export class InlineEmu implements Emu {
 
   namePayout(line: number, pence: number): void {
     this.machine?.namePayout?.(line, pence);
+  }
+
+  setPayoutMeter(line: number, token: boolean): void {
+    this.machine?.setPayoutMeter?.(line, token);
+  }
+
+  get payoutCounts(): readonly number[] {
+    return this.machine?.payoutCounts ?? [];
+  }
+
+  get unpricedPaid(): readonly number[] {
+    return this.machine?.unpricedPaidLines ?? [];
+  }
+
+  get payoutFaults(): PayoutFaults | null {
+    const c = this.machine?.payoutCheck;
+    return c ? { count: c.faultCount, faults: c.faults.map((f) => ({ lines: [...f.lines], why: f.why })) } : null;
   }
 
   nameCoin(line: number, coin: NamedCoin): void {
@@ -377,14 +407,14 @@ export class InlineEmu implements Emu {
     return Promise.resolve(l ? { ...l } : null);
   }
 
-  measureCoins(lines: readonly number[]): Promise<{ result: CoinMeasurement; wallMs: number } | null> {
+  measureCoins(lines: readonly number[], credit?: CreditWatch): Promise<{ result: CoinMeasurement; wallMs: number } | null> {
     const m = this.machine;
     const from = this.loadedFrom;
     if (!m || !from) return Promise.resolve(null);
     const t0 = performance.now();
     let result: CoinMeasurement;
     try {
-      result = measureRunningCoins(machineFor, from.game, m, this.gameName, from, lines, new Date());
+      result = measureRunningCoins(machineFor, from.game, m, this.gameName, from, lines, new Date(), credit);
     } catch (e) {
       console.warn('[emu] coin measuring failed', e);
       result = { refused: (e as Error).message || 'the machine could not be copied' };

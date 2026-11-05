@@ -8,10 +8,10 @@ export const SEED_OP = 'seed';
 export interface RestartBody extends SaveBody { base: number; stamp: string; kept: boolean }
 export type RestartReply = { ok: true; n: number } | { ok: false; why: 'held' | 'moved' | 'current' };
 export const RESTART_OP = 'restart';
-export type VisitReply =
+export type VisitReply = LoadFault & (
   | { ok: true; holder: 'you' | 'other' | null; holderName?: string; base: number; player: string; save: SaveBody & { n: number } }
   | { ok: true; holder: 'you' | 'other' | null; holderName?: string; base: number; player: string; save: null; why?: 'none' | 'version' }
-  | { ok: true; holder: 'you' | 'other' | null; holderName?: string; base: number; player: string; save: null; why: 'battery'; nvram: string };
+  | { ok: true; holder: 'you' | 'other' | null; holderName?: string; base: number; player: string; save: null; why: 'battery'; nvram: string });
 export const VISIT_OP = 'visit';
 export type RenewReply = { ok: true; leaseMs: number } | { ok: false; why: 'lost' };
 export type ReleaseReply = { ok: true; released: boolean };
@@ -44,23 +44,31 @@ export interface SaveBody {
   coins?: CoinTally;
   sinceGame?: CreditSince;
   coinsStopped?: boolean;
+  unpricedPaid?: PaidOutput[];
+  meterFault?: boolean;
 }
+export interface CoinFault { at: number; outputs: PaidOutput[] }
+export interface PaidOutput { line: number; kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper'; n: number }
 export interface CreditSince { inPence: number; tokenInPence: number }
 export interface LostCredit { at: number; savedAt: number; version: number; n: number; sinceGame: CreditSince | null }
 export type SaveReply = { ok: true; n: number; wallet?: WalletBalance } | { ok: false; why: 'not-holder' };
 export type LoadReply =
-  | { ok: true; save: SaveBody & { n: number } }
-  | { ok: true; save: null; why: 'none' | 'version' }
-  | { ok: true; save: null; why: 'battery'; nvram: string }
+  | ({ ok: true; save: SaveBody & { n: number } } & LoadFault)
+  | ({ ok: true; save: null; why: 'none' | 'version' } & LoadFault)
+  | ({ ok: true; save: null; why: 'battery'; nvram: string } & LoadFault)
   | { ok: false; why: 'not-holder' };
+export interface LoadFault { coinFault?: CoinFault }
 
 export interface MachineMoney {
   v: number; total: Ledger; since: number; at: number; restarts: number;
   lost?: LostCredit[];
   coinsStopped?: number;
+  coinFault?: CoinFault;
 }
 export const MONEY_OP = 'money';
 export type MoneyReply = { ok: true; money: MachineMoney | null } | { ok: false; why: 'not-host' };
+export const FAULT_OP = 'fault';
+export type FaultReply = { ok: true } | { ok: false; why: 'not-host' };
 
 export interface InputBody { session: string; inputs: RelayInput[] }
 export type InputReply = { ok: true; kept: number } | { ok: false; why: 'not-holder' };

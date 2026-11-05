@@ -1,3 +1,4 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { I960 } from '../cpu/i960';
 import { Mcs51 } from '../cpu/mcs51';
 import { Quart } from '../hw/quart';
@@ -41,6 +42,10 @@ const COIN_GAP = Math.round(0.005 * IGTS2000_CLOCK);
 const HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x78, start: 0x50, settle: 1 });
 
 export class IgtS2000 implements Machine {
+  static readonly HOPPER_LINE = 0;
+
+  static readonly snapshotConfig: readonly string[] = [];
+
   readonly system = 'IGTS2000';
   readonly clockHz = IGTS2000_CLOCK;
   readonly cpu: I960;
@@ -111,6 +116,18 @@ export class IgtS2000 implements Machine {
 
   readonly cashLedger: CashLedger = newCashLedger();
   private readonly book = new CoinBook(this.cashLedger, IGTS2000_CLOCK);
+  get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
+  get unpricedPayoutLines(): readonly number[] { return [IgtS2000.HOPPER_LINE]; }
+  get hopperPayoutLines(): readonly number[] { return [IgtS2000.HOPPER_LINE]; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return { [IgtS2000.HOPPER_LINE]: this.hopper.paid }; }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [{ line: IgtS2000.HOPPER_LINE, kind: 'hopper', displayNumber: 1, defaultPence: null }];
+  }
+  namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
   private readonly slots = new SlotCoins();
   private meterInRaw: number[] = [];
   private meterOutRaw: number[] = [];
@@ -144,7 +161,10 @@ export class IgtS2000 implements Machine {
         if (changed & 0xc0) this.lampStore.writeAt(0x80, 8, (pins & 0xc0) >> 6);
       },
     });
-    this.hopper.onCoin = () => { this.hopperEjects.count++; this.cashLedger.unpricedOut++; };
+    this.hopper.onCoin = () => {
+      this.hopperEjects.count++;
+      this.book.payouts.bookCash(this.cashLedger, IgtS2000.HOPPER_LINE);
+    };
     this.quart1.setClock(IGTS2000_CLOCK);
     this.quart2.setClock(IGTS2000_CLOCK);
     this.vfdCpu = new Mcs51({
@@ -233,6 +253,12 @@ export class IgtS2000 implements Machine {
     if (id < 0 || id >= this.matrix.length * 8) return;
     if (on) this.matrix[id >> 3] |= 1 << (id & 7);
     else this.matrix[id >> 3] &= ~(1 << (id & 7));
+  }
+
+  invertedInputs?: ReadonlySet<number>;
+
+  switchClosed(id: number): boolean {
+    return id >= 0 && id < this.matrix.length * 8 && ((this.matrix[id >> 3] >> (id & 7)) & 1) === 1;
   }
 
   layoutLamp(n: number): boolean { return n >= 0 && n < LAMP_COUNT && this.lamps[n] !== 0; }
@@ -580,6 +606,7 @@ export class IgtS2000 implements Machine {
       this.meterCounts[i]++;
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
+      countOutClick(this.outClicks, i, this.meterOutRaw[i]);
     }
   }
 

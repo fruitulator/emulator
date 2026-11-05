@@ -1,5 +1,6 @@
 
 import { isAacsContainer, readAacsContainer } from './fml';
+import { STRING_TABLE_COUNTS, stringTableSpan } from './fmlparse';
 import SCORPION2 from './gameconfig/SCORPION2.json';
 import SCORPION4 from './gameconfig/SCORPION4.json';
 import SCORPION5 from './gameconfig/SCORPION5.json';
@@ -33,22 +34,6 @@ import SCORPION1 from './gameconfig/SCORPION1.json';
 import SYS85 from './gameconfig/SYS85.json';
 
 const TERMINATOR = 0xffffffff;
-
-const STRING_TABLE_COUNTS = new Map([[0x43, 8], [0x44, 8], [0x45, 4]]);
-
-function stringTableSpan(
-  payload: Uint8Array, offset: number, hostTagByte: number, count: number,
-): number {
-  let pos = offset;
-  for (let i = 1; i < count; i++) {
-    if (pos + 4 > payload.length) return pos - offset;
-    const len = u32(payload, pos);
-    if (len > hostTagByte) return pos - offset;
-    if (pos + 4 + len > payload.length) return pos - offset;
-    pos += 4 + len;
-  }
-  return pos - offset;
-}
 
 const WIN1252 = new TextDecoder('windows-1252');
 
@@ -472,6 +457,9 @@ function signedCell(d: Uint8Array, at: number): number {
   return u32(d, at) | 0;
 }
 
+const METER_GRID_TAG = 0xa0;
+const METER_GRID_TAG_OLD = 0x69;
+
 export function meterMoneyMap(payload: Uint8Array, system: string): MeterMoneyMap | null {
   const spec = MAPS[normalise(system)]?.controls['Meters'];
   const block = spec?.meterTriacBlock;
@@ -479,7 +467,10 @@ export function meterMoneyMap(payload: Uint8Array, system: string): MeterMoneyMa
 
   const tag = Number(spec.tag ?? spec.tags?.[0]);
   if (!Number.isFinite(tag)) return null;
-  const value = fileLevelTags(payload).get(tag);
+  const tags = fileLevelTags(payload);
+  const stored = tags.get(tag);
+  const older = stored || tag !== METER_GRID_TAG ? undefined : tags.get(METER_GRID_TAG_OLD);
+  const value = stored ?? older;
   if (!value || value.length < block.byteOffset + block.rowCount * block.rowStride) return null;
 
   const out: MeterMoneyMap = { meterIn: [], meterOut: [], triacIn: [], triacOut: [], secIn: [], secOut: [] };
@@ -497,6 +488,10 @@ export function meterMoneyMap(payload: Uint8Array, system: string): MeterMoneyMa
       out.secIn.push(signedCell(value, at + sec.entryLayout.in));
       out.secOut.push(signedCell(value, at + sec.entryLayout.out));
     }
+  }
+  if (older && normalise(system) === 'MPS2') {
+    out.meterIn = [0, ...out.meterIn.slice(0, -1)];
+    out.meterOut = [0, ...out.meterOut.slice(0, -1)];
   }
   return out;
 }

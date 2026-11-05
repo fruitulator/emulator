@@ -56,7 +56,7 @@ export interface CabinetShell {
   modelId: string;
   panels: CabinetPanels;
   coin: CoinEntry | null;
-  shared?: ReadonlySet<object>;
+  shared?: Set<object>;
 }
 
 export function disposeShell(s: CabinetShell, keep: THREE.Texture | null): void {
@@ -434,7 +434,7 @@ async function modelShell(model: CabinetModel, o: ShellOptions): Promise<Cabinet
     modelId: model.id,
     panels: { fixed: true, glass: w / h, buttons: deck ? deck.w / deck.h : null, deck: btns ? btns.w / btns.h : null },
     coin,
-    shared: o.dress ? new Set([...sharedOf(src), ...dressShared(o.dress)]) : sharedOf(src),
+    shared: o.dress ? new Set([...sharedOf(src), ...dressShared(o.dress)]) : new Set(sharedOf(src)),
   };
 }
 

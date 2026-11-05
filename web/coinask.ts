@@ -17,6 +17,53 @@ export function readPayoutValues(raw: unknown): Record<string, number> {
     .filter((e): e is [string, number] => /^\d+$/.test(e[0]) && Number.isInteger(e[1]) && (e[1] as number) > 0));
 }
 
+interface PayoutAsk {
+  tokenPayouts?: readonly number[];
+  cashPayouts?: readonly number[];
+  payoutDevices?: readonly { line: number; defaultPence?: number | null }[];
+  payoutRows?: readonly { kind: 'meter' | 'output'; line: number }[];
+}
+
+export function payoutsAnswered(
+  info: PayoutAsk | null | undefined,
+  payouts: unknown,
+  lines: readonly number[] = [...(info?.tokenPayouts ?? []), ...(info?.cashPayouts ?? [])],
+  notPayoutRaw?: unknown,
+): boolean {
+  const valued = readPayoutValues(payouts);
+  const outputLines = info?.payoutRows?.filter((row) => row.kind === 'output').map((row) => row.line) ?? [];
+  const devices = info?.payoutDevices;
+  const candidates = devices?.length ? outputLines : [...lines, ...outputLines];
+  if (unresolvedPayoutLines(candidates, payouts, notPayoutRaw, outputLines).length) return false;
+  if (!devices?.length) return true;
+  return devices.every((d) => valued[String(d.line)]
+    || typeof d.defaultPence === 'number'
+    || (d.defaultPence === undefined && !lines.includes(d.line)));
+}
+
+export function readNotPayoutLines(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((line): line is number => typeof line === 'number' && Number.isInteger(line) && line >= 0))].sort((a, b) => a - b);
+}
+
+export function unresolvedPayoutLines(
+  lines: readonly number[],
+  valuesRaw: unknown,
+  notPayoutRaw: unknown,
+  notPayoutEligible: readonly number[],
+): number[] {
+  const values = readPayoutValues(valuesRaw);
+  const eligible = new Set(notPayoutEligible);
+  const notPayout = new Set(readNotPayoutLines(notPayoutRaw).filter((line) => eligible.has(line)));
+  return lines.filter((line) => (values[String(line)] !== undefined) === notPayout.has(line));
+}
+
+export function readPayoutMeters(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== 'object') return {};
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>)
+    .filter((e): e is [string, boolean] => /^\d+$/.test(e[0]) && typeof e[1] === 'boolean'));
+}
+
 export const CASH_COINS: readonly number[] = [200, 100, 50, 20, 10, 5, 2];
 
 export const TOKEN_VALUES: readonly number[] = [5, 10, 20, 25, 50, 100];

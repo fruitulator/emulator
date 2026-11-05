@@ -4,11 +4,11 @@ import type { StateRec } from '../web/store';
 import { fromBase64, toBase64 } from './doc';
 import { LiveLink, liveUrl, type LinkOptions } from './livelink';
 import type {
-  ClaimEvents, ClaimResult, ClaimFrom, SaveResult, SlotBattery, SlotKeyframe, StateSlot, Visit, VisitEvents, WatchEvents, WatchHandle,
+  ClaimEvents, ClaimResult, ClaimFrom, SaveFault, SaveResult, SlotBattery, SlotKeyframe, StateSlot, Visit, VisitEvents, WatchEvents, WatchHandle,
 } from './machines';
 import {
   DEV_PLAYER_HEADER, KEY_PART_MAX, MACHINE_PATH, RESTART_OP, SEED_OP, VISIT_OP, WALLET_PATH,
-  type AcquireReply, type ClaimBody, type CreditSince, type InputBody, type KeyPart, type Ledger, type LoadReply, type ReleaseReply, type RestartBody,
+  type AcquireReply, type ClaimBody, type CoinFault, type CreditSince, type InputBody, type KeyPart, type Ledger, type LoadReply, type ReleaseReply, type RestartBody,
   type RestartReply, type SaveBody, type SaveReply, type SeedReply, type VisitReply, type WalletReply,
 } from './serverwire';
 import type { CashLedger } from '../src/machine/machine';
@@ -165,6 +165,7 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
   let link: LiveLink | null = null;
   let visitLink: LiveLink | null = null;
   let held = false;
+  let fault: CoinFault | null = null;
   let pausedNow = false;
   let pending: InputBody[] = [];
 
@@ -245,6 +246,7 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
         if (seeded?.ok) console.log('[arcade] the machine\'s own save in this arcade is now its save on the server');
         if (seeded) r = await call<VisitReply>(`${VISIT_OP}?${saveQuery(stamp)}`, 'GET');
       }
+      fault = r.coinFault ?? null;
       if (!r.save && r.why === 'version') console.log('[arcade] the machine\'s last save is from another version: it starts fresh');
       if (!r.save && r.why === 'battery') console.log('[arcade] the machine\'s last save is from another emulation: it restarts from its battery');
       const s = r.save;
@@ -292,6 +294,7 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
     async load(stamp?: string): Promise<StateRec | null | 'version' | SlotBattery> {
       const r = await call<LoadReply>(`${LOAD_OP}?${saveQuery(stamp)}`, 'GET');
       if (!r.ok) throw new Error('this machine is not ours to load');
+      fault = r.coinFault ?? null;
       if (!r.save) {
         if (r.why === 'version') {
           console.log('[arcade] the machine\'s last save is from another version: it starts fresh');
@@ -312,13 +315,17 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
       };
     },
 
-    async save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean): Promise<SaveResult> {
+    coinFault(): CoinFault | null { return fault; },
+
+    async save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean, saveFault?: SaveFault): Promise<SaveResult> {
       const body: SaveBody = {
         version: SNAPSHOT_VERSION, ...recFields(rec),
         ...(money ? { ledger: wireLedger(money) } : {}),
         ...(coins && (coins.spent || coins.rejected) ? { coins: { spent: coins.spent, rejected: coins.rejected } } : {}),
         ...(credit ? { sinceGame: { inPence: credit.inPence, tokenInPence: credit.tokenInPence } } : {}),
         ...(coinsStopped !== undefined ? { coinsStopped } : {}),
+        ...(saveFault?.unpricedPaid.length ? { unpricedPaid: saveFault.unpricedPaid.map((x) => ({ ...x })) } : {}),
+        ...(saveFault?.meterFault ? { meterFault: true } : {}),
       };
       const r = await call<SaveReply>('save', 'PUT', body);
       if (!r.ok) throw new Error('the machine was not ours to save');

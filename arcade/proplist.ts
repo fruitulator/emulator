@@ -88,7 +88,7 @@ export function readProps(v: unknown): Prop[] | null {
 
 export const POSTER_H = 0.9;
 export const POSTER_FRAME = 0.035;
-export const POSTER_Y = 1.9;
+export const POSTER_Y = 1.7;
 
 export function wallHalfWidth(p: Prop): number {
   if (p.kind === 'poster') return (POSTER_H * posterArt(p.art).aspect) / 2 + POSTER_FRAME + 0.1;

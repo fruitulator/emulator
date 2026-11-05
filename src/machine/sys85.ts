@@ -1,4 +1,6 @@
 import { ROM_UNPLACED } from './pairplacer';
+import { TokenPayouts } from './coinbook';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, Machine, CoinWiringStatus } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
@@ -147,6 +149,26 @@ export class Sys85 implements Bus, Machine {
     }
   }
 
+  private readonly hostValues = new TokenPayouts();
+  namePayout(line: number, pence: number): void { this.hostValues.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return this.slidePence.flatMap((s, line) => s === null ? [] : [{ line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null }]);
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    for (const d of this.payoutDevices) out[d.line] = this.slideEjects[d.line] ?? 0;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    const rows = new Set(this.payoutDevices.map((d) => d.line));
+    const out: Record<number, number> = {};
+    this.slideEjects.forEach((n, i) => { if (n && !rows.has(i)) out[i] = n; });
+    return out;
+  }
+  private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
+
   readonly slidePence: SlideEffect[] = [null, null, null, null, null, null, null, null];
 
   setSlidePence(slides: readonly SlideEffect[]): void {
@@ -155,10 +177,17 @@ export class Sys85 implements Bus, Machine {
 
   private bookSlide(i: number): void {
     if (!this.booksMoney) return;
+    const host = this.hostValues.value(i);
+    if (host !== undefined) {
+      if (this.slidePence[i] === 'token') this.cashLedger.tokenOutPence += host;
+      else this.cashLedger.outPence += host;
+      return;
+    }
     const price = this.slidePence[i];
     if (typeof price === 'number') this.cashLedger.outPence += price;
     else if (price === 'token') this.cashLedger.tokenOutPence += Sys85.COIN_PENCE[Sys85.TOKEN_LINE] ?? 0;
-    else this.cashLedger.unpricedOut++;
+    else if (price === null && this.judgedByMeters) {  }
+    else { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
   }
 
   coinInhibits = 0;
@@ -174,6 +203,8 @@ export class Sys85 implements Bus, Machine {
   private static readonly COIN_PENCE = [10, 20, 50, 100, 20];
   private static readonly TOKEN_LINE = 4;
   readonly cashLedger = newCashLedger();
+  private readonly unpricedPaid = new Set<number>();
+  get unpricedPaidLines(): readonly number[] { return [...this.unpricedPaid]; }
 
   private dataportFitted = false;
 
@@ -273,14 +304,18 @@ export class Sys85 implements Bus, Machine {
       }
       this.#stated.state(strobe, 0xff, this.idleInputs[strobe]);
     };
-    bits(bank1, 6);
-    bits(bank2, 7);
+    bits(bank2, 6);
+    bits(bank1, 7);
     this.inputRegs.set(this.idleInputs);
   }
 
   private dilLabels: readonly string[] | null = null;
 
   setDilLabels(labels: readonly string[] | null): void { this.dilLabels = labels; }
+
+  private dilLabelOfRow(i: number): string | undefined {
+    return this.dilLabels?.[i < 8 ? 8 + i : i - 8];
+  }
 
   get switchPanel(): CabinetSwitch[] {
     const state = (n: number): boolean => (this.inputRegs[n >> 3] & (1 << (n & 7))) !== 0;
@@ -304,9 +339,9 @@ export class Sys85 implements Bus, Machine {
       const id = 48 + i;
       out.push({
         id,
-        label: dilSwitchLabel(`DIL${String(i + 1).padStart(2, '0')}`, this.dilLabels?.[i]),
+        label: dilSwitchLabel(`DIL${String(i + 1).padStart(2, '0')}`, this.dilLabelOfRow(i)),
         on: state(id),
-        dil: dilPlace(i < 8 ? 'DIL01-08' : 'DIL09-16', i & 7, this.dilLabels?.[i], { base: i < 8 ? 1 : 9 }),
+        dil: dilPlace(i < 8 ? 'DIL01-08' : 'DIL09-16', i & 7, this.dilLabelOfRow(i), { base: i < 8 ? 1 : 9 }),
         group: 'DIL switches',
         option: true,
         bootOnly: true,
@@ -473,7 +508,7 @@ export class Sys85 implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return this.wiring?.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, taken: SlotCoin | null): void {
@@ -485,11 +520,7 @@ export class Sys85 implements Bus, Machine {
       return;
     }
     if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || c.token === taken.token);
-      w.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      w.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
@@ -812,6 +843,7 @@ export class Sys85 implements Bus, Machine {
         this.meterCounts[b]++;
         this.gridTotals.in += this.meterInMult[b]!;
         this.gridTotals.out += this.meterOutMult[b]!;
+        countOutClick(this.outClicks, b, this.meterOutMult[b]);
       }
     }
 

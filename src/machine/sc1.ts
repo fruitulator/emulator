@@ -1,12 +1,15 @@
 import { ROM_UNPLACED } from './pairplacer';
+import { TokenPayouts } from './coinbook';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
-import type { CabinetSwitch, Machine, CoinWiringStatus } from './machine';
+import type { CabinetSwitch, CoinChute, Machine, CoinWiringStatus } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
 import { StatedLines } from './statedlines';
 import { M6809 } from '../cpu/m6809';
 import type { SlideEffect } from '../layout/fmlconfig';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Bd1 } from '../hw/bd1';
 import { Dm01, DM01_CLOCK } from '../hw/dm01';
 import { Reel } from '../hw/reel';
@@ -22,7 +25,8 @@ import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { detectCoins, linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { COIN_RAW, coinMatrixSteps } from './coinraw';
-import { CoinLockJudge, locateSc1CoinTables, sc1CoinSwitches, sc1CoinTable, sc1LineCoins, sc1LockedLines, sc1PlainCoinMask, SC1_COIN_LINES, type Sc1CoinSwitch, type Sc1CoinTables, type Sc1Mem } from './sc1coins';
+import { lockoutRefuses, type CoinLockoutWiring } from '../hw/coinlockout';
+import { locateSc1CoinTables, sc1CoinsPriced, sc1CoinSwitches, sc1CoinTable, sc1LineCoins, sc1ReadsDirectCoins, SC1_COIN_LINES, type Sc1CoinSwitch, type Sc1CoinTables, type Sc1LineCoin, type Sc1Mem } from './sc1coins';
 import type { Refusal } from './coinwiring';
 import { StrayCounter } from './strayaccess';
 import { mpu4RomImage } from './mpu4';
@@ -50,7 +54,9 @@ export interface IoAccess {
 }
 
 export class Sc1 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'programMem', 'dmBusySwitch', 'paySense'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'programMem', 'dmBusySwitch', 'paySense'];
   readonly cpu: M6809;
   readonly ram = new Uint8Array(RAM_SIZE);
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -226,6 +232,7 @@ export class Sc1 implements Bus, Machine {
     const word = this.triacLatch ? (pa & 0x0f) | ((pa & 0xc0) >> 2) : 0;
     const rising = word & ~this.triacWord;
     this.triacWord = word;
+    triacSenseRelease(this, rising);
     for (let b = 0; b < 8; b++) {
       if (rising & (1 << b)) {
         this.slideEjects[b]++;
@@ -236,6 +243,26 @@ export class Sc1 implements Bus, Machine {
     }
   }
 
+  private readonly hostValues = new TokenPayouts();
+  namePayout(line: number, pence: number): void { this.hostValues.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return this.slidePence.flatMap((s, line) => s === null ? [] : [{ line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null }]);
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    for (const d of this.payoutDevices) out[d.line] = this.slideEjects[d.line] ?? 0;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    const rows = new Set(this.payoutDevices.map((d) => d.line));
+    const out: Record<number, number> = {};
+    this.slideEjects.forEach((n, i) => { if (n && !rows.has(i)) out[i] = n; });
+    return out;
+  }
+  private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
+
   readonly slidePence: SlideEffect[] = [null, null, null, null, null, null, null, null];
 
   setSlidePence(slides: readonly SlideEffect[]): void {
@@ -244,18 +271,27 @@ export class Sc1 implements Bus, Machine {
 
   private bookSlide(i: number): void {
     if (!this.booksMoney) return;
+    const host = this.hostValues.value(i);
+    if (host !== undefined) {
+      if (this.slidePence[i] === 'token') this.cashLedger.tokenOutPence += host;
+      else this.cashLedger.outPence += host;
+      return;
+    }
     const price = this.slidePence[i];
-    if (typeof price === 'number') this.cashLedger.outPence += price;
-    else if (price === 'token') this.cashLedger.tokenOutPence += Sc1.TOKEN_PENCE;
-    else this.cashLedger.unpricedOut++;
+    const counted = !this.wiring && this.unpricedProgramCoins() !== null;
+    if (typeof price === 'number' && !counted) this.cashLedger.outPence += price;
+    else if (price === 'token') {
+      if (counted) { this.cashLedger.unpricedTokenOut++; this.unpricedPaid.add(i); }
+      else this.cashLedger.tokenOutPence += Sc1.TOKEN_PENCE;
+    } else if (price === null && this.judgedByMeters) {  }
+    else { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
   }
 
-  private static readonly COIN_DWELL = Math.floor(CPU_CLOCK * 0.06);
+  private static readonly COIN_DWELL = Math.floor(CPU_CLOCK * 0.1);
   private coinCycles = 0;
   private coinMask = 0;
   private coinStrobe = 0;
   private coinNext: Sc1CoinSwitch[] = [];
-  private readonly judge = new CoinLockJudge();
 
   private static readonly COIN_PENCE: (number | null)[] = [10, 20, 50, 100, null];
 
@@ -270,6 +306,8 @@ export class Sc1 implements Bus, Machine {
   private static readonly TOKEN_PENCE = 20;
 
   readonly cashLedger = newCashLedger();
+  private readonly unpricedPaid = new Set<number>();
+  get unpricedPaidLines(): readonly number[] { return [...this.unpricedPaid]; }
 
   private dataportFitted = false;
   private readonly dataPak = new DataPak(CPU_CLOCK);
@@ -309,6 +347,12 @@ export class Sc1 implements Bus, Machine {
   }
 
   layoutInput(id: number, on: boolean): void {
+    if (id >> 3 === DIRECT_COIN_ROW && (id & 7) < SC1_COIN_LINES && this.readsDirectCoins()) {
+      const mask = 1 << (id & 7);
+      if (on && !(this.directHeld & mask)) this.insertCoin(id & 7);
+      this.directHeld = on ? this.directHeld | mask : this.directHeld & ~mask;
+      return;
+    }
     if (this.isPanelSwitch(id)) {
       const mask = 1 << (id & 7);
       if (on) this.idleInputs[id >> 3] |= mask;
@@ -316,6 +360,8 @@ export class Sc1 implements Bus, Machine {
     }
     this.setInput(id >> 3, id & 7, on);
   }
+
+  private directHeld = 0;
 
   private isPanelSwitch(id: number): boolean {
     if (this.panel.some((s) => s.number === id)) return true;
@@ -360,19 +406,25 @@ export class Sc1 implements Bus, Machine {
       if (!s) return;
       for (let i = 0; i < 8; i++) {
         const mask = 1 << i;
-        if (s[i] === '1') this.idleInputs[strobe] |= mask;
+        if (s[i + 1] === '1') this.idleInputs[strobe] |= mask;
         else this.idleInputs[strobe] &= ~mask & 0xff;
       }
       this.#stated.state(strobe, 0xff, this.idleInputs[strobe]);
     };
-    bits(bank1, 6);
-    bits(bank2, 7);
+    bits(bank2, 6);
+    bits(bank1, 7);
     this.inputRegs.set(this.idleInputs);
   }
 
   private dilLabels: readonly string[] | null = null;
 
   setDilLabels(labels: readonly string[] | null): void { this.dilLabels = labels; }
+
+  private dilLabelOfRow(i: number): string | undefined {
+    const bit = i & 7;
+    if (bit === 7) return undefined;
+    return this.dilLabels?.[i < 8 ? 8 + bit + 1 : bit + 1];
+  }
 
   get switchPanel(): CabinetSwitch[] {
     const state = (n: number): boolean => (this.inputRegs[n >> 3] & (1 << (n & 7))) !== 0;
@@ -396,9 +448,9 @@ export class Sc1 implements Bus, Machine {
       const id = 48 + i;
       out.push({
         id,
-        label: dilSwitchLabel(`DIL${String(i + 1).padStart(2, '0')}`, this.dilLabels?.[i]),
+        label: dilSwitchLabel(`DIL${String(i + 1).padStart(2, '0')}`, this.dilLabelOfRow(i)),
         on: state(id),
-        dil: dilPlace(i < 8 ? 'DIL01-08' : 'DIL09-16', i & 7, this.dilLabels?.[i], { base: i < 8 ? 1 : 9 }),
+        dil: dilPlace(i < 8 ? 'DIL01-08' : 'DIL09-16', i & 7, this.dilLabelOfRow(i), { base: i < 8 ? 1 : 9 }),
         group: 'DIL switches',
         option: true,
         bootOnly: true,
@@ -460,7 +512,7 @@ export class Sc1 implements Bus, Machine {
 
   insertCoin(bit: number): void {
     if (this.coinCycles > 0) return;
-    const line = bit;
+    const line = bit >= DIRECT_COIN_ROW && bit < DIRECT_COIN_ROW + SC1_COIN_LINES && this.readsDirectCoins() ? bit - DIRECT_COIN_ROW : bit;
     if (!Number.isInteger(line) || line < 0 || line >= SC1_COIN_LINES) { this.coinsRefused++; return; }
     if (this.coinLinesShut & (1 << line)) { this.coinsRefused++; return; }
     const taken = this.programCoinOn(line);
@@ -468,35 +520,16 @@ export class Sc1 implements Bus, Machine {
       line === Sc1.TOKEN_LINE ? this.tokenMech : null);
     this.coinNext = next;
     this.pulseCoinSwitch(sw!);
-    const t = this.coinTables();
-    const mask = 'refused' in t || !t.lock ? 0 : sc1PlainCoinMask(t, this.rom, this.programMem, line);
-    this.judge.begin(line, mask, taken === 'refused', Sc1.JUDGE_WAIT);
-    if (taken === 'refused') { this.coinsRefused++; return; }
-    this.bookTakenCoin(line, taken);
-  }
-
-  private bookTakenCoin(line: number, taken: SlotCoin | null): void {
-    this.judge.book(this.cashLedger, () => {
-      if (this.wiring) this.bookWiredCoin(line, taken);
-      else this.bookProgramCoin(line, taken);
-    });
-  }
-
-  private static readonly JUDGE_WAIT = Math.floor(CPU_CLOCK * 0.5);
-
-  private judgeCoinLeaving(cycles: number): void {
-    const t = this.coinTables();
-    const line = this.judge.line;
-    const v = this.judge.watch(cycles, 'refused' in t ? null : t.lock, this.programMem, this.cashLedger);
-    if (v === 'refused') { this.coinsRefused++; return; }
-    if (v !== 'taken') return;
-    const taken = this.programCoinOn(line, false);
     if (taken === 'refused') return;
-    this.coinsRefused--;
-    this.bookTakenCoin(line, taken);
+    if (this.wiring) this.bookWiredCoin(line, taken);
+    else this.bookProgramCoin(line, taken);
   }
 
   private bookProgramCoin(line: number, taken: SlotCoin | null): void {
+    if (taken === null && this.unpricedProgramCoins()) {
+      this.cashLedger.unpricedIn = (this.cashLedger.unpricedIn ?? 0) + 1;
+      return;
+    }
     if (taken === null) {
       noteBoardDefault(this, {
         axis: 'coin',
@@ -522,32 +555,37 @@ export class Sc1 implements Bus, Machine {
 
   private readonly programMem: Sc1Mem = (a) => (a < RAM_SIZE ? this.ram[a]! : a >= 0x8000 && a < this.rom.length ? this.rom[a]! : 0);
 
+  private unpricedProgramCoins(): readonly Sc1LineCoin[] | null {
+    const t = this.coinTables();
+    if ('refused' in t) return null;
+    const coins = sc1LineCoins(t, this.rom, this.programMem);
+    return Array.isArray(coins) && !sc1CoinsPriced(coins) ? coins : null;
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    return this.unpricedProgramCoins()?.map((c, i) => ({ label: `Coin ${i + 1}`, bit: c.line, pence: null }));
+  }
+
   private readCoinTable(): CoinLineTable | Refusal {
     const t = this.coinTables();
     if ('refused' in t) return t;
+    const coins = sc1LineCoins(t, this.rom, this.programMem);
+    if (Array.isArray(coins) && !sc1CoinsPriced(coins)) return { refused: 'the program\'s coins are not priced by its records' };
     return sc1CoinTable(t, this.rom, this.programMem);
   }
 
-  private programCoinOn(line: number, locks = true): SlotCoin | 'refused' | null {
+  private programCoinOn(line: number): SlotCoin | 'refused' | null {
+    const counted = this.unpricedProgramCoins();
+    if (counted) return counted.some((c) => c.line === line) ? null : 'refused';
     const t = this.readCoinTable();
     if ('refused' in t) return null;
     const coins = detectCoins(t);
     if (!(coins instanceof Map)) return null;
-    if (locks && this.programLocked() & (1 << line)) return 'refused';
     return coins.get(line) ?? 'refused';
   }
 
-  private programLocked(): number {
-    const t = this.coinTables();
-    return 'refused' in t ? 0 : sc1LockedLines(t, this.rom, this.programMem);
-  }
-
   get coinRefusing(): number {
-    const t = this.readCoinTable();
-    if ('refused' in t) return 0;
-    let m = this.coinLinesShut;
-    for (let n = 0; n < SC1_COIN_LINES; n++) if (this.programCoinOn(n) === 'refused') m |= 1 << n;
-    return m;
+    return this.coinLinesShut;
   }
 
   get coinLineTable(): CoinLineTable | null {
@@ -563,19 +601,12 @@ export class Sc1 implements Bus, Machine {
   coinsRefused = 0;
 
   private coinInhibit = 0;
-  private coinMechOpened = false;
+
+  private static readonly LATCH: CoinLockoutWiring = { openSense: 1, mask: 0x1f, bits: [null, 2, 1, 0, null] };
 
   get coinLinesShut(): number {
-    const t = this.coinTables();
-    if ('refused' in t) return 0;
-    if (this.coinMechOpened) return 0;
-    const coins = sc1LineCoins(t, this.rom, this.programMem);
-    if (!Array.isArray(coins)) return 0;
     let m = 0;
-    for (const c of coins) {
-      const bit = c.mask & 0x1f;
-      if (bit && !(this.coinInhibit & bit)) m |= 1 << c.line;
-    }
+    for (let n = 0; n < SC1_COIN_LINES; n++) if (lockoutRefuses(Sc1.LATCH, this.coinInhibit, 1 << n)) m |= 1 << n;
     return m;
   }
 
@@ -593,7 +624,7 @@ export class Sc1 implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return this.wiring?.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, taken: SlotCoin | null): void {
@@ -604,12 +635,10 @@ export class Sc1 implements Bus, Machine {
       this.bookProgramCoin(line, taken);
       return;
     }
-    if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? typeof taken === 'number' && taken === c
-        : typeof taken === 'object' && (c.token === null || c.token === taken.token);
-      w.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+    if (this.unpricedProgramCoins()) {
+      w.state = 'calibrated';
+    } else if (taken !== null) {
+      w.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
@@ -676,10 +705,16 @@ export class Sc1 implements Bus, Machine {
   private readonly gridTotals = { in: 0, out: 0 };
 
   private pulseCoinSwitch(sw: Sc1CoinSwitch): void {
-    this.coinStrobe = sw.strobe;
+    this.coinStrobe = sw.strobe === 0 && this.readsDirectCoins() ? DIRECT_COIN_ROW : sw.strobe;
     this.coinMask = 1 << sw.bit;
     this.coinCycles = Sc1.COIN_DWELL;
-    this.inputRegs[sw.strobe] |= this.coinMask;
+    this.inputRegs[this.coinStrobe] |= this.coinMask;
+  }
+
+  private directCoinsCache: { rom: Uint8Array; yes: boolean } | null = null;
+  private readsDirectCoins(): boolean {
+    if (this.directCoinsCache?.rom !== this.rom) this.directCoinsCache = { rom: this.rom, yes: sc1ReadsDirectCoins(this.rom) };
+    return this.directCoinsCache.yes;
   }
 
   get coinBusy(): boolean {
@@ -749,7 +784,6 @@ export class Sc1 implements Bus, Machine {
   private warmReset(): void {
     this.bank = 3;
     this.coinInhibit = 0;
-    this.coinMechOpened = false;
     this.vfd.reset();
     this.vfdShift = 0;
     this.vfdBits = 0;
@@ -875,7 +909,6 @@ export class Sc1 implements Bus, Machine {
     }
     if (a >= 0x2400 && a < 0x2600) {
       this.coinInhibit = v & 0x1f;
-      if (this.coinInhibit) this.coinMechOpened = true;
       if (this.dm01) {
         if ((this.dmLines ^ v) & 0xe0) this.dotMatrixSerial(v);
         this.dmLines = v;
@@ -1042,6 +1075,7 @@ export class Sc1 implements Bus, Machine {
         this.meterCounts[b]++;
         this.gridTotals.in += this.meterInMult[b]!;
         this.gridTotals.out += this.meterOutMult[b]!;
+        countOutClick(this.outClicks, b, this.meterOutMult[b]);
       }
     }
 
@@ -1095,7 +1129,6 @@ export class Sc1 implements Bus, Machine {
         if (next) this.pulseCoinSwitch(next);
       }
     }
-    if (this.judge.line >= 0) this.judgeCoinLeaving(cycles);
 
     return cycles;
   }

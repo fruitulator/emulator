@@ -16,6 +16,9 @@ files are the sources' own 1K JPGs, unchanged, except where noted.
 | `Carpet006/` | ambientCG `Carpet006` — https://ambientcg.com/view?id=Carpet006 (no size given) | ambientCG (Lennart Demes) | CC0 — https://docs.ambientcg.com/license/ | 2026-10-05 |
 | `Metal027/` | ambientCG `Metal027` — https://ambientcg.com/view?id=Metal027 (black powder-coated metal; no size given) | ambientCG (Lennart Demes) | CC0 — https://docs.ambientcg.com/license/ | 2026-10-06 |
 | `black_oak_veneer/` | Poly Haven `black_oak_veneer` — https://polyhaven.com/a/black_oak_veneer (1000 mm; the default cabinet's skin, arcade/cabinet-default.ts) | Jenelle van Heerden | CC0 — https://polyhaven.com/license | 2026-10-07 |
+| `wood_floor/` | Poly Haven `wood_floor` — https://polyhaven.com/a/wood_floor (1700 mm; the Polished boards floor) | Dimitrios Savva | CC0 — https://polyhaven.com/license | 2026-11-01 |
+| `old_linoleum_flooring_01/` | Poly Haven `old_linoleum_flooring_01` — https://polyhaven.com/a/old_linoleum_flooring_01 (1990 mm; the Lino floor) | Charlotte Baglioni | CC0 — https://polyhaven.com/license | 2026-11-01 |
+| `floor_tiles_06/` | Poly Haven `floor_tiles_06` — https://polyhaven.com/a/floor_tiles_06 (3000 mm; the Tile floor) | Rob Tuytel | CC0 — https://polyhaven.com/license | 2026-11-01 |
 | `Wallpaper001A/` | ambientCG `Wallpaper001A` — https://ambientcg.com/view?id=Wallpaper001A (no size given) | ambientCG (Lennart Demes) | CC0 — https://docs.ambientcg.com/license/ | 2026-10-05 |
 
 The Poly Haven maps used are `diff` (colour), `nor_gl` (OpenGL normal) and

@@ -20,6 +20,15 @@ import squaresRough from './textures/Carpet005/Carpet005_rough_1k.jpg?url';
 import checkerColour from './textures/Carpet006/Carpet006_color_1k.jpg?url';
 import checkerNor from './textures/Carpet006/Carpet006_nor_gl_1k.jpg?url';
 import checkerRough from './textures/Carpet006/Carpet006_rough_1k.jpg?url';
+import boardsDiff from './textures/wood_floor/wood_floor_diff_1k.jpg?url';
+import boardsNor from './textures/wood_floor/wood_floor_nor_gl_1k.jpg?url';
+import boardsArm from './textures/wood_floor/wood_floor_arm_1k.jpg?url';
+import linoDiff from './textures/old_linoleum_flooring_01/old_linoleum_flooring_01_diff_1k.jpg?url';
+import linoNor from './textures/old_linoleum_flooring_01/old_linoleum_flooring_01_nor_gl_1k.jpg?url';
+import linoArm from './textures/old_linoleum_flooring_01/old_linoleum_flooring_01_arm_1k.jpg?url';
+import tileDiff from './textures/floor_tiles_06/floor_tiles_06_diff_1k.jpg?url';
+import tileNor from './textures/floor_tiles_06/floor_tiles_06_nor_gl_1k.jpg?url';
+import tileArm from './textures/floor_tiles_06/floor_tiles_06_arm_1k.jpg?url';
 import powderColour from './textures/Metal027/Metal027_color_1k.jpg?url';
 import powderNor from './textures/Metal027/Metal027_nor_gl_1k.jpg?url';
 import powderRough from './textures/Metal027/Metal027_rough_1k.jpg?url';
@@ -30,7 +39,7 @@ import veneerDiff from './textures/black_oak_veneer/black_oak_veneer_diff_1k.jpg
 import veneerNor from './textures/black_oak_veneer/black_oak_veneer_nor_gl_1k.jpg?url';
 import veneerArm from './textures/black_oak_veneer/black_oak_veneer_arm_1k.jpg?url';
 
-export type SurfaceId = 'wood' | 'planks' | 'plaster' | 'woodchip' | 'plush' | 'cord' | 'squares' | 'checker' | 'powder' | 'veneer';
+export type SurfaceId = 'wood' | 'planks' | 'plaster' | 'woodchip' | 'plush' | 'cord' | 'squares' | 'checker' | 'boards' | 'lino' | 'tile' | 'powder' | 'veneer';
 
 interface Surface {
   tileM: number;
@@ -39,6 +48,7 @@ interface Surface {
   arm?: string;
   rough?: string;
   relief?: number;
+  roughness?: number;
 }
 
 const SURFACES: Record<SurfaceId, Surface> = {
@@ -50,6 +60,9 @@ const SURFACES: Record<SurfaceId, Surface> = {
   cord: { tileM: 0.8, colour: cordColour, normal: cordNor, rough: cordRough },
   squares: { tileM: 1.6, colour: squaresColour, normal: squaresNor, rough: squaresRough },
   checker: { tileM: 1.6, colour: checkerColour, normal: checkerNor, rough: checkerRough },
+  boards: { tileM: 1.7, colour: boardsDiff, normal: boardsNor, arm: boardsArm, roughness: 0.55 },
+  lino: { tileM: 1.99, colour: linoDiff, normal: linoNor, arm: linoArm, roughness: 0.6 },
+  tile: { tileM: 3.0, colour: tileDiff, normal: tileNor, arm: tileArm, roughness: 0.6 },
   powder: { tileM: 0.5, colour: powderColour, normal: powderNor, rough: powderRough },
   veneer: { tileM: 1.0, colour: veneerDiff, normal: veneerNor, arm: veneerArm, relief: 2.5 },
 };
@@ -132,7 +145,7 @@ export function surfaceMaterial(
     color: tint,
     map: fit(map(s.colour, true, renderer)),
     normalMap: fit(map(s.normal, false, renderer)),
-    roughness: 1,
+    roughness: s.roughness ?? 1,
     metalness: 0,
   });
   m.normalScale.setScalar(s.relief ?? 1);

@@ -92,6 +92,19 @@ for (const raw of readFileSync(LST, 'utf8').split('\n')) {
 
 const kept = opcodes.filter((o) => o.enabled);
 
+const MANUAL_OVERRIDES = [
+  { name: 'divxu.w', from: 'if(m_TMP2 & 0x80)', to: 'if(m_TMP2 & 0x8000)' },
+];
+for (const { name, from, to } of MANUAL_OVERRIDES) {
+  const hits = kept.filter((o) => o.name === name);
+  if (!hits.length) fail('override names no encoding', name);
+  for (const o of hits) {
+    const i = o.body.findIndex((l) => l.trim() === from);
+    if (i < 0) fail(`override no longer matches ${name}`, from);
+    o.body[i] = o.body[i].replace(from, to);
+  }
+}
+
 const METHODS = new Map(Object.entries({
   r8_r: 'r8r', r8_w: 'r8w', r16_r: 'r16r', r16_w: 'r16w',
   r32_r: 'r32r', r32_w: 'r32w',
@@ -199,6 +212,13 @@ for (let i = 0; i < helperSrc.length; i++) {
     if (l === '}') { depth--; if (!depth) break; continue; }
     let ts = transpile(l, cname);
     if (ret === 'u32' || params.some((x) => x.ty === 'u32')) ts = ts.replace(/(?<!>)>>(?!>)/g, '>>>');
+    ts = ts.replace(/\(([a-z][a-z0-9_]*) & (0x[0-9a-f]+)\) == (0x[0-9a-f]+)/g, (m0, v, mask, k) => (
+      Number(k) >= 0x80000000 ? `((${v} & ${mask}) >>> 0) == ${k}` : m0));
+    ts = ts.replace(/^(\s*)([a-z][a-z0-9_]*)\s*(<<=|>>>=|>>=|\|=|&=|\^=|\+=|-=|=)\s*(.*);$/, (m0, ind, nm, op, expr) => {
+      const param = params.find((x) => x.nm === nm);
+      if (!param) return m0;
+      return `${ind}${nm} = ${param.ty}(${op === '=' ? expr : `${nm} ${op.slice(0, -1)} (${expr})`});`;
+    });
     if (ret !== 'void') ts = ts.replace(/^(\s*)return (.*);$/, `$1return ${ret}($2);`);
     body.push(ts);
   }
@@ -218,7 +238,8 @@ p(' *');
 p(' * Do not edit by hand — edit the generator. Every encoding, addressing mode');
 p(' * and flag rule below is MAME\'s, transposed rather than re-derived: this is');
 p(' * the table `h8make.py` expands into `h8.hxx`, filtered to the H8/300H');
-p(' * subset the HD6413002FN16 implements.');
+p(' * subset the HD6413002FN16 implements. The exceptions, where Hitachi\'s manual');
+p(' * overrules MAME, are `MANUAL_OVERRIDES` in the generator.');
 p(' *');
 p(' * Bodies run to completion instead of MAME\'s per-bus-access substates, and');
 p(' * cycles are charged the way `h8.cpp` charges them on a part with no EXR:');

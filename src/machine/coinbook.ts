@@ -28,12 +28,28 @@ export class TokenPayouts {
     if (Number.isInteger(pence) && pence > 0) this.named.set(line, pence);
   }
 
-  value(line: number): number | undefined { return this.named.get(line); }
+  value(line: number): number | undefined { return this.named.get(line) ?? this.defaults.get(line); }
+
+  setDefault(line: number, pence: number | null): void {
+    if (pence !== null && Number.isInteger(pence) && pence > 0) this.defaults.set(line, pence);
+    else this.defaults.delete(line);
+  }
+  private readonly defaults = new Map<number, number>();
+
+  private readonly unpriced = new Set<number>();
+  get unpricedLines(): readonly number[] { return [...this.unpriced]; }
+  noteUnpriced(line: number): void { this.unpriced.add(line); }
 
   book(ledger: CashLedger, line: number): void {
-    const v = this.named.get(line);
-    if (v === undefined) ledger.unpricedTokenOut++;
+    const v = this.value(line);
+    if (v === undefined) { ledger.unpricedTokenOut++; this.unpriced.add(line); }
     else ledger.tokenOutPence += v;
+  }
+
+  bookCash(ledger: CashLedger, line: number): void {
+    const v = this.value(line);
+    if (v === undefined) { ledger.unpricedOut++; this.unpriced.add(line); }
+    else ledger.outPence += v;
   }
 }
 
@@ -41,6 +57,7 @@ export class CoinBook {
   static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'openOnCoin', 'payouts'];
 
   readonly payouts = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] { return this.payouts.unpricedLines; }
 
   slides: SlideEffect[] = [];
   changeWindow = 0;
@@ -51,6 +68,32 @@ export class CoinBook {
   constructor(ledger: CashLedger, private changeGap: number, private openOnCoin = false) {
     Object.defineProperty(this, 'ledger', { value: ledger, enumerable: false });
     this.open = !openOnCoin;
+  }
+
+  lineCoins: number[] = [];
+  unnamedCount: number[] = [];
+
+  unnamed(line: number): void { this.unnamedCount[line] = (this.unnamedCount[line] ?? 0) + 1; }
+
+  rowCoins(rows: readonly { line: number }[]): Record<number, number> {
+    const out: Record<number, number> = {};
+    for (const r of rows) out[r.line] = this.lineCoins[r.line] ?? 0;
+    return out;
+  }
+
+  unnamedPulses(rows: readonly { line: number }[]): Record<number, number> {
+    const isRow = new Set(rows.map((r) => r.line));
+    const out: Record<number, number> = {};
+    this.unnamedCount.forEach((n, i) => { if (n && !isRow.has(i)) out[i] = n; });
+    this.lineCoins.forEach((n, i) => { if (n && !isRow.has(i)) out[i] = (out[i] ?? 0) + n; });
+    return out;
+  }
+
+  get slideRows(): { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return this.slides.flatMap((s, line) => s === null ? [] : [{
+      line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const,
+      displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null,
+    }]);
   }
 
   reset(): void {
@@ -88,9 +131,25 @@ export class CoinBook {
   }
 
   slide(line: number): void {
+    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
     const s = this.slides[line] ?? null;
-    const named = s === 'token' ? this.payouts.value(line) : undefined;
-    this.pay(named === undefined ? s : { token: named });
+    const named = s === 'token' || s === 'unpriced' ? this.payouts.value(line) : undefined;
+    if (named !== undefined && s === 'unpriced') this.pay(named);
+    else this.pay(named === undefined ? s : { token: named });
+    if (this.open && named === undefined && (s === 'token' || s === 'unpriced')) this.payouts.noteUnpriced(line);
+  }
+
+  tube(line: number): void {
+    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
+    const s = this.slides[line] ?? null;
+    const named = this.payouts.value(line);
+    if (named !== undefined) {
+      if (s === 'token') this.pay({ token: named });
+      else this.cashOut(named);
+    } else {
+      this.pay(s ?? 'unpriced');
+      if (this.open && (s === null || s === 'token' || s === 'unpriced')) this.payouts.noteUnpriced(line);
+    }
   }
 
   pay(s: SlideEffect | { token: number }): void {

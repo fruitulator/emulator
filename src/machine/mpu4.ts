@@ -6,6 +6,7 @@ import type { SlideEffect, SwitchControl } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
 import type { BoardPart } from './parts';
 import { M6809 } from '../cpu/m6809';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Pia6821 } from '../hw/pia6821';
 import { V20SoftSerial } from '../hw/v20softserial';
 import { DataPak } from '../hw/datapak';
@@ -30,6 +31,7 @@ import { StrayCounter } from './strayaccess';
 import { noteRomCut } from './boarddefaults';
 import { linesOf, MeterUnitCheck, meterCheckState, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type MeterCheckState, type SlotCoin } from './coinwiring';
 import { readMpu4CoinTable, readMpu4CoinTakes } from './mpu4coins';
+import { readMpu4CoinLocks, readMpu4LiveCoinRecords, mpu4CoinLockFor, type Mpu4CoinLocks } from './mpu4coinlocks';
 import { readMpu4VideoCoinTable, readMpu4VideoCoinTakes } from './mpu4vidcoins';
 import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import { COIN_RAW } from './coinraw';
@@ -314,7 +316,9 @@ export class SegColumnBank {
 }
 
 export class Mpu4 implements Bus, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache', 'modType', 'tokenPayouts'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'nvram', 'wiring', 'coinSlots', 'coinTableCache', 'takeCache', 'modType', 'tokenPayouts'];
   readonly digitKind: DigitKind = 'mpu4led';
   readonly cpu: M6809;
   readonly ram = new Uint8Array(0x0800);
@@ -529,6 +533,7 @@ export class Mpu4 implements Bus, Machine {
           this.hopper1Opto = (v & 0x08) !== 0;
         }
         this.coinLockouts = v & 0x0f;
+        { const d = this.ic5.ddrB() & 0x0f; if (d !== 0 && (v & d) !== d) this.coinLocksOpened = true; }
         const changed = (this.aux2Out ^ v) & 0xff;
         this.aux2Out = v;
         if (this.payoutType === 0x0b) this.crystalSrlWrite(changed, v);
@@ -1138,6 +1143,63 @@ export class Mpu4 implements Bus, Machine {
   private coinCycles = 0;
   private coinMask = 0;
   private coinLockouts = 0;
+  private coinLockCache: { rom: Uint8Array; locks: Mpu4CoinLocks | null } | null = null;
+  private coinLockStated = false;
+
+  static coinLockTableIn(image: Uint8Array): { form: 'records' | 'masks'; at: number } | null {
+    const fields = (p: number): boolean =>
+      p + 4 <= image.length && (image[p + 2]! & 0xf0) === 0 && image[p + 3] === 0;
+    const ports: number[] = [];
+    for (let i = 0; i + 4 <= image.length; i++) {
+      if (image[i] === 0x0c && image[i + 1] === 0x02 && fields(i)) ports.push(i);
+    }
+    for (let i = 0; i + 2 < ports.length; i++) {
+      const stride = ports[i + 1]! - ports[i]!;
+      if (stride >= 7 && stride <= 24 && ports[i + 2]! - ports[i + 1]! === stride) {
+        return { form: 'records', at: ports[i]! };
+      }
+    }
+    for (let i = 6; i + 6 <= image.length; i++) {
+      let ok = true;
+      for (let j = 0; j < 6; j++) {
+        const v = image[i + j]!;
+        if (v === 0 || (v & 0xf0) !== 0 || ((~image[i - 6 + j]!) & 0xff) !== v) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return { form: 'masks', at: i };
+    }
+    return null;
+  }
+
+  private coinLocksInCode(): Mpu4CoinLocks | null {
+    const rom = this.video ? this.video.rom : this.rom;
+    if (this.coinLockCache?.rom !== rom) {
+      this.coinLockCache = {
+        rom,
+        locks: this.video ? null : readMpu4CoinLocks(rom, Mpu4.coinLockTableIn),
+      };
+    }
+    return this.coinLockCache.locks;
+  }
+
+  private coinLockShutByCode(line: number): boolean {
+    const locks = this.coinLocksInCode();
+    const input = this.coinLinePattern[line]!;
+    const lock = locks
+      ? mpu4CoinLockFor(locks, input)
+      : readMpu4LiveCoinRecords(this.video ? this.video.rom : this.rom)?.find((r) => r.input === input)?.lock ?? null;
+    if (lock === null) return false;
+    return locks?.whenAll ? (this.coinLockouts & lock) === lock : (this.coinLockouts & lock) !== 0;
+  }
+
+  private statedLock(line: number): number | null {
+    const harness = Mpu4.lockoutFor(line, this.ic5.ddrB());
+    if (harness === null || this.video) return harness;
+    const record = readMpu4LiveCoinRecords(this.rom)?.find((r) => r.input === this.coinLinePattern[line]);
+    return record?.lock ?? harness;
+  }
 
   private static readonly COIN_LINE_BIT = [4, 5, 6, 7, 3, 2];
 
@@ -1193,42 +1255,20 @@ export class Mpu4 implements Bus, Machine {
     return line < 4 ? 1 << line : null;
   }
 
-  static coinLockTableIn(image: Uint8Array): { form: 'records' | 'masks'; at: number } | null {
-    const fields = (p: number): boolean =>
-      p + 4 <= image.length && (image[p + 2] & 0xf0) === 0 && image[p + 3] === 0x00;
-    const ports: number[] = [];
-    for (let i = 0; i + 4 <= image.length; i++) {
-      if (image[i] === 0x0c && image[i + 1] === 0x02 && fields(i)) ports.push(i);
-    }
-    for (let i = 0; i + 2 < ports.length; i++) {
-      const stride = ports[i + 1] - ports[i];
-      if (stride < 7 || stride > 24) continue;
-      if (ports[i + 2] - ports[i + 1] !== stride) continue;
-      return { form: 'records', at: ports[i] };
-    }
-    for (let i = 6; i + 6 <= image.length; i++) {
-      let ok = true;
-      for (let j = 0; j < 6; j++) {
-        const v = image[i + j];
-        if (v === 0 || (v & 0xf0) !== 0 || ((~image[i - 6 + j]) & 0xff) !== v) { ok = false; break; }
-      }
-      if (ok) return { form: 'masks', at: i };
-    }
-    return null;
-  }
-
-  private coinLockStated = false;
-
-  private coinLockAllOrNothing = false;
-
   private allCoinLocksHeld(): boolean {
+    if (!this.coinLocksOpened) return false;
     const d = this.ic5.ddrB() & 0x0f;
     return d !== 0 && (this.ic5.outB() & d) === d;
   }
 
-  get coinLockHarnessRead(): boolean {
-    return this.coinLockStated;
+  private coinLineShut(line: number): boolean {
+    if (this.allCoinLocksHeld()) return true;
+    return this.coinLocksOpened && line < 4
+      && (this.ic5.ddrB() & 0x0f) === 0x0f
+      && (this.ic5.outB() & (1 << line)) !== 0;
   }
+
+  private coinLocksOpened = false;
 
   coinsRefused = 0;
   coinRefusedReason: 'locked' | 'no-line' | 'still-passing' | 'not-taken' | null = null;
@@ -1258,12 +1298,24 @@ export class Mpu4 implements Bus, Machine {
       return;
     }
     if (line < 0 || line >= Mpu4.COIN_LINE_BIT.length) return;
-    const lock = Mpu4.lockoutFor(line, this.ic5.ddrB());
-    if (this.coinLockStated) {
-      if (lock === null) { this.coinsRefused++; this.coinRefusedReason = 'no-line'; return; }
-      if (this.coinLockouts & lock) { this.coinsRefused++; this.coinRefusedReason = 'locked'; return; }
-    } else if (this.coinLockAllOrNothing && this.allCoinLocksHeld()) {
-      this.coinsRefused++; this.coinRefusedReason = 'locked'; return;
+    const inCode = this.coinLocksInCode();
+    if (this.video && !this.coinLockStated && this.coinLineShut(line)) {
+      this.coinsRefused++;
+      this.coinRefusedReason = 'locked';
+      return;
+    }
+    if (inCode && this.coinLockShutByCode(line)) {
+      this.coinsRefused++;
+      this.coinRefusedReason = 'locked';
+      return;
+    }
+    if (this.coinLockStated && !inCode && line < 4) {
+      const lock = this.statedLock(line);
+      if (lock === null || (this.coinLockouts & lock)) {
+        this.coinsRefused++;
+        this.coinRefusedReason = lock === null ? 'no-line' : 'locked';
+        return;
+      }
     }
     this.coinMask = this.coinLinePattern[line];
     this.coinCycles = Mpu4.COIN_DWELL;
@@ -1393,7 +1445,7 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return this.wiring?.check.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number): void {
@@ -1479,13 +1531,25 @@ export class Mpu4 implements Bus, Machine {
 
   get coinLinesShut(): number {
     if (!this.coinLockStated) {
-      return this.coinLockAllOrNothing && this.allCoinLocksHeld() ? (1 << Mpu4.COIN_LINE_BIT.length) - 1 : 0;
+      let out = 0;
+      for (let line = 0; line < Mpu4.COIN_LINE_BIT.length; line++) {
+        if (this.coinLineShut(line)) out |= 1 << line;
+      }
+      return out;
     }
-    const ddr = this.ic5.ddrB();
+    if (!this.coinLocksInCode()) {
+      let out = 0;
+      for (let line = 0; line < Mpu4.COIN_LINE_BIT.length; line++) {
+        if (line >= 4) continue;
+        const lock = this.statedLock(line);
+        if (lock === null || (this.coinLockouts & lock)) out |= 1 << line;
+      }
+      return out;
+    }
     let out = 0;
     for (let line = 0; line < Mpu4.COIN_LINE_BIT.length; line++) {
-      const lock = Mpu4.lockoutFor(line, ddr);
-      if (lock === null || (this.coinLockouts & lock)) out |= 1 << line;
+      if (line >= 4) continue;
+      if (this.coinLockShutByCode(line)) out |= 1 << line;
     }
     return out;
   }
@@ -1573,10 +1637,59 @@ export class Mpu4 implements Bus, Machine {
   }
 
   private readonly tokenPayouts = new TokenPayouts();
+  private readonly cashPayouts = new TokenPayouts();
+  get unpricedPayoutLines(): readonly number[] {
+    return [
+      ...this.triacSlides.flatMap((s, i) => (s === 'unpriced' || (s === null && !this.judgedByMeters) ? [i] : [])),
+      ...(this.hopper1 && this.hopperCoinPence[0] === null ? [8] : []),
+      ...(this.hopper2 && this.hopperCoinPence[1] === null ? [9] : []),
+    ];
+  }
   get tokenPayoutLines(): readonly number[] {
     return this.outMetered ? [] : this.triacSlides.flatMap((s, i) => (s === 'token' ? [i] : []));
   }
-  namePayout(line: number, pence: number): void { this.tokenPayouts.name(line, pence); }
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [
+      ...this.triacSlides.flatMap((slide, line) => slide === null ? [] : [{
+        line,
+        kind: slide === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof slide === 'number' ? slide : null,
+      }]),
+      ...(this.hopper1 ? [{ line: 8, kind: 'hopper' as const, displayNumber: 1, defaultPence: this.hopperCoinPence[0] }] : []),
+      ...(this.hopper2 ? [{ line: 9, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1] }] : []),
+    ];
+  }
+  get unpricedPaidLines(): readonly number[] {
+    return [...new Set([...this.cashPayouts.unpricedLines, ...this.tokenPayouts.unpricedLines])].sort((a, b) => a - b);
+  }
+
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.triacSlides.forEach((s, i) => { if (s !== null) out[i] = this.triacPulses[i]!; });
+    if (this.hopper1) out[8] = this.hopper1.paid;
+    if (this.hopper2) out[9] = this.hopper2.paid;
+    return out;
+  }
+
+  private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
+
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.triacSlides.forEach((s, i) => { if (s === null) out[i] = this.triacPulses[i]!; });
+    return out;
+  }
+
+  get outMeterClicks(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    if (!this.meterMapFitted) { out[1] = this.meterCounts[1]!; out[3] = this.meterCounts[3]!; return out; }
+    this.meterOutMult.forEach((x, i) => { if (x > 0) out[i] = this.meterCounts[i]!; });
+    return out;
+  }
+  namePayout(line: number, pence: number): void {
+    this.tokenPayouts.name(line, pence);
+    this.cashPayouts.name(line, pence);
+  }
 
   setTriacSlides(slides: SlideEffect[]): void {
     for (let i = 0; i < 8; i++) this.triacSlides[i] = slides[i] ?? null;
@@ -1585,6 +1698,7 @@ export class Mpu4 implements Bus, Machine {
   private latchTriacs(v: number): void {
     let rising = v & ~this.outputs.triacs & 0xff;
     this.outputs.triacs = v;
+    triacSenseRelease(this, rising);
     if (this.payoutType === 5) {
       const latch = this.ic8 ? this.ic8.outB() : v;
       this.hopper1?.motorDrive((latch & 0x10) === 0);
@@ -1609,11 +1723,16 @@ export class Mpu4 implements Bus, Machine {
     for (let i = 0; rising !== 0; i++, rising >>= 1) {
       if (!(rising & 1)) continue;
       this.triacPulses[i]++;
-      const slide = this.outMetered ? null : this.triacSlides[i];
+      const slide = this.triacSlides[i];
+      const named = this.cashPayouts.value(i) ?? this.tokenPayouts.value(i);
       if (!this.booksMoney) {  }
-      else if (slide === 'token') this.tokenPayouts.book(this.cashLedger, i);
-      else if (slide === 'unpriced') this.cashLedger.unpricedOut++;
+      else if (named !== undefined) {
+        if (slide === 'token') this.cashLedger.tokenOutPence += named;
+        else this.cashLedger.outPence += named;
+      } else if (slide === 'token') this.tokenPayouts.book(this.cashLedger, i);
+      else if (slide === 'unpriced') this.cashPayouts.bookCash(this.cashLedger, i);
       else if (slide !== null) this.cashLedger.outPence += slide;
+      else if (!this.judgedByMeters) this.cashPayouts.bookCash(this.cashLedger, i);
       if (this.wiring && this.triacInMult[i]) this.wiring.check.count(this.triacInMult[i]!, this.wiringState.now);
       if (this.triacInMult[i] || this.triacOutMult[i]) {
         this.meterTotals.in += this.triacInMult[i];
@@ -1691,14 +1810,6 @@ export class Mpu4 implements Bus, Machine {
     if (this.wiring) {
       this.checkMeterIn(i);
       if (!this.booksMoney) return;
-    }
-    if (!this.meterMapFitted) {
-      if (i === 1) this.cashLedger.outPence += Mpu4.METER_UNIT_PENCE;
-      else if (i === 3) this.cashLedger.tokenOutPence += Mpu4.METER_UNIT_PENCE;
-    } else if (this.outMetered) {
-      const pence = (this.meterLedgerMult[i] ?? 0) * Mpu4.METER_UNIT_PENCE;
-      if (i === 3) this.cashLedger.tokenOutPence += pence;
-      else this.cashLedger.outPence += pence;
     }
   }
 
@@ -2070,21 +2181,24 @@ export class Mpu4 implements Bus, Machine {
 
   private tickHoppers(cycles: number): void {
     if (!this.hopper1) return;
-    const count = !this.outMetered;
-    const book = (fresh: number, pence: number | null): void => {
-      if (!count || !this.booksMoney) return;
-      if (pence === null) this.cashLedger.unpricedOut += fresh;
+    const book = (fresh: number, pence: number | null, line: number): void => {
+      if (!this.booksMoney) return;
+      if (pence === null) {
+        const named = this.cashPayouts.value(line);
+        if (named === undefined) { this.cashLedger.unpricedOut += fresh; this.cashPayouts.noteUnpriced(line); }
+        else this.cashLedger.outPence += fresh * named;
+      }
       else this.cashLedger.outPence += fresh * pence;
     };
     this.hopper1.tick(cycles);
     if (this.hopper1.paid > this.hopper1Booked) {
-      book(this.hopper1.paid - this.hopper1Booked, this.hopperCoinPence[0]);
+      book(this.hopper1.paid - this.hopper1Booked, this.hopperCoinPence[0], 8);
       this.hopper1Booked = this.hopper1.paid;
     }
     if (this.hopper2) {
       this.hopper2.tick(cycles);
       if (this.hopper2.paid > this.hopper2Booked) {
-        book(this.hopper2.paid - this.hopper2Booked, this.hopperCoinPence[1]);
+        book(this.hopper2.paid - this.hopper2Booked, this.hopperCoinPence[1], 9);
         this.hopper2Booked = this.hopper2.paid;
       }
     }
@@ -2101,10 +2215,10 @@ export class Mpu4 implements Bus, Machine {
     }
     this.romMask = this.rom.length <= PAGE_SIZE ? PAGE_SIZE - 1 : this.rom.length - 1;
     this.bank = this.resetPage();
+    this.coinLockCache = null;
     this.coinLockStated = this.video
       ? 'lines' in this.readCoinTable()
-      : Mpu4.coinLockTableIn(this.rom) !== null;
-    this.coinLockAllOrNothing = !!this.video && !this.coinLockStated;
+      : Mpu4.coinLockTableIn(this.rom) !== null || this.coinLocksInCode() !== null;
     this.hopperCoinPence = Mpu4.hopperCoinRecordsIn(this.rom);
   }
 
@@ -2185,7 +2299,9 @@ export class Mpu4 implements Bus, Machine {
     this.meterPendingMask = 0;
     this.meterTickCycles = 0;
     this.reelSelect = 0;
+    this.coinLocksOpened = false;
     this.coinLockouts = 0;
+    this.coinLockCache = null;
     for (let k = 0; k < this.pendLine.length; k++) if (this.pendLine[k]! >= 0) this.settle(k, false);
     this.mainsCycles = 0;
     this.mainsState = false;

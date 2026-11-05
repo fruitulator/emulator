@@ -1,3 +1,4 @@
+import { openLayer } from './layer';
 import { UI_ICONS } from './icons';
 import { str } from '../i18n';
 
@@ -43,18 +44,8 @@ export function openModal(o: {
   wrap.append(card);
   let open = true;
   const onKey = (ev: KeyboardEvent): void => {
-    if (!open) return;
-    ev.stopPropagation();
-    if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
-    if (o.onKey?.(ev)) { ev.preventDefault(); return; }
-    if (ev.key === 'Tab') {
-      const stops = [...card.querySelectorAll<HTMLElement>('button:not(:disabled)')];
-      if (!stops.length) return;
-      const i = stops.indexOf(document.activeElement as HTMLElement);
-      const next = ev.shiftKey ? (i <= 0 ? stops.length - 1 : i - 1) : (i + 1) % stops.length;
-      ev.preventDefault();
-      stops[next].focus();
-    }
+    if (!open || ev.key === 'Escape' || ev.key === 'Tab') return;
+    if (o.onKey?.(ev)) { ev.preventDefault(); ev.stopPropagation(); }
   };
   const close = (): void => {
     if (!open) return;
@@ -62,13 +53,14 @@ export function openModal(o: {
     window.removeEventListener('keydown', onKey, true);
     backdrop.remove();
     wrap.remove();
-    if (o.returnTo?.isConnected) o.returnTo.focus({ preventScroll: true });
+    layer.release();
     o.onClose?.();
   };
   backdrop.addEventListener('click', close);
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   window.addEventListener('keydown', onKey, true);
   document.body.append(backdrop, wrap);
+  const layer = openLayer([backdrop, wrap], { kind: 'dialog', close, returnTo: o.returnTo ?? null });
   return { card, close };
 }
 

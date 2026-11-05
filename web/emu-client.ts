@@ -1,8 +1,9 @@
 import type { Game } from '../src/machine/registry';
-import type { CoinChute, CoinWiringStatus, NamedCoin } from '../src/machine/machine';
+import type { CoinChute, CoinWiringStatus, MeterTotals, NamedCoin } from '../src/machine/machine';
 import type { CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
+import type { CreditWatch } from '../src/machine/coinmeasure';
 import { FrameView } from '../src/machine/framestate';
-import type { AutosaveTrigger, CashLedger, DiagEntry, EmuRequest, EmuResponse, MachineInfo } from './emu-protocol';
+import type { AutosaveTrigger, CashLedger, DiagEntry, EmuRequest, EmuResponse, MachineInfo, PayoutFaults } from './emu-protocol';
 import type { Snapshot } from './snapshot';
 import type { Recording } from '../src/machine/replay';
 import type { Check, CheckResult, RelayInput } from './relay';
@@ -23,6 +24,7 @@ export interface EmuLoadOptions {
   panelSwitches?: Record<string, boolean>;
   namedCoins?: Record<string, NamedCoin>;
   namedPayouts?: Record<string, number>;
+  payoutMeters?: Record<string, boolean>;
   coinWiring?: CoinWiring;
   powerCycle?: boolean;
   benchStep?: boolean;
@@ -59,9 +61,15 @@ export interface AutosaveBlob {
 export interface Emu {
   load(opts: EmuLoadOptions): Promise<MachineInfo>;
   input(id: number, on: boolean): void;
+  control(id: number, on: boolean): void;
   coin(bit: number): void;
   nameCoin(line: number, coin: NamedCoin): void;
   namePayout(line: number, pence: number): void;
+  setPayoutMeter(line: number, token: boolean): void;
+  readonly payoutCounts: readonly number[];
+  readonly meterTotals: MeterTotals | null;
+  readonly unpricedPaid: readonly number[];
+  readonly payoutFaults: PayoutFaults | null;
   gateSeen(lamps: readonly number[]): void;
   setCoinWiring(wiring: CoinWiring): void;
   readonly coinWiringStatus: CoinWiringStatus | null;
@@ -75,7 +83,7 @@ export interface Emu {
   diagRam(addrs: number[]): Promise<number[]>;
   ledger(): Promise<CashLedger | null>;
   clearRam(settings: ClearRamSettings): Promise<string | null>;
-  measureCoins(lines: readonly number[]): Promise<{ result: CoinMeasurement; wallMs: number } | null>;
+  measureCoins(lines: readonly number[], credit?: CreditWatch): Promise<{ result: CoinMeasurement; wallMs: number } | null>;
   ioActivity(): Promise<Record<string, number> | null>;
   startRecording(opts: { cold: boolean; setHash?: string; at?: number }): void;
   stopRecording(): Promise<Recording | null>;
@@ -97,7 +105,7 @@ export interface Emu {
   onAutosave?: (blob: AutosaveBlob, trigger: AutosaveTrigger) => void;
   onSerial?: (events: { ch: number; bytes: number[] }[]) => void;
   onCoins?: (coins: CoinChute[]) => void;
-  onCoinRejected?: (bit: number) => void;
+  onCoinRejected?: (bit: number, refused: boolean) => void;
 }
 
 interface PendingLoad {
@@ -129,6 +137,14 @@ export class WorkerEmu implements Emu {
   private infoValue: MachineInfo | null = null;
   private wiringStatus: CoinWiringStatus | null = null;
   get coinWiringStatus(): CoinWiringStatus | null { return this.wiringStatus; }
+  private lastPayoutCounts: readonly number[] = [];
+  get payoutCounts(): readonly number[] { return this.lastPayoutCounts; }
+  private lastMeterTotals: MeterTotals | null = null;
+  get meterTotals(): MeterTotals | null { return this.lastMeterTotals; }
+  private lastUnpricedPaid: readonly number[] = [];
+  get unpricedPaid(): readonly number[] { return this.lastUnpricedPaid; }
+  private lastPayoutFaults: PayoutFaults | null = null;
+  get payoutFaults(): PayoutFaults | null { return this.lastPayoutFaults; }
   private autosave: AutosaveBlob | null = null;
   private bench: EmuBenchStats | null = null;
   private audioPort: MessagePort | null = null;
@@ -136,7 +152,7 @@ export class WorkerEmu implements Emu {
   onAutosave?: (blob: AutosaveBlob, trigger: AutosaveTrigger) => void;
   onSerial?: (events: { ch: number; bytes: number[] }[]) => void;
   onCoins?: (coins: CoinChute[]) => void;
-  onCoinRejected?: (bit: number) => void;
+  onCoinRejected?: (bit: number, refused: boolean) => void;
 
   get info(): MachineInfo | null {
     return this.infoValue;
@@ -203,11 +219,17 @@ export class WorkerEmu implements Emu {
       case 'coins':
         if (msg.epoch === this.epoch && this.infoValue) {
           this.infoValue.coins = msg.coins;
+          if (msg.unpriced) {
+            const drawn = this.infoValue.drawnCoins;
+            this.infoValue.unpricedCoins = msg.unpriced;
+            this.infoValue.unnamedCoins = msg.unnamed;
+            if (drawn) this.infoValue.slotlessCoins = msg.unpriced.map((c) => c.line).filter((l) => !drawn.includes(l));
+          }
           this.onCoins?.(msg.coins);
         }
         break;
       case 'coin-rejected':
-        if (msg.epoch === this.epoch) this.onCoinRejected?.(msg.bit);
+        if (msg.epoch === this.epoch) this.onCoinRejected?.(msg.bit, msg.refused);
         break;
       case 'key-fitted':
         if (msg.epoch === this.epoch) this.pendingKeys.shift()?.(msg.positions);
@@ -250,6 +272,10 @@ export class WorkerEmu implements Emu {
         const resolve = this.pendingLedgers.get(msg.id);
         this.pendingLedgers.delete(msg.id);
         this.wiringStatus = msg.wiring ?? null;
+        this.lastMeterTotals = msg.meterTotals ? { ...msg.meterTotals } : null;
+        this.lastPayoutCounts = msg.payoutCounts ?? [];
+        this.lastUnpricedPaid = msg.unpricedPaid ?? [];
+        this.lastPayoutFaults = msg.payoutFaults ?? null;
         resolve?.(msg.ledger);
         break;
       }
@@ -304,6 +330,7 @@ export class WorkerEmu implements Emu {
   load(opts: EmuLoadOptions): Promise<MachineInfo> {
     this.epoch++;
     this.wiringStatus = null;
+    this.lastMeterTotals = null;
     this.current = null;
     this.previous = null;
     this.autosave = null;
@@ -321,6 +348,7 @@ export class WorkerEmu implements Emu {
         panelSwitches: opts.panelSwitches,
         namedCoins: opts.namedCoins,
         namedPayouts: opts.namedPayouts,
+        payoutMeters: opts.payoutMeters,
         coinWiring: opts.coinWiring,
         powerCycle: opts.powerCycle,
         benchStep: opts.benchStep,
@@ -340,6 +368,10 @@ export class WorkerEmu implements Emu {
     this.post({ type: 'input', epoch: this.epoch, id, on });
   }
 
+  control(id: number, on: boolean): void {
+    this.post({ type: 'input', epoch: this.epoch, id, on, control: true });
+  }
+
   coin(bit: number): void {
     this.post({ type: 'coin', epoch: this.epoch, bit });
   }
@@ -350,6 +382,10 @@ export class WorkerEmu implements Emu {
 
   namePayout(line: number, pence: number): void {
     this.post({ type: 'name-payout', epoch: this.epoch, line, pence });
+  }
+
+  setPayoutMeter(line: number, token: boolean): void {
+    this.post({ type: 'payout-meter', epoch: this.epoch, line, token });
   }
 
   gateSeen(lamps: readonly number[]): void {
@@ -420,12 +456,12 @@ export class WorkerEmu implements Emu {
     });
   }
 
-  measureCoins(lines: readonly number[]): Promise<{ result: CoinMeasurement; wallMs: number } | null> {
+  measureCoins(lines: readonly number[], credit?: CreditWatch): Promise<{ result: CoinMeasurement; wallMs: number } | null> {
     if (!this.infoValue) return Promise.resolve(null);
     return new Promise((resolve) => {
       const id = this.nextId++;
       this.pendingMeasures.set(id, resolve);
-      this.post({ type: 'measure-coins', epoch: this.epoch, id, lines: [...lines] });
+      this.post({ type: 'measure-coins', epoch: this.epoch, id, lines: [...lines], ...(credit ? { credit } : {}) });
     });
   }
 

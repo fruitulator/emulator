@@ -7,6 +7,7 @@ export interface Mpu5Channel {
   label: string;
   cents?: number;
   pattern: number;
+  enable?: number | null;
 }
 
 export interface CoinValue {
@@ -88,6 +89,7 @@ export function readCoinValue(rom: Uint8Array, coin: number): CoinValue {
 const BIT_OF_PENCE = new Map<number, number>([[5, 0], [10, 1], [20, 2], [50, 3], [100, 4], [200, 5]]);
 const TOKEN_BIT = 6;
 const COIN_PORT = 0xffffff;
+const LOCKOUT_PORT = 0xfffff7;
 const NO_DEVICE = 0x270f;
 
 const tagIs = (rom: Uint8Array, a: number, t: string): boolean =>
@@ -99,10 +101,10 @@ export function readMpu5Mechs(rom: Uint8Array): Mpu5Mechs {
   const none = (why: string): Mpu5Mechs => ({ parallel: null, binary: null, at: { parallel: [], binary: [] }, refused: { parallel: why, binary: why }, notSterling: [] });
   const table = findDeviceTable(rom);
   if (table < 0) return none('no BCOS device table in the program');
-  const device = (id: number): { level: number; mask: number } | null => {
+  const device = (id: number): MechDevice | null => {
     const e = table + id * 20;
     if (e + 20 > rom.length) return null;
-    return { level: u32(e) & 0xffffff, mask: rom[e + 14]! };
+    return { level: u32(e) & 0xffffff, port: u32(e + 4) & 0xffffff, mask: rom[e + 14]! };
   };
   const kinds: Record<'parallel' | 'binary', { at: number; channels: Mpu5Channel[] }[]> = { parallel: [], binary: [] };
   for (let a = 0; a + 0xc0 <= rom.length; a += 2) {
@@ -116,10 +118,14 @@ export function readMpu5Mechs(rom: Uint8Array): Mpu5Mechs {
   }
   const settle = (list: { at: number; channels: Mpu5Channel[] }[], kind: string): { channels: Mpu5Channel[] | null; why: string | null } => {
     if (!list.length) return { channels: null, why: `no ${kind} coin mech record in the program` };
-    const key = (c: Mpu5Channel[]): string => JSON.stringify(c);
+    const key = (c: Mpu5Channel[]): string => JSON.stringify(c.map((x) => ({ ...x, enable: 0 })));
     const first = key(list[0]!.channels);
     if (list.some((r) => key(r.channels) !== first)) return { channels: null, why: `the program's ${kind} coin mech records disagree` };
-    return { channels: list[0]!.channels, why: null };
+    const channels = list[0]!.channels.map((c, i) => {
+      const all = list.map((r) => r.channels[i]!.enable ?? null);
+      return { ...c, enable: all.includes(null) ? null : all.reduce<number>((m, b) => m | b!, 0) };
+    });
+    return { channels, why: null };
   };
   const p = settle(kinds.parallel, 'parallel');
   const b = settle(kinds.binary, 'binary');
@@ -132,9 +138,11 @@ export function readMpu5Mechs(rom: Uint8Array): Mpu5Mechs {
   };
 }
 
+interface MechDevice { level: number; port: number; mask: number }
+
 function readRecord(
   rom: Uint8Array, a: number, stride: number,
-  device: (id: number) => { level: number; mask: number } | null,
+  device: (id: number) => MechDevice | null,
   u16: (a: number) => number, u32: (a: number) => number,
 ): { kind: 'parallel' | 'binary'; channels: Mpu5Channel[] } | null {
   const linesAt = a + 0x1e + 8 * stride;
@@ -149,7 +157,7 @@ function readRecord(
     masks.push(d.mask);
   }
   const channels: Mpu5Channel[] = [];
-  const foreign: (CoinValue & { pattern: number })[] = [];
+  const foreign: (CoinValue & { pattern: number; enable: number | null })[] = [];
   let multi = false;
   for (let i = 0; i < 8; i++) {
     const e = a + 0x1e + i * stride;
@@ -166,22 +174,25 @@ function readRecord(
       pattern |= m;
     }
     if (code & (code - 1)) multi = true;
+    const word = u16(e + 4);
+    const gate = word < 0x8000 ? device(word) : null;
+    const enable = gate && gate.port === LOCKOUT_PORT ? gate.mask : null;
     const v = readCoinValue(rom, coin);
     if (v.pence === null) {
-      if (!foreign.some((c) => c.label === v.label)) foreign.push({ ...v, pattern });
+      if (!foreign.some((c) => c.label === v.label)) foreign.push({ ...v, pattern, enable });
       continue;
     }
     const bit = v.pence === 0 ? TOKEN_BIT : BIT_OF_PENCE.get(v.pence);
     if (bit === undefined) continue;
     if (channels.some((c) => c.bit === bit)) continue;
-    channels.push({ bit, pence: v.pence, label: v.label, pattern });
+    channels.push({ bit, pence: v.pence, label: v.label, pattern, enable });
   }
   foreign.sort((x, y) => (x.cents ?? Infinity) - (y.cents ?? Infinity));
   for (const f of foreign) {
     let bit = 0;
     while (bit < TOKEN_BIT && channels.some((c) => c.bit === bit)) bit++;
     if (bit >= TOKEN_BIT) break;
-    channels.push({ bit, pence: null, label: f.label, ...(f.cents !== null ? { cents: f.cents } : {}), pattern: f.pattern });
+    channels.push({ bit, pence: null, label: f.label, ...(f.cents !== null ? { cents: f.cents } : {}), pattern: f.pattern, enable: f.enable });
   }
   if (!channels.length) return null;
   channels.sort((x, y) => x.bit - y.bit);

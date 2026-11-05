@@ -1,6 +1,7 @@
 import { str } from '../i18n';
 import { scrollFromOpen } from './scrollsettle';
 import { namedCoinLabel, namingChoices } from '../coinask';
+import { openLayer, type Layer } from './layer';
 import type { NamedCoin } from '../../src/machine/machine';
 
 export interface CoinMenuRow { label: string; sub?: string }
@@ -68,10 +69,12 @@ export function openCoinMenu(o: {
   }
 
   let closed = false;
+  let layer: Layer | null = null;
   function close(): void {
     if (closed) return;
     closed = true;
     list.remove();
+    layer?.release();
     removeEventListener('pointerdown', outside, true);
     removeEventListener('resize', away);
     removeEventListener('scroll', away, true);
@@ -117,6 +120,7 @@ export function openCoinMenu(o: {
   list.style.left = `${Math.max(edge, Math.min(x, innerWidth - w - edge))}px`;
   list.style.top = `${Math.max(edge, Math.min(y, innerHeight - h - edge))}px`;
   list.focus({ preventScroll: true });
+  layer = openLayer([list], { kind: 'menu', close, focus: list });
   setTimeout(() => {
     if (closed) return;
     addEventListener('pointerdown', outside, true);

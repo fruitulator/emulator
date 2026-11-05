@@ -105,6 +105,7 @@ export class Pluto5 implements Bus16, Machine {
 
   readonly cashLedger = newCashLedger();
   private readonly coinBook = new CoinBook(this.cashLedger, Math.round(1.5 * PLUTO5_CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
   private secLedgerMult: number[] = [];
@@ -178,6 +179,7 @@ export class Pluto5 implements Bus16, Machine {
   get meterTotals(): { in: number; out: number } { return { ...this.secTotals }; }
 
   private secCount(meter: number, delta: number): void {
+    if (delta > 0 && meter >= 0 && meter < this.secPulses.length) this.secPulses[meter] += delta;
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
     if (inMult) this.secTotals.in += inMult * delta;
@@ -187,6 +189,8 @@ export class Pluto5 implements Bus16, Machine {
       if (q > 0) for (let k = 0; k < delta; k++) this.coinBook.cashOut(q);
     }
   }
+
+  readonly secPulses = new Uint32Array(32);
 
   layoutLamp(n: number): boolean { return n >= 0 && n < 256 && this.lamps[n] !== 0; }
   layoutLampLevel(n: number): number { return n >= 0 && n < 256 ? this.lamps[n] : 0; }

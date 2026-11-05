@@ -1,7 +1,7 @@
 import type { CashLedger } from '../src/machine/machine';
 import type { ArcadeDoc, DocMachine } from './doc';
 import { asPlayer, devPlayerForPage, serverFlag } from './remote';
-import { MACHINE_PATH, MONEY_OP, type CreditSince, type LostCredit, type MachineMoney, type MoneyReply } from './serverwire';
+import { FAULT_OP, MACHINE_PATH, MONEY_OP, type CreditSince, type FaultReply, type LostCredit, type MachineMoney, type MoneyReply } from './serverwire';
 import { str } from '../web/i18n';
 import {
   LEDGER_FIELDS as FIELDS, MONEY_RECORD_VERSION, addReading, emptyRecord, keptNumber, readMoneyTotals, sameRun,
@@ -112,6 +112,16 @@ export function statsMoney(m: DocMachine, server?: MachineMoney | null): StatsMo
     euroInCents: n(t.euroInCents), euroOutCents: n(t.euroOutCents),
     lost: [...(rec.lost ?? [])].reverse(),
   };
+}
+
+export async function clearServerFault(arcadeId: string, machine: string): Promise<void> {
+  const base = serverFlag();
+  if (!base) return;
+  const player = await devPlayerForPage();
+  const opts = asPlayer(player);
+  const r = await fetch(`${base}${MACHINE_PATH}/${encodeURIComponent(arcadeId)}/${encodeURIComponent(machine)}/${FAULT_OP}`, { ...opts, method: 'DELETE' });
+  const body = (await r.json()) as FaultReply;
+  if (!body.ok) throw new Error('the arcade server did not let this host clear the machine\'s coin setup fault');
 }
 
 export async function serverMoney(arcadeId: string, machine: string): Promise<MachineMoney | null | undefined> {

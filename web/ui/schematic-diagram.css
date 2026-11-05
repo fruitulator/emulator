@@ -1,11 +1,21 @@
 :root {
-  --bp-paper: #0b2a60;
-  --bp-paper-deep: #05193f;
-  --bp-grid: rgba(190, 214, 255, 0.085);
-  --bp-grid-major: rgba(190, 214, 255, 0.16);
-  --bp-ink: #eaf2ff;
-  --bp-ink-dim: rgba(234, 242, 255, 0.5);
-  --bp-ink-faint: rgba(234, 242, 255, 0.26);
+  --bp-paper: #060b18;
+  --bp-paper-lift: #0b1630;
+  --bp-sheet: radial-gradient(120% 90% at 50% 40%, var(--bp-paper-lift) 0%, var(--bp-paper) 70%);
+  --bp-edge: inset 0 0 0 1px rgba(120, 170, 255, 0.14), inset 0 0 80px rgba(0, 0, 0, 0.45);
+  --bp-grid: rgba(120, 170, 255, 0.05);
+  --bp-grid-major: rgba(120, 170, 255, 0.1);
+  --bp-ink: #e6eeff;
+  --bp-sub: rgba(190, 215, 255, 0.6);
+  --bp-outline: rgba(190, 215, 255, 0.55);
+  --bp-outline-active: rgba(220, 235, 255, 0.9);
+  --bp-ink-faint: rgba(190, 215, 255, 0.26);
+  --bp-hatch: rgba(190, 215, 255, 0.18);
+  --bp-line-data: rgba(220, 235, 255, 0.85);
+  --bp-line-address: rgba(190, 215, 255, 0.6);
+  --bp-line-control: rgba(190, 215, 255, 0.5);
+  --bp-line-io: rgba(190, 215, 255, 0.45);
+  --bp-rail-label: rgba(190, 215, 255, 0.45);
   --bp-glow: #8fe3ff;
   --bp-glow-soft: rgba(143, 227, 255, 0.35);
   --bp-glow-faint: rgba(143, 227, 255, 0.14);
@@ -15,9 +25,10 @@
     linear-gradient(var(--bp-grid-major) 1px, transparent 1px),
     linear-gradient(90deg, var(--bp-grid-major) 1px, transparent 1px),
     linear-gradient(var(--bp-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bp-grid) 1px, transparent 1px);
-  background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
-  background-position: 4px 4px;
+    linear-gradient(90deg, var(--bp-grid) 1px, transparent 1px),
+    var(--bp-sheet);
+  background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px, auto;
+  background-position: 4px 4px, 4px 4px, 4px 4px, 4px 4px, 0 0;
 }
 .schem-pan {
   position: absolute;
@@ -71,8 +82,8 @@
   justify-content: center;
   gap: 1px;
   border-radius: 0;
-  background: rgba(5, 25, 63, 0.3);
-  border: 1px solid var(--bp-ink-dim);
+  background: var(--bp-paper);
+  border: 1px solid var(--bp-outline);
   overflow: hidden;
   text-align: center;
   line-height: 1.15;
@@ -84,7 +95,6 @@
   font-weight: 500;
   letter-spacing: 0.05em;
   color: var(--bp-ink);
-  opacity: 0.82;
   white-space: nowrap;
   transition: opacity 260ms ease, text-shadow 320ms ease;
 }
@@ -93,7 +103,7 @@
   font-size: 11px;
   line-height: 1.1;
   letter-spacing: 0.02em;
-  color: var(--bp-ink-dim);
+  color: var(--bp-sub);
   white-space: nowrap;
   transition: color 260ms ease;
 }
@@ -119,7 +129,7 @@
     repeating-linear-gradient(
       -45deg,
       transparent 0 5px,
-      rgba(234, 242, 255, 0.07) 5px 6px
+      var(--bp-hatch) 5px 6px
     );
   border-style: dashed;
   border-color: var(--bp-ink-faint);
@@ -131,7 +141,7 @@
 }
 .schem-node[data-state="unmodelled"] .schem-part,
 .schem-node[data-state="unfitted"] .schem-part {
-  color: var(--bp-ink-faint);
+  color: var(--bp-rail-label);
 }
 .schem-node[data-state="unserved"] {
   background: rgba(255, 138, 128, 0.1);
@@ -168,7 +178,7 @@
   transition: background-color 200ms ease, box-shadow 320ms ease, border-color 200ms ease;
 }
 .schem-node[data-act="1"] {
-  border-color: var(--bp-ink);
+  border-color: var(--bp-outline-active);
   box-shadow: 0 0 10px var(--bp-glow-faint);
 }
 .schem-node[data-act="1"] .schem-lbl {
@@ -181,7 +191,7 @@
 }
 .schem-node[data-act="2"] {
   border-color: #ffffff;
-  background: rgba(143, 227, 255, 0.07);
+  background: #101a28;
   box-shadow:
     0 0 0 1px var(--bp-glow-faint),
     0 0 18px var(--bp-glow-soft),
@@ -212,7 +222,7 @@
 .schem-node[data-band="rail"] {
   border: 0;
   border-radius: 0;
-  background: var(--bp-ink-dim);
+  background: var(--bp-line-address);
   overflow: visible;
   transition: none;
 }
@@ -223,21 +233,21 @@
   top: -3px;
   bottom: -3px;
   width: 1px;
-  background: var(--bp-ink-dim);
+  background: var(--bp-line-address);
 }
 .schem-node[data-band="rail"]::before { left: 0; }
 .schem-node[data-band="rail"]::after { right: 0; }
-.schem-rail-data { background: var(--bp-ink) !important; opacity: 0.85; }
+.schem-rail-data { background: var(--bp-line-data) !important; }
 .schem-rail-address { height: 2px !important; margin-top: 0.5px; }
 .schem-rail-control {
   height: 2px !important;
   margin-top: 0.5px;
-  background: repeating-linear-gradient(90deg, var(--bp-ink-dim) 0 7px, transparent 7px 11px) !important;
+  background: repeating-linear-gradient(90deg, var(--bp-line-control) 0 7px, transparent 7px 11px) !important;
 }
 .schem-rail-serial {
   height: 2px !important;
   margin-top: 0.5px;
-  background: repeating-linear-gradient(90deg, var(--bp-ink-dim) 0 9px, transparent 9px 12px, var(--bp-ink-dim) 12px 14px, transparent 14px 17px) !important;
+  background: repeating-linear-gradient(90deg, var(--bp-line-io) 0 9px, transparent 9px 12px, var(--bp-line-io) 12px 14px, transparent 14px 17px) !important;
 }
 .schem-raillbl {
   position: absolute;
@@ -248,24 +258,23 @@
   font-size: 9px;
   line-height: 1;
   letter-spacing: 0.12em;
-  color: var(--bp-ink-dim);
+  color: var(--bp-rail-label);
   white-space: nowrap;
 }
 .schem-bus {
   fill: none;
-  stroke: var(--bp-ink);
+  stroke: var(--bp-line-address);
   stroke-width: 1.5;
   stroke-linecap: butt;
   stroke-linejoin: miter;
-  opacity: 0.42;
-  transition: opacity 260ms ease;
+  transition: stroke 260ms ease;
 }
-.schem-bus-data { stroke-width: 2.2; }
-.schem-bus-address { stroke-width: 1.2; }
-.schem-bus-control { stroke-dasharray: 5 3; }
-.schem-bus-serial { stroke-dasharray: 7 3 1.5 3; }
-.schem-bus-analog { stroke-dasharray: 1.5 3; stroke-linecap: round; }
-.schem-bus-power { stroke-width: 1; opacity: 0.3; }
+.schem-bus-data { stroke: var(--bp-line-data); stroke-width: 2.2; }
+.schem-bus-address { stroke: var(--bp-line-address); stroke-width: 1.2; }
+.schem-bus-control { stroke: var(--bp-line-control); stroke-dasharray: 5 3; }
+.schem-bus-serial { stroke: var(--bp-line-io); stroke-dasharray: 7 3 1.5 3; }
+.schem-bus-analog { stroke: var(--bp-line-io); stroke-dasharray: 1.5 3; stroke-linecap: round; }
+.schem-bus-power { stroke: var(--bp-ink-faint); stroke-width: 1; }
 .schem-halo {
   fill: none;
   stroke: var(--bp-glow);
@@ -279,7 +288,6 @@
   opacity: 0.22;
 }
 .schem-bus.schem-flow {
-  opacity: 1;
   stroke: #ffffff;
   stroke-dasharray: 7 5;
   stroke-linecap: round;
@@ -293,21 +301,18 @@
   height: 10px;
   overflow: visible;
 }
-.schem-legend svg .schem-bus {
-  opacity: 0.75;
-}
 .schem-legend i {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border: 1px solid var(--bp-ink-dim);
+  border: 1px solid var(--bp-outline);
 }
 .schem-legend i.schem-key-live {
-  border-color: #ffffff;
+  border-color: var(--bp-outline-active);
   box-shadow: 0 0 6px var(--bp-glow-soft);
 }
 .schem-legend i.schem-key-off {
   border-style: dashed;
   border-color: var(--bp-ink-faint);
-  background: repeating-linear-gradient(-45deg, transparent 0 2px, rgba(234, 242, 255, 0.2) 2px 3px);
+  background: repeating-linear-gradient(-45deg, transparent 0 2px, var(--bp-hatch) 2px 3px);
 }

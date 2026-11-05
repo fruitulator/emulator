@@ -27,8 +27,18 @@ function ensure(): HTMLDivElement {
   return bubble;
 }
 
+const offPage = (el: HTMLElement): boolean => !el.isConnected || !el.getClientRects().length;
+
+function watchOwner(): void {
+  if (!owner) return;
+  if (offPage(owner)) { hide(); return; }
+  requestAnimationFrame(watchOwner);
+}
+
 function show(el: HTMLElement, name: string, what: string): void {
+  if (offPage(el)) return;
   const b = ensure();
+  const watching = !!owner;
   owner = el;
   head.textContent = name;
   line.textContent = what;
@@ -46,6 +56,7 @@ function show(el: HTMLElement, name: string, what: string): void {
   b.style.top = `${Math.round(below ? r.bottom + GAP : r.top - GAP - h)}px`;
   b.style.setProperty('--arrow-x', `${Math.round(mid - left)}px`);
   requestAnimationFrame(() => { if (owner === el) b.classList.add('up'); });
+  if (!watching) requestAnimationFrame(watchOwner);
 }
 
 function hide(): void {

@@ -245,6 +245,7 @@ export function readJpmRecords(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable |
     const tb = scriptTargetBase(rom);
     const meters = tb === null ? null : readJpmMeters(rom, tb);
     const lines: CoinLine[] = [];
+    const coinMeterBits = new Set<number>();
     for (const line of LINES) {
       const rec = base + stride * (line - 18);
       if (rec + stride > rom.length) return null;
@@ -263,6 +264,7 @@ export function readJpmRecords(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable |
         const bits = new Set(s.adds.filter((x) => x.target >= 0 && x.amount > 0).map((x) => meters?.get(x.target)));
         if (!bits.has(TOKEN_IN_BIT)) tokenIn = false;
         if (bits.has(CASH_IN_BIT)) cashIn = true;
+        if (credits > 0 && !terms.length) for (const bit of bits) if (bit !== undefined) coinMeterBits.add(bit);
       }
       const token = meters !== null && tokenIn && !cashIn;
       lines.push({ line, credits, change: anyChange ? change : [], ...(token ? { token: true } : {}) });
@@ -270,6 +272,7 @@ export function readJpmRecords(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable |
     if (lines.every((l) => l.credits === 0)) continue;
     return {
       lines,
+      coinMeterBits: [...coinMeterBits].sort((x, y) => x - y),
       pricePerCredit: null,
       source: `JPM ${stride}-byte coin records ${hex(base)}${how}, scripts for counter ${hex(ctr)}, code ${hex(a)}`,
     };
@@ -291,6 +294,286 @@ export function readPatternRecords(rom: Uint8Array): Refusal | null {
   return null;
 }
 
+export function readCoinHandlers(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable | Refusal | null {
+  const test = (a: number): { bit: number; base: number; handler: number } | null => {
+    const m = word(rom, a + 2);
+    const base = word(rom, a + 6);
+    if (word(rom, a) !== 0xc2a0 || word(rom, a + 4) !== 0xc2aa || word(rom, a + 8) !== 0x22a0 || word(rom, a + 10) !== m + 2) return null;
+    if (word(rom, a + 12) !== 0x1607 || word(rom, a + 14) !== 0xc2a0 || word(rom, a + 16) !== m) return null;
+    if (word(rom, a + 18) !== 0x4aa0 || word(rom, a + 20) !== m + 2 || word(rom, a + 22) !== base || word(rom, a + 24) !== 0x0460) return null;
+    const mask = word(rom, m + 2);
+    if (word(rom, m) !== 0 || mask <= 0 || mask >= 0x20 || (mask & (mask - 1))) return null;
+    return { bit: 31 - Math.clz32(mask), base, handler: word(rom, a + 26) };
+  };
+  let scan = false;
+  for (let a = 0; a + 4 <= rom.length && !scan; a += 2) scan = word(rom, a) === 0xc820 && word(rom, a + 2) === 0xc004;
+  if (!scan) return null;
+  for (let a = 0; a + 28 <= rom.length; a += 2) {
+    const chain: { bit: number; handler: number }[] = [];
+    for (let t = test(a), p = a; t && t.base === test(a)!.base; p += 28, t = test(p)) chain.push(t);
+    if (chain.length !== LINES.length || new Set(chain.map((c) => c.bit)).size !== LINES.length) continue;
+    const lines: CoinLine[] = [];
+    let counter = -1;
+    for (const { bit, handler } of chain) {
+      const got = handlerCredit(rom, handler, io);
+      if (got === null) return null;
+      if ('refused' in got) return got;
+      if (counter >= 0 && got.counter !== counter) return null;
+      counter = got.counter;
+      lines.push({ line: 19 + bit, credits: got.credits, change: [], ...(got.code !== null && dataPakCoinInKind(got.code) === 'token' ? { token: true } : {}) });
+    }
+    lines.sort((x, y) => x.line - y.line);
+    return { lines, pricePerCredit: null, source: `MPS2 coin handlers, code ${hex(a)}` };
+  }
+  return null;
+}
+
+function handlerCredit(rom: Uint8Array, h: number, io: Mps2CoinIo): { credits: number; counter: number; code: number | null } | Refusal | null {
+  if (word(rom, h) !== 0x0283 || word(rom, h + 2) !== 3) return null;
+  let p = h + 4;
+  if (word(rom, p) === 0x1602 && word(rom, p + 2) === 0x0460) p += 6;
+  else if ((word(rom, p) & 0xff00) === 0x1300) p += 2;
+  else return null;
+  let r5: number | null = null; let code: number | null = null;
+  for (let n = 0; n < 8; n++) {
+    const w = word(rom, p);
+    if (w === 0x0420) {
+      if (r5 !== null && code === null) code = r5;
+      r5 = null; p += 4;
+    } else if (w === 0x0205) {
+      r5 = word(rom, p + 2); p += 4;
+    } else if (w === 0xa805) {
+      return r5 === null ? null : { credits: r5, counter: word(rom, p + 2), code };
+    } else if (w === 0xd160 && word(rom, p + 2) === 0xc00a) {
+      if (word(rom, p + 4) !== 0x06c5 || word(rom, p + 6) !== 0x0945 || word(rom, p + 8) !== 0x0545 || word(rom, p + 10) !== 0x0245) return null;
+      if (word(rom, p + 14) !== 0x1604 || word(rom, p + 16) !== 0x0205 || word(rom, p + 20) !== 0x0460) return null;
+      const position = ~(io.rotaryByte >> 4) & word(rom, p + 12);
+      if (position !== 0) return { refused: `coin handler at code ${hex(h)}: this rotary position pays change down a path that is not read` };
+      return { credits: word(rom, p + 18), counter: creditCounter(rom, word(rom, p + 22)), code };
+    } else return null;
+  }
+  return null;
+}
+
+function creditCounter(rom: Uint8Array, store: number): number {
+  return word(rom, store) === 0xa805 ? word(rom, store + 2) : -1;
+}
+
+export function metersInPairs(rom: Uint8Array): boolean {
+  return pairedBank(rom) !== null;
+}
+
+export function pairedBank(rom: Uint8Array): number | null {
+  for (let a = 0; a + 28 <= rom.length; a += 2) {
+    if (word(rom, a) !== 0x0247 || word(rom, a + 2) !== 0xfffe || word(rom, a + 4) !== 0x05a0) continue;
+    const bank = word(rom, a + 6);
+    if (word(rom, a + 8) === 0xa707 && word(rom, a + 10) === 0xc1e0 && word(rom, a + 12) === bank
+      && word(rom, a + 14) === 0xc207 && word(rom, a + 16) === 0x0247 && word(rom, a + 18) === 0xfffe
+      && word(rom, a + 20) === 0xa707 && word(rom, a + 22) === 0x0248 && word(rom, a + 24) === 1
+      && word(rom, a + 26) === 0xc808 && word(rom, a + 28) === bank) return bank;
+  }
+  return null;
+}
+
+export function readCountedMeters(rom: Uint8Array): { coinBit: number; payBit: number; tubeBits: number } | null {
+  const pc = word(rom, 0x46);
+  if (pc < 0 || word(rom, pc) !== 0x62cd) return null;
+  let base = -1;
+  for (let p = pc + 2; p < pc + 12; p += 2) if (word(rom, p) === 0x05ab) { base = word(rom, p + 2); break; }
+  if (base < 0) return null;
+  let first = -1;
+  let portACounters = 0;
+  for (let a = 0; a + 4 <= rom.length && first < 0; a += 2) {
+    if (word(rom, a) !== 0x0201 || word(rom, a + 2) !== base) continue;
+    let counter = 0; let sinceBit0 = -1;
+    for (let p = a + 4, n = 0; n < 40; n++) {
+      const w = word(rom, p);
+      if (w === 0x0202) sinceBit0 = word(rom, p + 2) === 0x0100 ? 0 : -1;
+      else if (w === 0x06a0) { counter++; if (sinceBit0 >= 0) sinceBit0++; }
+      else if (w === 0xd820 && word(rom, p + 4) === METER_PORT) {
+        if (sinceBit0 === 8) first = counter - 8;
+        break;
+      } else if (w === 0xd820 && word(rom, p + 4) === 0xc000 && sinceBit0 === counter) portACounters = counter;
+      else if (w !== 0x0200 && w !== 0xd820) break;
+      p += insnLen(rom, p);
+    }
+  }
+  if (first < 0) return null;
+  const bitOf = (xop: number): number | null => {
+    if ((xop & 0xfff0) !== 0x2c40) return null;
+    const bit = (xop & 15) - first;
+    return bit >= 0 && bit < 8 ? bit : null;
+  };
+  const added = (p: number): boolean => word(rom, p) === 0x2ca0 && word(rom, p + 4) === 0x2ca0;
+  let coinBit: number | null = null; let payBit: number | null = null; let payAt = -1;
+  for (let a = 8; a + 16 <= rom.length; a += 2) {
+    if (coinBit === null && word(rom, a) === 0xc0c2 && added(a + 4) && word(rom, a + 12) === 0x0603 && (word(rom, a + 14) & 0xff00) === 0x1600
+      && word(rom, a - 8) === 0xc24b) {
+      let calls = 0;
+      for (let c = 4; c + 4 <= rom.length; c += 2) {
+        if (word(rom, c) !== 0x06a0 || word(rom, c + 2) !== a - 8) continue;
+        for (let back = c - 4; back >= Math.max(0, c - 12); back -= 2) if (word(rom, back) === 0x0202 && word(rom, back + 2) > 0) { calls++; break; }
+      }
+      if (calls >= 2) coinBit = bitOf(word(rom, a + 2));
+    }
+    if (payBit === null && word(rom, a) === 0x6801 && word(rom, a + 4) === 0x7420 && added(a + 10)) { payBit = bitOf(word(rom, a + 8)); payAt = a; }
+  }
+  if (coinBit === null || payBit === null || coinBit === payBit) return null;
+  let tubeBits = 0;
+  for (let a = 0; a + 12 <= rom.length; a += 2) {
+    const x = word(rom, a);
+    if ((x & 0xfff0) !== 0x2c40 || word(rom, a + 2) !== 0x0200 || word(rom, a + 6) !== 0x0201 || word(rom, a + 8) <= 0) continue;
+    const next = a + 10; const j = word(rom, next);
+    const reaches = next === payAt || ((j & 0xff00) === 0x1000 && next + 2 + ((j << 24) >> 23) === payAt);
+    if (reaches && (x & 15) < portACounters) tubeBits |= 1 << (x & 15);
+  }
+  return { coinBit, payBit, tubeBits };
+}
+
+export function readCreditMeters(rom: Uint8Array): { payBit: number; tubeBits: number } | null {
+  const isRam = (a: number): boolean => a >= 0xe800 && a < 0xf100;
+  const records = (() => {
+    for (let a = 4; a + 8 <= rom.length; a += 2) {
+      const ai = word(rom, a);
+      if ((ai & 0xfff0) !== 0x0220 || word(rom, a + 2) !== 4 || (word(rom, a + 4) & 0xfff0) !== 0x0910 || word(rom, a + 6) !== 0x17fc) continue;
+      if (word(rom, a - 4) !== (0x0200 | (ai & 15))) continue;
+      const base = word(rom, a - 2);
+      let n = 0;
+      for (let k = 1; k <= 8; k++) {
+        const c = word(rom, base + 4 * k); const v = word(rom, base + 4 * k + 2);
+        if (!isRam(c) || v < 1 || v > 0xff) break;
+        n++;
+      }
+      if (n >= 3) return true;
+    }
+    return false;
+  })();
+  const pairs = (a: number): Map<number, number> => {
+    const m = new Map<number, number>();
+    for (let p = a; isRam(word(rom, p)) && word(rom, p + 2) < 0x40; p += 4) m.set(word(rom, p), word(rom, p + 2));
+    return m;
+  };
+  let meters: Map<number, number> | null = null; let tubeBits = 0;
+  for (let a = 4; a + 8 <= rom.length && !meters; a += 2) {
+    if (!isRam(word(rom, a)) || word(rom, a + 2) !== 0x20 || word(rom, a - 2) !== 0) continue;
+    const m = pairs(a);
+    if (m.size < 3) continue;
+    meters = m;
+    for (let p = a - 6; p >= 0 && isRam(word(rom, p)) && word(rom, p + 2) < 0x40; p -= 4) {
+      const out = word(rom, p + 2);
+      if (out >= 0x10 && out <= 0x12) tubeBits |= 1 << (out - 0x10);
+    }
+  }
+  const bit = (out: number | undefined): number | null => (out !== undefined && out >= 0x20 && out < 0x28 ? out - 0x20 : null);
+  if (meters) {
+    for (let a = 0; a + 18 <= rom.length; a += 2) {
+      if (word(rom, a) !== 0x6822 || word(rom, a + 6) !== 0x0622 || word(rom, a + 10) !== 0xa822 || word(rom, a + 12) !== word(rom, a + 2)) continue;
+      const payBit = bit(meters.get(word(rom, a + 14)));
+      if (payBit !== null && tubeBits) return { payBit, tubeBits };
+    }
+    if (!records) return null;
+    for (let a = 0; a + 12 <= rom.length; a += 2) {
+      if ((word(rom, a) & 0xff00) !== 0x8000 || !isRam(word(rom, a + 2)) || (word(rom, a + 4) & 0xff00) !== 0x4000 || !isRam(word(rom, a + 6))) continue;
+      if (word(rom, a + 8) !== 0x8001 || !isRam(word(rom, a + 10))) continue;
+      const payBit = bit(meters.get(word(rom, a + 2)));
+      if (payBit !== null && tubeBits) return { payBit, tubeBits };
+      return null;
+    }
+    return null;
+  }
+  if (!records) return null;
+  for (let n = 3; n < 16; n++) {
+    const h = word(rom, 0x42 + n * 4);
+    if (h <= 0 || h + 32 > rom.length || (word(rom, h) & 0xfff0) !== 0xc1f0) continue;
+    let list = -1;
+    for (let p = h + 2; p < h + 30; p += 2) {
+      if (word(rom, p) === 0xc1a7) list = word(rom, p + 2);
+      if (word(rom, p) === 0x0380) break;
+    }
+    if (list < 0) continue;
+    let k = -1;
+    const xop = 0x2c00 | (n << 6);
+    for (let a = 0x60; a + 6 <= rom.length; a += 2) {
+      const w = word(rom, a);
+      if ((w & 0xfff0) !== (xop | 0x20) || !(w & 15)) continue;
+      const d = word(rom, a + 4);
+      if (word(rom, word(rom, a + 2)) > 0 && word(rom, word(rom, a + 2)) <= 0xff && !(d & 1) && d <= 14 && (k < 0 || d < k)) k = d;
+    }
+    if (k < 0) continue;
+    let end = list;
+    while (isRam(word(rom, end)) || word(rom, end) === 0) end += 2;
+    const outs = rom.subarray(end + 2, end + 2 + (end - list) / 2);
+    const payBit = bit(outs[k / 2]);
+    if (payBit === null) continue;
+    let tubes = 7;
+    for (const o of outs) if (o >= 0x10 && o <= 0x12) tubes &= ~(1 << (o - 0x10));
+    return tubes ? { payBit, tubeBits: tubes } : null;
+  }
+  return null;
+}
+
+export class PendingCounterFinder {
+  private static readonly STEPS = 5;
+  private static readonly MAX_STEPS = 9;
+  private static readonly GAP = 1_500_000;
+  private static readonly DROP_WAIT = 4_500_000;
+  private base: Uint8Array | null = null;
+  private baseAt = 0;
+  rose = false;
+  private last: Uint8Array | null = null;
+  private candidates: number[] = [];
+  private line = -1;
+  private at = 0;
+  private steps = 0;
+  private dropSeen = false;
+
+  dropped(ram: Uint8Array, lo: number, hi: number, now: number): void {
+    this.dropSeen = true;
+    if (!this.last && !this.base) { this.base = ram.slice(lo, hi + 1); this.baseAt = now; }
+  }
+
+  pulse(line: number, ram: Uint8Array, lo: number, hi: number, now: number): number | null {
+    if (this.last && (now < this.at || now - this.at > PendingCounterFinder.GAP)) this.last = null;
+    if (!this.last) {
+      if (!this.base) return null;
+      const base = this.base;
+      this.base = null;
+      if (now < this.baseAt || now - this.baseAt > PendingCounterFinder.DROP_WAIT) return null;
+      this.candidates = [];
+      for (let a = lo; a <= hi; a++) {
+        const up = (ram[a]! - base[a - lo]!) & 0xff;
+        if (up > 0 && up < 0x80) this.candidates.push(a);
+      }
+      if (!this.candidates.length) return null;
+      this.last = ram.slice(lo, hi + 1);
+      this.line = line;
+      this.at = now;
+      this.steps = 0;
+      this.dropSeen = false;
+      return null;
+    }
+    if (line !== this.line) return null;
+    this.at = now;
+    const last = this.last;
+    const dropSeen = this.dropSeen;
+    let rose = false;
+    this.candidates = this.candidates.filter((a) => {
+      const d = (ram[a]! - last[a - lo]!) & 0xff;
+      if (d === 0xff) return true;
+      if (dropSeen && d > 0 && d < 0x80) return (rose = true);
+      return false;
+    });
+    this.rose = rose;
+    this.dropSeen = false;
+    if (!this.candidates.length) { this.last = null; return null; }
+    last.set(ram.subarray(lo, hi + 1));
+    this.steps++;
+    if (this.steps < PendingCounterFinder.STEPS || (this.candidates.length > 1 && this.steps < PendingCounterFinder.MAX_STEPS)) return null;
+    this.last = null;
+    return this.candidates[0]!;
+  }
+}
+
 export function readMps2CoinTable(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable | Refusal {
   const words = readWordTable(rom, io);
   if (words) return words;
@@ -298,5 +581,7 @@ export function readMps2CoinTable(rom: Uint8Array, io: Mps2CoinIo): CoinLineTabl
   if (jpm) return jpm;
   const pat = readPatternRecords(rom);
   if (pat) return pat;
-  return { refused: 'no known MPS2 coin-table code (word table, JPM records, pence records)' };
+  const handlers = readCoinHandlers(rom, io);
+  if (handlers) return handlers;
+  return { refused: 'no known MPS2 coin-table code (word table, JPM records, pence records, coin handlers)' };
 }

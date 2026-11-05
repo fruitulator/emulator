@@ -1,3 +1,5 @@
+import { openLayer } from './layer';
+
 let card: { el: HTMLElement; row: HTMLElement; off: () => void } | null = null;
 
 export function openSideCard(el: HTMLElement, row: HTMLElement, panel: HTMLElement): boolean {
@@ -24,14 +26,10 @@ export function openSideCard(el: HTMLElement, row: HTMLElement, panel: HTMLEleme
   el.style.top = `${Math.round(Math.min(Math.max(EDGE, r.top), innerHeight - h - EDGE))}px`;
   el.style.visibility = '';
   row.setAttribute('aria-expanded', 'true');
-  const outside = (e: PointerEvent): void => {
-    const t = e.target as Node;
-    if (!el.contains(t) && !row.contains(t)) closeSideCard();
-  };
   const resize = (): void => closeSideCard();
-  addEventListener('pointerdown', outside, true);
   addEventListener('resize', resize);
-  card = { el, row, off: () => { removeEventListener('pointerdown', outside, true); removeEventListener('resize', resize); } };
+  const layer = openLayer([el], { kind: 'menu', close: closeSideCard, returnTo: row });
+  card = { el, row, off: () => { removeEventListener('resize', resize); layer.release(); } };
   return true;
 }
 

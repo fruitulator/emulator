@@ -1,8 +1,9 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { COIN_RAW } from './coinraw';
 import type { Bus16 } from '../cpu/bus68k';
 import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus, NoteResult } from './machine';
 import type { BoardPart } from './parts';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
 import { M68000 } from '../cpu/m68000';
 import {
@@ -66,7 +67,6 @@ const SOUND_IRQ_LEVEL = 6;
 const SOUND_IRQ_VECTOR = 0x1e;
 const SOUND_PERIOD_CYCLES = [0x1046, 0x823, 0x411, 0x208];
 const COIN_TAIL = Math.floor(ASTRA_CLOCK * 0.005);
-const METER_UNIT_PENCE = 10;
 const ASTRA_HOPPER_PENCE: (number | null)[] = [100, null];
 const METER_TICK_CYCLES = 0x4e20;
 const METER_HOLD_TICKS = 5;
@@ -128,6 +128,7 @@ export class Astra implements Bus16, Machine {
   private meterAcc = 0;
   readonly cashLedger = newCashLedger();
   private readonly coinBook = new CoinBook(this.cashLedger, Math.round(1.5 * ASTRA_CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly slotCoins = new SlotCoins();
 
   private coinMask = 0;
@@ -162,47 +163,41 @@ export class Astra implements Bus16, Machine {
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
   readonly secTotals = { in: 0, out: 0 };
-  private static readonly SEC_UNIT_PENCE = 10;
-
   setSecMoneyMap(secIn: readonly number[], secOut: readonly number[]): void {
     this.secInMult = [...secIn];
     this.secOutMult = [...secOut];
-    this.relayLedgerMults();
   }
 
   private meterInMultRaw: readonly number[] = [];
   private meterOutMultRaw: readonly number[] = [];
-  private secLedgerMult: number[] = [];
-  private relayLedgerMults(): void {
-    const [meters, secs] = ledgerOutMults(
-      { in: this.meterInMultRaw, out: this.meterOutMultRaw },
-      { in: this.secInMult, out: this.secOutMult },
-    );
-    this.meterOutPence = meters.map((x) => x * METER_UNIT_PENCE);
-    this.secLedgerMult = secs;
-  }
-
-  pricesOut(): boolean {
-    return this.meterOutPence.some((p) => p > 0) || this.secLedgerMult.some((x) => x > 0);
-  }
-
   private secCount(meter: number, delta: number): void {
+    if (delta > 0 && meter >= 0 && meter < this.secPulses.length) this.secPulses[meter] += delta;
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
-    if (inMult) {
-      this.secTotals.in += inMult * delta;
-    }
-    if (outMult) {
-      this.secTotals.out += outMult * delta;
-      const q = (this.secLedgerMult[meter] ?? 0) * Astra.SEC_UNIT_PENCE;
-      if (this.booksMoney && q > 0) for (let k = 0; k < delta; k++) this.coinBook.cashOut(q);
-      else if (this.booksMoney) this.cashLedger.outPence += q * delta;
-    }
+    if (inMult) this.secTotals.in += inMult * delta;
+    if (outMult) this.secTotals.out += outMult * delta;
   }
+  readonly secPulses = new Uint32Array(32);
+
   private readonly paidBooked = [0, 0];
   hopperOutPence = 0;
   readonly hopperEjects = [0, 0];
   private tokenPayout: AstraTokenPayout | null = null;
+  get unpricedPayoutLines(): readonly number[] { return []; }
+  get hopperPayoutLines(): readonly number[] { return [0, 1]; }
+  get tokenPayoutLines(): readonly number[] { return [1]; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMultRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return { 0: this.hoppers[0]!.paid, 1: this.hoppers[1]!.paid }; }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+
+  get payoutDevices(): readonly { line: number; kind: 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [
+      { line: 0, kind: 'hopper', displayNumber: 1, defaultPence: ASTRA_HOPPER_PENCE[0] },
+      { line: 1, kind: 'token-hopper', displayNumber: 2, defaultPence: this.tokenCoinPence() },
+    ];
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
   tokenCoinPence(): number | null {
     return this.tokenPayout ? astraTokenPence(this.tokenPayout, this.rom, this.ram) : null;
   }
@@ -333,12 +328,9 @@ export class Astra implements Bus16, Machine {
     this.layoutInput(n, made);
   }
 
-  private meterOutPence: number[] = [];
-
   setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
     this.meterInMultRaw = [...inMult];
     this.meterOutMultRaw = [...outMult];
-    this.relayLedgerMults();
   }
 
   private dilLabels: readonly string[] | null = null;
@@ -570,7 +562,7 @@ export class Astra implements Bus16, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(id: number, taken: AstraCoin | null): void {
@@ -582,11 +574,7 @@ export class Astra implements Bus16, Machine {
       return;
     }
     if (taken !== null) {
-      const agrees = typeof c === 'number'
-        ? !taken.token && taken.pence === c
-        : taken.token && (c.token === null || c.token === taken.pence);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      this.wiringState.state = 'calibrated';
     }
     this.coinBook.coin(bookedOfSlotCoin(c));
   }
@@ -682,13 +670,25 @@ export class Astra implements Bus16, Machine {
       if (paid > this.paidBooked[h]) {
         const fresh = paid - this.paidBooked[h];
         const token = h === 1 ? this.tokenCoinPence() : null;
-        if (h !== 1) this.hopperOutPence += fresh * (ASTRA_HOPPER_PENCE[h] ?? 0);
+        if (h !== 1) this.hopperOutPence += fresh * (this.coinBook.payouts.value(h) ?? ASTRA_HOPPER_PENCE[h] ?? 0);
         this.hopperEjects[h] += fresh;
-        if (!this.pricesOut() && this.booksMoney) {
-          const pence = ASTRA_HOPPER_PENCE[h];
-          if (token !== null) this.cashLedger.tokenOutPence += token * fresh;
-          else if (pence === null) this.cashLedger.unpricedTokenOut += fresh;
-          else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(pence);
+        if (this.booksMoney) {
+          const named = this.coinBook.payouts.value(h);
+          if (h === 1) {
+            const v = named ?? token;
+            if (v === null) {
+              this.cashLedger.unpricedTokenOut += fresh;
+              this.coinBook.payouts.noteUnpriced(h);
+            }
+            else this.cashLedger.tokenOutPence += v * fresh;
+          } else {
+            const v = named ?? ASTRA_HOPPER_PENCE[h];
+            if (v === null) {
+              this.cashLedger.unpricedOut += fresh;
+              this.coinBook.payouts.noteUnpriced(h);
+            }
+            else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(v);
+          }
         }
         this.paidBooked[h] = paid;
       }
@@ -770,9 +770,7 @@ export class Astra implements Bus16, Machine {
         this.meterCounts[b]++;
         this.gridTotals.in += this.meterInMultRaw[b] ?? 0;
         this.gridTotals.out += this.meterOutMultRaw[b] ?? 0;
-        if (!this.booksMoney) continue;
-        const outP = this.meterOutPence[b] ?? 0;
-        if (outP) this.coinBook.cashOut(outP);
+        countOutClick(this.outClicks, b, this.meterOutMultRaw[b]);
       }
     }
   }

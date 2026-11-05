@@ -1,8 +1,10 @@
 import { UI_ICONS, rowIcon } from './icons';
 import { str } from '../i18n';
 import { closeSideCard, escapeSideCard } from './sidecard';
+import { openLayer, type Layer } from './layer';
 
 let returnFocus: HTMLElement | null = null;
+let sheetLayer: Layer | null = null;
 
 let byPointer = false;
 if (typeof addEventListener === 'function') {
@@ -236,6 +238,9 @@ export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HT
   escapeAlwaysCloses();
   closeSideCard();
   const { sheet, scrim, rows, title } = parts();
+  const dressed = title.closest('.sheet-machine-words');
+  if (dressed) dressed.replaceWith(title);
+  title.parentElement?.querySelectorAll(':scope > .sheet-machine-thumb').forEach((n) => n.remove());
   const head = title.parentElement!;
   head.querySelector(':scope > .sheet-sub')?.remove();
   head.querySelector(':scope > .sheet-close')?.remove();
@@ -295,6 +300,7 @@ export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HT
   rows.scrollTop = 0;
   sheet.classList.toggle('by-pointer', byPointer);
   (rows.querySelector('button:not(:disabled)') as HTMLElement | null)?.focus({ preventScroll: true });
+  sheetLayer ??= openLayer([sheet, scrim], { kind: 'dialog', close: closeSheet, returnTo, onEscape: escapeSideCard });
 }
 
 function grouped(els: HTMLElement[]): HTMLElement[] {
@@ -338,6 +344,9 @@ export function closeSheet(): void {
   window.setTimeout(() => {
     if (!sheet.classList.contains('open')) sheet.hidden = true;
   }, 260);
+  const l = sheetLayer;
+  sheetLayer = null;
+  l?.release();
   returnFocus?.focus();
   returnFocus = null;
 }

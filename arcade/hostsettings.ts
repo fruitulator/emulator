@@ -5,7 +5,6 @@ import { card, checkRow, menuRow } from '../web/ui/rows';
 import { standing, unsourcedMachines, type ArcadeDoc, type DocMachine } from './doc';
 import { serverMoney, statsMoney } from './moneyrecord';
 import { ARCADE_NAME_MAX, cleanName } from './machines';
-import { moneyTrust } from './moneygate';
 import { showToast } from '../web/ui/toast';
 import { str } from '../web/i18n';
 import { textField } from '../web/ui/field';
@@ -29,7 +28,6 @@ export interface ShareHooks {
 export const pounds = (p: number): string => `${p < 0 ? '-' : ''}£${(Math.abs(p) / 100).toFixed(2)}`;
 
 export function machineMoney(m: DocMachine): { inPence: number; outPence: number } | null {
-  if (moneyTrust(m.board).trust === 'none') return null;
   const f = statsMoney(m);
   return { inPence: f.inPence, outPence: f.outPence };
 }
@@ -61,7 +59,7 @@ export async function arcadeFigures(d: ArcadeDoc, server: boolean): Promise<Arca
   let any = false;
   let inPence = 0;
   let outPence = 0;
-  const books = d.machines.filter((m) => moneyTrust(m.board).trust !== 'none');
+  const books = d.machines;
   const reads = await Promise.all(books.map(async (m) => {
     const r = server ? await serverMoney(d.id, m.id) : undefined;
     return r === undefined ? statsMoney(m) : statsMoney(m, r);
@@ -201,7 +199,7 @@ export function confirmDelete(h: Pick<SettingsHooks, 'doc' | 'share' | 'remove'>
     message: str('arcade.hostsettings.delete_n', { 0: d.name || str('arcade.hostsettings.this_arcade') }),
     lines: deleteLines(d, !!h.share?.shared()),
     buttons: [
-      { button: keep, run: () => undefined },
+      { button: keep, run: () => undefined, dismiss: true },
       {
         button: yes,
         run: () => {

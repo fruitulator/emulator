@@ -166,18 +166,29 @@ export function groupGames(games: GameMeta[], sortBy: SortKey): { label: string;
   return out;
 }
 
+const drawnAtY = new WeakMap<Element, number>();
 const reveal = typeof IntersectionObserver === 'undefined' ? null
   : new IntersectionObserver((entries, obs) => {
     const crossfading = document.body.classList.contains('mode-fade');
     for (const e of entries) {
       if (!e.isIntersecting) continue;
-      if (!crossfading) e.target.classList.add('card-in');
+      const moved = window.scrollY !== drawnAtY.get(e.target);
+      if (!crossfading && !moved) e.target.classList.add('card-in');
       animated.add((e.target as HTMLElement).dataset.hash ?? '');
       obs.unobserve(e.target);
     }
   }, { rootMargin: '80px 0px' });
 
 const animated = new Set<string>();
+
+if (typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches) {
+  let calm = 0;
+  window.addEventListener('scroll', () => {
+    document.body.classList.add('cards-scrolling');
+    clearTimeout(calm);
+    calm = window.setTimeout(() => { document.body.classList.remove('cards-scrolling'); }, 150);
+  }, { passive: true });
+}
 
 export function agoText(ts: number): string {
   const s = (Date.now() - ts) / 1000;
@@ -292,7 +303,10 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
     if (ev.button !== 0) ev.preventDefault();
   });
   el.dataset.hash = g.hash;
-  if (!animated.has(g.hash)) reveal?.observe(el);
+  if (!animated.has(g.hash) && reveal) {
+    drawnAtY.set(el, window.scrollY);
+    reveal.observe(el);
+  }
   return el;
 }
 

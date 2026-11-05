@@ -5,6 +5,7 @@ import { contentKeys } from '../web/contentkeys';
 const keysOf = (g: GameMeta): string[] => (g.contentHash ? contentKeys(g) : [g.hash]);
 import { MENU_ICONS, UI_ICONS, rowIcon } from '../web/ui/icons';
 import { card, menuRow, setKvValue, statRow } from '../web/ui/rows';
+import { openLayer, type Layer } from '../web/ui/layer';
 import type { DecorateSection } from './decorate';
 import { POSTER_URLS } from './posterurls';
 import { artwork } from '../web/ui/art';
@@ -14,13 +15,14 @@ import { unplayableReason } from '../web/libimport';
 import { openDialog } from '../web/ui/dialog';
 import { dangerRow, closeSheet, confirmInSheet, escapeCloses, optionRow, sheetRow, showSheet } from '../web/ui/sheet';
 import { statusRow } from '../web/ui/status';
+import { COIN_SETUP_FAULT_HOST_TEXT, outputName } from './coinfault';
+import type { CoinFault } from './serverwire';
 import {
   ARCADE_MAX_MACHINES, FLOOR_CENTRE, FLOOR_COLS, FLOOR_GEOM, FLOOR_ROWS, FLOOR_STEP, addMachine, addProp, aligned, arrange, cannotAdd, distributed, duplicateMachine, facedAll, fits, moveMachine, moveProp, turnedAsGroup, turnedEach, type AlignEdge, type Arranged, type ArrangeTarget,
   faceProp, groupMoved, moveGroup, propFits, propSize, propStand, removeMachine, removeProp, switchedOff, snapProp, turnMachine, turnOf, turnProp, type ArcadeDoc, type DocMachine, type FloorGroup, type Place, type Turn,
 } from './doc';
 import { cellCentre, doorway } from './floor';
 import { posterArt, POSTER_FRAME, POSTER_H, POSTERS, PROP_KINDS, propKind, PROPS_MAX, type PosterArt, type Prop, type PropKind } from './proplist';
-import { moneyTrust, NO_BOOKKEEPING } from './moneygate';
 import { deleteArcade, listArcades, putArcade, setCurrentArcade, currentArcade } from './docstore';
 import { arcadeSettingsParts, darkNote, openArcadeSettings, type SettingsHooks, type SettingsParts } from './hostsettings';
 import { lookOf, THEMES, themeOfLook } from './roomlook';
@@ -109,7 +111,7 @@ const go = (q: string): void => {
     tappedCell = p.has('col') && p.has('row') && Number.isInteger(col) && Number.isInteger(row) ? { col, row } : null;
     void openPickerOver();
   } else if (p.get('install') || p.get('edit')) {
-    void openWizardOver((p.get('install') ?? p.get('edit'))!, p.has('edit') ? 'edit' : 'add');
+    void openWizardOver((p.get('install') ?? p.get('edit'))!, p.has('edit') ? 'edit' : 'add', p.get('step') === 'fill' ? 'fill' : null);
   }
 };
 
@@ -136,7 +138,7 @@ export async function openHost(): Promise<void> {
     await render();
     top.inert = true;
     const back = (): void => go('');
-    await (await import('./wizard')).openWizard(dlg!, doc, (install ?? edit)!, edit ? 'edit' : 'add', back);
+    await (await import('./wizard')).openWizard(dlg!, doc, (install ?? edit)!, edit ? 'edit' : 'add', back, edit && q.get('step') === 'fill' ? 'fill' : null);
     return;
   }
   if (q.has('start') || !doc) {
@@ -163,6 +165,7 @@ export async function openFloorDock(o: {
   doc: ArcadeDoc; placed?: (places: Map<string, Place>) => void; props?: (props: Prop[]) => void;
   changed?: () => Promise<boolean>; dialog?: (open: boolean) => void; onClose?: () => void;
   decorate?: typeof decorateMaker;
+  setup?: string;
 }): Promise<void> {
   const { openDock } = await import('../web/ui/dock');
   doc = o.doc;
@@ -179,7 +182,7 @@ export async function openFloorDock(o: {
     body: [body],
     onEscape: () => {
       if (frame) {
-        if (!document.querySelector('.ui-alert, .ui-dialog')) frame.querySelector<HTMLElement>('.wz-exit')?.click();
+        if (!document.querySelector('.ui-dialog')) frame.querySelector<HTMLElement>('.wz-exit')?.click();
         return true;
       }
       if (editor && cancelDrag && document.body.classList.contains('fp-dragging')) { cancelDrag(); return true; }
@@ -202,10 +205,11 @@ export async function openFloorDock(o: {
       o.onClose?.();
     },
   });
-  dock.root.classList.add('ui-dock-wide');
+  dock.root.classList.add('ui-dock-wide', 'nb-sheet--right');
   dockRoot = dock.root;
   dockShow = (nodes, slide) => dock.show(nodes, slide);
   await render();
+  if (o.setup) go(`&edit=${encodeURIComponent(o.setup)}&step=fill`);
 }
 
 let scrim: HTMLElement | null = null;
@@ -254,10 +258,10 @@ async function openPickerOver(): Promise<void> {
   await renderPicker(doc);
 }
 
-async function openWizardOver(id: string, mode: 'add' | 'edit'): Promise<void> {
+async function openWizardOver(id: string, mode: 'add' | 'edit', startAt: 'fill' | null = null): Promise<void> {
   if (!doc) return;
   const dlg = dialogFrame('');
-  await (await import('./wizard')).openWizard(dlg, doc, id, mode, () => go(''));
+  await (await import('./wizard')).openWizard(dlg, doc, id, mode, () => go(''), startAt);
 }
 
 async function leaveDialog(): Promise<void> {
@@ -1050,37 +1054,46 @@ function openFloorMenu(d: ArcadeDoc, at: { col: number; row: number }, returnTo:
     if (fits(d, p)) addAt(p);
     else say(str('arcade.host.there_is_no_room_for'), 'warn');
   });
-  const prop = sheetRow(str('arcade.host.add_prop'), '');
-  prop.append(rowIcon(MENU_ICONS.chevRight, 'row-chev', 16));
-  prop.addEventListener('click', () => openAddProp(d, returnTo, at));
-  showSheet(str('arcade.host.add_here'), [machine, prop], returnTo);
+  const next = (label: string, open: () => void): HTMLElement => {
+    const r = sheetRow(label, '');
+    r.append(rowIcon(MENU_ICONS.chevRight, 'row-chev', 16));
+    r.addEventListener('click', open);
+    return r;
+  };
+  showSheet(str('arcade.host.add_here'), [
+    machine,
+    next(str('arcade.host.add_furniture'), () => openAddFurniture(d, returnTo, at)),
+    next(str('arcade.host.add_poster'), () => openAddPoster(d, returnTo, at)),
+  ], returnTo);
 }
 
 const fullNote = (): string => str('arcade.host.full_n_machines', { 0: ARCADE_MAX_MACHINES });
 
-function openAddProp(d: ArcadeDoc, returnTo: HTMLElement, at?: { col: number; row: number }): void {
-  const add = (kind: PropKind, art?: PosterArt): void => {
-    closeSheet();
-    if ((d.props?.length ?? 0) >= PROPS_MAX) { say(str('arcade.host.there_is_no_clear_floor_for_it'), 'warn'); return; }
-    let to: { x: number; z: number } | null = null;
-    if (at) {
-      const c = cellCentre({ col: Math.floor(at.col), row: Math.floor(at.row) }, GEOM);
-      to = propKind(kind).wall ? { x: c.x - FLOOR_CENTRE.x, z: c.z - FLOOR_CENTRE.z } : snapProp(c.x, c.z, { id: '', kind, x: 0, z: 0, yaw: 0 });
-    }
-    const p = addProp(d, kind, art, to);
-    if (!p) { if (to) sayNoRoom(); else say(str('arcade.host.there_is_no_clear_floor_for_it'), 'warn'); return; }
-    void propsChanged(d, p.id);
-  };
-  const posters = (): void => {
-    showSheet(str('arcade.host.posters'), POSTERS.map((a) => {
-      const r = sheetRow(a.label, '');
-      r.addEventListener('click', () => add('poster', a.id));
-      return r;
-    }), returnTo);
-  };
-  showSheet(str('arcade.host.add_a_prop'), PROP_KINDS.map((k) => {
+function placeProp(d: ArcadeDoc, kind: PropKind, art: PosterArt | undefined, at?: { col: number; row: number }): void {
+  closeSheet();
+  if ((d.props?.length ?? 0) >= PROPS_MAX) { say(str('arcade.host.there_is_no_clear_floor_for_it'), 'warn'); return; }
+  let to: { x: number; z: number } | null = null;
+  if (at) {
+    const c = cellCentre({ col: Math.floor(at.col), row: Math.floor(at.row) }, GEOM);
+    to = propKind(kind).wall ? { x: c.x - FLOOR_CENTRE.x, z: c.z - FLOOR_CENTRE.z } : snapProp(c.x, c.z, { id: '', kind, x: 0, z: 0, yaw: 0 });
+  }
+  const p = addProp(d, kind, art, to);
+  if (!p) { if (to) sayNoRoom(); else say(str('arcade.host.there_is_no_clear_floor_for_it'), 'warn'); return; }
+  void propsChanged(d, p.id);
+}
+
+function openAddFurniture(d: ArcadeDoc, returnTo: HTMLElement, at?: { col: number; row: number }): void {
+  showSheet(str('arcade.host.add_furniture'), PROP_KINDS.filter((k) => k.id !== 'poster').map((k) => {
     const r = sheetRow(k.label, '');
-    r.addEventListener('click', () => (k.id === 'poster' ? posters() : add(k.id)));
+    r.addEventListener('click', () => placeProp(d, k.id, undefined, at));
+    return r;
+  }), returnTo);
+}
+
+function openAddPoster(d: ArcadeDoc, returnTo: HTMLElement, at?: { col: number; row: number }): void {
+  showSheet(str('arcade.host.add_poster'), POSTERS.map((a) => {
+    const r = sheetRow(a.label, '');
+    r.addEventListener('click', () => placeProp(d, 'poster', a.id, at));
     return r;
   }), returnTo);
 }
@@ -1095,13 +1108,8 @@ const pounds = (p: number): string => `${p < 0 ? '-' : ''}£${(Math.abs(p) / 100
 function openStats(m: DocMachine, d: ArcadeDoc): void {
   const box = card();
   let playsRow: HTMLElement | null = null;
-  const noBooks = moneyTrust(m.board).trust === 'none';
   const st = m.stats;
-  if (noBooks) {
-    const row = el('div', null, { class: 'menu-row menu-stat' });
-    row.append(el('span', NO_BOOKKEEPING, { class: 'row-label' }));
-    box.append(row);
-  } else {
+  {
     const inRow = statRow(box, str('arcade.host.money_in'));
     const outRow = statRow(box, str('arcade.host.money_out'));
     const tokRow = statRow(box, str('arcade.host.tokens_out'));
@@ -1127,6 +1135,7 @@ function openStats(m: DocMachine, d: ArcadeDoc): void {
         if (r === undefined) { inRow.textContent = '-'; outRow.textContent = '-'; return; }
         show(statsMoney(m, r));
         if (r?.coinsStopped !== undefined) box.prepend(statusRow('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE));
+
       });
     } else {
       show(statsMoney(m));
@@ -1219,11 +1228,15 @@ function machineState(m: DocMachine): 'off' | 'dark' | 'open' {
   return switchedOff(m) ? 'off' : !m.source ? 'dark' : 'open';
 }
 
-function statusLine(m: DocMachine): HTMLElement {
+function statusLine(m: DocMachine, fault: CoinFault | null = null): HTMLElement {
   const st = machineState(m);
-  const line = el('span', null, { class: `ml-status ml-status--${st}` });
-  line.append(el('span', null, { class: 'ml-dot', 'aria-hidden': 'true' }),
-    st === 'off' ? str('arcade.host.powered_off') : st === 'dark' ? str('arcade.host.visitors_need_this_game') : str('arcade.host.playable_by_everyone'));
+  const line = el('span', null, { class: `ml-status ml-status--${fault ? 'fault' : st}` });
+  const names = fault?.outputs.map(outputName).join(', ');
+  const words = fault ? (names ? `${COIN_SETUP_FAULT_HOST_TEXT} \u00b7 ${names}` : COIN_SETUP_FAULT_HOST_TEXT)
+    : st === 'off' ? str('arcade.host.powered_off') : st === 'dark' ? str('arcade.host.visitors_need_this_game') : str('arcade.host.playable_by_everyone');
+  const text = el('span', words, { class: 'ml-status-text' });
+  if (fault) line.title = words;
+  line.append(el('span', null, { class: 'ml-dot', 'aria-hidden': 'true' }), text);
   return line;
 }
 
@@ -1233,11 +1246,18 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
   const box = el('div', null, { class: 'ml-scroll' });
   box.append(list);
   const more = (): void => { box.classList.toggle('ml-more', box.scrollTop + box.clientHeight < box.scrollHeight - 1); };
+  const faults = new Map<string, CoinFault>();
   const fill = (): void => {
-    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null)));
+    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null, faults.get(m.id) ?? null)));
     box.hidden = !ms.length;
     more();
   };
+  if (serverFlag()) {
+    void Promise.all(ms.map(async (m) => {
+      const f = (await serverMoney(d.id, m.id))?.coinFault;
+      if (f) faults.set(m.id, f);
+    })).then(() => { if (faults.size) fill(); });
+  }
   box.addEventListener('scroll', more);
   new ResizeObserver(more).observe(box);
   requestAnimationFrame(fill);
@@ -1245,12 +1265,20 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
   return [box];
 }
 
-function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null): HTMLElement {
+function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null, fault: CoinFault | null = null): HTMLElement {
   const row = el('button', null, { type: 'button', class: `ml-row ml-row--${machineState(m)}`, 'data-id': m.id }) as HTMLButtonElement;
   const thumb = artwork(held?.hasThumb ? held.hash : null, m.name, () => undefined);
   thumb.classList.add('ml-thumb');
   const words = el('span', null, { class: 'ml-words' });
-  words.append(el('span', m.name, { class: 'ml-name' }), statusLine(m));
+  words.append(el('span', m.name, { class: 'ml-name' }), statusLine(m, fault));
+  if (fault) {
+    row.classList.add('ml-row--fault');
+    const fix = el('span', null, { class: 'ml-fix', 'aria-hidden': 'true' });
+    fix.append(rowIcon(UI_ICONS.tool, 'ml-fix-icon', 16), el('span', str('arcade.host.fix')));
+    row.append(thumb, words, fix);
+    row.addEventListener('click', () => go(`&edit=${encodeURIComponent(m.id)}&step=fill`));
+    return row;
+  }
   const plays = m.stats?.plays;
   row.append(thumb, words, el('span', plays ? str('arcade.host.n_plays', { n: plays }) : '\u2014', { class: 'nb-meta ml-plays' }),
     rowIcon(UI_ICONS.chevRight, 'ml-chev', 16));
@@ -1308,7 +1336,8 @@ function openEditor(d: ArcadeDoc, byContent: Map<string, GameMeta>): void {
       if (why) { say(why, 'warn'); return; }
       addAt(null);
     }),
-    tool(str('arcade.host.add_furniture'), UI_ICONS.plus, (b) => openAddProp(d, b)),
+    tool(str('arcade.host.add_furniture'), UI_ICONS.plus, (b) => openAddFurniture(d, b)),
+    tool(str('arcade.host.add_poster'), UI_ICONS.poster, (b) => openAddPoster(d, b)),
   );
   const add = iconButton(UI_ICONS.plus, str('arcade.host.add'), () => {
     const machine = optionRow(str('arcade.host.add_machine'), '', UI_ICONS.cabinet);
@@ -1319,8 +1348,10 @@ function openEditor(d: ArcadeDoc, byContent: Map<string, GameMeta>): void {
       addAt(null);
     });
     const furniture = optionRow(str('arcade.host.add_furniture'), '', UI_ICONS.plus);
-    furniture.addEventListener('click', () => openAddProp(d, add));
-    showSheet(str('arcade.host.add'), [machine, furniture], add);
+    furniture.addEventListener('click', () => openAddFurniture(d, add));
+    const poster = optionRow(str('arcade.host.add_poster'), '', UI_ICONS.poster);
+    poster.addEventListener('click', () => openAddPoster(d, add));
+    showSheet(str('arcade.host.add'), [machine, furniture, poster], add);
   });
   add.className = 'nb-icon-btn fp-tool-add';
   const select = el('button', null, { type: 'button', class: 'fp-tool fp-tool-select', 'aria-pressed': 'false', 'aria-label': str('arcade.host.select') }) as HTMLButtonElement;
@@ -1332,12 +1363,12 @@ function openEditor(d: ArcadeDoc, byContent: Map<string, GameMeta>): void {
   const done = button(str('arcade.host.done'), () => closeEditor(), { class: 'nb-btn nb-btn--primary fp-editor-done' });
   const ends = el('div', null, { class: 'fp-editor-ends' });
   ends.append(add, select, done);
-  head.append(lead, bar, ends);
+  head.append(lead, ends);
   const stage = el('div', null, { class: 'fp-editor-stage' });
   const picked1 = el('div', null, { class: 'fp-selbar nb-sheet', role: 'region', 'aria-label': str('arcade.host.edit_layout') });
   picked1.hidden = true;
   stage.append(picked1);
-  root.append(head, stage);
+  root.append(head, stage, bar);
   document.body.append(root);
   document.body.classList.add('fp-editing');
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => fitEditor()) : null;
@@ -1562,7 +1593,7 @@ function deletePicked(d: ArcadeDoc): void {
     info: true,
     message: str('arcade.host.delete_n_items', { n }),
     buttons: [
-      { button: keep, run: () => undefined },
+      { button: keep, run: () => undefined, dismiss: true },
       {
         button: yes,
         run: () => {
@@ -1733,25 +1764,24 @@ function popMenu(rows: MenuRow[], at: { x: number; y: number } | HTMLElement, he
   const e = editor;
   if (!e) return;
   const menus: HTMLElement[] = [];
+  let layer: Layer | null = null;
   const close = (): void => {
     for (const m of menus) m.remove();
-    removeEventListener('pointerdown', outside, true);
     removeEventListener('keydown', onKey, true);
     removeEventListener('resize', close);
     if (pickMenu?.root === menus[0]) pickMenu = null;
+    layer?.release();
   };
-  const outside = (ev: PointerEvent): void => { if (!menus.some((m) => m.contains(ev.target as Node))) close(); };
+  const back = (): boolean => {
+    if (menus.length < 2) return false;
+    menus.pop()!.remove();
+    (menus[menus.length - 1].querySelector('[aria-expanded="true"]') as HTMLElement | null)?.focus();
+    return true;
+  };
   const onKey = (ev: KeyboardEvent): void => {
     const open = menus[menus.length - 1];
     const items = [...open.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')];
     const i = items.indexOf(document.activeElement as HTMLElement);
-    if (ev.key === 'Escape') {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      if (menus.length > 1) { menus.pop()!.remove(); (menus[menus.length - 1].querySelector('[aria-expanded="true"]') as HTMLElement | null)?.focus(); return; }
-      close();
-      return;
-    }
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault();
       ev.stopImmediatePropagation();
@@ -1796,6 +1826,7 @@ function popMenu(rows: MenuRow[], at: { x: number; y: number } | HTMLElement, he
     }
     document.body.append(m);
     menus.push(m);
+    layer?.add(m);
     return m;
   };
   const place = (m: HTMLElement, from: DOMRect | { x: number; y: number }, side: boolean): void => {
@@ -1820,7 +1851,7 @@ function popMenu(rows: MenuRow[], at: { x: number; y: number } | HTMLElement, he
   const first = build(rows, head, 0);
   place(first, at instanceof HTMLElement ? at.getBoundingClientRect() : at, false);
   first.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus({ preventScroll: true });
-  addEventListener('pointerdown', outside, true);
+  layer = openLayer([first], { kind: 'menu', close, onEscape: back });
   addEventListener('keydown', onKey, true);
   addEventListener('resize', close);
   pickMenu = { root: first, close };
@@ -1889,6 +1920,7 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
   page.setAttribute('role', 'dialog');
   page.setAttribute('aria-modal', 'true');
   page.setAttribute('aria-labelledby', 'hostPickTitle');
+  openLayer([page], { kind: 'dialog', close: () => go('') });
   const head = el('div', null, { class: 'host-head nb-sheet-head' });
   head.append(el('h2', str('arcade.host.add_a_machine'), { id: 'hostPickTitle' }));
   const acts = el('div', null, { class: 'host-actions' });

@@ -1,4 +1,5 @@
 import { placeRomFlat } from './pairplacer';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
 import type { CabinetSwitch, CoinChute, CoinWiringStatus, Machine } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
@@ -6,6 +7,7 @@ import type { SlideEffect } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
 import type { BoardPart } from './parts';
 import { M6809 } from '../cpu/m6809';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Mc68681 } from '../hw/mc68681';
 import { Pia6821 } from '../hw/pia6821';
 import { I8279 } from '../hw/i8279';
@@ -27,6 +29,7 @@ import { noteBoardDefault, noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
 import { MaygayDongle } from '../hw/m1dongle';
 import { COIN_RAW } from './coinraw';
+import { TokenPayouts } from './coinbook';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { lockoutRefuses, lockoutRefusing, type CoinLockoutWiring } from '../hw/coinlockout';
 import { v20LoadRamFile } from './v20ramfile';
@@ -62,6 +65,10 @@ export interface M1abInputs {
 }
 
 export class M1ab implements Bus, Machine {
+  static readonly HOPPER_LINE = 6;
+
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
   readonly cpu: M6809;
   readonly ram = new Uint8Array(RAM_SIZE);
   private readonly rom = new Uint8Array(ROM_SIZE * 2);
@@ -123,7 +130,7 @@ export class M1ab implements Bus, Machine {
   private readonly latchLamp = new SwitchedLamps(1);
   static readonly LATCH_LAMP = 0x206;
 
-  static readonly snapshotConfig: readonly string[] = ['necFitted', 'necBankBlock', 'mixer', 'wiring', 'coinSlots', 'coinTableCache', 'lockoutCache'];
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'necFitted', 'necBankBlock', 'mixer', 'wiring', 'coinSlots', 'coinTableCache', 'lockoutCache'];
 
   readonly latch = new Uint8Array(8);
 
@@ -183,7 +190,7 @@ export class M1ab implements Bus, Machine {
   get lockoutWiring(): CoinLockoutWiring {
     const t = this.readCoinTable();
     if (this.lockoutCache?.t !== t) {
-      const masks = 'refused' in t ? [] : t.lockouts.map((m, line) => (line === M1ab.TOKEN_LINE ? null : m));
+      const masks = 'refused' in t ? [] : t.lockouts;
       this.lockoutCache = { t, w: { openSense: 1, mask: 0x3f, bits: [], masks } };
     }
     return this.lockoutCache.w;
@@ -249,6 +256,7 @@ export class M1ab implements Bus, Machine {
     this.meterCount[i]++;
     this.meterTotals.in += this.meterInMult[i];
     this.meterTotals.out += this.meterOutMult[i];
+    countOutClick(this.outClicks, i, this.meterOutMult[i]);
     if (this.wiring && i === M1ab.CASH_IN_METER) this.wiring.check.count(1, this.wiringState.now);
   }
   get meterLevels(): number { return this.meters & (this.hopperFitted() ? 0x3b : 0x7f); }
@@ -304,19 +312,75 @@ export class M1ab implements Bus, Machine {
   private driveTriacs(v: number): void {
     const rising = v & ~this.triacs & 0x3f;
     this.triacs = v & 0xff;
+    triacSenseRelease(this, rising);
     if (!rising) return;
     for (let i = 0; i < 6; i++) {
       if (!((rising >> i) & 1)) continue;
       this.slideCoins[i]++;
       const price = this.slidePence[i];
       if (!this.booksMoney) {  }
-      else if (typeof price === 'number') this.cashLedger.outPence += price;
-      else if (price === 'token') this.cashLedger.tokenOutPence += this.tokenPence;
-      else if (price === 'unpriced') this.cashLedger.unpricedOut++;
+      else if (typeof price === 'number') this.cashLedger.outPence += this.payoutNames.value(i) ?? price;
+      else if (price === 'token') {
+        const pence = this.payoutNames.value(i) ?? this.tokenPence;
+        if (pence > 0) this.cashLedger.tokenOutPence += pence;
+        else { this.cashLedger.unpricedTokenOut++; this.payoutNames.noteUnpriced(i); }
+      }
+      else if (price === 'unpriced') {
+        const pence = this.payoutNames.value(i);
+        if (pence === undefined) { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
+        else this.cashLedger.outPence += pence;
+      }
     }
   }
 
   readonly cashLedger = newCashLedger();
+  private readonly unpricedPaid = new Set<number>();
+  private readonly payoutNames = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] {
+    return [...new Set([...this.unpricedPaid, ...this.payoutNames.unpricedLines])];
+  }
+  get unpricedPayoutLines(): readonly number[] {
+    return [
+      ...this.slidePence.flatMap((price, line) => price === 'unpriced' ? [line] : []),
+      ...(this.hopperFitted() && this.hopperCoinPence === null ? [M1ab.HOPPER_LINE] : []),
+    ];
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.slidePence.flatMap((price, line) => price === 'token' && this.tokenPence === 0 ? [line] : []);
+  }
+  get hopperPayoutLines(): readonly number[] {
+    return this.hopperFitted() ? [M1ab.HOPPER_LINE] : [];
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.slidePence.forEach((p, i) => { if (p !== null) out[i] = this.slideCoins[i] ?? 0; });
+    if (this.hopperFitted()) out[M1ab.HOPPER_LINE] = this.hopper.paid;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.slidePence.forEach((p, i) => { if (p === null && this.slideCoins[i]) out[i] = this.slideCoins[i]!; });
+    return out;
+  }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    const slides = this.slidePence.flatMap((price, line) => price === null ? [] : [{
+      line,
+      kind: price === 'token' ? 'token-tube' as const : 'tube' as const,
+      displayNumber: line + 1,
+      defaultPence: typeof price === 'number' ? price : price === 'token' ? this.tokenPence || null : null,
+    }]);
+    if (!this.hopperFitted()) return slides;
+    return [...slides, {
+      line: M1ab.HOPPER_LINE,
+      kind: 'hopper',
+      displayNumber: (this.hoppersWord & 0x50) === 0x40 ? 2 : 1,
+      defaultPence: this.hopperCoinPence,
+    }];
+  }
+  namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
 
   private static readonly COIN_PENCE = [10, 20, 50, 100, 20, 0, 0, 0];
 
@@ -859,7 +923,7 @@ export class M1ab implements Bus, Machine {
   }
 
   private get booksMoney(): boolean {
-    return this.wiring?.check.state !== 'disagrees';
+    return true;
   }
 
   private checks(line: number, pence: number | null): boolean {
@@ -1170,8 +1234,13 @@ export class M1ab implements Bus, Machine {
     if (this.hopper.paid > this.hopperPaidBooked) {
       const fresh = this.hopper.paid - this.hopperPaidBooked;
       if (!this.booksMoney) {  }
-      else if (this.hopperCoinPence === null) this.cashLedger.unpricedOut += fresh;
-      else this.cashLedger.outPence += fresh * this.hopperCoinPence;
+      else {
+        const pence = this.payoutNames.value(M1ab.HOPPER_LINE) ?? this.hopperCoinPence;
+        if (pence === null) {
+          this.cashLedger.unpricedOut += fresh;
+          this.payoutNames.noteUnpriced(M1ab.HOPPER_LINE);
+        } else this.cashLedger.outPence += fresh * pence;
+      }
       this.hopperPaidBooked = this.hopper.paid;
     }
 

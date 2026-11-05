@@ -15,6 +15,7 @@ export interface ProconnCoinCode {
   pence: boolean;
   form: 'bit' | 'code';
   credit: { entry: number; at: number; exit: number } | null;
+  counted?: { at: number; bank: number; other: number };
   route: number;
   tokenMeter: number | null;
   tokenOut: { at: number; acc: number; counts: number; meter: number; code: number; value: number } | null;
@@ -221,6 +222,74 @@ function locateLatched(rom: Uint8Array): ProconnCoinCode | Refusal | null {
   return null;
 }
 
+function locateGated(rom: Uint8Array): ProconnCoinCode | Refusal | null {
+  for (const s of find(rom, [0x3a, null, null, 0xa7, 0x28, null, 0x01, 0xd8, 0x02, 0xed, 0x78, 0xee, 0xff, 0xdd, 0xa6, null, 0x28, 0x04, 0x32, null, null, 0xc9, 0x3a, null, null, 0xa7, 0xc8])) {
+    const latch = word(rom, s + 19);
+    if (word(rom, s + 23) !== latch) continue;
+    const mOff = rom[s + 15]!;
+    const banks: number[] = [];
+    let at = -1;
+    for (let pc = s + 27; pc < s + 27 + 0x20; pc += z80Length(rom, pc)) {
+      if (rom[pc] === 0x21) banks.push(word(rom, pc + 1));
+      if (rom[pc] === 0x07 && rom[pc + 1] === 0x38 && rom[pc + 2] === 0x03 && rom[pc + 3] === 0x23 && rom[pc + 4] === 0x18 && rom[pc + 5] === 0xfa && rom[pc + 6] === 0x34) { at = pc + 6; break; }
+    }
+    if (at < 0 || !banks.length || banks.length > 2) return { refused: 'gated coin reader: no count by the highest row bit' };
+    let bank = -1;
+    let cfg = -1;
+    let vOff = -1;
+    for (const b of banks) {
+      for (const p of find(rom, [0x21, b & 0xff, b >> 8, 0x06, 0x08, 0x0e, 0x00, 0x7e, 0xa7, 0x28, null, 0x35])) {
+        const v = find(rom, [0xdd, 0x2a, null, null, 0xdd, 0x6e, null, 0xdd, 0x66, null, 0x79, 0xcd], p + 12, p + 0x20)[0];
+        if (v === undefined || rom[v + 9] !== rom[v + 6]! + 1) continue;
+        const g = word(rom, v + 12);
+        if (![0xd5, 0xe5, 0x5f, 0x16, 0x00, 0x19, 0x7e].every((x, i) => rom[g + i] === x)) continue;
+        bank = b; cfg = word(rom, v + 2); vOff = rom[v + 6]!;
+      }
+      if (bank >= 0) break;
+    }
+    if (bank < 0) return { refused: 'gated coin reader: no spend of its coin counters found' };
+    const configs: number[] = [];
+    for (const c of find(rom, [0xcd, null, null, 0x22, cfg & 0xff, cfg >> 8])) {
+      const f = word(rom, c + 1);
+      const t = find(rom, [0xdd, 0x21, null, null, 0xdd, 0x19, 0xdd, 0x6e, 0x00, 0xdd, 0x66, 0x01], f, f + 0x40)[0];
+      if (t === undefined) continue;
+      let bits = 0;
+      for (let pc = f; pc < t; pc += z80Length(rom, pc)) if (rom[pc] === 0xcb && (rom[pc + 1]! & 0xc7) === 0xc3) bits = Math.max(bits, ((rom[pc + 1]! >> 3) & 7) + 1);
+      const table = word(rom, t + 2);
+      for (let k = 0; k < 1 << bits; k++) configs.push(word(rom, table + 2 * k));
+      break;
+    }
+    if (!configs.length) return { refused: 'gated coin reader: its configuration table not found' };
+    const masks = new Set(configs.map((c) => rom[c + mOff]!));
+    const tables = new Set(configs.map((c) => word(rom, c + vOff)));
+    if (masks.size !== 1 || tables.size !== 1) return { refused: 'gated coin reader: the settings pick between coin masks or value tables' };
+    const readMask = [...masks][0]!;
+    const values = [...tables][0]!;
+    const coins: ProconnCoin[] = [];
+    for (let b = 7; b >= 0; b--) {
+      if (!(readMask & (1 << b))) continue;
+      const code = 7 - b;
+      const value = rom[values + code]!;
+      if (!value) continue;
+      coins.push({ pattern: 1 << b, mask: readMask & ~((1 << b) - 1) & 0xff, code, value, token: false });
+    }
+    if (!coins.length) return { refused: 'gated coin reader: its value table credits no coin' };
+    return {
+      coins,
+      pence: false,
+      form: 'bit',
+      credit: null,
+      counted: { at, bank, other: banks.find((b) => b !== bank) ?? -1 },
+      route: -1,
+      tokenMeter: null,
+      tokenOut: null,
+      unread: [],
+      source: `Proconn gated coin reader ${hex(s)}, count ${hex(at)}, bank ${hex(bank)}, values ${hex(values)} (counts)`,
+    };
+  }
+  return null;
+}
+
 function valueCall(rom: Uint8Array, p: number, route: number):
   { form: 'byte' | 'word'; values: number | null; tables: number[]; next: number } | null {
   const tables: number[] = [];
@@ -246,7 +315,7 @@ function meterTable(rom: Uint8Array, route: number, exclude: readonly number[]):
 
 export function locateProconnCoins(rom: Uint8Array): ProconnCoinCode | Refusal {
   const coinBytes = sampler(rom);
-  if (!coinBytes.length) return locateLatched(rom) ?? { refused: 'no coin-row sampler found in the program' };
+  if (!coinBytes.length) return locateLatched(rom) ?? locateGated(rom) ?? { refused: 'no coin-row sampler found in the program' };
   let reader: NonNullable<ReturnType<typeof readerBlocks>> | null = null;
   for (const c of coinBytes) { reader = readerBlocks(rom, c); if (reader) break; }
   if (!reader) return { refused: 'no coin reader found on the coin byte' };

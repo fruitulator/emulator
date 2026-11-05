@@ -10,6 +10,28 @@ export const SELECTOR = [0x34, 0x02, 0xa6, 0x01, 0x85, 0x08, 0x26, 0x05, 0x30, 0
 export const CREDIT_ADD = [0xa6, 0x02, 0x31, 0xa6, 0x10, 0xbf];
 const SCAN_BODY = [0xa6, 0x84, 0x44, 0x44, 0x44, 0x44, 0xb1, -1, -1, 0x27, 0x09, 0xb7, -1, -1, 0xbd, -1, -1,
   0xb7, -1, -1, 0x11, 0xa3, 0x02, 0x26, 0x06, 0xa6, 0x01, 0xaa, 0xe4, 0xa7, 0xe4];
+const SCAN_BODY_NEAR = [0xa6, 0x84, 0x44, 0x44, 0x44, 0x44, 0xb1, -1, -1, 0x27, 0x08, 0xb7, -1, -1, 0x8d, -1,
+  0xb7, -1, -1, 0x11, 0xa3, 0x02, 0x26, 0x06, 0xa6, 0x01, 0xaa, 0xe4, 0xa7, 0xe4];
+const SCAN_BODY_PLAIN = [0xa6, 0x84, 0x44, 0x44, 0x44, 0x44, 0xb1, -1, -1, 0x27, 0x09, 0xb7, -1, -1, 0xbd, -1, -1,
+  0xb7, -1, -1, 0xe6, 0x84, 0xc4, 0x07];
+
+const DIRECT_COIN_READ = [0xb6, 0x34, 0x04, 0x84, 0x1f, 0x12, 0x12, 0x34, 0x02, 0xb6, 0x34, 0x04, 0x84, 0x1f, 0xa1, 0xe0];
+
+export function sc1ReadsDirectCoins(rom: Uint8Array): boolean {
+  return findAll(rom, DIRECT_COIN_READ).length > 0;
+}
+
+export function sc1HasShutAllRoutine(rom: Uint8Array): boolean {
+  for (let p = 0; p + 11 <= rom.length; p++) {
+    if (rom[p] === 0xb6 && rom[p + 3] === 0x84 && rom[p + 4] === 0xe0 && rom[p + 5] === 0xb7
+      && word(rom, p + 6) === word(rom, p + 1) && rom[p + 8] === 0xb7 && rom[p + 9] === 0x24 && rom[p + 10] === 0x00) return true;
+  }
+  return false;
+}
+
+export function sc1CoinsPriced(coins: readonly Sc1LineCoin[]): boolean {
+  return coins.filter((c) => c.token && c.line < TOKEN_CHUTE).length <= 1;
+}
 
 const SEQUENCE = [0x8e, -1, -1, 0x8c, -1, -1, 0x24, -1, 0xb6, -1, -1, 0xb8, -1, -1, 0x43, 0xb4, -1, -1,
   0xa5, 0x04, 0x27, 0x05, 0xc6, 0xff, 0xe7, 0x98, 0x02];
@@ -50,9 +72,9 @@ export function locateSc1CoinTables(rom: Uint8Array): Sc1CoinTables | Refusal {
   const found = new Set<string>();
   for (let p = 0; p + 12 <= rom.length; p++) {
     if (rom[p] !== 0xc6 || rom[p + 2] !== 0x34 || rom[p + 3] !== 0x04 || rom[p + 4] !== 0x8e
-      || rom[p + 7] !== 0x17 || rom[p + 10] !== 0xa5 || rom[p + 11] !== 0x0c) continue;
+      || (rom[p + 7] !== 0x17 && rom[p + 7] !== 0xbd) || rom[p + 10] !== 0xa5 || rom[p + 11] !== 0x0c) continue;
     const rel = ((rom[p + 8]! << 8) | rom[p + 9]!) << 16 >> 16;
-    if (!at(rom, p + 10 + rel, SELECTOR)) continue;
+    if (!at(rom, rom[p + 7] === 0xbd ? word(rom, p + 8) : p + 10 + rel, SELECTOR)) continue;
     found.add(`${word(rom, p + 5)},${rom[p + 1]!}`);
   }
   if (found.size !== 1) return { refused: found.size ? 'the program names two coin tables' : 'no coin records found in the program' };
@@ -61,7 +83,7 @@ export function locateSc1CoinTables(rom: Uint8Array): Sc1CoinTables | Refusal {
   if (groups < 1 || groups > 8) return { refused: 'the coin record count is out of range' };
   if (findAll(rom, CREDIT_ADD).length !== 1) return { refused: 'the program\'s credit routine was not found' };
 
-  const scans = findAll(rom, SCAN_BODY);
+  const scans = [...findAll(rom, SCAN_BODY), ...findAll(rom, SCAN_BODY_NEAR), ...findAll(rom, SCAN_BODY_PLAIN)];
   if (scans.length !== 1) return { refused: scans.length ? 'the program has two switch scans' : 'the program\'s switch scan was not found' };
   const body = scans[0]!;
   const head = body - 5;
@@ -81,6 +103,7 @@ export function locateSc1CoinTables(rom: Uint8Array): Sc1CoinTables | Refusal {
       coinByte = word(rom, p + 3);
     }
   }
+  if (coinByte < 0) coinByte = coinByteOfDebounce(rom);
   if (coinByte < 0 || coinByte >= 0x2000) return { refused: 'the switch scan\'s coin byte was not found' };
   if (switches.some((s) => s < 0x8000 || s >= rom.length)) return { refused: 'the switch table is not in fixed ROM' };
   const sequences = readCoinSequences(rom, 0x8000);
@@ -89,14 +112,42 @@ export function locateSc1CoinTables(rom: Uint8Array): Sc1CoinTables | Refusal {
 }
 
 const DEBOUNCE_TAIL = [0x43, 0xb4, -1, -1, 0xb7, -1, -1, 0x43, 0xba, -1, -1, 0x43, 0xba, -1, -1, 0xb7, -1, -1];
+const DEBOUNCE_TAIL_ONE = [0x43, 0xb4, -1, -1, 0xb7, -1, -1, 0x43, 0xba, -1, -1, 0x43, 0x4d, 0x27, -1, 0x7d, -1, -1, 0x26, -1,
+  0x81, 0x08, 0x27, -1, 0x81, 0x04, 0x27, -1, 0x81, 0x02, 0x27, -1, 0x81, 0x01, 0x26, -1, 0xba, -1, -1, 0xb7, -1, -1];
+
+function debounceAt(rom: Uint8Array, p: number, one: boolean): { last: number; lockByte: number; pending: number } | null {
+  const last = word(rom, p + 2);
+  const lockByte = word(rom, p + 9);
+  const pending = word(rom, one ? p + 37 : p + 13);
+  if (word(rom, one ? p + 40 : p + 16) !== pending || lockByte >= 0x2000 || last >= 0x2000) return null;
+  return { last, lockByte, pending };
+}
+
+function debounces(rom: Uint8Array): { p: number; last: number; lockByte: number; pending: number }[] {
+  const out: { p: number; last: number; lockByte: number; pending: number }[] = [];
+  for (const [sig, one] of [[DEBOUNCE_TAIL, false], [DEBOUNCE_TAIL_ONE, true]] as const) {
+    for (const p of findAll(rom, sig)) {
+      const d = debounceAt(rom, p, one);
+      if (d) out.push({ p, ...d });
+    }
+  }
+  return out;
+}
+
+function coinByteOfDebounce(rom: Uint8Array): number {
+  const hits = new Set<number>();
+  for (const d of debounces(rom)) {
+    if (!findAll(rom, [0xa6, 0x0c, 0xb5, d.pending >> 8, d.pending & 0xff]).length) continue;
+    for (let q = Math.max(0, d.p - 0x60); q < d.p; q++) {
+      if (rom[q] === 0xb6 && rom[q + 3] === 0xb8 && word(rom, q + 4) === d.last) hits.add(word(rom, q + 1));
+    }
+  }
+  return hits.size === 1 ? [...hits][0]! : -1;
+}
 
 export function readCoinLock(rom: Uint8Array, coinByte: number): Sc1CoinLock | null {
   const hits: Sc1CoinLock[] = [];
-  for (const p of findAll(rom, DEBOUNCE_TAIL)) {
-    const last = word(rom, p + 2);
-    const lockByte = word(rom, p + 9);
-    const pending = word(rom, p + 13);
-    if (word(rom, p + 16) !== pending || lockByte >= 0x2000 || last >= 0x2000) continue;
+  for (const { p, last, lockByte, pending } of debounces(rom)) {
     if (!findAll(rom, [0xa6, 0x0c, 0xb5, pending >> 8, pending & 0xff]).length) continue;
     let reads = false;
     let stores = false;
@@ -147,6 +198,7 @@ export class CoinLockJudge {
   bookedIn = 0;
   bookedToken = 0;
   bookedUnpriced = 0;
+  bookedUnpricedIn = 0;
 
   begin(line: number, mask: number, lockedAtDrop: boolean, waitCycles: number): void {
     this.line = mask ? line : -1;
@@ -154,15 +206,16 @@ export class CoinLockJudge {
     this.locked = lockedAtDrop;
     this.seen = false;
     this.wait = waitCycles;
-    this.bookedIn = this.bookedToken = this.bookedUnpriced = 0;
+    this.bookedIn = this.bookedToken = this.bookedUnpriced = this.bookedUnpricedIn = 0;
   }
 
   book(l: CashLedger, booking: () => void): void {
-    const [i0, t0, u0] = [l.inPence, l.tokenInPence, l.unpricedTokenIn];
+    const [i0, t0, u0, c0] = [l.inPence, l.tokenInPence, l.unpricedTokenIn, l.unpricedIn ?? 0];
     booking();
     this.bookedIn = l.inPence - i0;
     this.bookedToken = l.tokenInPence - t0;
     this.bookedUnpriced = l.unpricedTokenIn - u0;
+    this.bookedUnpricedIn = (l.unpricedIn ?? 0) - c0;
   }
 
   watch(cycles: number, lock: Sc1CoinLock | null | undefined, mem: Sc1Mem, l: CashLedger): 'refused' | 'taken' | null {
@@ -182,6 +235,7 @@ export class CoinLockJudge {
     l.inPence -= this.bookedIn;
     l.tokenInPence -= this.bookedToken;
     l.unpricedTokenIn -= this.bookedUnpriced;
+    if (this.bookedUnpricedIn) l.unpricedIn = (l.unpricedIn ?? 0) - this.bookedUnpricedIn;
     return 'refused';
   }
 }
@@ -232,6 +286,7 @@ export function sc1Coins(t: Sc1CoinTables, rom: Uint8Array, mem: Sc1Mem): Sc1Coi
       x += REC;
     }
     const mask = rom[x + 12]!;
+    if (!mask && !rom[x + 2]) { x += REC; continue; }
     if (!mask || (mask & (mask - 1)) !== 0) return { refused: 'a coin record names no single coin bit' };
     if (out.some((c) => c.mask === mask)) return { refused: 'two coin records name one coin bit' };
     out.push({ at: x, mask, credits: rom[x + 2]!, change: rom[x + 3]!, counter: rom[x + 15]! });

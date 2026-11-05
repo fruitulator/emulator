@@ -1,6 +1,8 @@
 import type { Bus16 } from '../cpu/bus68k';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus } from './machine';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
+import { TokenPayouts } from './coinbook';
 import type { Reel } from '../hw/reel';
 import { H83002 } from '../hw/h83002';
 import { EpochAsic } from '../hw/epochasic';
@@ -9,7 +11,7 @@ import { DataPak } from '../hw/datapak';
 import { EpochAlpha } from '../hw/epochalpha';
 import { Ymz280b } from '../hw/ymz280b';
 import { EpochReels } from '../hw/epochreels';
-import { EpochCoin, findEpochCoinTables, findEpochHopperCoins, type EpochCoinTables, type EpochHopperCoin } from '../hw/epochcoin';
+import { EpochCoin, findEpochCoinInhibits, findEpochCoinTables, findEpochHopperCoins, type EpochCoinTables, type EpochHopperCoin } from '../hw/epochcoin';
 import { Hopper, v20Waveform } from '../hw/hopper';
 import { Sec } from '../hw/sec';
 import { EpochMatrix } from '../hw/epochmatrix';
@@ -28,6 +30,7 @@ import type { LayoutSwitch } from './layoutswitches';
 import type { DeclaredCoin } from './layoutcoins';
 import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState } from './coinwiring';
 import { epochCoinTable, epochShutLines, epochSlotLine } from './epochcoins';
+import { lockoutRefuses, lockoutRefusing, type CoinLockoutWiring } from '../hw/coinlockout';
 
 const YMZ_BASE = 0xfffc00;
 const YMZ_END = 0xfffc04;
@@ -112,8 +115,37 @@ export class Epoch implements Machine {
   private secLines = 0;
 
   readonly cashLedger = newCashLedger();
-  private static readonly HOPPER_PENCE: (number | null)[] = [100, null];
   private hopperCoinRecords: [EpochHopperCoin | null, EpochHopperCoin | null] = [null, null];
+  private readonly payoutNames = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
+  get unpricedPayoutLines(): readonly number[] { return [0, 1]; }
+  get hopperPayoutLines(): readonly number[] { return [0, 1]; }
+  readonly outClicks: number[] = [];
+  static readonly SEC_KEY = 100;
+  get outMeterClicks(): Readonly<Record<number, number>> {
+    const out = outClicksOf(this.outClicks, this.moneyGrid.meterOut);
+    this.secOutMult.forEach((x, i) => { if (x > 0) out[Epoch.SEC_KEY + i] = this.outClicks[Epoch.SEC_KEY + i] ?? 0; });
+    return out;
+  }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.hopperCoinRecords.forEach((_, i) => { out[i] = this.hoppers[i]?.paid ?? 0; });
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+
+  get payoutDevices(): readonly { line: number; kind: 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return this.hopperCoinRecords.map((coin, line) => ({
+      line,
+      kind: coin?.token ? 'token-hopper' as const : 'hopper' as const,
+      displayNumber: line + 1,
+      defaultPence: coin?.pence ?? null,
+    }));
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.hopperCoinRecords.flatMap((c, i) => (c?.token ? [i] : []));
+  }
+  namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
   hopperPriceIsDefault(): boolean {
     return this.hopperCoinRecords[0] === null;
   }
@@ -122,40 +154,20 @@ export class Epoch implements Machine {
   readonly hopperEjects = [0, 0];
 
   static readonly METER_UNIT_PENCE = 10;
-  static readonly SEC_UNIT_PENCE = 10;
-  private meterOutPence: number[] = [];
   private secOutMult: number[] = [];
 
   setMeterMoney(outMult: readonly number[], inMult: readonly number[] = []): void {
     this.moneyGrid.meterOut = [...outMult];
     this.moneyGrid.meterIn = [...inMult];
-    this.relayLedgerMults();
   }
 
   setSecMoneyMap(secOut: readonly number[], secIn: readonly number[] = []): void {
     this.secOutMult = [...secOut];
     this.moneyGrid.secIn = [...secIn];
-    this.relayLedgerMults();
   }
 
   private readonly moneyGrid = { meterIn: [] as number[], meterOut: [] as number[], secIn: [] as number[] };
-  private secLedgerMult: number[] = [];
-  private relayLedgerMults(): void {
-    const [meters, secs] = ledgerOutMults(
-      { in: this.moneyGrid.meterIn, out: this.moneyGrid.meterOut },
-      { in: this.moneyGrid.secIn, out: this.secOutMult },
-    );
-    this.meterOutPence = meters.map((x) => x * Epoch.METER_UNIT_PENCE);
-    this.secLedgerMult = secs;
-  }
-
-  pricesOut(): boolean {
-    return this.meterOutPence.some((p) => p > 0) || this.secLedgerMult.some((x) => x > 0);
-  }
-
-  pricesOutAtSec(): boolean {
-    return this.secLedgerMult.some((x) => x > 0);
-  }
+  readonly secPulses = new Uint32Array(32);
 
   readonly meterCounts = new Uint32Array(8);
   private static readonly METER_TICK_CYCLES = 0x1f40;
@@ -221,6 +233,20 @@ export class Epoch implements Machine {
 
   inhibits = 0;
   diverter = 0;
+
+  private static readonly LOCKOUT: CoinLockoutWiring = { openSense: 0, mask: 0xfc, bits: [] };
+
+  private lockout: CoinLockoutWiring = Epoch.LOCKOUT;
+
+  get coinRefusing(): number {
+    return lockoutRefusing(this.lockout, this.lockoutDriven, 16, (n) => 1 << n);
+  }
+
+  private inhibitWalk = 0;
+
+  private get lockoutDriven(): number {
+    return this.inhibitWalk === 2 ? this.inhibits : 0;
+  }
 
   private readonly mechLamps = new SwitchedLamps(3);
   private readonly inhibitLamps = new SwitchedLamps(8);
@@ -403,9 +429,8 @@ export class Epoch implements Machine {
     this.sec.onCount = (meter, delta) => {
       this.gridTotals.in += (this.moneyGrid.secIn[meter] ?? 0) * delta;
       this.gridTotals.out += (this.secOutMult[meter] ?? 0) * delta;
-      if (!this.booksMoney) return;
-      const mult = this.secLedgerMult[meter] ?? 0;
-      if (mult && delta > 0) this.cashLedger.outPence += mult * delta * Epoch.SEC_UNIT_PENCE;
+      countOutClick(this.outClicks, Epoch.SEC_KEY + meter, this.secOutMult[meter], delta);
+      if (delta > 0 && meter >= 0 && meter < this.secPulses.length) this.secPulses[meter] += delta;
     };
     this.dev.portB.inputSource = () => (this.sec.data() ? 0x10 : 0x00);
     this.dev.port6.onOutput = () => this.driveSec();
@@ -466,6 +491,8 @@ export class Epoch implements Machine {
     this.coinTables = findEpochCoinTables(this.rom.subarray(0, this.romLength));
     this.hopperCoinRecords = findEpochHopperCoins(this.rom.subarray(0, this.romLength));
     this.coin.setSwitches(this.coinTables ? this.coinTables.codeSwitches : Epoch.MFME_ROW2_LINES);
+    const masks = this.coinTables && findEpochCoinInhibits(this.rom.subarray(0, this.romLength), this.coinTables.records);
+    this.lockout = masks ? { ...Epoch.LOCKOUT, masks } : Epoch.LOCKOUT;
   }
 
   get coinChutes(): CoinChute[] | undefined {
@@ -516,6 +543,7 @@ export class Epoch implements Machine {
     this.inputBank = 0;
     this.bank1Row = this.bank1Idle;
     this.inhibits = 0;
+    this.inhibitWalk = 0;
     this.diverter = 0;
     this.mechLamps.reset();
     this.inhibitLamps.reset();
@@ -549,12 +577,13 @@ export class Epoch implements Machine {
       const fresh = paid - this.paidBooked[h];
       if (fresh > 0) {
         const coin = this.hopperCoinRecords[h];
-        const pence = coin ? coin.pence : Epoch.HOPPER_PENCE[h];
+        const named = this.payoutNames.value(h);
+        const pence = named ?? coin?.pence ?? null;
         const token = coin?.token === true;
         if (!token) this.hopperOutPence += fresh * (pence ?? 0);
         this.hopperEjects[h] += fresh;
-        if (!this.pricesOut() && this.booksMoney) {
-          if (pence === null) this.cashLedger.unpricedOut += fresh;
+        if (this.booksMoney) {
+          if (pence === null) for (let n = 0; n < fresh; n++) this.payoutNames.bookCash(this.cashLedger, h);
           else if (token) this.cashLedger.tokenOutPence += fresh * pence;
           else this.cashLedger.outPence += fresh * pence;
         }
@@ -600,7 +629,7 @@ export class Epoch implements Machine {
           this.meterCounts[b]++;
           this.gridTotals.in += this.moneyGrid.meterIn[b] ?? 0;
           this.gridTotals.out += this.moneyGrid.meterOut[b] ?? 0;
-          if (this.booksMoney) this.cashLedger.outPence += this.meterOutPence[b] ?? 0;
+          countOutClick(this.outClicks, b, this.moneyGrid.meterOut[b]);
         }
       }
     }
@@ -684,6 +713,8 @@ export class Epoch implements Machine {
       else if (off === OUTPUT_BASE + 2) {
         this.inputBank = val & 0xff;
         this.inhibits = val & 0xff;
+        if ((val & 0xfc) === 0xfc) { if (this.inhibitWalk === 0) this.inhibitWalk = 1; }
+        else if (this.inhibitWalk === 1) this.inhibitWalk = 2;
       } else if (off === OUTPUT_BASE + 3) this.diverter = val & 0xff;
       else if (off === OUTPUT_BASE + 4) this.drive.write(0, val);
       else if (off === OUTPUT_BASE + 5) this.drive.write(1, val);
@@ -922,6 +953,11 @@ export class Epoch implements Machine {
   private static readonly RECORD_SLOT_OF_ROW = [0, 1, 2, 7, 6, 3, 5];
 
   insertCoin(index: number): void {
+    if ((this.inhibits & 0xfc) !== 0xfc) this.inhibitWalk = 2;
+    if (!this.coin.busy && lockoutRefuses(this.lockout, this.lockoutDriven, this.coinTables ? 1 << index : 0)) {
+      this.coinsRefused++;
+      return;
+    }
     const t = this.coinTables;
     if (!t) {
       this.insertMfmeCoin(index);
@@ -935,7 +971,7 @@ export class Epoch implements Machine {
       this.coinsRefused++;
       return;
     }
-    if (this.wiring) this.bookWiredCoin(index, coin.pence, coin.token, true);
+    else if (this.wiring) this.bookWiredCoin(index, coin.pence, coin.token, true);
     else if (coin.pence !== null) {
       if (coin.token) this.cashLedger.tokenInPence += coin.pence;
       else this.cashLedger.inPence += coin.pence;
@@ -949,7 +985,7 @@ export class Epoch implements Machine {
     const note = COIN_NOTES.get(id);
     if (raw === undefined || !note || (raw & ~0x3e) !== 0) return;
     if (this.coin.busy) return;
-    if (this.wiring) this.bookWiredCoin(id, note.pence, note.token, false);
+    else if (this.wiring) this.bookWiredCoin(id, note.pence, note.token, false);
     else if (note.pence !== null) {
       if (note.token) this.cashLedger.tokenInPence += note.pence;
       else this.cashLedger.inPence += note.pence;
@@ -1008,7 +1044,7 @@ export class Epoch implements Machine {
   }
 
   private get booksMoney(): boolean {
-    return this.wiring?.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, pence: number | null, token: boolean, checked: boolean): void {
@@ -1022,11 +1058,7 @@ export class Epoch implements Machine {
       return;
     }
     if (checked && pence !== null) {
-      const agrees = typeof c === 'number'
-        ? !token && pence === c
-        : token && (c.token === null || c.token === pence);
-      w.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+      w.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }

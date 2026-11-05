@@ -110,6 +110,6 @@ export function chordText(mods: readonly Modifier[], key: string, apple = APPLE)
   return chordCaps(mods, key, apple).join(apple ? '' : '+');
 }
 
-export function primaryModifier(ev: KeyboardEvent, apple = APPLE): boolean {
-  return apple ? ev.metaKey && !ev.ctrlKey : ev.ctrlKey && !ev.metaKey;
+export function isSearchChord(ev: KeyboardEvent): boolean {
+  return ev.code === 'KeyK' && ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && !ev.isComposing;
 }

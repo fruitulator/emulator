@@ -1,11 +1,13 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, AudioSource, DigitKind, CoinChute, CoinWiringStatus } from './machine';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { detectCoins, linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
+import type { SlideEffect } from '../layout/fmlconfig';
 import { CoinBook, SlotCoins, bookedOfSlotCoin, slotStatedCoins, slotOrNoteCoin } from './coinbook';
 import {
   coinReachesRow, locatePhoenixCoins, phoenixCoins, phxCoinOf, phxCoinTable, phxIdHits, phxReadLines, phxSlotId,
-  TOKEN_OUT_METER, type PhxCoin, type PhxCoinCode,
+  type PhxCoin, type PhxCoinCode,
 } from './phoenixcoins';
 import { Z180 } from '../cpu/z180';
 import type { Z80Io } from '../cpu/z80';
@@ -33,7 +35,6 @@ const AY_CLOCK = 0x177000;
 const REEL_COUNT = 8;
 export const PHOENIX_REEL_ADJUST = 0;
 const WATCHDOG2 = 0x96000;
-const METER_UNIT_PENCE = 10;
 const METER_TICK = 1000;
 const COIN_HOLD_LINE = Math.round(0.07 * CLOCK);
 const COIN_TAIL = Math.round(0.005 * CLOCK);
@@ -91,7 +92,7 @@ class Ppi {
 }
 
 export class Phoenix implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['switches', 'coinCodeCache', 'coinsCache', 'coinSlots', 'drawnCoins', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw', 'triacOutRaw'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -187,18 +188,56 @@ export class Phoenix implements Machine {
 
   private readonly ledger = newCashLedger();
   private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly slotCoins = new SlotCoins();
-  private meterOutPence: number[] = [];
+  private slidePence: SlideEffect[] = [];
+  private triacOutRaw: number[] = [];
+  private isPayoutTriac(i: number): boolean {
+    return this.slidePence[i] != null || (this.triacOutRaw[i] ?? 0) > 0;
+  }
+  get unpricedPayoutLines(): readonly number[] {
+    return Array.from({ length: 8 }, (_, i) => i).filter((i) => {
+      const p = this.slidePence[i];
+      return this.isPayoutTriac(i) && (p == null || p === 'token' || p === 'unpriced');
+    });
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.slidePence.flatMap((s, i) => (s === 'token' && i < 8 ? [i] : []));
+  }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.coinBook.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+    return Array.from({ length: 8 }, (_, i) => i).filter((i) => this.isPayoutTriac(i)).map((line) => {
+      const p = this.slidePence[line];
+      return {
+        line,
+        kind: p === 'token' ? 'token-tube' as const : 'tube' as const,
+        displayNumber: line + 1,
+        defaultPence: typeof p === 'number' ? p : null,
+      };
+    });
+  }
+  get meterOnlyPayout(): boolean {
+    return this.payoutDevices.length === 0 && this.meterOutRaw.some((x) => x > 0);
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
+  setSlidePence(slides: readonly SlideEffect[]): void {
+    this.slidePence = [...slides];
+    this.coinBook.setSlides(this.slidePence);
+  }
   get cashLedger(): CashLedger | undefined {
     return this.ledger;
   }
-  setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+  setMeterMoney(inMult: readonly number[], outMult: readonly number[], triacOut: readonly number[] = []): void {
     this.meterInRaw = [...inMult];
     this.meterOutRaw = [...outMult];
-    this.meterOutPence = ledgerOutMults({ in: inMult, out: outMult })[0].map((x) => x * METER_UNIT_PENCE);
+    this.triacOutRaw = [...triacOut];
   }
 
-  private get tokenOutMeter(): number { return this.coinCode() ? TOKEN_OUT_METER : -1; }
+  get meterCounts(): Uint32Array { return this.meters; }
 
   setSwitches(sw: LayoutSwitch[]): void {
     this.switches = sw;
@@ -459,17 +498,19 @@ export class Phoenix implements Machine {
         this.meters[i]++;
         this.gridTotals.in += this.meterInRaw[i] ?? 0;
         this.gridTotals.out += this.meterOutRaw[i] ?? 0;
-        if (!this.booksMoney) continue;
-        const q = this.meterOutPence[i] ?? 0;
-        if (i === this.tokenOutMeter) this.ledger.tokenOutPence += q;
-        else if (q) this.coinBook.cashOut(q);
+        countOutClick(this.outClicks, i, this.meterOutRaw[i]);
+        if (this.booksMoney && (this.meterOutRaw[i] ?? 0) > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
       }
     }
   }
 
   private triacWrite(v: number): void {
     const rise = v & ~this.triacLatch;
-    for (let i = 0; i < 8; i++) if (rise & (1 << i)) this.triacPulses[i]++;
+    for (let i = 0; i < 8; i++) {
+      if (!(rise & (1 << i))) continue;
+      this.triacPulses[i]++;
+      if (this.isPayoutTriac(i)) { if (this.booksMoney) this.coinBook.tube(i); } else this.coinBook.unnamed(i);
+    }
     this.triacLatch = v;
   }
 
@@ -752,7 +793,7 @@ export class Phoenix implements Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookTaken(id: number, c: PhxCoin, code: PhxCoinCode): void {
@@ -769,7 +810,7 @@ export class Phoenix implements Machine {
       ? !c.token && wired === pence
       : c.token && (wired.token === null || wired.token === pence);
     this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-    if (agrees) this.bookCoin(wired);
+    this.bookCoin(wired);
   }
 
   private bookCoin(c: SlotCoin): void {

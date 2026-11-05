@@ -1,4 +1,5 @@
 import { Ygv619 } from '../hw/ygv619';
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { M68000 } from '../cpu/m68000';
 import { ColdfireWasm, REASON_FALLBACK } from '../cpu/coldfirewasm';
 import type { Bus16 } from '../cpu/bus68k';
@@ -44,7 +45,8 @@ export function adder5ScreenSize(mode: number): { width: number; height: number 
 }
 import { opticWindowForFlag } from '../layout/datreels';
 import type { Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult, CabinetSwitch } from './machine';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
+import { TokenPayouts } from './coinbook';
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
 import { resetReelsInPlace } from './v20optic';
@@ -399,33 +401,32 @@ export class Sc5 implements Bus16, Machine {
   }
 
   readonly cashLedger = newCashLedger();
+  private readonly payoutNames = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
+  private unpricedHopperCoins = 0;
+  private pendingDataPakCashOut: number[] = [];
+  private hostPricedHopperCoins = 0;
 
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
   readonly meterTotals = { in: 0, out: 0 };
-  private static readonly SEC_UNIT_PENCE = 10;
-
   setSecMoneyMap(secIn: number[], secOut: number[]): void {
     this.secInMult = [...secIn];
     this.secOutMult = [...secOut];
-    [this.secLedgerMult] = ledgerOutMults({ in: this.secInMult, out: this.secOutMult });
-  }
-
-  private secLedgerMult: number[] = [];
-
-  private pricesOut(): boolean {
-    return this.secLedgerMult.some((x) => x > 0);
   }
 
   private secCount(meter: number, delta: number): void {
+    if (delta > 0 && meter >= 0 && meter < this.secPulses.length) this.secPulses[meter] += delta;
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
     if (inMult) this.meterTotals.in += inMult * delta;
     if (outMult) {
       this.meterTotals.out += outMult * delta;
-      this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Sc5.SEC_UNIT_PENCE;
+      countOutClick(this.outClicks, meter, outMult, delta);
     }
   }
+
+  readonly secPulses = new Uint32Array(32);
 
   get hoppers(): { paid: number; running: boolean }[] {
     const h = this.bus.get(CC_HOPPER);
@@ -436,9 +437,28 @@ export class Sc5 implements Bus16, Machine {
     for (const addr of [CC_HOPPER, CC_HOPPER2]) {
       const h = this.bus.get(addr);
       if (h instanceof Sch2Hopper) {
-        h.onPaid = () => { if (!this.pricesOut()) this.cashLedger.unpricedOut++; };
+        h.onPaid = () => {
+          const line = addr === CC_HOPPER ? 100 : 101;
+          this.hopperCoins[line - 100] = (this.hopperCoins[line - 100] ?? 0) + 1;
+          const named = this.payoutNames.value(line);
+          if (named !== undefined) {
+            this.pendingDataPakCashOut.shift();
+            this.cashLedger.outPence += named;
+            this.hostPricedHopperCoins++;
+            return;
+          }
+          const pence = this.pendingDataPakCashOut.shift();
+          if (pence === undefined) {
+            this.unpricedHopperCoins++;
+            this.payoutNames.bookCash(this.cashLedger, line);
+          } else {
+            this.cashLedger.outPence += pence;
+          }
+
+        };
       }
     }
+
     const note = this.bus.get(CC_NOTE);
     if (note instanceof JcmEba) {
       note.onStacked = (type) => { this.cashLedger.inPence += note.pence(type) ?? 0; };
@@ -452,11 +472,45 @@ export class Sc5 implements Bus16, Machine {
     }
     this.sec.onCount = (meter, delta) => this.secCount(meter, delta);
     this.dataPak.onCashOut = (pence) => {
-      if (this.pricesOut()) return;
-      if (this.cashLedger.unpricedOut > 0) this.cashLedger.unpricedOut--;
-      this.cashLedger.outPence += pence;
+      if (this.hostPricedHopperCoins > 0) {
+        this.hostPricedHopperCoins--;
+        return;
+      }
+      if (this.unpricedHopperCoins > 0 || this.cashLedger.unpricedOut > 0) {
+        if (this.unpricedHopperCoins > 0) this.unpricedHopperCoins--;
+        this.cashLedger.unpricedOut--;
+        this.cashLedger.outPence += pence;
+      } else {
+        this.pendingDataPakCashOut.push(pence);
+      }
     };
   }
+
+  get unpricedPayoutLines(): readonly number[] { return [0, 1]; }
+  get hopperPayoutLines(): readonly number[] { return [0, 1]; }
+  readonly outClicks: number[] = [];
+  readonly hopperCoins: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.secOutMult); }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    for (const d of this.payoutDevices) out[d.line] = this.hopperCoins[d.line - 100] ?? 0;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+
+  get payoutDevices(): readonly { line: number; kind: 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [...this.bus.entries()]
+      .filter(([, d]) => d instanceof Sch2Hopper)
+      .map(([addr, d], i) => ({
+        line: addr === CC_HOPPER ? 100 : 101,
+        kind: 'hopper',
+        displayNumber: i + 1,
+        defaultPence: d instanceof Sch2Hopper && /^GB(\d{3})/.test(d.coin)
+          ? Number(/^GB(\d{3})/.exec(d.coin)?.[1])
+          : null,
+      }));
+  }
+  namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
 
   readonly unmodelled: string[] = [];
 
@@ -1750,10 +1804,13 @@ export class Sc5 implements Bus16, Machine {
     if (this.coinTooSoon()) { this.coinsRefused++; return; }
     this.lastCoinAt = this.busNow >>> 0;
     if (!this.mech.insert(channel)) { this.coinsRefused++; return; }
-    this.cashLedger.inPence += this.mech.pence(channel) ?? 0;
+    const pence = this.mech.pence(channel) ?? 0;
+    this.acceptedPence += pence;
+    this.cashLedger.inPence += pence;
   }
 
   coinsRefused = 0;
+  acceptedPence = 0;
 
   get unnamedCoinLines(): readonly number[] {
     return [];

@@ -477,6 +477,7 @@ export interface Cabinet<A = ImageBitmap> {
     thickness: number; slant: number; seg16: boolean;
     spacing?: number; hSpacing?: number; vSpacing?: number;
     centre?: number; chop?: number;
+    columns?: number;
     charset?: number;
     reversed?: boolean;
     dot?: { x: number; y: number; spacing: number; digitGap?: number };

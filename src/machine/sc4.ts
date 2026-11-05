@@ -1,6 +1,8 @@
 import type { Bus16 } from '../cpu/bus68k';
-import type { Machine, OptionKey, DigitKind, NoteResult, CoinPortLines, CoinWiringStatus } from './machine';
+import { countOutClick, outClicksOf } from './payoutcheck';
+import type { CoinChute, Machine, OptionKey, DigitKind, NoteResult, CoinPortLines, CoinWiringStatus } from './machine';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel, type CabinetSwitch } from './machine';
+import { TokenPayouts } from './coinbook';
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
 import { M68000 } from '../cpu/m68000';
@@ -11,7 +13,7 @@ import { findSecurityKey, Sc4Mbus } from '../hw/sc4mbus';
 import { Mc68681, X1_HZ } from '../hw/mc68681';
 import { RngUnit } from '../hw/rngunit';
 import { Sec } from '../hw/sec';
-import { Sc4HopperPair, locateSc4PayoutUnits, readSc4HopperCoins, type Sc4Coin, type Sc4HopperCoins, type Sc4PayoutUnits } from '../hw/sc4hoppers';
+import { Sc4HopperPair, locateSc4PayoutUnits, readSc4HopperCoins, sc4UnitCoin, sc4UnitEnabled, type Sc4Coin, type Sc4HopperCoins, type Sc4PayoutUnits } from '../hw/sc4hoppers';
 import { JcmEba, Sch2Hopper, deviceFor } from '../hw/cctalk';
 import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
 import { SwitchedLamps } from '../hw/switchedlamps';
@@ -37,7 +39,7 @@ import { COIN_RAW } from './coinraw';
 import { linesOf, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState, wiringKey, wiringStateFor } from './coinwiring';
 import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
 import { BfmColourLed } from '../hw/bfmcolourled';
-import { locateSc4CoinTables, sc4CoinTable, sc4ProgramCoin, sc4TokenLine, SC4_COIN_LINES, type Sc4CoinTables, type Sc4Mem, type Sc4ProgramCoin } from './sc4coins';
+import { locateSc4CoinDebounce, locateSc4CoinTables, sc4CoinsUnpriced, sc4CoinTable, sc4ProgramCoin, sc4TokenLine, SC4_COIN_LINES, type Sc4CoinTables, type Sc4Mem, type Sc4ProgramCoin } from './sc4coins';
 
 export const MASTER_CLOCK = 16_000_000;
 
@@ -121,7 +123,7 @@ export interface IoAccess {
 }
 
 export class Sc4 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'coinLinePattern', 'tokenLine', 'programMem', 'dmBusySwitch'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'wiring', 'coinSlots', 'coinTablesCache', 'coinLinePattern', 'tokenLine', 'programMem', 'programWord', 'dmBusySwitch'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: M68307Sim;
@@ -252,7 +254,7 @@ export class Sc4 implements Bus16, Machine {
     v.address = 0x28;
     v.desFitted = desFitted;
     applyPartKeys(v, this.ccTalkKeys.note);
-    v.onStacked = (billType) => { if (this.booksMoney) this.cashLedger.inPence += JcmEba.billPence(billType) ?? 0; };
+    v.onStacked = (billType) => { if (this.booksMoney) this.bookNote(JcmEba.billPence(billType) ?? 0); };
     v.onLampWord = (word) => { this.noteLamps.write(word); this.packNoteLamps(); };
     this.ccNote = v;
     this.resetNoteLamps();
@@ -290,7 +292,7 @@ export class Sc4 implements Bus16, Machine {
       applyPartKeys(h, dest === 3 ? this.ccTalkKeys.hopper1 : this.ccTalkKeys.hopper2);
       h.setPeriod(Math.floor(MASTER_CLOCK / 6));
       const address = dest;
-      h.onPaid = () => { if (!this.pricesOut()) this.bookHopperCoin(this.hopperCoins().cctalk.get(address) ?? null); };
+      h.onPaid = () => { this.bookHopperCoin(this.payingCoins().cctalk.get(address) ?? null, address & 1); };
       this.ccHoppers.set(dest, h);
     }
     const rd = h.reply(header, f.slice(4, 4 + (len ?? 0)));
@@ -308,16 +310,14 @@ export class Sc4 implements Bus16, Machine {
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
   readonly meterTotals = { in: 0, out: 0 };
-  private static readonly SEC_UNIT_PENCE = 10;
-
   setSecMoneyMap(secIn: number[], secOut: number[]): void {
     this.secInMult = [...secIn];
     this.secOutMult = [...secOut];
     this.relayLedgerMults();
   }
 
-  private secLedgerMult: number[] = [];
-  private meterLedgerMult: number[] = [];
+  secLedgerMult: number[] = [];
+  meterLedgerMult: number[] = [];
   private relayLedgerMults(): void {
     [this.secLedgerMult, this.meterLedgerMult] = ledgerOutMults(
       { in: this.secInMult, out: this.secOutMult },
@@ -334,12 +334,9 @@ export class Sc4 implements Bus16, Machine {
     this.relayLedgerMults();
   }
 
-  private pricesOut(): boolean {
-    const prices = (m: number[]) => m.some((x) => x > 0);
-    return prices(this.secLedgerMult) || prices(this.meterLedgerMult);
-  }
-
   readonly meterCounts = new Uint32Array(8);
+
+  readonly secPulses = new Uint32Array(32);
 
   private meterPulse(n: number): void {
     this.meterCounts[n]++;
@@ -348,7 +345,7 @@ export class Sc4 implements Bus16, Machine {
     if (inMult) this.meterTotals.in += inMult;
     if (outMult) {
       this.meterTotals.out += outMult;
-      if (this.booksMoney) this.cashLedger.outPence += (this.meterLedgerMult[n] ?? 0) * Sc4.SEC_UNIT_PENCE;
+      countOutClick(this.outClicks, n, outMult);
     }
   }
 
@@ -368,33 +365,135 @@ export class Sc4 implements Bus16, Machine {
   }
 
   private secCount(meter: number, delta: number): void {
+    if (delta > 0 && meter >= 0 && meter < this.secPulses.length) this.secPulses[meter] += delta;
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
     if (inMult) this.meterTotals.in += inMult * delta;
     if (outMult) {
       this.meterTotals.out += outMult * delta;
-      if (this.booksMoney) this.cashLedger.outPence += (this.secLedgerMult[meter] ?? 0) * delta * Sc4.SEC_UNIT_PENCE;
+      countOutClick(this.outClicks, Sc4.SEC_KEY + meter, outMult, delta);
     }
   }
   readonly parHopper = new Sc4HopperPair(MASTER_CLOCK);
   private payoutUnits: Sc4PayoutUnits | null = null;
 
   hopperCoins(): Sc4HopperCoins {
-    return readSc4HopperCoins(this.payoutUnits, (a) => {
-      if (a < 0) return -1;
-      if (a + 1 < ROM_SIZE) return (this.rom[a] << 8) | this.rom[a + 1];
-      const i = this.ramOffset(a, 2);
-      if (i >= 0) return (this.ram[i] << 8) | this.ram[i + 1];
-      return -1;
-    });
+    return readSc4HopperCoins(this.payoutUnits, this.programWord);
   }
 
-  private bookHopperCoin(coin: Sc4Coin | null): void {
+  private readonly programWord = (a: number): number => {
+    if (a < 0) return -1;
+    if (a + 1 < ROM_SIZE) return (this.rom[a] << 8) | this.rom[a + 1];
+    const i = this.ramOffset(a, 2);
+    if (i >= 0) return (this.ram[i] << 8) | this.ram[i + 1];
+    return -1;
+  };
+
+  private payingCoins(): Sc4HopperCoins {
+    if (!this.unpricedProgram()) return this.hopperCoins();
+    return readSc4HopperCoins(this.payoutUnits, this.programWord, (fn) => sc4UnitEnabled(fn, this.programWord, (id) => this.programSwitch(id)));
+  }
+
+  private unitsByLine(): (Sc4PayoutUnits & { form: 'table' }) | null {
+    const u = this.payoutUnits;
+    if (u?.form !== 'table' || u.modeAt === undefined || !this.unpricedProgram()) return null;
+    const long = (a: number): number => ((this.programWord(a) << 16) | this.programWord(a + 2)) >>> 0;
+    for (let i = 0, n = this.programWord(u.countAt); i < n; i++) {
+      if (this.programWord(long(u.table + 64 * i + 0x1e)) > 3) return null;
+    }
+    return u;
+  }
+
+  private unitOn(u: Sc4PayoutUnits & { form: 'table' }, mode: number, line: number): Sc4Coin | null {
+    return sc4UnitCoin(u, this.programWord, (fn, m) => sc4UnitEnabled(fn, this.programWord, (id) => this.programSwitch(id), m), mode, line);
+  }
+
+  private coinOutOf(h: 1 | 2): Sc4Coin | null {
+    const u = this.unitsByLine();
+    if (!u) return this.payingCoins().line[h - 1];
+    const mode = this.programWord(u.modeAt!) & 4;
+    const driven = this.parHopper.drivenLine(h);
+    const lines = driven !== null ? [driven] : h === 1 ? [0, 2] : [1];
+    const coins = lines.map((l) => this.unitOn(u, mode, l)).filter((c): c is Sc4Coin => c !== null);
+    return coins.length && coins.every((c) => c.pence === coins[0].pence) ? coins[0] : null;
+  }
+
+  private unitsAllRead(u: Sc4PayoutUnits & { form: 'table' }): boolean {
+    const long = (a: number): number => ((this.programWord(a) << 16) | this.programWord(a + 2)) >>> 0;
+    const n = this.programWord(u.countAt);
+    if (n < 1) return false;
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const r = u.table + 64 * i;
+      const mode = this.programWord(r) >> 8;
+      if (mode !== 0 && mode !== 4) continue;
+      const line = this.programWord(long(r + 0x1e));
+      if (line < 0) return false;
+      if (line === 3) continue;
+      if (this.unitOn(u, mode, line) === null) {
+        const fn = long(r + 0x3c);
+        if (fn > 0 && sc4UnitEnabled(fn, this.programWord, (id) => this.programSwitch(id), mode) === false) continue;
+        return false;
+      }
+      any = true;
+    }
+    return any;
+  }
+
+  private programSwitch(id: number): boolean | null {
+    if (id & 0xff00) return null;
+    const strobe = id & 0x1f;
+    if (strobe >= 8 && strobe < 16) return null;
+    const off = (strobe < 8 ? (strobe << 4) : 0x1000 | ((strobe - 16) << 4)) | 1;
+    return (this.readIo(off) & (1 << (id >> 5))) !== 0;
+  }
+
+  private bookHopperCoin(coin: Sc4Coin | null, line = 0): void {
+    this.paidCoins[line] = (this.paidCoins[line] ?? 0) + 1;
     if (!this.booksMoney) return;
-    if (coin === null) this.cashLedger.unpricedOut++;
+    if (this.unpricedProgram()) {
+      const pence = coin === null ? null : this.hostPriceOf(coin.pence);
+      if (pence === null) this.payoutNames.bookCash(this.cashLedger, line);
+      else this.cashLedger.outPence += pence;
+      return;
+    }
+    if (coin === null) this.payoutNames.bookCash(this.cashLedger, line);
     else if (coin.token) this.cashLedger.tokenOutPence += coin.pence;
     else this.cashLedger.outPence += coin.pence;
   }
+  private readonly payoutNames = new TokenPayouts();
+  get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
+  get unpricedPayoutLines(): readonly number[] {
+    const coins = this.payingCoins().line;
+    return coins.flatMap((c, i) => (c === null ? [i] : []));
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.payingCoins().line.flatMap((c, i) => (c?.token ? [i] : []));
+  }
+  readonly outClicks: number[] = [];
+  readonly paidCoins: number[] = [];
+  static readonly SEC_KEY = 100;
+  get outMeterClicks(): Readonly<Record<number, number>> {
+    const out = outClicksOf(this.outClicks, this.meterOutMult);
+    this.secOutMult.forEach((x, i) => { if ((x ?? 0) > 0) out[Sc4.SEC_KEY + i] = this.outClicks[Sc4.SEC_KEY + i] ?? 0; });
+    return out;
+  }
+  get rowCoins(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    for (const d of this.payoutDevices) out[d.line] = this.paidCoins[d.line] ?? 0;
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+
+  get payoutDevices(): readonly { line: number; kind: 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return this.payingCoins().line.map((coin, line) => ({
+      line,
+      kind: coin?.token ? 'token-hopper' : 'hopper',
+      displayNumber: line + 1,
+      defaultPence: coin?.pence ?? null,
+    }));
+  }
+  namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
   readonly seg7 = new BfmLed();
   private parHopperFitted = false;
 
@@ -701,6 +800,7 @@ export class Sc4 implements Bus16, Machine {
 
   readonly dataPak = new DataPak(16_670_000);
   private dataPakType = 0;
+
   private dataPakOnUart = true;
   private ackQueue: number[] = [];
   private ackDue = 0;
@@ -907,31 +1007,57 @@ export class Sc4 implements Bus16, Machine {
     else this.coins |= (1 << bit) & 0x3f;
   }
 
-  private static readonly COIN_PULSE_INSTRUCTIONS = (0x50 - 15) * 5000;
-  private coinInstructions = 0;
+  private static readonly COIN_HELD_CYCLES = MASTER_CLOCK / 10;
+  private static readonly COIN_FREE_CYCLES = MASTER_CLOCK / 5;
+  private coinLeft = -1;
   private coinBit = -1;
 
   get coinBusy(): boolean {
-    return this.coinBit >= 0;
+    return this.coinLeft >= 0;
   }
 
   insertCoin(bit: number): void {
-    if (this.coinBit >= 0) return;
-    if (lockoutRefuses(Sc4.LOCKOUT, this.io[Sc4.LOCKOUT_OFF], this.lockoutPattern(bit))) {
+    if (this.coinLeft >= 0) return;
+    if (this.lockoutSeenOpen && lockoutRefuses(this.lockoutWiring(), this.io[Sc4.LOCKOUT_OFF], 1 << bit)) {
       this.coinsRefused++;
       return;
     }
     const taken = this.programCoinOn(bit);
     this.coinBit = bit;
-    this.coinInstructions = 0;
+    this.coinLeft = Sc4.COIN_FREE_CYCLES;
     this.coins &= ~this.coinPattern(bit) & 0x3f;
     if (taken === 'refused') { this.coinsRefused++; return; }
-    if (this.wiring) { this.bookWiredCoin(bit, taken); return; }
-    this.bookProgramCoin(bit, taken);
+    if (this.coinDebounceAt() !== null) { this.coinAwaited = { line: bit, taken }; return; }
+    this.bookCoin(bit, taken);
+  }
+
+  private bookCoin(line: number, taken: Sc4ProgramCoin): void {
+    if (this.wiring) { this.bookWiredCoin(line, taken); return; }
+    this.bookProgramCoin(line, taken);
+  }
+
+  private coinAwaited: { line: number; taken: Sc4ProgramCoin } | null = null;
+
+  private judgeCoin(): void {
+    const c = this.coinAwaited!;
+    const at = this.coinDebounceAt();
+    const p = this.coinPattern(c.line) & 0x3f;
+    const code = p & 0x1f || p;
+    if (at !== null && (this.programMem.w(at) & code) === code) {
+      this.coinAwaited = null;
+      this.bookCoin(c.line, c.taken);
+    } else if (this.coinLeft < 0) {
+      this.coinAwaited = null;
+      this.coinsRefused++;
+    }
   }
 
   private bookProgramCoin(line: number, taken: Sc4ProgramCoin): void {
     if (taken === 'refused') return;
+    if (taken !== null && this.unpricedProgram()) {
+      this.cashLedger.unpricedIn = (this.cashLedger.unpricedIn ?? 0) + 1;
+      return;
+    }
     if (taken === null) {
       noteBoardDefault(this, {
         axis: 'coin',
@@ -945,16 +1071,43 @@ export class Sc4 implements Bus16, Machine {
     else this.cashLedger.inPence += taken.pence;
   }
 
+  private unpricedProgram(): boolean {
+    const t = this.coinTables();
+    return !('refused' in t) && sc4CoinsUnpriced(t, this.programMem, this.coinLinePattern);
+  }
+
+  private bookNote(pence: number): void {
+    if (this.unpricedProgram()) this.cashLedger.unpricedIn = (this.cashLedger.unpricedIn ?? 0) + 1;
+    else this.cashLedger.inPence += pence;
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    if (!this.unpricedProgram()) return undefined;
+    const out: CoinChute[] = [];
+    for (let line = 0; line < SC4_COIN_LINES; line++) {
+      const c = this.programCoinOn(line);
+      if (c !== null && c !== 'refused') out.push({ label: `Coin ${out.length + 1}`, bit: line, pence: null });
+    }
+    return out;
+  }
+
   private programCoinOn(line: number): Sc4ProgramCoin {
     const t = this.coinTables();
     if ('refused' in t) return null;
     return sc4ProgramCoin(t, this.programMem, this.coinPattern(line) & 0x3f);
   }
 
-  private coinTablesCache: { rom: Uint8Array; t: Sc4CoinTables | { refused: string } } | null = null;
+  private coinTablesCache: { rom: Uint8Array; t: Sc4CoinTables | { refused: string }; debounce: number | null } | null = null;
   private coinTables(): Sc4CoinTables | { refused: string } {
-    if (this.coinTablesCache?.rom !== this.rom) this.coinTablesCache = { rom: this.rom, t: locateSc4CoinTables(this.rom) };
+    if (this.coinTablesCache?.rom !== this.rom) {
+      this.coinTablesCache = { rom: this.rom, t: locateSc4CoinTables(this.rom), debounce: locateSc4CoinDebounce(this.rom) };
+    }
     return this.coinTablesCache.t;
+  }
+
+  private coinDebounceAt(): number | null {
+    this.coinTables();
+    return this.coinTablesCache!.debounce;
   }
 
   private readonly programMem: Sc4Mem = {
@@ -969,23 +1122,44 @@ export class Sc4 implements Bus16, Machine {
   static readonly LOCKOUT: CoinLockoutWiring = { openSense: 1, mask: 0x3f, bits: [0, 1, 2, 3, 4, 5] };
   static readonly LOCKOUT_OFF = 0x02f1;
 
-  private lockoutPattern(line: number): number {
-    return this.binaryMech ? 0x3f : this.coinPattern(line) & 0x3f;
+  private lockoutSeenOpen = false;
+
+  private static readonly BINARY_INHIBIT = new Map<number, number>([[200, 0], [20, 3], [5, 4], [10, 4], [50, 4], [100, 5]]);
+  private static readonly BINARY_CODE_PENCE = new Map<number, number>([[0x08, 5], [0x1c, 10], [0x0b, 20], [0x0d, 50], [0x1a, 100], [0x1f, 200]]);
+
+  private lockoutWiring(): CoinLockoutWiring {
+    const masks: (number | null)[] = [];
+    for (let line = 0; line < SC4_COIN_LINES; line++) {
+      const p = this.coinPattern(line) & 0x3f;
+      if (this.binaryMech) {
+        const pence = Sc4.BINARY_CODE_PENCE.get(p);
+        const inhibit = pence === undefined ? undefined : Sc4.BINARY_INHIBIT.get(pence);
+        masks.push(inhibit === undefined ? null : 1 << (5 - inhibit));
+        continue;
+      }
+      const single = p !== 0 && (p & (p - 1)) === 0;
+      masks.push(single ? p : null);
+    }
+    return { ...Sc4.LOCKOUT, masks };
   }
 
   coinsRefused = 0;
 
   get coinRefusing(): number {
-    let m = lockoutRefusing(Sc4.LOCKOUT, this.io[Sc4.LOCKOUT_OFF], 6, (n) => this.lockoutPattern(n));
+    let m = this.lockoutSeenOpen ? lockoutRefusing(this.lockoutWiring(), this.io[Sc4.LOCKOUT_OFF], SC4_COIN_LINES, (n) => 1 << n) : 0;
     for (let n = 0; n < SC4_COIN_LINES; n++) if (this.programCoinOn(n) === 'refused') m |= 1 << n;
     return m >>> 0;
   }
 
-  private tickCoin(): void {
-    if (this.coinBit < 0) return;
-    if (++this.coinInstructions < Sc4.COIN_PULSE_INSTRUCTIONS) return;
-    this.coins |= this.coinPattern(this.coinBit) & 0x3f;
-    this.coinBit = -1;
+  private tickCoin(cycles: number): void {
+    if (this.coinLeft < 0) return;
+    this.coinLeft -= cycles;
+    if (this.coinBit >= 0 && this.coinLeft <= Sc4.COIN_FREE_CYCLES - Sc4.COIN_HELD_CYCLES) {
+      this.coins |= this.coinPattern(this.coinBit) & 0x3f;
+      this.coinBit = -1;
+    }
+    if (this.coinLeft <= 0) this.coinLeft = -1;
+    if (this.coinAwaited) this.judgeCoin();
   }
 
   private binaryMech = false;
@@ -1058,7 +1232,7 @@ export class Sc4 implements Bus16, Machine {
   }
 
   private get booksMoney(): boolean {
-    return !this.wiring || this.wiringState.state !== 'disagrees';
+    return true;
   }
 
   private bookWiredCoin(line: number, taken: Sc4ProgramCoin): void {
@@ -1069,12 +1243,10 @@ export class Sc4 implements Bus16, Machine {
       this.bookProgramCoin(line, taken);
       return;
     }
-    if (taken !== null && taken !== 'refused') {
-      const agrees = typeof c === 'number'
-        ? !taken.token && taken.pence === c
-        : taken.token && (c.token === null || c.token === taken.pence);
-      this.wiringState.state = agrees ? 'calibrated' : 'disagrees';
-      if (!agrees) return;
+    if (this.unpricedProgram()) {
+      this.wiringState.state = 'calibrated';
+    } else if (taken !== null && taken !== 'refused') {
+      this.wiringState.state = 'calibrated';
     }
     if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
     if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
@@ -1109,7 +1281,44 @@ export class Sc4 implements Bus16, Machine {
   private static readonly COIN_ROW = 12;
 
   get unnamedCoinLines(): readonly number[] {
-    return this.coinSlots;
+    const host = this.unpricedCoinLines;
+    return host ? [...new Set([...this.coinSlots, ...host.map((c) => c.line)])].sort((a, b) => a - b) : this.coinSlots;
+  }
+
+  get unpricedCoinLines(): readonly { line: number; credits: number | null }[] | undefined {
+    if (!this.unpricedProgram()) return undefined;
+    const byLine = this.unitsByLine();
+    if (byLine) {
+      if (!this.unitsAllRead(byLine)) return undefined;
+    } else {
+      const paying = this.payingCoins();
+      const read = paying.cctalk.size ? [...paying.cctalk.values()] : paying.line;
+      if (read.some((c) => c === null)) return undefined;
+    }
+    return (this.coinChutes ?? []).flatMap((c) => {
+      const coin = this.programCoinOn(c.bit);
+      return coin !== null && coin !== 'refused' ? [{ line: c.bit, credits: coin.pence }] : [];
+    });
+  }
+
+  private hostCreditPrice(): number | null {
+    const w = this.wiring;
+    if (!w) return null;
+    let price: number | null = null;
+    for (const [line, c] of w.coins) {
+      const v = typeof c === 'number' ? c : c.token;
+      const coin = this.programCoinOn(line);
+      if (v === null || coin === null || coin === 'refused' || coin.pence <= 0) return null;
+      const p = v / coin.pence;
+      if (price !== null && Math.abs(p - price) > 1e-9) return null;
+      price = p;
+    }
+    return price;
+  }
+
+  private hostPriceOf(units: number): number | null {
+    const price = this.hostCreditPrice();
+    return price === null ? null : Math.round(units * price);
   }
 
   private readCoinTable(): CoinLineTable | { refused: string } {
@@ -1167,7 +1376,7 @@ export class Sc4 implements Bus16, Machine {
       this.noteHoldLeft = Sc4.NOTE_ESCROW_CYCLES;
       return 'escrow';
     }
-    if (this.booksMoney) this.cashLedger.inPence += pence;
+    if (this.booksMoney) this.bookNote(pence);
     return 'stacked';
   }
 
@@ -1205,7 +1414,7 @@ export class Sc4 implements Bus16, Machine {
       this.noteHeld = 0;
       this.noteVendLeft = Sc4.NOTE_VEND_CYCLES;
       this.noteVendCode = 1 << channel;
-      if (this.booksMoney) this.cashLedger.inPence += this.notePence.get(channel) ?? 0;
+      if (this.booksMoney) this.bookNote(this.notePence.get(channel) ?? 0);
       return;
     }
     if (this.noteHoldLeft > 0 && (this.noteHoldLeft -= cycles) <= 0) {
@@ -1234,8 +1443,7 @@ export class Sc4 implements Bus16, Machine {
     this.duart2.inputPort = 0x20;
     this.resetNoteLamps();
     this.parHopper.onCoin = (h) => {
-      if (this.pricesOut()) return;
-      this.bookHopperCoin(this.hopperCoins().line[h - 1]);
+      this.bookHopperCoin(this.unpricedProgram() ? this.coinOutOf(h) : this.payingCoins().line[h - 1], h - 1);
     };
     this.sim = new M68307Sim({
       txByte: (v) => {
@@ -1387,6 +1595,7 @@ export class Sc4 implements Bus16, Machine {
 
   private warmReset(): void {
     this.io.fill(0);
+    this.lockoutSeenOpen = false;
     this.ioLog.clear();
     this.strayReads.clear();
     this.sim.reset();
@@ -1605,6 +1814,7 @@ export class Sc4 implements Bus16, Machine {
       if (off < 0x1400) this.boardWatchdog = BOARD_WATCHDOG_CYCLES;
       this.noteIo(a, true);
       this.io[off] = v;
+      if (off === Sc4.LOCKOUT_OFF && (v & Sc4.LOCKOUT.mask) !== 0) this.lockoutSeenOpen = true;
       const wrow = off & 0xfff0;
       if (wrow === 0x0300) this.parHopper.writeP03(v);
       if (wrow === 0x0310) this.parHopper.writePayen1(v);
@@ -1721,7 +1931,7 @@ export class Sc4 implements Bus16, Machine {
     this.bd1.tick(cycles);
     if (this.dm01) this.runDotMatrix(cycles);
     this.serviceDataport(cycles);
-    this.tickCoin();
+    this.tickCoin(cycles);
     if (this.noteFitted) this.tickNote(cycles);
     if (this.parHopperFitted) this.parHopper.tick(cycles);
     for (const h of this.ccHoppers.values()) if (h.timing) h.tick(cycles);

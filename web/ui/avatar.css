@@ -76,6 +76,9 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+.ui-name-pill[hidden] {
+  display: none;
+}
 .ui-name-pill .nb-avatar {
   box-shadow: 0 0 0 2px rgba(255, 201, 61, 0.6);
 }

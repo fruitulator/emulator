@@ -6,6 +6,7 @@ export const SC4_COIN_LINES = 6;
 const CODE_END = 0x100000;
 const RAM_BASE = 0x800000;
 const STRIDE = 82;
+const MAX_VALUE = 100_000;
 
 export interface Sc4Select {
   binary: number;
@@ -14,7 +15,8 @@ export interface Sc4Select {
 
 export type Sc4CoinTables =
   | { form: 'records'; base: number; count: number; countAt: number; coded: number; parallel: number; select: Sc4Select }
-  | { form: 'list'; list: number; next: number; sw: number; codes: number | null; select: Sc4Select | null };
+  | { form: 'list'; list: number; next: number; sw: number; codes: number | null; select: Sc4Select | null }
+  | { form: 'strobed'; base: number; stride: number };
 
 export type Sc4ProgramCoin = { pence: number; token: boolean } | 'refused' | null;
 
@@ -35,18 +37,78 @@ const isRecordsTable = (r: Sc4Mem, x: number, kind: 'parallel' | 'coded'): boole
 const tstRam = (r: Sc4Mem, a: number): number | null =>
   r.w(a) === 0x4a79 && r.w(a + 2) === 0x0080 ? RAM_BASE | r.w(a + 4) : null;
 
+const isDecodeTable = (r: Sc4Mem, x: number): boolean => {
+  if (r.w(x) !== 0xfffe) return false;
+  for (let i = 1; i < 64; i++) {
+    const v = r.w(x + 2 * i);
+    if (v >= 0x40 && (v < 0xfffa || v > 0xfffe)) return false;
+  }
+  return true;
+};
+
+const loadsImm = (r: Sc4Mem, a: number): number | null => {
+  const w = r.w(a) & 0xf1ff;
+  return w === 0x207c || w === 0x41f9 ? r.l(a + 2) : null;
+};
+
+function dispatcherTables(r: Sc4Mem, end: number): { coded: number; parallel: number } | null {
+  for (let a = 0; a < end; a += 2) {
+    if (tstRam(r, a) === null || (r.w(a + 6) & 0xff00) !== 0x6700) continue;
+    const taken = a + 8 + ((r.w(a + 6) << 24) >> 24);
+    let coded: number | null = null;
+    for (let b = a + 8; b < taken; b += 2) if ((coded = loadsImm(r, b)) !== null) break;
+    if (coded === null || coded >= end || !isDecodeTable(r, coded)) continue;
+    for (let b = taken; b < taken + 0x10; b += 2) {
+      const parallel = loadsImm(r, b);
+      if (parallel === null) continue;
+      if (parallel < end && parallel !== coded && isDecodeTable(r, parallel)) return { coded, parallel };
+      break;
+    }
+  }
+  return null;
+}
+
+function recordsWalked(r: Sc4Mem, end: number, countAt: number, inRom: number, count: number): number | null {
+  let priced = true;
+  for (let i = 0; i < count && priced; i++) priced = r.l(inRom + STRIDE * i) > 0 && r.l(inRom + STRIDE * i) <= MAX_VALUE;
+  const walked = new Map<number, number>();
+  for (let a = 0; a < end; a += 2) {
+    if (loadsImm(r, a) === inRom && priced) return inRom;
+    if ((r.w(a) & 0xf1ff) !== 0x207c || r.l(a + 2) < RAM_BASE) continue;
+    const adda = 0xd1c0 | (r.w(a) & 0x0e00);
+    for (let b = a + 6; b < a + 0x100 && b < end; b += 2) {
+      if (r.w(b) !== 0x7052 || r.w(b + 2) !== adda) continue;
+      let named = false;
+      for (let c = a + 6; c < b + 0x20 && !named; c += 2) named = r.l(c) === countAt;
+      if (named) walked.set(r.l(a + 2), (walked.get(r.l(a + 2)) ?? 0) + 1);
+      break;
+    }
+  }
+  const top = [...walked].sort((x, y) => y[1] - x[1]);
+  return top.length && top[0]![1] > (top[1]?.[1] ?? 0) ? top[0]![0] : null;
+}
+
 function locateRecords(rom: Uint8Array): Sc4CoinTables | Refusal {
   const r = romMem(rom);
   const end = Math.min(rom.length, CODE_END) - 0x90;
-  const parRefs: [number, number][] = [];
-  const codedRefs: [number, number][] = [];
-  for (let a = 0; a < end; a += 2) {
-    if ((r.w(a) & 0xf1ff) !== 0x207c) continue;
-    const x = r.l(a + 2);
-    if (x >= end) continue;
-    if (isRecordsTable(r, x, 'parallel')) parRefs.push([a, x]);
-    else if (isRecordsTable(r, x, 'coded')) codedRefs.push([a, x]);
+  const known = dispatcherTables(r, end);
+  const scan = (read: boolean): { par: [number, number][]; coded: [number, number][] } => {
+    const par: [number, number][] = [];
+    const coded: [number, number][] = [];
+    for (let a = 0; a < end; a += 2) {
+      const x = loadsImm(r, a);
+      if (x === null || x >= end) continue;
+      if (read ? x === known?.parallel : isRecordsTable(r, x, 'parallel')) par.push([a, x]);
+      else if (read ? x === known?.coded : isRecordsTable(r, x, 'coded')) coded.push([a, x]);
+    }
+    return { par, coded };
+  };
+  let refs = scan(false);
+  if (!refs.par.length || !refs.coded.length || !refs.coded.some(([ac]) => refs.par.some(([ap]) => Math.abs(ac - ap) <= 0x30))) {
+    if (known) refs = scan(true);
   }
+  const parRefs = refs.par;
+  const codedRefs = refs.coded;
   let found: { coded: number; parallel: number; binary: number; handlers: number[] } | null = null;
   for (const [ac, c] of codedRefs) {
     for (const [ap, p] of parRefs) {
@@ -87,7 +149,8 @@ function locateRecords(rom: Uint8Array): Sc4CoinTables | Refusal {
   }
   const inRom = countAt - STRIDE * count;
   const ram = [...bases].filter((b) => b >= RAM_BASE);
-  const base = bases.has(inRom) ? inRom : ram.length === 1 ? ram[0]! : null;
+  let base = bases.has(inRom) ? inRom : ram.length === 1 ? ram[0]! : null;
+  if (base === null) base = recordsWalked(r, end, countAt, inRom, count);
   if (base === null) return { refused: 'Scorpion 4 coin tables: the coin records were not found' };
   return { form: 'records', base, count, countAt, coded: found.coded, parallel: found.parallel, select: { binary: found.binary, handlers: found.handlers } };
 }
@@ -117,12 +180,65 @@ function locateList(rom: Uint8Array): Sc4CoinTables | Refusal {
   return { form: 'list', ...at, codes, select: binary === null ? null : { binary, handlers: [] } };
 }
 
+function locateStrobed(rom: Uint8Array): Sc4CoinTables | Refusal {
+  const r = romMem(rom);
+  const end = Math.min(rom.length, CODE_END) - 0x30;
+  for (let a = 0x10; a < end; a += 2) {
+    if ((r.w(a) & 0xfff8) !== 0x0200 || r.w(a + 2) !== 0x0017) continue;
+    let strobe = false;
+    for (let b = a - 2; b >= a - 0x10; b -= 2) if ((r.w(b) & 0xfff8) === 0x0800 && r.w(b + 2) === 3) strobe = true;
+    if (!strobe) continue;
+    const walked = walkIndex(r, a + 4, r.w(a) & 7);
+    if (walked) return { form: 'strobed', ...walked };
+  }
+  return { refused: 'no Scorpion 4 strobed coin scan found' };
+}
+
+function walkIndex(r: Sc4Mem, from: number, start: number): { base: number; stride: number } | null {
+  const d: (number | null)[] = new Array(8).fill(null);
+  const an: (number | null)[] = new Array(8).fill(null);
+  const addr: (number | null)[] = new Array(8).fill(null);
+  d[start] = 1;
+  for (let a = from, n = 0; n < 16; n++) {
+    const w = r.w(a);
+    const dst = (w >> 9) & 7;
+    const src = w & 7;
+    if ((w & 0xf100) === 0x7000) { d[dst] = 0; a += 2; }
+    else if ((w & 0xf1f8) === 0x1000) { d[dst] = d[src]; a += 2; }
+    else if ((w & 0xf1f8) === 0x2000) { d[dst] = d[src]; a += 2; }
+    else if ((w & 0xf1f8) === 0x2040) { an[dst] = d[src]; a += 2; }
+    else if ((w & 0xf1f8) === 0x2048) { an[dst] = an[src]; addr[dst] = addr[src]; a += 2; }
+    else if ((w & 0xf1f8) === 0xd080) { if (d[dst] === null || d[src] === null) return null; d[dst]! += d[src]!; a += 2; }
+    else if ((w & 0xf1f8) === 0x9080) { if (d[dst] === null || d[src] === null) return null; d[dst]! -= d[src]!; a += 2; }
+    else if ((w & 0xf1f8) === 0xe188) { if (d[src] === null) return null; d[src]! *= 1 << (dst || 8); a += 2; }
+    else if ((w & 0xf1f8) === 0xd1c0) { if (an[dst] === null || d[src] === null) return null; an[dst]! += d[src]!; a += 2; }
+    else if ((w & 0xf1f8) === 0xd1c8) { if (an[dst] === null || an[src] === null) return null; an[dst]! += an[src]!; a += 2; }
+    else if ((w & 0xf1ff) === 0xd1fc) { addr[dst] = r.l(a + 2); a += 6; }
+    else if ((w & 0xf1ff) === 0x41f9) { addr[dst] = r.l(a + 2); an[dst] = 0; a += 6; }
+    else if ((w & 0xfff8) === 0x4a30) {
+      const ext = r.w(a + 2);
+      if ((ext & 0x0fff) !== 0x0800) return null;
+      const rn = (ext >> 12) & 7;
+      const base = addr[w & 7];
+      const index = ext & 0x8000 ? an[rn] : d[rn];
+      const onBase = an[w & 7];
+      if (base === null || base === undefined || index === null || index === undefined || onBase === null || onBase === undefined) return null;
+      const stride = index + onBase;
+      if (stride !== 20 && stride !== 22) return null;
+      return { base, stride };
+    } else return null;
+  }
+  return null;
+}
+
 export function locateSc4CoinTables(rom: Uint8Array): Sc4CoinTables | Refusal {
   const rec = locateRecords(rom);
   if (!('refused' in rec)) return rec;
   const list = locateList(rom);
   if (!('refused' in list)) return list;
-  return { refused: 'no Scorpion 4 coin table this reader knows (neither coin records nor a coin list)' };
+  const strobed = locateStrobed(rom);
+  if (!('refused' in strobed)) return strobed;
+  return { refused: 'no Scorpion 4 coin table this reader knows (no coin records, coin list or strobed scan)' };
 }
 
 function coded(sel: Sc4Select | null, mem: Sc4Mem): boolean {
@@ -134,7 +250,7 @@ const recordsCoin = (t: Extract<Sc4CoinTables, { form: 'records' }>, mem: Sc4Mem
   if (idx >= t.count) return 'refused';
   const rec = t.base + STRIDE * idx;
   const pence = mem.l(rec);
-  if (pence === 0 || pence > 100_000) return null;
+  if (pence === 0 || pence > MAX_VALUE) return null;
   const kind = recordKind(t, mem, idx);
   if (kind === 'unread') return null;
   return { pence, token: false };
@@ -182,12 +298,14 @@ const nameAt = (mem: Sc4Mem, a: number): string => {
   return s;
 };
 
+const recordIndex = (t: Extract<Sc4CoinTables, { form: 'records' }>, mem: Sc4Mem, p: number, isCoded: boolean): number =>
+  (isCoded ? mem.w(t.coded + 2 * (mem.w(t.select.binary) ? p & 0x1f : p)) : mem.w(t.parallel + 2 * p));
+
 export function sc4ProgramCoin(t: Sc4CoinTables, mem: Sc4Mem, pattern: number): Sc4ProgramCoin {
   const p = pattern & 0x3f;
+  if (t.form === 'strobed') return strobedCoin(t, mem, p);
   if (t.form === 'records') {
-    const isCoded = coded(t.select, mem);
-    const idx = isCoded ? mem.w(t.coded + 2 * (mem.w(t.select.binary) ? p & 0x1f : p)) : mem.w(t.parallel + 2 * p);
-    return recordsCoin(t, mem, idx);
+    return recordsCoin(t, mem, recordIndex(t, mem, p, coded(t.select, mem)));
   }
   if (coded(t.select, mem)) {
     if (t.codes === null) return null;
@@ -195,6 +313,17 @@ export function sc4ProgramCoin(t: Sc4CoinTables, mem: Sc4Mem, pattern: number): 
   }
   return listCoin(t, mem, p);
 }
+
+const strobedCoin = (t: Extract<Sc4CoinTables, { form: 'strobed' }>, mem: Sc4Mem, p: number): Sc4ProgramCoin => {
+  let built = false;
+  for (let i = 0; i < 0x18 && !built; i++) built = (mem.w(t.base + t.stride * i) >> 8) !== 0;
+  if (!built) return null;
+  if (!(p & 8)) return 'refused';
+  const rec = t.base + t.stride * (p & 0x17);
+  if ((mem.w(rec) >> 8) === 0) return 'refused';
+  const pence = mem.w(rec + 2);
+  return pence === 0 ? 'refused' : { pence, token: false };
+};
 
 export function sc4TokenLine(t: Sc4CoinTables, mem: Sc4Mem): number | null {
   if (t.form !== 'list') return null;
@@ -208,13 +337,54 @@ export function sc4TokenLine(t: Sc4CoinTables, mem: Sc4Mem): number | null {
   return lines.length === 1 ? lines[0]! : null;
 }
 
+export function sc4CoinName(name: string, value: number): 'agrees' | 'neutral' | 'other' {
+  if (!/^\d/.test(name)) return 'neutral';
+  const m = /^(\d+)\s*(PND|PD|POUND|P|T)\b/.exec(name);
+  if (!m) return 'other';
+  return Number(m[1]) * (m[2] === 'P' || m[2] === 'T' ? 1 : 100) === value ? 'agrees' : 'other';
+}
+
+export function sc4CoinsUnpriced(t: Sc4CoinTables, mem: Sc4Mem, patterns: readonly number[]): boolean {
+  if (t.form !== 'records') return false;
+  const isCoded = coded(t.select, mem);
+  for (const pattern of patterns) {
+    const idx = recordIndex(t, mem, pattern & 0x3f, isCoded);
+    if (idx >= t.count) continue;
+    const rec = t.base + STRIDE * idx;
+    const at = mem.l(rec + 0x46);
+    if (at === 0 || at >= CODE_END) continue;
+    if (sc4CoinName(nameAt(mem, at), mem.l(rec)) === 'other') return true;
+  }
+  return false;
+}
+
+export function locateSc4CoinDebounce(rom: Uint8Array): number | null {
+  const r = romMem(rom);
+  const end = Math.min(rom.length, CODE_END) - 12;
+  for (let a = 0x20; a < end; a += 2) {
+    if ((r.w(a) & 0xfff8) !== 0x3210 || (r.w(a + 2) & 0xfff8) !== 0x8250 || (r.w(a + 4) & 0xfff8) !== 0xc250
+      || (r.w(a + 6) & 0xfff8) !== 0x3010 || (r.w(a + 8) & 0xfff8) !== 0xc050 || r.w(a + 10) !== 0x8240) continue;
+    const reg = r.w(a + 4) & 7;
+    for (let b = a - 6; b >= a - 0x20; b -= 2) {
+      if (r.w(b) === (0x207c | (reg << 9))) {
+        const at = r.l(b + 2);
+        return at >= RAM_BASE ? at : null;
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
 export function sc4CoinSource(t: Sc4CoinTables): string {
+  if (t.form === 'strobed') return `Scorpion 4 strobed coin records ${hex(t.base)} (${t.stride} bytes each)`;
   return t.form === 'records'
     ? `Scorpion 4 coin records ${hex(t.base)} (${t.count}), decode tables ${hex(t.parallel)}/${hex(t.coded)}`
     : `Scorpion 4 coin list ${hex(t.list)}${t.codes === null ? '' : `, codes ${hex(t.codes)}`}`;
 }
 
 export function sc4CoinTable(t: Sc4CoinTables, mem: Sc4Mem, patterns: readonly number[]): CoinLineTable | Refusal {
+  if (sc4CoinsUnpriced(t, mem, patterns)) return { refused: `${sc4CoinSource(t)}: the program's coins state no price` };
   const lines: CoinLine[] = [];
   for (let line = 0; line < SC4_COIN_LINES; line++) {
     const pat = patterns[line];

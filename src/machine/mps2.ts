@@ -1,4 +1,6 @@
+import { countOutClick, outClicksOf } from './payoutcheck';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel, type CabinetSwitch, type CashLedger, type Machine, type MachineDisplay } from './machine';
+import { triacSenseRelease } from '../hw/triacsense';
 import { Reel } from '../hw/reel';
 import { I8255 } from '../hw/i8255';
 import { Tms9995, type Tms9995Bus } from '../cpu/tms9995';
@@ -10,6 +12,7 @@ import { BASE_BOARD_BASS_FREQ } from '../hw/blipleak';
 import { JpmReels } from '../hw/jpmreels';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { Hopper, v20Waveform } from '../hw/hopper';
+import type { SlideEffect } from '../layout/fmlconfig';
 import { DataPak } from '../hw/datapak';
 import type { ReelGeometry } from './layoutreels';
 import { layoutPanelRows, type LayoutSwitch } from './layoutswitches';
@@ -20,8 +23,9 @@ import { noteRomCut } from './boarddefaults';
 import { COIN_RAW, coinMatrixSteps } from './coinraw';
 import { StrayCounter } from './strayaccess';
 import type { DigitKind, CoinWiringStatus } from './machine';
-import { calibratorState, changeOf, detectCoins, linesOf, MeterStepCalibrator, wiringKey, wiringStateFor, type CalibratorState, type CoinLineTable, type CoinWiring, type SlotCoin, type WatchedCoin } from './coinwiring';
-import { readMps2CoinTable } from './mps2coins';
+import { calibratorState, changeOf, detectCoins, linesOf, MeterStepCalibrator, PairedMeterCheck, wiringKey, wiringStateFor, type CalibratorState, type CoinLineTable, type CoinWiring, type SlotCoin, type WatchedCoin } from './coinwiring';
+import { metersInPairs, pairedBank, PendingCounterFinder, readCountedMeters, readCreditMeters, readMps2CoinTable } from './mps2coins';
+import { lockoutRefuses, type CoinLockoutWiring } from '../hw/coinlockout';
 import { CoinBook, bookedOfSlotCoin, statedCoinOf, type BookedCoin } from './coinbook';
 
 const RAM_LO = 0xe800;
@@ -41,9 +45,23 @@ const WATCHDOG_CYCLES = 1_000_000;
 const COIN_HOLD = Math.round(0.15 * CLOCK);
 const COIN_GAP = Math.round(0.15 * CLOCK);
 
+const COIN_INHIBIT_MASKS: readonly (number | null)[] = [
+  ...Array(20).fill(null),
+  0x10,
+  0x20,
+  0x40,
+  0x80,
+];
+const COIN_INHIBITS: CoinLockoutWiring = { openSense: 0, mask: 0xf0, bits: [], masks: COIN_INHIBIT_MASKS };
+const INHIBITED_LINES = 0xf << 20;
+
 const TUBE_FULL_MASK = 0b0000_0111;
 
 const METER_UNIT_PENCE = 10;
+
+const METER_STEPS: readonly number[] = [1, 2, 5, 10];
+
+const CASH_IN_LINE = 1;
 
 const METER_TICK_CYCLES = 4000;
 
@@ -64,7 +82,9 @@ function v20UnfittedReelpos(pos: number, bankSteps: number): number {
 }
 
 export class Mps2 implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['fitted', 'windowOnly', 'wiring', 'coinSlots', 'slotStated'];
+  triacSenseLine = -1;
+  triacSenseMask = 0xff;
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'triacInMult', 'triacOutMultRaw', 'triacHasMoney', 'fitted', 'windowOnly', 'wiring', 'coinSlots', 'slotStated', 'creditTubesRead', 'payoutSlides', 'pendingFinder'];
 
   readonly digitKind: DigitKind = 'impact';
   readonly clockHz = CLOCK;
@@ -96,34 +116,198 @@ export class Mps2 implements Machine {
 
   private readonly ledger = newCashLedger();
   private readonly coinBook = new CoinBook(this.ledger, Math.round(1.5 * CLOCK));
+  get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private readonly dropLine = new Array<number>(4).fill(-1);
   private readonly dropWait = new Array<number>(4).fill(0);
   private dropping = false;
   coinsRefused = 0;
   private meterInPence: number[] = [];
-  private meterOutPence: number[] = [];
   get cashLedger(): CashLedger | undefined {
     return this.ledger;
   }
 
-  setMeterMoney(inMult: readonly number[], outMult: readonly number[]): void {
+  setMeterMoney(inMult: readonly number[], outMult: readonly number[], triacIn: readonly number[] = [], triacOut: readonly number[] = []): void {
     this.meterInMult = [...inMult];
+    this.meterInMultRaw = [...inMult];
     this.meterOutMultRaw = [...outMult];
-    this.meterOutMult = [...ledgerOutMults({ in: inMult, out: outMult })[0]];
+    const [meterOut] = ledgerOutMults({ in: inMult, out: outMult }, { in: triacIn, out: triacOut });
+    this.meterOutMult = [...meterOut!];
+    this.triacInMult = [...triacIn];
+    this.triacOutMultRaw = [...triacOut];
+    this.triacHasMoney = triacIn.some((x) => x) || triacOut.some((x) => x);
+    const t = this.readCoinTable();
+    if ('lines' in t) for (const bit of t.coinMeterBits ?? []) this.meterOutMult[bit + 1] = 0;
+    const counted = readCountedMeters(this.rom);
+    if (counted) {
+      const { coinBit, payBit } = counted;
+      if ((inMult[coinBit] ?? 0) > 0 && (this.meterOutMult[payBit] ?? 0) > 0 && !inMult[coinBit + 1] && !outMult[payBit + 1]) {
+        this.meterInMult = [0, ...this.meterInMult.slice(0, -1)];
+        this.meterOutMult = [0, ...this.meterOutMult.slice(0, -1)];
+      }
+    }
+    const credit = readCreditMeters(this.rom);
+    if (credit && this.meterOutMult.some((x) => x)) {
+      this.meterOutMult = this.meterOutMult.map(() => 0);
+      this.meterOutMult[credit.payBit + 1] = 1;
+      this.meterInMult = this.meterInMult.map((x) => (x > 0 ? 1 : 0));
+    }
     this.meterInPence = this.meterInMult.map((x) => x * METER_UNIT_PENCE);
-    this.meterOutPence = this.meterOutMult.map((x) => x * METER_UNIT_PENCE);
+    this.priceTokenTubes();
+    this.pairedUnitRead = -1;
+    this.creditTubesRead = -1;
   }
+  readonly meterNameOffset = 1;
   private meterInMult: number[] = [];
   private meterOutMult: number[] = [];
+  private triacInMult: number[] = [];
+  private triacOutMultRaw: number[] = [];
+  private triacHasMoney = false;
+  private meterInMultRaw: number[] = [];
   private meterOutMultRaw: number[] = [];
   readonly meterTotals = { in: 0, out: 0 };
 
   private bookMeterLine(line: number): void {
     if (this.wiring) { this.bookWiredLine(line); return; }
-    if ((this.meterInPence[line] ?? 0) > 0) this.meterTakesCoin();
-    const outP = this.meterOutPence[line] ?? 0;
-    if (line === TOKEN_OUT_LINE) this.ledger.tokenOutPence += outP;
-    else if (outP) this.coinBook.cashOut(outP);
+    if ((this.meterInPence[line] ?? 0) > 0) {
+      this.findPending(line);
+      if ((this.pendingAt[line] ?? -1) < 0) this.meterTakesCoin();
+    } else if (this.dropping && !this.meterChecksCoins) this.meterTakesCoin();
+    if (this.unitState.cal.win.open) {
+      const inC = this.meterInMult[line] ?? 0;
+      if (inC > 0) this.unitCal().count(inC, this.now);
+    }
+    this.countMeterOut(this.meterOutMultRaw[line] ?? 0);
+  }
+
+  private countMeterOut(raw: number): void {
+    if (raw > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
+  }
+
+  private payoutSlides: readonly SlideEffect[] = [null, null, null, null, null];
+  setPayoutSlides(slides: readonly SlideEffect[] | null): void {
+    this.payoutSlides = Array.from({ length: 5 }, (_, i) => slides?.[i] ?? null);
+    this.coinBook.setSlides(this.payoutSlides);
+    this.priceTokenTubes();
+  }
+
+  private get tokenOutMeterPence(): number | null {
+    const m = this.meterOutMult[TOKEN_OUT_LINE] ?? 0;
+    return m > 0 ? m * METER_UNIT_PENCE : null;
+  }
+  private priceTokenTubes(): void {
+    const p = this.tokenOutMeterPence;
+    this.payoutSlides.forEach((e, line) => this.coinBook.payouts.setDefault(line, e === 'token' ? p : null));
+  }
+  private static readonly HOPPER_LINE = 8;
+  private isPayoutLine(i: number): boolean {
+    return this.payoutSlides[i] !== null || (i >= 1 && i <= 3 && ((this.creditTubes() >> (i - 1)) & 1) === 1);
+  }
+  private get hopperFitted(): boolean { return (this.hoppersFlag & 0x40) === 0; }
+  readonly outClicks: number[] = [];
+  get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMultRaw); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.coinBook.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    const rows: { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] = [];
+    for (let line = 0; line < 5; line++) {
+      if (!this.isPayoutLine(line)) continue;
+      const e = this.payoutSlides[line];
+      rows.push({ line, kind: e === 'token' ? 'token-tube' : 'tube', displayNumber: line + 1, defaultPence: typeof e === 'number' ? e : e === 'token' ? this.tokenOutMeterPence : null });
+    }
+    if (this.hopperFitted) rows.push({ line: Mps2.HOPPER_LINE, kind: 'hopper', displayNumber: 1, defaultPence: null });
+    return rows;
+  }
+  get unpricedPayoutLines(): readonly number[] {
+    return this.payoutDevices.filter((d) => d.defaultPence === null && !(d.line < 5 && this.payoutSlides[d.line] === 'token')).map((d) => d.line);
+  }
+  get tokenPayoutLines(): readonly number[] {
+    return this.payoutSlides.flatMap((e, i) => (e === 'token' ? [i] : []));
+  }
+  get meterOnlyPayout(): boolean {
+    return this.payoutDevices.length === 0 && this.meterOutMultRaw.some((x) => x > 0);
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
+
+  private bookPayoutLine(i: number): void {
+    if (this.isPayoutLine(i)) this.coinBook.tube(i);
+    else this.coinBook.unnamed(i);
+  }
+
+  private readonly hopperBooked = { paid: 0 };
+  private bookHoppers(): void {
+    if (!this.hopperFitted) return;
+    const fresh = this.hopper.paid - this.hopperBooked.paid;
+    this.hopperBooked.paid = this.hopper.paid;
+    if (fresh <= 0) return;
+    for (let k = 0; k < fresh; k++) this.coinBook.tube(Mps2.HOPPER_LINE);
+  }
+
+  private readonly unitState: { cal: CalibratorState } = { cal: calibratorState() };
+
+  private unitCal(): MeterStepCalibrator {
+    return this.meterLaw(this.unitState.cal);
+  }
+
+  private meterLaw(s: CalibratorState): MeterStepCalibrator {
+    const unit = this.pairedUnit();
+    return unit === null
+      ? new MeterStepCalibrator(Mps2.WIRING_QUIET, Mps2.WIRING_FIRST_WAIT, s)
+      : new PairedMeterCheck(unit, Mps2.WIRING_QUIET, Mps2.WIRING_FIRST_WAIT, s);
+  }
+
+  private pairedUnitRead = -1;
+
+  private pairedUnit(): number | null {
+    if (this.pairedUnitRead === -1) this.pairedUnitRead = this.readPairedUnit() ?? 0;
+    return this.pairedUnitRead || null;
+  }
+
+  private readPairedUnit(): number | null {
+    if (!metersInPairs(this.rom)) return null;
+    const t = this.coinLineTable;
+    const coins = t ? detectCoins(t) : null;
+    const x = this.meterInMult[CASH_IN_LINE] ?? 0;
+    if (!t || !(coins instanceof Map) || x <= 0) return null;
+    for (const l of t.lines) {
+      const c = coins.get(l.line);
+      if (typeof c !== 'number' || l.credits <= 0 || l.change.length) continue;
+      const unit = c / l.credits / x;
+      return METER_STEPS.includes(unit) ? unit : null;
+    }
+    return null;
+  }
+
+  private creditTubes(): number {
+    if (this.creditTubesRead === -1) {
+      const counted = this.meterOutMult.some((x) => x) ? readCountedMeters(this.rom)?.tubeBits ?? 0 : 0;
+      const tubes = counted || (this.meterOutMult.some((x) => x) ? readCreditMeters(this.rom)?.tubeBits ?? 0 : 0);
+      this.creditTubesRead = tubes && !this.coinsPriceable() ? tubes : 0;
+    }
+    return this.creditTubesRead;
+  }
+  private creditTubesRead = -1;
+
+  private coinsPriceable(): boolean {
+    if (!this.meterChecksCoins) return false;
+    const t = this.coinLineTable;
+    const priced = t ? detectCoins(t) : null;
+    if (priced instanceof Map) for (const c of priced.values()) if (typeof c === 'number' || c.token !== null) return true;
+    for (const c of this.slotStated.values()) if (typeof c === 'number' || (c !== null && typeof c === 'object')) return true;
+    return false;
+  }
+
+  private unitSample(line: number): number | null {
+    const coin = this.dropCoin(line);
+    const v = typeof coin === 'number' ? coin : coin !== null && typeof coin === 'object' ? coin.token : null;
+    return v === null ? null : v - this.changeOn(line, v);
+  }
+
+  private tickUnit(): void {
+    const closed = this.unitCal().tick(this.now);
+    if (!closed) return;
+    const s = this.unitState.cal;
+    if (s.state === 'calibrated' && !METER_STEPS.includes(s.step!)) { s.state = 'disagrees'; s.step = null; }
   }
 
   private dropCoin(line: number): BookedCoin {
@@ -137,13 +321,14 @@ export class Mps2 implements Machine {
   private bookCoinTaken(line: number): void {
     const coin = this.dropCoin(line);
     this.coinBook.coin(coin);
-    if (typeof coin !== 'number') return;
+  }
+
+  private changeOn(line: number, coin: number): number {
     const pence = new Map<number, number>([[line, coin]]);
     const t = this.coinLineTable;
     const priced = t ? detectCoins(t) : null;
     if (priced instanceof Map) for (const [l, c] of priced) if (typeof c === 'number') pence.set(l, c);
-    const change = changeOf(t, pence).get(line) ?? 0;
-    if (change > 0) this.coinBook.cashOut(change);
+    return changeOf(t, pence).get(line) ?? 0;
   }
 
   private get meterChecksCoins(): boolean {
@@ -162,7 +347,56 @@ export class Mps2 implements Machine {
     this.dropWait[k] = 0;
   }
 
+  private bankTakesCoin(): void {
+    if (this.pairedBankAt === -2) this.pairedBankAt = pairedBank(this.rom) ?? -1;
+    if (this.pairedBankAt < 0) return;
+    const odd = this.ram[this.pairedBankAt + 1]! & 1;
+    if (odd && !this.bankOddSeen) this.meterTakesCoin();
+    this.bankOddSeen = odd;
+  }
+  private pairedBankAt = -2;
+  private bankOddSeen = 0;
+
+  private readonly pendingAt = new Array<number>(9).fill(-1);
+  private readonly pendingSeen = new Array<number>(9).fill(0);
+  private readonly pendingPulseAt = new Array<number>(9).fill(0);
+  private readonly pendingFinder = new PendingCounterFinder();
+  private inPairsRead = -1;
+
+  private findPending(line: number): void {
+    if (line >= this.pendingAt.length) return;
+    this.pendingPulseAt[line] = this.now;
+    if (this.pendingAt[line]! >= 0) return;
+    if (this.inPairsRead === -1) this.inPairsRead = metersInPairs(this.rom) ? 1 : 0;
+    if (this.inPairsRead) return;
+    const at = this.pendingFinder.pulse(line, this.ram, RAM_LO, RAM_HI, this.now);
+    if (at === null) return;
+    this.pendingAt[line] = at;
+    this.pendingSeen[line] = this.ram[at]!;
+    if (this.pendingFinder.rose) this.meterTakesCoin();
+  }
+
+  private pendingStillCounts(): void {
+    for (let l = 0; l < this.pendingAt.length; l++) {
+      const at = this.pendingAt[l]!;
+      if (at >= 0 && this.now - this.pendingPulseAt[l]! > Mps2.WIRING_QUIET && this.ram[at]) this.pendingAt[l] = -1;
+    }
+  }
+
+  private pendingTakesCoin(): void {
+    for (let l = 0; l < this.pendingAt.length; l++) {
+      const at = this.pendingAt[l]!;
+      if (at < 0) continue;
+      const v = this.ram[at]!;
+      const up = (v - this.pendingSeen[l]!) & 0xff;
+      this.pendingSeen[l] = v;
+      if (up > 0 && up < 0x80) this.meterTakesCoin();
+    }
+  }
+
   private tickDrops(cycles: number): void {
+    this.bankTakesCoin();
+    this.pendingTakesCoin();
     let any = false;
     for (let i = 0; i < this.dropLine.length; i++) {
       if (this.dropLine[i]! < 0) continue;
@@ -181,10 +415,10 @@ export class Mps2 implements Machine {
     change: Map<number, number>;
   } | null = null;
 
-  private wiringState: { key: string; cal: CalibratorState; held: { inC: Float64Array; outC: Float64Array }; windowLines: number[] } = Mps2.freshWiringState('');
+  private wiringState: { key: string; cal: CalibratorState; held: { inC: Float64Array }; windowLines: number[] } = Mps2.freshWiringState('');
 
-  private static freshWiringState(key: string): { key: string; cal: CalibratorState; held: { inC: Float64Array; outC: Float64Array }; windowLines: number[] } {
-    return { key, cal: calibratorState(), held: { inC: new Float64Array(9), outC: new Float64Array(9) }, windowLines: [] };
+  private static freshWiringState(key: string): { key: string; cal: CalibratorState; held: { inC: Float64Array }; windowLines: number[] } {
+    return { key, cal: calibratorState(), held: { inC: new Float64Array(9) }, windowLines: [] };
   }
 
   private static readonly WIRING_QUIET = Math.round(1.5 * CLOCK);
@@ -198,7 +432,7 @@ export class Mps2 implements Machine {
     this.wiring = {
       coins,
       conflicts,
-      cal: new MeterStepCalibrator(Mps2.WIRING_QUIET, Mps2.WIRING_FIRST_WAIT, this.wiringState.cal),
+      cal: this.meterLaw(this.wiringState.cal),
       unpricedTokens: [...coins.values()].some((c) => typeof c === 'object' && c.token === null),
       change: changeOf(this.coinLineTable, pence),
     };
@@ -220,13 +454,12 @@ export class Mps2 implements Machine {
   private bookWiredLine(line: number): void {
     const w = this.wiring!;
     let inC = this.meterInMult[line] ?? 0;
-    const outC = this.meterOutMult[line] ?? 0;
     if (line === TOKEN_IN_LINE && w.unpricedTokens) inC = 0;
     if (inC > 0) w.cal.count(inC, this.now);
     const toToken = inC > 0 && line !== TOKEN_IN_LINE && this.windowIsTokens();
     this.wiringState.held.inC[toToken ? TOKEN_IN_LINE : line] += inC;
-    this.wiringState.held.outC[line] += outC;
     this.flushWired();
+    this.countMeterOut(this.meterOutMultRaw[line] ?? 0);
   }
 
   private windowIsTokens(): boolean {
@@ -244,13 +477,9 @@ export class Mps2 implements Machine {
     const step = w.cal.step;
     for (let line = 0; line < 9; line++) {
       const inP = this.wiringState.held.inC[line]! * step;
-      const outP = this.wiringState.held.outC[line]! * step;
       this.wiringState.held.inC[line] = 0;
-      this.wiringState.held.outC[line] = 0;
       if (line === TOKEN_IN_LINE) this.ledger.tokenInPence += inP;
       else this.ledger.inPence += inP;
-      if (line === TOKEN_OUT_LINE) this.ledger.tokenOutPence += outP;
-      else this.ledger.outPence += outP;
     }
   }
 
@@ -264,7 +493,7 @@ export class Mps2 implements Machine {
       this.ledger.unpricedTokenIn += closed.coins.filter((c) => c === null).length;
       for (const l of lines) {
         const c = w.change.get(l);
-        if (c) { this.ledger.inPence += c; this.ledger.outPence += c; }
+        if (c) this.ledger.inPence += c;
       }
     }
     this.flushWired();
@@ -288,11 +517,20 @@ export class Mps2 implements Machine {
       stated.set(c.button, had === undefined || JSON.stringify(had) === JSON.stringify(coin) ? coin : null);
     }
     this.slotStated = stated;
+    this.pairedUnitRead = -1;
+    this.creditTubesRead = -1;
   }
   private slotStated = new Map<number, BookedCoin>();
 
   get unnamedCoinLines(): readonly number[] {
-    return this.coinSlots.map((s) => s.line);
+    const host = this.unpricedCoinLines;
+    const drawn = this.coinSlots.map((s) => s.line);
+    return host ? [...new Set([...drawn, ...host.map((c) => c.line)])].sort((a, b) => a - b) : drawn;
+  }
+
+  get unpricedCoinLines(): readonly { line: number; credits: number | null }[] | undefined {
+    if (!this.creditTubes()) return undefined;
+    return [19, 20, 21, 22, 23].map((line) => ({ line, credits: null }));
   }
 
   get coinLineTable(): CoinLineTable | null {
@@ -315,13 +553,24 @@ export class Mps2 implements Machine {
   }
 
   private ppi26a = 0; private ppi26b = 0;
+  private coinLockSeen = false;
+  private tokenLockSeen = false;
+  private tokenLockOutputWritten = false;
   private ppi22b = 0; private ppi22cPrev = 0;
   private ppi25a = 0; private ppi25b = 0; private ppi25c = 0;
   static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 100, gap: 0x96 });
   private readonly hopper = new Hopper(CLOCK, Mps2.HOPPER_WAVEFORM);
   private readonly ppi26 = new I8255({
-    outA: (v) => { this.ppi26a = v; this.driveHopper(); this.driveReelBonus(v); },
-    outB: (v) => { this.ppi26b = v; this.refreshSeg(); this.driveHopper(); },
+    outA: (v) => {
+      this.ppi26a = v;
+      if ((v & 0xf0) !== 0xf0) this.coinLockSeen = true;
+      this.driveHopper(); this.driveReelBonus(v); this.driveTriacSense();
+    },
+    outB: (v) => {
+      this.ppi26b = v;
+      if (this.tokenLockOutputWritten && (v & 0x80) !== 0) this.tokenLockSeen = true;
+      this.refreshSeg(); this.driveHopper(); this.driveTriacSense();
+    },
     outC: (v) => { this.driveMeters(v); },
   }, { modeSetKeepsLatches: true });
   private readonly ppi21 = new I8255({}, { modeSetKeepsLatches: true });
@@ -353,13 +602,17 @@ export class Mps2 implements Machine {
     if (confirmed) for (let l = 0; l < 9; l++) if (confirmed & (1 << l)) this.meterConfirmed(l);
     if (this.wiring) this.tickWiring();
     if (this.dropping) this.tickDrops(cycles);
+    if (this.unitState.cal.win.open) this.tickUnit();
     this.coinBook.elapse(cycles);
   }
 
   private meterConfirmed(line: number): void {
-    if (line >= 1) this.meterCounts[line - 1]++;
-    this.meterTotals.in += this.meterInMult[line] ?? 0;
+    if (line >= 1) {
+      this.meterCounts[line - 1]++;
+    }
+    this.meterTotals.in += this.meterInMultRaw[line] ?? 0;
     this.meterTotals.out += this.meterOutMultRaw[line] ?? 0;
+    countOutClick(this.outClicks, line, this.meterOutMultRaw[line]);
     this.bookMeterLine(line);
   }
 
@@ -443,7 +696,7 @@ export class Mps2 implements Machine {
 
   constructor(roms: readonly Uint8Array[], nvram?: Uint8Array) {
     let off = 0;
-    for (const r of roms) { this.rom.set(r.subarray(0, this.rom.length - off), off); off += r.length; }
+    for (const r of roms) { if (off >= this.rom.length) break; this.rom.set(r.subarray(0, this.rom.length - off), off); off += r.length; }
     noteRomCut(this, off, 0x10000);
     if (nvram) this.ram.set(nvram.subarray(0, 0x800), RAM_LO);
 
@@ -548,7 +801,7 @@ export class Mps2 implements Machine {
   private static readonly TEST_SWITCH_ROW = 7;
   setHoppers(v: number): void { this.hoppersFlag = v & 0xff; }
   setProtocol(p: number): void { this.protocol = p; }
-  setRotary(n: number): void { this.rotary = n & 0xf; }
+  setRotary(n: number): void { this.rotary = n & 0xf; this.pairedUnitRead = -1; }
   setGame(word: number): void { this.reelBonus = word === 1; }
   get hasReelBonus(): boolean { return this.reelBonus; }
 
@@ -598,6 +851,9 @@ export class Mps2 implements Machine {
     for (const g of [0, 1, 2, 3, 4, 5]) this.jpmReels.reels[g].present = this.fitted[g];
     this.coinTimer = 0;
     this.coinInput = -1;
+    this.coinLockSeen = false;
+    this.tokenLockSeen = false;
+    this.tokenLockOutputWritten = false;
     this.dropLine.fill(-1);
     this.dropWait.fill(0);
     this.dropping = false;
@@ -609,6 +865,7 @@ export class Mps2 implements Machine {
     this.lampData = 0;
     this.lampAge = 0;
     this.hopper.reset();
+    this.hopperBooked.paid = 0;
 
     this.lamps.fill(0);
     this.digits.fill(0);
@@ -673,7 +930,10 @@ export class Mps2 implements Machine {
 
   private writeIo(a: number, v: number): void {
     switch (a & 0xc) {
-      case 0x0: this.ppi26.write(a & 3, v); break;
+      case 0x0:
+        if ((a & 3) === 1) this.tokenLockOutputWritten = true;
+        this.ppi26.write(a & 3, v);
+        break;
       case 0x4: this.ppi21.write(a & 3, v); break;
       case 0x8: this.ppi22.write(a & 3, v); break;
       default: this.ppi25.write(a & 3, v); break;
@@ -688,6 +948,38 @@ export class Mps2 implements Machine {
     for (let bit = 0; bit < 16; bit++) {
       if ((data >> bit) & 1) this.lamps[base + bit] = LAMP_PERSISTENCE;
     }
+  }
+
+  private triacSenseWord = 0;
+  private driveTriacSense(): void {
+    const a = this.ppi26a, b = this.ppi26b;
+    const word = !(a & 8) && this.nmiEnable ? (b & 1) | ((a & 7) << 1) | ((b & 0x80) >> 3) : 0;
+    const rising = word & ~this.triacSenseWord;
+    this.triacSenseWord = word;
+    triacSenseRelease(this, rising);
+    if (rising) {
+      for (let i = 0; i < 5; i++) if ((rising >> i) & 1) this.bookPayoutLine(i);
+    }
+    if (rising && this.triacHasMoney) for (let i = 0; i < 5; i++) if ((rising >> i) & 1) this.bookTriacRise(i);
+  }
+
+  private bookTriacRise(i: number): void {
+    const inC = this.triacInMult[i] ?? 0;
+    this.meterTotals.in += inC;
+    this.meterTotals.out += this.triacOutMultRaw[i] ?? 0;
+    const w = this.wiring;
+    if (w) {
+      if (inC > 0) w.cal.count(inC, this.now);
+      this.wiringState.held.inC[0] += inC;
+      this.flushWired();
+      this.countMeterOut(this.triacOutMultRaw[i] ?? 0);
+      return;
+    }
+    if (inC > 0) {
+      this.meterTakesCoin();
+      if (this.unitState.cal.win.open) this.unitCal().count(inC, this.now);
+    }
+    this.countMeterOut(this.triacOutMultRaw[i] ?? 0);
   }
 
   private driveHopper(): void {
@@ -779,6 +1071,7 @@ export class Mps2 implements Machine {
     if (this.reelBonus) this.tickReelBonus(c);
     if (++this.lampAge >= LAMP_AGE_INSTRUCTIONS) { this.lampAge = 0; this.ageSeg(); this.ageLamps(); }
     this.hopper.tick(c);
+    if (this.hopper.paid !== this.hopperBooked.paid) this.bookHoppers();
     this.duart1.tick(c);
     this.duart2.tick(c);
     this.jpmReels.tick(c);
@@ -891,15 +1184,33 @@ export class Mps2 implements Machine {
 
   insertCoin(bit: number): void {
     if (this.coinTimer > 0 || this.mechTimer > 0 || bit < 0 || bit > 31) return;
+    if (this.tokenLockSeen && bit === 19 && (this.ppi26b & 0x80) === 0) {
+      this.coinsRefused++;
+      return;
+    }
+    if (this.coinLockSeen && bit >= 20 && bit <= 23 &&
+        lockoutRefuses(COIN_INHIBITS, this.ppi26.read(0), 1 << bit)) {
+      this.coinsRefused++;
+      return;
+    }
     if (this.wiring) {
       this.wiring.cal.coin(this.wiredValue(bit), this.now);
       this.wiringState.windowLines.push(bit);
-    } else if (!this.meterChecksCoins) {
+    } else if (!this.meterChecksCoins && !this.shutCoinWaits(bit)) {
       this.bookCoinTaken(bit);
     } else {
+      this.pendingStillCounts();
+      this.pendingFinder.dropped(this.ram, RAM_LO, RAM_HI, this.now);
       const k = this.dropLine.indexOf(-1);
       if (k < 0) this.coinsRefused++;
-      else { this.dropLine[k] = bit; this.dropWait[k] = Mps2.WIRING_FIRST_WAIT; this.dropping = true; }
+      else {
+        if (!this.dropping) {
+          this.bankTakesCoin();
+          for (let l = 0; l < this.pendingAt.length; l++) if (this.pendingAt[l]! >= 0) this.pendingSeen[l] = this.ram[this.pendingAt[l]!]!;
+        }
+        this.dropLine[k] = bit; this.dropWait[k] = Mps2.WIRING_FIRST_WAIT; this.dropping = true;
+      }
+      this.unitCal().coin(this.unitSample(bit), this.now);
     }
     if (this.tokenMech && bit === this.tokenMech[0]) {
       this.mechQueue = this.tokenMech.slice(1);
@@ -912,6 +1223,15 @@ export class Mps2 implements Machine {
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0 || this.mechTimer > 0; }
+
+  private shutCoinWaits(bit: number): boolean {
+    return ((INHIBITED_LINES >>> bit) & 1) === 1 && this.inhibitsShut();
+  }
+
+  private inhibitsShut(): boolean {
+    if (this.ppi26.read(3) & 0x10) return false;
+    return lockoutRefuses(COIN_INHIBITS, this.ppi26.read(0), 0);
+  }
 
   private static readonly TOK_MPS2 = 0x3f;
   private static readonly TOKEN_MECH: readonly number[] =

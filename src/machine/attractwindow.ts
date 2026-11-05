@@ -4,6 +4,7 @@ export interface Second {
   pics?: readonly number[];
   screen?: readonly number[];
   video?: number;
+  segs?: string;
 }
 
 export const quiet = (s: Second): boolean => !s.reels && !s.ledger && !s.alarm;
@@ -47,6 +48,12 @@ export function screenShow(w: readonly Second[]): boolean {
   return count(v.slice(0, half)) >= PICTURES_MIN && count(v.slice(half)) >= PICTURES_MIN;
 }
 
+const ZERO_DIGITS = /^digits "[ .]*0[0 .]*"$/;
+
+export function idleAtZero(w: readonly Second[]): boolean {
+  return w.length >= QUIET_LONG_S && w.every((s) => quiet(s) && moving(s) && ZERO_DIGITS.test(s.line));
+}
+
 export const VIDEO_ATTRACT_MAX = 40;
 
 export const videoPlaying = (s: Second): boolean => (s.video ?? 0) > VIDEO_ATTRACT_MAX;
@@ -57,13 +64,14 @@ export function videoShow(w: readonly Second[]): boolean {
 
 const alive = (w: readonly Second[]): boolean => w.every(quiet) && w.some(moving);
 
-export const keepable = (w: readonly Second[]): boolean => (alive(w) && varied(w)) || videoShow(w);
+export const keepable = (w: readonly Second[]): boolean => (alive(w) && varied(w)) || videoShow(w) || idleAtZero(w);
 
 export function attractFired(secs: readonly Second[], windowS: number): boolean {
   if (secs.length < windowS) return false;
   const w = secs.slice(-windowS);
   const long0 = Math.max(windowS, QUIET_LONG_S);
   if (secs.length >= long0 && (videoShow(secs.slice(-long0)) || screenShow(secs.slice(-long0)))) return true;
+  if (idleAtZero(secs.slice(-QUIET_LONG_S))) return true;
   if (!alive(w)) return false;
   if (secs.length < VARIETY_S) return false;
   const v = secs.slice(-VARIETY_S);

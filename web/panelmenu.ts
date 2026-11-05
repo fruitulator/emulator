@@ -1,5 +1,6 @@
 import { str } from './i18n';
 import { rowIcon } from './ui/icons';
+import { openLayer, type Layer } from './ui/layer';
 
 export interface PanelDownload {
   label: string;
@@ -39,6 +40,7 @@ export class DownloadMenu {
     this.button = document.createElement('button');
     this.button.type = 'button';
     this.button.className = 'schem-action nb-btn nb-btn--sm';
+    this.button.setAttribute('aria-label', str('panelmenu.download'));
     this.button.setAttribute('aria-haspopup', 'true');
     this.button.setAttribute('aria-expanded', 'false');
     this.button.append(icon(DOWNLOAD, 'schem-action-icon', 14), span('', str('panelmenu.download')));
@@ -68,13 +70,19 @@ export class DownloadMenu {
     this.button.setAttribute('aria-expanded', 'true');
     document.addEventListener('pointerdown', this.onOutside, true);
     card.querySelector('button')?.focus({ preventScroll: true });
+    this.layer = openLayer([this.popover], { kind: 'menu', close: () => this.close(true), returnTo: this.button });
   }
+
+  private layer: Layer | null = null;
 
   close(refocus = false): void {
     if (!this.isOpen) return;
     this.popover.hidden = true;
     this.button.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', this.onOutside, true);
+    const l = this.layer;
+    this.layer = null;
+    l?.release();
     if (refocus) this.button.focus({ preventScroll: true });
   }
 

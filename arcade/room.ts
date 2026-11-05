@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import { buildShell, DERIVED, modelFor, type CabinetShell } from './cabinets';
-import { cabinetDress, ENV_INTENSITY } from './cabinetlight';
+import { cabinetDress, cabinetEnvironment, captureRoomEnv, ENV_INTENSITY, REALISM_ENV_INTENSITY, swapEnvironment } from './cabinetlight';
+import { GlassCopy } from './glasscopy';
+import { FloorReflection } from './roomreflect';
+import { allRealism, readRealism, REALISM_PARTS, type RealismParts } from './realism';
 import { releaseStand, retireShell } from './slotgpu';
-import { backReach, framingDistance, glassPointAt, glassWorld, glassWorldPoint, TILT_DOWN, TILT_UP, walkUpView, type GlassHit } from './glasshit';
+import { backReach, framingDistance, glassPointAt, glassWorld, glassWorldPoint, meshPointAtUv, planePointAtUv, shown as partShown, TILT_DOWN, TILT_UP, walkUpView, type GlassHit } from './glasshit';
 import { CANVAS_OVER_GLASS_Z, GlassOverlay, glassPieces, holeGlass } from './glassflat';
 import { PlayPointer } from '../web/play/pointer';
 import { KeyHintLayer, type HintPlace } from '../web/keyhints';
@@ -16,12 +19,13 @@ import type { ArcadeMachine } from './machines';
 import type { GameMeta } from '../web/store';
 import { downloadCard, type DownloadCard } from '../web/ui/progress';
 import { NOTE_INFO, NOTE_OK, NOTE_WARN } from '../web/stopnote';
+import { convexOutline, type CabinetBox } from '../web/ui/barplace';
 import { showToast } from '../web/ui/toast';
 import { banksPlan, gridPlan, type RoomPlan, type Stand } from './floor';
 import type { Place } from './doc';
 import { BANK_MARGINS, buildRoom, dimMaterials, lightPool, type Dressing } from './dressing';
-import { glowPlan, makeGlow, type GlassGlow } from './glassglow';
-import { copyLook, lookOf as roomLook, neonMotionOn, REDUCED_MOTION, type RoomLook } from './roomlook';
+import { glowPlan, haloRects, makeGlow, type GlassGlow } from './glassglow';
+import { copyLook, lookOf as roomLook, neonMotionOn, REDUCED_MOTION, type RoomLook, isHardFloor } from './roomlook';
 import { DPR_CAP, glassSaid, roomSwitches, switchesSaid, type RoomSwitches } from './roomperf';
 import { PropLayer, type CigPart, type VendCue } from './proplayer';
 import { PlayerPills, type PillAnchor, type PillPlayer } from './playerpills';
@@ -59,6 +63,14 @@ const FOCUS_LAMP_ABOVE_M = 0.7;
 const FOCUS_LAMP_FORWARD_M = 0.6;
 const FOCUS_DIM_MS = 450;
 const FOCUS_LIFT = 1.6;
+const REALISM_GLOW_M = 8;
+const REALISM_GLOW_FADE_M = 1.5;
+const COPY_LIVE_MS = 66;
+const COPY_ATTRACT_PS = 15;
+const ENV_SETTLE_MS = 400;
+const ENV_EYE_M = 1.5;
+const SHEEN_LEVEL = 1.6;
+const SHEEN_ROUGHNESS = 0.12;
 const VIEW_FOV = 50;
 const VIEW_DIR = { x: 0.3, y: 1.1, z: 1 };
 const VIEW_LOOK_Y = 0.9;
@@ -108,6 +120,8 @@ interface Slot {
   glow: GlassGlow | null;
   glowFrom: { left: number | null; right: number | null };
   box: THREE.Box3 | null;
+  copy: GlassCopy | null;
+  sheen: THREE.Group | null;
 }
 
 export interface RoomStats {
@@ -248,6 +262,276 @@ export class Room {
     this.live.keys.layer = new KeyHintLayer(host);
     this.live.hintPlace = () => this.hintPlace();
     this.pills = new PlayerPills(host);
+    const forced = this.switches.realism;
+    this.setRealism(forced === null ? readRealism() : allRealism(forced));
+  }
+
+  realismParts: RealismParts = allRealism(false);
+  get realism(): boolean { return REALISM_PARTS.some((p) => this.realismParts[p]); }
+  private get shadowsOn(): boolean { return this.realismParts.shadows && this.switches.rShadow; }
+  private get haloOn(): boolean { return this.realismParts.halos && this.switches.rHalo; }
+  private get reflectionsOn(): boolean { return this.realismParts.reflections && this.switches.rEnv && this.switches.env; }
+  private get sheenOn(): boolean { return this.realismParts.sheen && this.switches.rGlass && this.switches.env; }
+  private get roomEnvWanted(): boolean { return this.reflectionsOn || this.sheenOn; }
+  private roomEnv: THREE.WebGLRenderTarget | null = null;
+  private envDueAt = Infinity;
+  private envLevel = ENV_INTENSITY;
+  private pictureOnly = false;
+  private copyTokens = 2;
+  private lastCopyTick = 0;
+
+  private get glowOn(): boolean {
+    return this.switches.glow || (this.realismParts.glow && this.switches.rGlow && !this.pictureOnly);
+  }
+
+  private get glowBuilt(): boolean {
+    return this.glowOn || this.haloOn;
+  }
+
+  setRealism(parts: RealismParts): void {
+    if (REALISM_PARTS.every((p) => parts[p] === this.realismParts[p])) return;
+    this.realismParts = parts;
+    this.applyRealism();
+  }
+
+  private applyRealism(): void {
+    const shadow = this.shadowsOn;
+    this.renderer.shadowMap.enabled = shadow;
+    this.renderer.shadowMap.autoUpdate = !shadow;
+    this.renderer.shadowMap.needsUpdate = shadow;
+    this.room.setRealism({ shadow, halos: this.haloOn });
+    for (const s of this.slots) if (s.shell) this.castFrom(s.shell, shadow);
+    if (!this.roomEnvWanted) this.dropRoomEnv();
+    else if (this.roomEnv) this.cabinetsOnEnv();
+    else this.envDueAt = 0;
+    this.rebuildGlows();
+    this.syncReflect();
+    for (const s of this.slots) {
+      this.unhangSheen(s);
+      this.hangSheen(s);
+    }
+    if (!this.realismParts.glow && !this.haloOn && !this.floorMirror) {
+      for (const s of this.slots) { s.copy?.dispose(); s.copy = null; }
+    }
+    if (!this.sheenOn) {
+      this.sheenMat?.dispose();
+      this.sheenMat = null;
+    }
+    this.applyDim(this.dimK);
+  }
+
+  private floorMirror: FloorReflection | null = null;
+  private syncReflect(): void {
+    const wanted = this.realismParts.floor && this.switches.rFloor && isHardFloor(this.look.carpet);
+    if (!wanted) {
+      this.floorMirror?.dispose();
+      this.floorMirror = null;
+      return;
+    }
+    this.floorMirror ??= new FloorReflection();
+    this.floorMirror.bind(this.room.floor.material as THREE.MeshStandardMaterial);
+  }
+
+  private hideExtras(): () => void {
+    const shown: THREE.Object3D[] = [];
+    for (const s of this.slots) {
+      for (const g of [s.glow?.group, s.sheen]) if (g?.visible) { g.visible = false; shown.push(g); }
+    }
+    return () => { for (const g of shown) g.visible = true; };
+  }
+
+  private drawFloorMirror(): void {
+    const mirror = this.floorMirror;
+    if (!mirror) return;
+    const b = this.plan.box;
+    this.floorBox.min.set(b.minX, -0.01, b.minZ);
+    this.floorBox.max.set(b.maxX, 0.01, b.maxZ);
+    if (!this.frustum.intersectsBox(this.floorBox)) return;
+    const back: { m: THREE.MeshBasicMaterial; map: THREE.Texture | null }[] = [];
+    const holed: Slot[] = [];
+    for (const s of this.slots) {
+      if (!s.shell || !s.glass.overlaid) continue;
+      s.copy ??= new GlassCopy();
+      holeGlass(s.shell, false);
+      holed.push(s);
+      for (const m of s.shell.glassMeshes) {
+        const mat = m.material as THREE.MeshBasicMaterial;
+        back.push({ m: mat, map: mat.map });
+        mat.map = s.copy.texture;
+      }
+    }
+    const show = this.hideExtras();
+    this.room.floor.visible = false;
+    mirror.render(this.renderer, this.scene, this.camera);
+    this.room.floor.visible = true;
+    show();
+    for (const { m, map } of back) m.map = map;
+    for (const s of holed) if (s.shell) holeGlass(s.shell, true);
+  }
+  private readonly floorBox = new THREE.Box3();
+
+  private sheenMat: THREE.MeshStandardMaterial | null = null;
+
+  private hangSheen(s: Slot): void {
+    if (!s.shell || !this.roomEnv || !this.sheenOn) return;
+    this.sheenMat ??= new THREE.MeshStandardMaterial({
+      color: 0x000000, roughness: SHEEN_ROUGHNESS, metalness: 0, transparent: true, depthWrite: false,
+      blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+      blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    this.sheenMat.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace('#include <aomap_fragment>', `reflectedLight.directSpecular = vec3( 0.0 );
+  #include <aomap_fragment>`);
+    };
+    this.sheenMat.envMap = this.roomEnv.texture;
+    this.sheenMat.envMapIntensity = SHEEN_LEVEL * this.dimK;
+    const group = new THREE.Group();
+    s.holder.updateWorldMatrix(true, false);
+    const toHolder = s.holder.matrixWorld.clone().invert();
+    for (const m of s.shell.glassMeshes) {
+      if (!m.visible) continue;
+      m.updateWorldMatrix(true, false);
+      const pane = new THREE.Mesh(m.geometry, this.sheenMat);
+      pane.matrixAutoUpdate = false;
+      pane.matrix.multiplyMatrices(toHolder, m.matrixWorld);
+      pane.renderOrder = 2;
+      pane.raycast = () => {};
+      group.add(pane);
+    }
+    s.sheen = group;
+    s.holder.add(group);
+  }
+
+  private unhangSheen(s: Slot): void {
+    if (s.sheen) { s.holder.remove(s.sheen); s.sheen = null; }
+  }
+
+  private castFrom(shell: CabinetShell, cast: boolean): void {
+    shell.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = cast; });
+  }
+
+  private realismDirty(): void {
+    if (!this.realism) return;
+    if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
+    if (this.roomEnvWanted) this.envDueAt = performance.now() + ENV_SETTLE_MS;
+    this.syncReflect();
+  }
+
+  private dressShell(s: Slot): void {
+    if (!s.shell) return;
+    if (this.renderer.shadowMap.enabled) { this.castFrom(s.shell, true); this.renderer.shadowMap.needsUpdate = true; }
+    if (this.roomEnv && this.reflectionsOn) swapEnvironment(s.shell.group, s.shell.shared, this.roomEnv.texture, this.envLevel);
+    if (s.copy) s.copy.paint = '';
+    if (this.glowBuilt) this.rebuildGlow(s, this.slots.indexOf(s));
+    this.unhangSheen(s);
+    this.hangSheen(s);
+  }
+
+  private dropRoomEnv(): void {
+    this.envDueAt = Infinity;
+    this.envLevel = ENV_INTENSITY;
+    for (const s of this.slots) this.unhangSheen(s);
+    const old = this.roomEnv;
+    this.roomEnv = null;
+    if (!old) return;
+    this.envOnShells(cabinetEnvironment(this.renderer), ENV_INTENSITY);
+    for (const s of this.slots) s.shell?.shared?.delete(old.texture);
+    old.dispose();
+  }
+
+  private cabinetsOnEnv(): void {
+    const room = this.reflectionsOn ? this.roomEnv : null;
+    this.envLevel = room ? REALISM_ENV_INTENSITY : ENV_INTENSITY;
+    this.envOnShells(room?.texture ?? cabinetEnvironment(this.renderer), this.envLevel);
+  }
+
+  private envOnShells(env: THREE.Texture, level: number): void {
+    for (const s of this.slots) if (s.shell) swapEnvironment(s.shell.group, s.shell.shared, env, level);
+  }
+
+  private captureEnv(): void {
+    this.envDueAt = Infinity;
+    if (!this.slots.some((s) => s.shell)) return;
+    const dimWas = this.dimK;
+    if (dimWas < 1) this.applyDim(1);
+    const holed = this.unholeGlasses();
+    const show = this.hideExtras();
+    const b = this.plan.box;
+    const p = this.walk.nearestFree({ x: (b.minX + b.maxX) / 2, z: (b.minZ + b.maxZ) / 2 });
+    const target = captureRoomEnv(this.renderer, this.scene, new THREE.Vector3(p.x, ENV_EYE_M, p.z));
+    show();
+    for (const s of holed) if (s.shell) holeGlass(s.shell, true);
+    for (const s of this.slots) this.shadeGlass(s);
+    const old = this.roomEnv;
+    this.roomEnv = target;
+    this.cabinetsOnEnv();
+    for (const s of this.slots) {
+      this.unhangSheen(s);
+      this.hangSheen(s);
+    }
+    if (old) {
+      for (const s of this.slots) s.shell?.shared?.delete(old.texture);
+      old.dispose();
+    }
+    this.applyDim(dimWas);
+  }
+
+  private unholeGlasses(): Slot[] {
+    const holed: Slot[] = [];
+    for (const s of this.slots) {
+      if (!s.shell) continue;
+      for (const m of s.shell.glassMeshes) {
+        const mat = m.material as THREE.MeshBasicMaterial;
+        if (mat.color.r !== 1) mat.color.setScalar(1);
+      }
+      if (s.glass.overlaid) {
+        holeGlass(s.shell, false);
+        s.glass.texture.needsUpdate = true;
+        holed.push(s);
+      }
+    }
+    return holed;
+  }
+
+  private pictureLook(on: boolean): void {
+    this.pictureOnly = on;
+    this.room.setRealism({ shadow: this.shadowsOn, halos: !on && this.haloOn, picture: on });
+    if (this.roomEnv && this.reflectionsOn) {
+      this.envLevel = on ? ENV_INTENSITY : REALISM_ENV_INTENSITY;
+      this.envOnShells(on ? cabinetEnvironment(this.renderer) : this.roomEnv.texture, this.envLevel);
+    }
+    if (this.floorMirror) this.floorMirror.shown = !on;
+    for (const s of this.slots) {
+      if (s.glow) s.glow.group.visible = !on;
+      if (s.sheen) s.sheen.visible = !on;
+      this.showPool(s);
+    }
+    this.applyDim(this.dimK);
+  }
+
+  private feedCopies(now: number, frozen: boolean): void {
+    const f = this.focus;
+    const g = f?.glass;
+    if (f?.copy && g?.mode === 'live' && f.copy.dirty && now - f.copy.at >= COPY_LIVE_MS && g.layoutCanvas && g.cab && g.shown) {
+      const c = g.shown;
+      f.copy.copy(g.layoutCanvas, c.left - g.cab.content.left, c.top - g.cab.content.top, c.width, c.height, now);
+    }
+    if (frozen) { this.lastCopyTick = 0; return; }
+    if (this.lastCopyTick) this.copyTokens = Math.min(2, this.copyTokens + ((now - this.lastCopyTick) / 1000) * COPY_ATTRACT_PS);
+    this.lastCopyTick = now;
+    if (this.copyTokens < 1) return;
+    let next: Slot | null = null;
+    for (const s of this.slots) {
+      if (!s.copy || s.glass.mode === 'live') continue;
+      if (s.copy.paint === `${s.glass.mode}:${s.glass.lastPaint}`) continue;
+      if (!next || s.copy.at < next.copy!.at) next = s;
+    }
+    if (!next) return;
+    this.copyTokens--;
+    const canvas = next.glass.texCanvas;
+    next.copy!.copy(canvas, 0, 0, canvas.width, canvas.height, now);
+    next.copy!.paint = `${next.glass.mode}:${next.glass.lastPaint}`;
   }
 
   private readonly pills: PlayerPills;
@@ -346,6 +630,7 @@ export class Room {
     if (a.minX !== b.minX || a.maxX !== b.maxX || a.minZ !== b.minZ || a.maxZ !== b.maxZ) {
       this.scene.remove(this.room.group);
       if (this.sign) { this.room.group.remove(this.sign); disposeSign(this.sign); this.sign = null; }
+      if (this.realism) this.room.setRealism({ shadow: false, halos: false });
       this.room.group.traverse((o) => {
         const mesh = o as THREE.Mesh;
         mesh.geometry?.dispose();
@@ -354,6 +639,8 @@ export class Room {
       });
       this.room = buildRoom(b, this.renderer, this.look, this.switches, plan.doorX);
       this.room.motion = neonMotionOn();
+      if (this.realism) this.room.setRealism({ shadow: this.shadowsOn, halos: this.haloOn });
+      this.floorMirror?.bind(null);
       this.scene.add(this.room.group);
       void this.hangSign();
     }
@@ -379,6 +666,7 @@ export class Room {
     }
     this.route = [];
     this.rebuildGlows();
+    this.realismDirty();
   }
 
   private makeSlot(m: ArcadeMachine, spot: Stand): Slot {
@@ -387,7 +675,7 @@ export class Room {
     holder.rotation.y = spot.yaw;
     this.scene.add(holder);
     if (m.held && !this.switches.glow) holder.add(lightPool());
-    return { glass: new Glass(m), x: spot.x, spot, shell: null, holder, loaded: false, shown: false, shellSeq: 0, shellLook: '', bounds: null, box: null, glow: null, glowFrom: { left: null, right: null } };
+    return { glass: new Glass(m), x: spot.x, spot, shell: null, holder, loaded: false, shown: false, shellSeq: 0, shellLook: '', bounds: null, box: null, glow: null, glowFrom: { left: null, right: null }, copy: null, sheen: null };
   }
 
   private static machineKey(m: ArcadeMachine): string {
@@ -397,6 +685,8 @@ export class Room {
   private dropSlot(s: Slot): void {
     this.forgetSlot(s);
     if (s.glow) { s.holder.remove(s.glow.group); s.glow.dispose(); s.glow = null; }
+    if (s.copy) { s.copy.dispose(); s.copy = null; }
+    this.unhangSheen(s);
     releaseStand(s.holder, s.shell, s.glass.texture);
     s.shell = null;
     this.scene.remove(s.holder);
@@ -473,6 +763,7 @@ export class Room {
     this.look = copyLook(look);
     this.room.restyle(this.look);
     if (signChanged) void this.hangSign();
+    this.realismDirty();
   }
 
   private hintView = '';
@@ -524,7 +815,8 @@ export class Room {
     };
     await Promise.all(Array.from({ length: parallel }, worker));
     this.openTimes.built = performance.now();
-    void this.bringAlive(kept).then(() => { this.openTimes.loaded = performance.now(); });
+    this.realismDirty();
+    void this.bringAlive(kept).then(() => { this.openTimes.loaded = performance.now(); this.realismDirty(); });
   }
 
   private readonly builds = new BuildOnce<Slot>((s) => this.slots.includes(s));
@@ -603,6 +895,7 @@ export class Room {
     s.holder.updateMatrixWorld(true);
     s.bounds = new THREE.Box3().setFromObject(s.holder).getBoundingSphere(new THREE.Sphere());
     s.box = new THREE.Box3().setFromObject(shell.group);
+    if (this.realism) this.dressShell(s);
   }
 
   private before(s: Slot): Pt {
@@ -1083,6 +1376,7 @@ export class Room {
     s.loaded = false;
     s.shown = false;
     if (!this.switches.glow) s.holder.add(lightPool());
+    if (this.realism) this.showPool(s);
   }
 
   walkUp(s: Slot): void {
@@ -1131,10 +1425,14 @@ export class Room {
     const notReadyText = str('arcade.room.n_is_not_ready_the', { 0: name });
     const hourglass = { paths: UI_ICONS.hourglass, label: str('arcade.room.getting_ready') };
     let ready = false;
+    const sayReady = (): void => {
+      if (!this.live.takesCoins()) note.notice(notReadyText, undefined, undefined, NAME_NOTE_MS, NOTE_WARN);
+      else note.notice(readyText, undefined, undefined, NAME_NOTE_MS, NOTE_OK);
+    };
     const show = (): void => {
       arrivedAt = performance.now() - t0;
       if (note.visible) return;
-      if (ready) note.notice(readyText, undefined, undefined, NAME_NOTE_MS, NOTE_OK);
+      if (ready) sayReady();
       else note.notice(connecting, undefined, undefined, READY_WAIT_MS, hourglass);
     };
     const settle = (why: string): void => {
@@ -1143,8 +1441,7 @@ export class Room {
       console.log(`[arcade] walk-up: arrived +${Math.round(arrivedAt)} ms, ${why} +${ms} ms`);
       if (this.focus !== s || !note.visible || note.text !== connecting) return;
       if (why === 'failed') note.dismiss();
-      else if (!this.live.takesCoins()) note.notice(notReadyText, undefined, undefined, NAME_NOTE_MS, NOTE_WARN);
-      else note.notice(readyText, undefined, undefined, NAME_NOTE_MS, NOTE_OK);
+      else sayReady();
     };
     let poll: ReturnType<typeof setInterval> | null = null;
     onFailed = (): void => settle('failed');
@@ -1166,6 +1463,46 @@ export class Room {
   private sayOtherVersion(name: string, action?: { label: string; run: () => void }): void {
     this.otherVersionToast?.();
     this.otherVersionToast = showToast(str('arcade.room.different_version', { 0: name }), { kind: 'warn', sticky: true, action });
+  }
+
+  private machineView(f: Slot): { pos: THREE.Vector3; look: THREE.Vector3; fov: number } {
+    const c = this.glassWorld(f);
+    const dist = framingDistance(f.shell!, this.camera, ROOM_FOV);
+    const back = Math.min(this.orbit.back, this.orbitBackMax(f, dist));
+    const v = walkUpView(c, dist * back, this.orbit.yaw, this.orbit.pitch, f.spot.yaw, dist);
+    return { pos: v.pos, look: v.look, fov: machineFov(this.orbit.back, back) };
+  }
+
+  cabinetOnScreen(): CabinetBox | null {
+    const f = this.focus;
+    if (!f?.shell) return null;
+    const v = this.machineView(f);
+    const cam = this.camera.clone();
+    cam.fov = v.fov;
+    cam.updateProjectionMatrix();
+    cam.position.copy(v.pos);
+    cam.lookAt(v.look);
+    cam.updateMatrixWorld();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const x = (p: THREE.Vector3): number => rect.left + ((p.x + 1) / 2) * rect.width;
+    const y = (p: THREE.Vector3): number => rect.top + ((1 - p.y) / 2) * rect.height;
+    const points: { x: number; y: number }[] = [];
+    for (const m of f.shell.glassMeshes) {
+      if (!partShown(m)) continue;
+      m.updateWorldMatrix(true, false);
+      for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+        const local = meshPointAtUv(m.geometry, u, v) ?? (m.userData.shaped ? planePointAtUv(m.geometry, u, v) : null);
+        if (!local) continue;
+        const p = local.applyMatrix4(m.matrixWorld).project(cam);
+        points.push({ x: x(p), y: y(p) });
+      }
+    }
+    if (!points.length) return null;
+    const left = Math.min(...points.map((p) => p.x));
+    const right = Math.max(...points.map((p) => p.x));
+    const top = Math.min(...points.map((p) => p.y));
+    const bottom = Math.max(...points.map((p) => p.y));
+    return { left, top, right, bottom, outline: convexOutline(points) };
   }
 
   stepBack(): void {
@@ -1199,17 +1536,32 @@ export class Room {
   private rebuildGlows(): void {
     for (const s of this.slots) {
       if (s.glow) { s.holder.remove(s.glow.group); s.glow.dispose(); s.glow = null; }
+      this.showPool(s);
     }
-    if (!this.switches.glow) return;
-    const size = { W: DERIVED.width, H: DERIVED.height, D: DERIVED.depth };
-    this.slots.forEach((s, i) => {
-      const plan = glowPlan(this.plan.spots, i, this.plan.box, size.W, size.D);
-      const tex = (j: number | null): THREE.Texture | null => (j === null ? null : this.slots[j].glass.texture);
-      s.glow = makeGlow(s.shell?.size ?? size, s.glass.texture, tex(plan.left), tex(plan.right), plan.wall);
-      s.glowFrom = { left: plan.left, right: plan.right };
-      s.holder.add(s.glow.group);
-    });
+    if (!this.glowBuilt) return;
+    this.slots.forEach((s, i) => this.rebuildGlow(s, i));
     this.applyDim(this.dimK);
+  }
+
+  private rebuildGlow(s: Slot, i: number): void {
+    if (s.glow) { s.holder.remove(s.glow.group); s.glow.dispose(); s.glow = null; }
+    const size = { W: DERIVED.width, H: DERIVED.height, D: DERIVED.depth };
+    const plan = glowPlan(this.plan.spots, i, this.plan.box, size.W, size.D);
+    const lit = (o: Slot): THREE.Texture => (this.realismParts.glow || this.haloOn ? (o.copy ??= new GlassCopy()).texture : o.glass.texture);
+    const tex = (j: number | null): THREE.Texture | null => (j === null || !this.glowOn ? null : lit(this.slots[j]));
+    s.glow = makeGlow(s.shell?.size ?? size, lit(s), tex(plan.left), tex(plan.right), plan.wall,
+      this.haloOn && s.shell ? haloRects(s.shell.glassMeshes, s.holder) : [], this.glowOn);
+    s.glowFrom = { left: plan.left, right: plan.right };
+    s.holder.add(s.glow.group);
+    const k = this.dimK;
+    if (k < 1) this.applyDim(k);
+  }
+
+  private showPool(s: Slot): void {
+    for (const c of s.holder.children) {
+      const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+      if (m?.isMeshBasicMaterial && m.blending === THREE.AdditiveBlending) c.visible = !this.glowOn;
+    }
   }
 
   private readonly focusLamp = (() => {
@@ -1300,6 +1652,7 @@ export class Room {
     this.dimK = k;
     this.room.dim(k);
     dimMaterials(this.props.group, k);
+    const onRoomEnv = !!this.roomEnv && this.reflectionsOn;
     const kOf = (i: number | null): number => (i !== null && this.slots[i] === this.focus && k < 1 ? 1 : k);
     for (const s of this.slots) {
       const mine = s === this.focus && k < 1;
@@ -1308,13 +1661,19 @@ export class Room {
         const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
         if (m?.isMeshBasicMaterial && m.blending === THREE.AdditiveBlending) m.opacity = 0.16 * (mine ? 1 : k);
       }
-      if (!s.shell || s.shell.modelId !== 'default') continue;
-      const env = ENV_INTENSITY * (mine ? 1 + (1 - k) * (FOCUS_LIFT - 1) : k);
-      s.shell.group.traverse((o) => {
-        const mat = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
-        if (mat?.isMeshStandardMaterial && mat.envMap) mat.envMapIntensity = env;
-      });
+      if (!s.shell || mine || (s.shell.modelId !== 'default' && !onRoomEnv)) continue;
+      this.envOnShell(s.shell, this.envLevel * k);
     }
+    const f = this.focus?.shell;
+    if (f && k < 1 && (f.modelId === 'default' || onRoomEnv)) this.envOnShell(f, this.envLevel * (1 + (1 - k) * (FOCUS_LIFT - 1)));
+    if (this.sheenMat) this.sheenMat.envMapIntensity = SHEEN_LEVEL * k;
+  }
+
+  private envOnShell(shell: CabinetShell, level: number): void {
+    shell.group.traverse((o) => {
+      const mat = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (mat?.isMeshStandardMaterial && mat.envMap) mat.envMapIntensity = level;
+    });
   }
 
   private bright = 1;
@@ -1357,11 +1716,8 @@ export class Room {
       want.set(r.maxX - 0.4, r.height - 0.2, r.maxZ - 0.4);
       look.set(cx, 0.6, (r.minZ + r.maxZ) / 2);
     } else if (f?.shell) {
-      const c = this.glassWorld(f);
-      const dist = framingDistance(f.shell, this.camera, ROOM_FOV);
-      const back = Math.min(this.orbit.back, this.orbitBackMax(f, dist));
-      this.setFov(machineFov(this.orbit.back, back));
-      const v = walkUpView(c, dist * back, this.orbit.yaw, this.orbit.pitch, f.spot.yaw, dist);
+      const v = this.machineView(f);
+      this.setFov(v.fov);
       want.copy(v.pos);
       look.copy(v.look);
     } else {
@@ -1404,10 +1760,17 @@ export class Room {
     const due: { s: Slot; g: Glass; d: number }[] = [];
     for (const s of this.slots) {
       const g = s.glass;
-      if (s.glow) s.glow.group.visible = Math.hypot(s.x - this.camPos.x, s.spot.z - this.camPos.z) < MID_M;
+      if (s.glow) {
+        const away = Math.hypot(s.x - this.camPos.x, s.spot.z - this.camPos.z);
+        if (this.realism) {
+          s.glow.group.visible = away < REALISM_GLOW_M;
+          s.glow.setFade(Math.min(1, (REALISM_GLOW_M - away) / REALISM_GLOW_FADE_M));
+        } else s.glow.group.visible = away < MID_M;
+      }
       if (g.mode === 'live') {
         if (this.live.frame(TEX_LIVE)) {
           paints++;
+          if (s.copy) s.copy.dirty = true;
           const tc = DEV_ROOM ? performance.now() : 0;
           this.overlays.get(s)?.refresh();
           if (DEV_ROOM) { const d = performance.now() - tc; glassCost.copyMs += d; glassTotals.copyMs += d; }
@@ -1436,8 +1799,13 @@ export class Room {
     }
     this.room.tick(t, this.camera.position);
     this.props.tick(t, this.room.motion);
+    if (this.realism) {
+      if (this.glowBuilt || this.floorMirror) this.feedCopies(now, frozen);
+      if (performance.now() >= this.envDueAt) this.captureEnv();
+    }
     const tGlass = performance.now();
     this.gpuTimer?.begin();
+    if (this.floorMirror) this.drawFloorMirror();
     this.renderer.render(this.scene, this.camera);
     this.gpuTimer?.end();
     if (this.live.keys.hintsShown) {
@@ -1496,8 +1864,9 @@ export class Room {
     return `${c.width}x${c.height}@${+this.renderer.getPixelRatio().toFixed(2)}`;
   }
 
-  setLiveSwitches(o: Partial<Pick<RoomSwitches, 'focusFreeze' | 'dim' | 'dpr' | 'glow' | 'lamp'>>): void {
+  setLiveSwitches(o: Partial<Pick<RoomSwitches, 'focusFreeze' | 'dim' | 'dpr' | 'glow' | 'lamp'>> & { realism?: RealismParts }): void {
     const sw = this.switches as RoomSwitches;
+    if (o.realism !== undefined) this.setRealism(o.realism);
     if (o.glow !== undefined) { sw.glow = o.glow; this.rebuildGlows(); }
     if (o.lamp !== undefined) { sw.lamp = o.lamp; this.hangFocusLamp(this.lampWanted); }
     if (o.focusFreeze !== undefined) { sw.focusFreeze = o.focusFreeze; this.freezeOthers(); }
@@ -1531,23 +1900,12 @@ export class Room {
     const pr = this.renderer.getPixelRatio();
     const tileW = Math.min(w, Math.floor(size.x * pr));
     const tileH = Math.min(h, Math.floor(size.y * pr));
+    if (this.realism) this.pictureLook(true);
     const dimWas = this.dimK;
     if (dimWas < 1) this.applyDim(1);
     const exposureWas = this.renderer.toneMappingExposure;
     this.renderer.toneMappingExposure = 1;
-    const holed: Slot[] = [];
-    for (const s of this.slots) {
-      if (!s.shell) continue;
-      for (const m of s.shell.glassMeshes) {
-        const mat = m.material as THREE.MeshBasicMaterial;
-        if (mat.color.r !== 1) mat.color.setScalar(1);
-      }
-      if (s.glass.overlaid) {
-        holeGlass(s.shell, false);
-        s.glass.texture.needsUpdate = true;
-        holed.push(s);
-      }
-    }
+    const holed = this.unholeGlasses();
     const el = this.renderer.domElement;
     const out = document.createElement('canvas');
     out.width = w;
@@ -1568,6 +1926,7 @@ export class Room {
     for (const s of holed) if (s.shell) holeGlass(s.shell, true);
     for (const s of this.slots) this.shadeGlass(s);
     if (dimWas < 1) this.applyDim(dimWas);
+    if (this.realism) this.pictureLook(false);
     this.renderer.toneMappingExposure = exposureWas;
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, size.x, size.y);

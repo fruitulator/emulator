@@ -3,13 +3,15 @@ import type { Check, CheckResult, RelayInput } from './relay';
 import type { FrameLayout } from '../src/machine/framestate';
 import type { Schematic } from '../src/machine/schematic';
 import type { Snapshot } from './snapshot';
-import type { CashLedger, CoinChute, CoinWiringStatus, DilPlace, NamedCoin } from '../src/machine/machine';
+import type { CashLedger, CoinChute, CoinWiringStatus, DilPlace, MeterTotals, NamedCoin, PayoutRow } from '../src/machine/machine';
 import type { CoinLineTable, CoinMeasurement, CoinWiring } from '../src/machine/coinwiring';
+import type { CreditWatch } from '../src/machine/coinmeasure';
 import type { DiagEntry } from './diaglog';
 import type { Recording } from '../src/machine/replay';
 import type { SwitchControl } from '../src/layout/fmlconfig';
 
 export type { CashLedger };
+export type { MeterTotals };
 
 export type { DiagEntry };
 
@@ -22,6 +24,11 @@ export function ledgerPayoutPercent(l: CashLedger): number | null {
   const take = l.inPence - l.tokenInPence;
   if (take <= 0) return null;
   return (100 * (l.outPence + l.tokenOutPence)) / take;
+}
+
+export function meterTotalsPercent(t: MeterTotals): number | null {
+  if (t.in === 0) return null;
+  return Math.trunc((t.out * 100) / t.in);
 }
 
 export interface MachineInfo {
@@ -42,9 +49,20 @@ export interface MachineInfo {
   coins?: CoinChute[];
   coinPort?: { compare: number; lines: { bit: number; mask: number }[] };
   unnamedCoins?: number[];
+  unpricedCoins?: { line: number; credits: number | null }[];
   uncountedCoins?: number[];
   unpricedPayouts?: number[];
+  meterNameOffset?: number;
   tokenPayouts?: number[];
+  payoutDevices?: {
+    line: number;
+    kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper';
+    displayNumber?: number;
+    defaultPence?: number | null;
+  }[];
+  meterOnlyPayout?: boolean;
+  cashPayouts?: number[];
+  payoutRows?: PayoutRow[];
   namesCoins?: boolean;
   coinTable?: CoinLineTable;
   coinTableRefusal?: string;
@@ -66,6 +84,7 @@ export type EmuRequest =
       panelSwitches?: Record<string, boolean>;
       namedCoins?: Record<string, NamedCoin>;
       namedPayouts?: Record<string, number>;
+      payoutMeters?: Record<string, boolean>;
       coinWiring?: CoinWiring;
       powerCycle?: boolean;
       benchStep?: boolean;
@@ -76,10 +95,11 @@ export type EmuRequest =
       relay?: { at: number };
       follow?: { cycle: number; seq: number; bufferMs: number };
     }
-  | { type: 'input'; epoch: number; id: number; on: boolean }
+  | { type: 'input'; epoch: number; id: number; on: boolean; control?: boolean }
   | { type: 'coin'; epoch: number; bit: number }
   | { type: 'name-coin'; epoch: number; line: number; coin: NamedCoin }
   | { type: 'name-payout'; epoch: number; line: number; pence: number }
+  | { type: 'payout-meter'; epoch: number; line: number; token: boolean }
   | { type: 'gate-seen'; epoch: number; lamps: number[] }
   | { type: 'coin-wiring'; epoch: number; wiring: CoinWiring }
   | { type: 'note'; epoch: number; billType: number; parallel?: boolean }
@@ -92,7 +112,7 @@ export type EmuRequest =
       namedCoins?: Record<string, NamedCoin>;
       coinWiring?: CoinWiring;
     }
-  | { type: 'measure-coins'; epoch: number; id: number; lines: number[] }
+  | { type: 'measure-coins'; epoch: number; id: number; lines: number[]; credit?: CreditWatch }
   | {
       type: 'record-start';
       epoch: number;
@@ -129,8 +149,8 @@ export type EmuResponse =
   | { type: 'loaded'; epoch: number; info: MachineInfo }
   | { type: 'load-error'; epoch: number; message: string }
   | { type: 'serial'; epoch: number; events: { ch: number; bytes: number[] }[] }
-  | { type: 'coins'; epoch: number; coins: CoinChute[] }
-  | { type: 'coin-rejected'; epoch: number; bit: number }
+  | { type: 'coins'; epoch: number; coins: CoinChute[]; unpriced?: { line: number; credits: number | null }[]; unnamed?: number[] }
+  | { type: 'coin-rejected'; epoch: number; bit: number; refused: boolean }
   | { type: 'frame'; buf: ArrayBuffer; machineS?: number }
   | { type: 'halted'; epoch: number; message: string }
   | { type: 'key-fitted'; epoch: number; positions: number[] }
@@ -165,7 +185,9 @@ export type EmuResponse =
     }
   | { type: 'diag-result'; id: number; values: number[] }
   | {
-      type: 'ledger-result'; id: number; ledger: CashLedger | null;
+      type: 'ledger-result'; id: number; ledger: CashLedger | null; meterTotals?: MeterTotals; payoutCounts?: number[];
+      unpricedPaid?: number[];
+      payoutFaults?: PayoutFaults;
       wiring?: CoinWiringStatus;
     }
   | { type: 'clear-ram-result'; id: number; error?: string }
@@ -177,3 +199,12 @@ export type EmuResponse =
   | { type: 'keyframe-result'; id: number; key: (Check & { data: Uint8Array; cycles: number; ledger: CashLedger | null; nvram?: Uint8Array }) | null }
   | { type: 'follow-report'; epoch: number; result: CheckResult | null; drift?: string; diff?: string[] }
   | { type: 'follow-pos'; epoch: number; cycle: number; lag: number };
+
+export interface PayoutFaults { count: number; faults: { lines: number[]; why: 'unnamed' | 'value' }[] }
+
+export function payoutFaultLinesSince(p: PayoutFaults | null | undefined, since: number): number[] {
+  if (!p) return [];
+  const n = p.count - since;
+  if (n <= 0) return [];
+  return [...new Set(p.faults.slice(-Math.min(n, p.faults.length)).flatMap((f) => f.lines))].sort((a, b) => a - b);
+}

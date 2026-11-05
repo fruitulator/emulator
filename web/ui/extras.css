@@ -56,6 +56,10 @@
 .ui-status .row-sub {
   line-height: 1.4;
 }
+.ui-status .row-sub::first-letter,
+.nb-checklist__text small::first-letter {
+  text-transform: uppercase;
+}
 .ui-status > .ui-status-result {
   flex: none;
   margin-left: auto;
