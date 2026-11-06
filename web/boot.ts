@@ -1,5 +1,8 @@
 import { AGE_OK_CLASS, APP_READY_CLASS, ageGate } from './agegate';
+import { updateGate } from './updategate';
 import { followOtherTabs } from './ui/theme';
+
+await updateGate('app');
 
 followOtherTabs();
 

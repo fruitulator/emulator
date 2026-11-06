@@ -23,6 +23,7 @@ export function roomDoc(d: ArcadeDoc): ArcadeDoc {
     if (m.gameConfig !== undefined) out.gameConfig = m.gameConfig;
     if (m.hostFiles?.length) out.hostFiles = m.hostFiles;
     if (m.versions !== undefined) out.versions = m.versions;
+    if (m.build !== undefined) out.build = m.build;
     if (m.detected !== undefined) out.detected = m.detected;
     if (m.outOfService) out.outOfService = true;
     const notReady = installNotReady(m);
@@ -57,6 +58,11 @@ export function roomToSend(d: ArcadeDoc, carry: readonly string[] = []): unknown
   };
 }
 
+function readBuild(v: unknown): DocMachine['build'] | undefined {
+  const b = v as { id?: unknown; label?: unknown } | null;
+  return b && typeof b.id === 'string' && typeof b.label === 'string' ? { id: b.id, label: b.label } : undefined;
+}
+
 export function readRoomDoc(v: unknown, id: string): ArcadeDoc | null {
   const d = v as Partial<ArcadeDoc> | null;
   if (!d || d.format !== ARCADE_FORMAT || d.version !== ARCADE_DOC_VERSION || !Array.isArray(d.machines)) return null;
@@ -71,7 +77,8 @@ export function readRoomDoc(v: unknown, id: string): ArcadeDoc | null {
       programHash: typeof m.programHash === 'string' ? m.programHash : undefined, source: readMachineSource(m.source),
       formerContentHashes: Array.isArray(m.formerContentHashes) ? m.formerContentHashes.filter((h): h is string => typeof h === 'string') : undefined,
       hostFiles: readHostFiles(m.hostFiles) ?? undefined,
-      versions: Number.isInteger(m.versions) && (m.versions as number) > 0 ? m.versions : undefined })),
+      versions: Number.isInteger(m.versions) && (m.versions as number) > 0 ? m.versions : undefined,
+      build: readBuild(m.build) })),
     ...(room ? { room } : {}),
     ...(props?.length ? { props } : {}),
   };

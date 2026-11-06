@@ -1,3 +1,4 @@
+import { withBuild } from '../web/updategate';
 import {
   DEV_PLAYER_PARAM, LIVE_OP, LIVE_PING, LIVE_PONG,
   type KeyPart, type LiveToPage, type LiveToServer, type Presence, type RelayBatch,
@@ -41,7 +42,7 @@ export function liveUrl(machineBase: string, player: string): string {
   const u = new URL(`${machineBase}/${LIVE_OP}`);
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
   if (player) u.searchParams.set(DEV_PLAYER_PARAM, player);
-  return u.href;
+  return withBuild(u).href;
 }
 
 export class LiveLink {

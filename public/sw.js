@@ -59,7 +59,7 @@ async function precache() {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(precache().then(() => self.skipWaiting()));
+  event.waitUntil(precache());
 });
 
 self.addEventListener('activate', (event) => {
@@ -71,6 +71,14 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'build') {
+    if (event.ports && event.ports[0]) event.ports[0].postMessage({ build: PRECACHE.build });
+    return;
+  }
+  if (event.data && event.data.type === 'skip-waiting') {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   const urls = event.data && event.data.type === 'cache-assets' ? event.data.urls : null;
   if (!Array.isArray(urls)) return;
   event.waitUntil(caches.open(CACHE).then((c) => Promise.all(
@@ -90,17 +98,19 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          void caches.open(CACHE).then((c) => c.put(shell, copy));
+          if (!PRECACHE.files.length) {
+            const copy = res.clone();
+            void caches.open(CACHE).then((c) => c.put(shell, copy));
+          }
           return res;
         })
-        .catch(() => caches.match(shell).then((hit) => hit ?? Response.error())),
+        .catch(() => caches.open(CACHE).then((c) => c.match(shell)).then((hit) => hit ?? Response.error())),
     );
     return;
   }
 
   event.respondWith(
-    caches.match(req, { ignoreVary: true }).then((hit) => (hit && !isPage(hit) ? hit : fetch(req).then((res) => {
+    caches.open(CACHE).then((c) => c.match(req, { ignoreVary: true })).then((hit) => (hit && !isPage(hit) ? hit : fetch(req).then((res) => {
       if (res.ok && res.type === 'basic' && !isPage(res)) {
         const copy = res.clone();
         void caches.open(CACHE).then((c) => c.put(req, copy));

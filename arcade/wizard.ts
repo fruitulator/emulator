@@ -1,5 +1,5 @@
 import { helpButton, openHelp } from '../web/help/help';
-import { configOf } from '../src/machine/registry';
+import { configOf, type GameVariant } from '../src/machine/registry';
 import type { CashLedger, PayoutRow } from '../src/machine/machine';
 import type { MachineInfo } from '../web/emu-protocol';
 import type { Snapshot } from '../web/snapshot';
@@ -32,6 +32,7 @@ import { paidOutputs, payoutKindLabel } from './coinfault';
 import type { CoinFault } from './serverwire';
 import type { CabLamp } from '../web/dat';
 import { alarmsUnseen, attractBudgetS, buttonsOnly, hostGate, lookNext, TRACE_S, WizardMachine, type BootFrom } from './wizmachine';
+import { noRamVerdict, tryWithoutRam, type InstallStart } from '../src/machine/ramstart';
 import { TRACE_FPS } from './trace';
 import { COINS_STOPPED_HOST_TEXT, el, exitButton, iconButton } from './host';
 import { clearServerFault, serverMoney } from './moneyrecord';
@@ -53,6 +54,7 @@ import { acceptorSlots, coinLineSlots, type AcceptorSlot, type DrawnSlot } from 
 import { penceOf } from './wallet';
 import { coinsTaken, hostCoinsTaken, lineCoins, markableButtons, markedCounted, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 import { definitionOf, keepCoinAnswers } from './hostset';
+import { buildsOf, libraryBuild, machineBuildId } from './builds';
 
 declare const __BUILD_ID__: string;
 const BUILD = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev';
@@ -106,7 +108,7 @@ export async function openWizard(
   root.classList.add('host-wz', 'nb-wizard');
   const top = el('div', null, { class: 'wz-head nb-wizard__head' });
   const heading = el('h2', mode === 'edit' ? str('arcade.wizard.edit_machine') : str('arcade.wizard.install_machine'), { class: 'wz-heading' });
-  const title = el('div', row ? machineTitle(row.name, null) : str('arcade.wizard.this_machine_is_not_in'), { class: 'wz-title' });
+  const title = el('div', row ? machineTitle(row.name, null, row.build) : str('arcade.wizard.this_machine_is_not_in'), { class: 'wz-title' });
   if (row) title.title = row.name;
   const sub = el('p', null, { class: 'wz-sub' });
   sub.append(title);
@@ -133,7 +135,7 @@ export async function openWizard(
   const library = await listGames().catch(() => []);
   if (exited) return;
   const held = library.find((g) => (g.contentHash ? contentKeys(g) : [g.hash]).includes(row.contentHash)) ?? null;
-  title.textContent = machineTitle(row.name, held);
+  title.textContent = machineTitle(row.name, held, row.build);
   if (!held) {
     const missing = el('div', null, { class: 'wz-missing' });
     missing.append(
@@ -144,14 +146,17 @@ export async function openWizard(
     return;
   }
   row.setup = readFitSet(row.setup ?? {});
+  const build = buildsOf(held).length ? machineBuildId(row) ?? libraryBuild(held)?.id : undefined;
   w = new Wizard(root, doc, row, mode, leave, {
-    id: row.id, contentHash: row.contentHash, formerContentHashes: row.formerContentHashes ?? [], name: machineTitle(row.name, held), board: row.board, cabinetStyle: row.detected?.cabinetStyle ?? null,
+    id: row.id, contentHash: row.contentHash, formerContentHashes: row.formerContentHashes ?? [], name: machineTitle(row.name, held, row.build), board: row.board, cabinetStyle: row.detected?.cabinetStyle ?? null,
     traceUrl: null, held, setup: row.setup, config: row.config,
+    ...(build ? { build } : {}),
     slot: {
       load: async () => (mode === 'edit' && row.state ? fromMachineState(row.state, held.hash) : null),
       save: async (rec) => { row.state = toMachineState(rec); },
     },
   }, startAt);
+  w.onRenamed = (name) => { title.textContent = name; };
   await w.start();
 }
 
@@ -284,9 +289,15 @@ class Wizard {
   private refillOn = false;
   private cached: CoinStepCache | null = null;
   private draft: MachineConfig;
+  onRenamed: ((name: string) => void) | null = null;
+  private coldNext = false;
   private alert: Alert | null = null;
   private needHost = false;
   private attractSkipped = false;
+  private fromFiles = false;
+  private noRamTried = false;
+  private noRamAttempt = false;
+  private installStart: InstallStart = 'ram';
   private needsLook = false;
   private needsShown = false;
   private needsAlert: Alert | null = null;
@@ -911,8 +922,49 @@ class Wizard {
 
   private async bootFrom(): Promise<BootFrom> {
     this.startedOnce++;
-    if (this.startedOnce === 1) return this.mode === 'edit' ? { kind: 'saved' } : { kind: 'files' };
-    return { kind: 'cycle', snap: this.wm.live.running ? await this.wm.snapshot() : null };
+    let from: BootFrom;
+    if (this.coldNext) { this.coldNext = false; from = { kind: 'files' }; }
+    else if (this.startedOnce === 1) from = this.mode === 'edit' ? { kind: 'saved' } : { kind: 'files' };
+    else from = { kind: 'cycle', snap: this.wm.live.running ? await this.wm.snapshot() : null };
+    this.fromFiles = from.kind === 'files';
+    if (this.fromFiles) this.noRamTried = false;
+    return from;
+  }
+
+  private async startWithoutRam(waiting: () => boolean, budget: number): Promise<boolean> {
+    const wm = this.wm;
+    const back = await wm.snapshot();
+    this.noRamAttempt = true;
+    this.say(str('arcade.wizard.starting_the_machine'));
+    let found = false;
+    try {
+      await wm.boot(this.m.config, { kind: 'files', blank: true });
+      if (this.stoodDown()) return false;
+      await wm.until(() => !!wm.live.emu.latestFrame(), 20_000);
+      found = await wm.until(waiting, budget, () => this.gone() || wm.reading?.verdict === 'ALARM');
+    } catch (e) {
+      console.info(`[arcade] the machine did not start without its battery: ${(e as Error).message}`);
+    } finally {
+      this.noRamAttempt = false;
+    }
+    if (this.stoodDown()) return false;
+    const alarm = wm.reading?.verdict === 'ALARM';
+    const verdict = noRamVerdict({ found: found && wm.attract(), alarm });
+    const showed = verdict === 'no-ram' ? 'attract' : alarm ? 'alarm' : 'none';
+    console.info(`[arcade] no-RAM start after the battery start stood still: ${showed} within ${Math.round(budget / 1000)} s; installing from: ${verdict}`);
+    if (verdict === 'no-ram') {
+      this.installStart = 'no-ram';
+      this.ledgerAtBoot = await wm.ledger();
+      return true;
+    }
+    this.say(str('arcade.wizard.starting_the_machine'));
+    try {
+      if (!back) throw new Error('no snapshot of the battery start');
+      await wm.restore(back);
+    } catch {
+      await wm.boot(this.m.config, { kind: 'files' });
+    }
+    return false;
   }
 
   private async runBoot(restart = true): Promise<void> {
@@ -934,6 +986,7 @@ class Wizard {
           wm.live.startSound();
           how = await wm.boot(this.m.config, await this.bootFrom());
           if (this.stoodDown()) return;
+          this.installStart = 'ram';
           this.ledgerAtBoot = await wm.ledger();
           this.unpriced = false;
           this.preTest = null;
@@ -952,12 +1005,12 @@ class Wizard {
       this.running = 'attract';
       this.render();
       const budget = attractBudgetS(this.m.board) * 1000;
-      const t0 = performance.now();
+      let t0 = performance.now();
       const waiting = (): boolean => {
         if (!this.needHost) {
           const s = Math.round((performance.now() - t0) / 1000);
           this.say(str('arcade.wizard.waiting_for_attract_n_s', { 0: s }));
-          if (s >= ATTRACT_HINT_S && !this.runNote) {
+          if (s >= ATTRACT_HINT_S && !this.runNote && !this.noRamAttempt) {
             this.runNote = str('arcade.wizard.ensure_no_credit');
             this.render();
           }
@@ -968,6 +1021,13 @@ class Wizard {
       while (!found && !this.gone() && wm.reading?.verdict !== 'ALARM') {
         if (wm.selfBusy()) {
           found = await wm.until(waiting, budget, () => this.gone());
+          continue;
+        }
+        if (tryWithoutRam({ newInstall: this.mode === 'add', fromFiles: this.fromFiles, attempted: this.noRamTried,
+          found, alarm: false , selfBusy: wm.selfBusy(), skipped: this.attractSkipped })) {
+          this.noRamTried = true;
+          t0 = performance.now();
+          found = await this.startWithoutRam(waiting, budget);
           continue;
         }
         const look = alarmsUnseen(wm.reading);
@@ -982,13 +1042,15 @@ class Wizard {
         this.setCheck('attract', false, str('arcade.wizard.the_machine_is_showing_an', { 0: wm.reading?.matched ?? '' }));
         return;
       }
-      this.setCheck('attract', true, this.attractSkipped && !wm.attract() ? str('arcade.wizard.not_found_installing_without_it') : '');
+      this.setCheck('attract', true, this.attractSkipped && !wm.attract() ? str('arcade.wizard.not_found_installing_without_it')
+        : this.installStart === 'no-ram' ? str('arcade.wizard.started_again_without_the') : '');
       const r = wm.reading;
       if (r?.verdict === 'ALARM') {
         this.setCheck('alarm', false, str('arcade.wizard.showing_an_alarm_n', { 0: r.matched ?? '' }));
         return;
       }
       this.setCheck('alarm', true, r?.verdict === 'CLEAR' ? '' : str('arcade.wizard.no_alarm_could_be_read', { 0: r?.unread ?? str('arcade.wizard.no_reading') }));
+      this.m.validation!.start = this.installStart;
       this.booted = true;
       this.attractSnap = await wm.snapshot();
     } finally {
@@ -1008,6 +1070,24 @@ class Wizard {
   }
 
   private renderConfig(): void {
+    const builds = buildsOf(this.wm.machine.held);
+    let sections = 0;
+    if (builds.length) {
+      const body = el('div', null, { class: 'wz-keys' });
+      const row = el('label', null, { class: 'menu-row menu-key' });
+      const sel = el('select', null, { id: 'wizBuild', 'aria-label': str('main.build') });
+      for (const v of builds) sel.append(el('option', v.label, { value: v.id }));
+      sel.value = this.wm.machine.build ?? builds[0].id;
+      sel.addEventListener('change', () => {
+        const v = builds.find((b) => b.id === sel.value);
+        if (v) void this.changeBuild(v);
+      });
+      row.append(el('span', str('main.build'), { class: 'row-label' }), sel);
+      body.append(row);
+      enhanceSelect(sel, { small: true, popover: { align: 'end', within: () => this.root, minWidth: 180, maxHeight: 280 } });
+      this.panel.append(expandSection(str('main.build'), UI_ICONS.options, body, true).root);
+      sections++;
+    }
     const info = this.info();
     if (!info) {
       this.panel.append(el('p', str('arcade.wizard.the_machine_is_not_running'), { class: 'host-note' }));
@@ -1016,7 +1096,6 @@ class Wizard {
     const cfg = this.draft;
     cfg.optionKeys ??= {};
     cfg.panelSwitches ??= {};
-    let sections = 0;
     if (info.optionKeys.length) {
       const body = el('div', null, { class: 'wz-keys' });
       info.optionKeys.forEach((k, i) => {
@@ -1097,6 +1176,42 @@ class Wizard {
     this.putBacks = 0;
     this.hostDone();
     this.say(str('arcade.wizard.restarting_with_the_new_settings'));
+    await this.runBoot(true);
+  }
+
+  private async changeBuild(v: GameVariant): Promise<void> {
+    if (this.busy || v.id === this.wm.machine.build) return;
+    this.booted = false;
+    this.settled = false;
+    this.attractSkipped = false;
+    const am = this.wm.machine;
+    am.build = v.id;
+    am.name = machineTitle(this.m.name, am.held, v);
+    this.onRenamed?.(am.name);
+    if (this.mode === 'add') {
+      this.m.build = { ...v };
+      await this.save();
+    }
+    this.wm.stopWatch();
+    this.wm.live.stop();
+    this.recRun++;
+    this.rec = 'waiting';
+    this.recNote = '';
+    this.putBack = false;
+    this.putBacks = 0;
+    this.hostDone();
+    this.cached = null;
+    this.coldNext = true;
+    this.say(str('arcade.wizard.opening'));
+    try {
+      this.wm.glass.forgetCache();
+      await this.wm.open();
+    } catch (e) {
+      this.say(str('arcade.wizard.cannot_open_n', { 0: (e as Error).message }), 'fail');
+      return;
+    }
+    if (this.gone()) return;
+    this.render();
     await this.runBoot(true);
   }
 
@@ -1583,7 +1698,9 @@ class Wizard {
 
   private stepKey(): string | null {
     const game = this.wm.glass.game;
-    return game ? `${this.m.contentHash}|${configDigest(this.m.config)}|${boardStamp(game.system)}` : null;
+    if (!game) return null;
+    const build = game.variants.length > 1 ? `|${game.variant}` : '';
+    return `${this.m.contentHash}${build}|${configDigest(this.m.config)}|${boardStamp(game.system)}`;
   }
 
   private useCache(): void {
@@ -2573,7 +2690,7 @@ class Wizard {
       const game = wm.glass.game;
       this.noCoinSlot = !!f && takesNoCoinAtAll(wm.live.emu.info, (f.coinRefusing | f.coinLinesShut) >>> 0, game ? viewFor(game.system).coins : []);
       if (this.noCoinSlot) {
-        console.info(`[arcade] no coin slot the host can price: every coin line this machine lists is refused at attract (${((f!.coinRefusing | f!.coinLinesShut) >>> 0).toString(2)}); not installed`);
+        console.info(`[arcade] no coin slot the host can price: every coin line this machine lists is refused at attract (lines 0-31 ${((f!.coinRefusing | f!.coinLinesShut) >>> 0).toString(2)}, 32-63 ${((f!.coinRefusingHi | f!.coinLinesShutHi) >>> 0).toString(2)}); not installed`);
         this.setCheck('coin', false, str('arcade.wizard.no_coin_slot_layout_needs_fixing'));
         return;
       }
@@ -2711,6 +2828,9 @@ class Wizard {
         const def = await definitionOf(g.game);
         m.hostFiles = def.hostFiles;
         m.versions = def.versions;
+        const build = g.game.variants.length > 1 ? g.game.variants.find((v) => v.id === g.game!.variant) : undefined;
+        if (build) m.build = { ...build };
+        else delete m.build;
       }
       keepCoinAnswers(m, this.wm.machine.held?.coinAnswers);
       m.detected = {

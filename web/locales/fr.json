@@ -170,6 +170,7 @@
     "one": "Ajoutée",
     "other": "Ajoutée ×{n}"
   },
+  "arcade.host.added_n_of_n": "Ajoutée {0} sur {1}",
   "arcade.host.align": "Aligner",
   "arcade.host.align_bottom": "Aligner en bas",
   "arcade.host.align_centre": "Centrer",
@@ -721,6 +722,7 @@
   "arcade.wizard.some_payouts_cannot_be_counted": "Certains paiements de cette machine ne peuvent pas être comptés.",
   "arcade.wizard.start_moves_the_reels": "Start fait bouger les rouleaux",
   "arcade.wizard.start_pressed": "Start pressé",
+  "arcade.wizard.started_again_without_the": "Redémarrée sans la mémoire sauvegardée du jeu pour effacer les parties",
   "arcade.wizard.started_from_the_game_s": "démarrée depuis les fichiers du jeu : son état sauvegardé n'a pas pu être utilisé",
   "arcade.wizard.starting_the_machine": "Démarrage de la machine…",
   "arcade.wizard.starts_the_machine_from_cold": "Allume la machine et vérifie qu'elle démarre.",
@@ -1150,7 +1152,7 @@
   "main.brightness": "Luminosité",
   "main.brightness_n": "Luminosité {0} %",
   "main.brightness_n_press_to_reset": "Luminosité {0} % - appuyez pour réinitialiser",
-  "main.build": "Build",
+  "main.build": "Version",
   "main.bulb_lab": "Labo d'ampoules",
   "main.cache_corrupt_please_delete_and": "cache corrompu - supprimez ce jeu et importez-le à nouveau",
   "main.close_menu": "Fermer le menu",
@@ -1268,7 +1270,6 @@
   "main.reverse_virtual_display": "Inverser l'afficheur virtuel",
   "main.reverse_virtual_display_text": "Inverser le texte de l'afficheur virtuel",
   "main.save_snapshot": "Enregistrer un instantané",
-  "main.saving_for_offline_n_n": "Enregistrement hors ligne… {0}/{1}",
   "main.saving_the_file": "Enregistrement du fichier…",
   "main.sets_that_failed_part_way": {
     "one": "Les jeux qui ont échoué en cours de route ont aussi laissé {n} jeu dans la bibliothèque ; Retirer les enlève aussi.",
@@ -1511,6 +1512,9 @@
   "ui.tip.my_games": "Votre bibliothèque : ajoutez de nouveaux jeux et gérez ceux que vous avez.",
   "ui.tip.my_games_name": "Mes jeux",
   "ui.toast.dismiss": "Fermer",
+  "update.unable_to_update_fruitulator": "Impossible de mettre à jour Fruitulator. La mise à jour sera retentée plus tard.",
+  "update.updating": "Mise à jour…",
+  "update.updating_n_n": "Mise à jour… {0}/{1}",
   "versionpicker.last_played": "Dernière partie",
   "versionpicker.n_versions_grouped": {
     "one": "{n} version regroupée",

@@ -189,7 +189,8 @@ export class Glass {
 
   private key(): string {
     const m = this.machine;
-    const held = m.hostFiles && m.gameConfig ? { ...m.held!, variant: m.gameConfig.source } : m.held!;
+    const held = m.hostFiles && m.gameConfig ? { ...m.held!, variant: m.gameConfig.source }
+      : m.build ? { ...m.held!, variant: m.build } : m.held!;
     return cacheKey({
       held, contentHash: this.machine.contentHash, setup: this.machine.setup,
       cabinetStyle: this.machine.cabinetStyle, traceUrl: this.machine.traceUrl, texSize: TEX_ATTRACT,
@@ -202,6 +203,11 @@ export class Glass {
       this.rec = await readRec(this.machine.held.hash, this.key());
     }
     return this.rec;
+  }
+
+  forgetCache(): void {
+    this.rec = null;
+    this.recRead = false;
   }
 
   async restore(): Promise<boolean> {
@@ -258,7 +264,7 @@ export class Glass {
       const rec = await this.readCache();
       t = performance.now();
       const m = this.machine;
-      const { game, cab } = await openHeld(held.hash, T, m.hostFiles ? { files: m.hostFiles, config: m.gameConfig ?? null } : null);
+      const { game, cab } = await openHeld(held.hash, T, m.hostFiles ? { files: m.hostFiles, config: m.gameConfig ?? null } : null, m.build);
       lap('open');
       this.game = game;
       if (rec) {
@@ -633,7 +639,7 @@ export function artReader(cab: Cabinet, blocks: readonly { left: number; top: nu
 const ART_MARGIN = 4;
 
 function openHeld(
-  hash: string, T: LoadTimes, host: { files: HostFile[]; config: GameConfig | null } | null,
+  hash: string, T: LoadTimes, host: { files: HostFile[]; config: GameConfig | null } | null, build?: string,
 ): Promise<{ game: Game; cab: Cabinet | null }> {
   return new Promise((resolve, reject) => {
     let game: Game | null = null;
@@ -657,7 +663,7 @@ function openHeld(
         done();
       },
     };
-    (host ? openAsHost(hash, host.files, host.config, events) : openPak(hash, events, undefined, false))
+    (host ? openAsHost(hash, host.files, host.config, events) : openPak(hash, events, build, false))
       .then(() => { if (!game) reject(new Error('the record opened with no files')); done(); }, reject);
   });
 }

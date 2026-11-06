@@ -1,6 +1,7 @@
 import { inflateSync, strFromU8 } from 'fflate';
 import { SNAPSHOT_VERSION } from '../web/snapshot';
 import type { StateRec } from '../web/store';
+import { buildHeaders } from '../web/updategate';
 import { fromBase64, toBase64 } from './doc';
 import { LiveLink, liveUrl, type LinkOptions } from './livelink';
 import type {
@@ -84,7 +85,7 @@ export function devPlayerForPage(): Promise<string> {
 }
 
 export function asPlayer(player: string, headers: Record<string, string> = {}): RequestInit {
-  return { credentials: 'include', headers: { ...(player ? { [DEV_PLAYER_HEADER]: player } : {}), ...headers } };
+  return { credentials: 'include', headers: { ...buildHeaders(), ...(player ? { [DEV_PLAYER_HEADER]: player } : {}), ...headers } };
 }
 
 function session(): Storage | null {

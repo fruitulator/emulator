@@ -4,7 +4,7 @@ import {
 import { sources } from './sources/feature';
 import { Presenter, planSize, uniformPlan } from './present';
 import { damagedRoms } from '../src/machine/textcopy';
-import { type FrameView } from '../src/machine/framestate';
+import { coinLineRefused, type FrameView } from '../src/machine/framestate';
 import { SchematicPanel } from './schematic';
 import { BulbLab } from './bulblab';
 import { WorkerEmu, type AutosaveBlob, type Emu } from './emu-client';
@@ -2450,18 +2450,6 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
       .filter((u) => u.startsWith(location.origin));
     if (urls.length) sw.postMessage({ type: 'cache-assets', urls });
   };
-  const offlineNotes = ['offlineNote', 'lib-offline']
-    .map((id) => document.getElementById(id))
-    .filter((el): el is HTMLElement => !!el);
-  navigator.serviceWorker.addEventListener('message', (e: MessageEvent) => {
-    const d = e.data as { type?: string; done?: number; total?: number; failed?: number } | null;
-    if (d?.type !== 'precache-progress' || typeof d.done !== 'number' || typeof d.total !== 'number') return;
-    const over = d.done + (d.failed ?? 0) >= d.total;
-    for (const el of offlineNotes) {
-      el.textContent = str('main.saving_for_offline_n_n', { 0: d.done, 1: d.total });
-      el.hidden = over;
-    }
-  });
   navigator.serviceWorker.startMessages();
   const register = (): void => {
     void navigator.serviceWorker.register('/sw.js')
@@ -3121,7 +3109,7 @@ function dropCoinAt(bit: number, acceptor?: CabLamp['acceptor'], gate?: CabLamp)
       return 'refused';
     }
     emu.coin(bit);
-    if ((f.coinRefusing >>> bit) & 1) return 'refused';
+    if (coinLineRefused(f, bit)) return 'refused';
     stopWatch.engage();
     return 'accepted';
   });

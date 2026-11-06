@@ -1,4 +1,5 @@
 import type { Machine } from './machine';
+import { coinLineRefused } from './framestate';
 import type { CoinMeasurement, LineMeasurement } from './coinwiring';
 
 export interface MeasureWindows { firstWaitS: number; quietS: number; capS: number; chunkS: number }
@@ -53,7 +54,7 @@ function measureOne(m: Machine, line: number | null, at: Date | null, w: Measure
   const secs0 = secPulses(m);
   const triacs0 = triacTicks(m);
   const refused0 = m.coinsRefused ?? 0;
-  const refusing = line !== null && m.coinRefusing !== undefined && line < 16 && (m.coinRefusing & (1 << line)) !== 0;
+  const refusing = line !== null && coinLineRefused(m, line);
   const chunk = Math.max(1, Math.round(m.clockHz * w.chunkS));
   const state = (): string => `${totals.in},${totals.out},${meterPulses(m).join('.')},${secPulses(m).join('.')},${triacTicks(m).join('.')}`;
   const sigs: string[] = [];

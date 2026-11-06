@@ -1,3 +1,4 @@
+import { withBuild } from '../web/updategate';
 import type { LinkOptions, SocketLike } from './livelink';
 import { ARCADES_PATH, LIVE_PING, LIVE_PONG, ROOM_CHANNEL_PATH, ROOM_PING_MS, type RoomMessage } from './serverwire';
 
@@ -15,7 +16,7 @@ export interface RoomLinkEvents {
 export function roomChannelUrl(base: string, arcadeId: string): string {
   const u = new URL(`${base}${ARCADES_PATH}/${encodeURIComponent(arcadeId)}/${ROOM_CHANNEL_PATH}`);
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-  return u.href;
+  return withBuild(u).href;
 }
 
 export function readRoomMessage(data: unknown): RoomMessage | null {

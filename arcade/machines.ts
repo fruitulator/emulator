@@ -207,6 +207,7 @@ export interface ArcadeMachine {
   traceUrl: string | null;
   traceBytes?: () => Promise<Uint8Array>;
   held: GameMeta | null;
+  build?: string;
   setup: MachineSetup;
   config: MachineConfig;
   slot?: StateSlot;
@@ -255,8 +256,9 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
       id: m.id,
       contentHash: m.contentHash,
       formerContentHashes: formers,
-      name: machineTitle(m.name, mine),
+      name: machineTitle(m.name, mine, m.build),
       board: m.board,
+      build: m.build?.id,
       cabinetStyle: m.detected?.cabinetStyle ?? null,
       traceUrl: t ? `doc:${m.contentHash}:${traceId(t)}` : null,
       traceBytes: t ? () => Promise.resolve(fromBase64(t.data)) : undefined,

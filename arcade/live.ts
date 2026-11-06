@@ -1,4 +1,5 @@
 import { WorkerEmu, type AutosaveBlob } from '../web/emu-client';
+import { blankMemoryGame } from '../web/emu-core';
 import { getMeta, playCountOf, putMeta } from '../web/store';
 import { payoutsAnswered, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
@@ -17,7 +18,7 @@ import { gatesOf } from '../web/play/gates';
 import { Audio } from '../web/audio';
 import { CabinetEffects } from '../web/effects';
 import { restoreCabinetSounds } from '../web/menupanels';
-import type { FrameView } from '../src/machine/framestate';
+import { coinLineRefused, type FrameView } from '../src/machine/framestate';
 import { pickControl } from '../web/cabhit';
 import { checkboxAt } from '../web/checkbox';
 import { PlayKeys, type KeySurface } from '../web/play/keys';
@@ -50,7 +51,7 @@ import { ClaimTrigger, moneyMoved, walkUpStart } from './visit';
 import { CARRY_ON_BUTTON, CreditSign, IdleClock, idleLimitsFrom, stillPlayingText } from './idle';
 import { str } from '../web/i18n';
 
-type StartOpts = { cold?: boolean; stampPlay?: boolean; saveOnLeave?: boolean; snapshot?: Snapshot; powerCycle?: boolean };
+type StartOpts = { cold?: boolean; blankMemory?: boolean; stampPlay?: boolean; saveOnLeave?: boolean; snapshot?: Snapshot; powerCycle?: boolean };
 
 const VISIT_POLL_MS = 250;
 
@@ -627,7 +628,7 @@ export class Live {
       const cfg = glass.machine.config;
       const ownAnswers = glass.machine.hostFiles ? undefined : meta?.coinAnswers;
       const opts = {
-        game: battery ? { ...game, nvram: battery } : game,
+        game: battery ? { ...game, nvram: battery } : o.cold && o.blankMemory ? blankMemoryGame(game) : game,
         optionKeys: cfg.optionKeys,
         panelSwitches: cfg.panelSwitches,
         ...coinsForLoad(cfg.coins, ownAnswers, null),
@@ -946,7 +947,7 @@ export class Live {
       this.emu.coin(line);
       this.stopWatch.engage();
       this.settle.played(performance.now());
-      return f && ((f.coinRefusing >>> line) & 1) ? 'refused' : 'accepted';
+      return f && coinLineRefused(f, line) ? 'refused' : 'accepted';
     }, () => {
       if (seq === this.loadSeq) this.wallet?.rejected(line);
     });

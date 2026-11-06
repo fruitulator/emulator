@@ -4,6 +4,16 @@ import { join, relative, resolve, sep } from 'node:path';
 
 export const MARKER = "/*PRECACHE*/ { build: 'dev', files: [] }";
 
+export const BUILD_META = /<meta name="fruitulator-build" content="dev"\s*\/?>/;
+export const STAMPED_PAGES = ['index.html', 'arcade/index.html'];
+
+export function stampPage(html, build, name = 'page') {
+  if (!BUILD_META.test(html)) {
+    throw new Error(`vite-precache: ${name} no longer carries <meta name="fruitulator-build" content="dev"> -- the update check cannot work`);
+  }
+  return html.replace(BUILD_META, `<meta name="fruitulator-build" content="${build}">`);
+}
+
 export function filesUnder(dir) {
   const out = [];
   const walk = (d) => {
@@ -49,6 +59,10 @@ export function precachePlugin() {
       const sw = join(outDir, 'sw.js');
       const m = manifestFor(outDir);
       writeFileSync(sw, injectInto(readFileSync(sw, 'utf8'), m));
+      for (const page of STAMPED_PAGES) {
+        const f = join(outDir, page);
+        writeFileSync(f, stampPage(readFileSync(f, 'utf8'), m.build, page));
+      }
       console.log(`offline precache: ${m.files.length} files, ${(m.bytes / 1e6).toFixed(1)} MB, build ${m.build}`);
     },
   };

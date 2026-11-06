@@ -170,6 +170,7 @@
     "one": "Toegevoegd",
     "other": "Toegevoegd ×{n}"
   },
+  "arcade.host.added_n_of_n": "Toegevoegd {0} van {1}",
   "arcade.host.align": "Uitlijnen",
   "arcade.host.align_bottom": "Onder uitlijnen",
   "arcade.host.align_centre": "Centreren",
@@ -721,6 +722,7 @@
   "arcade.wizard.some_payouts_cannot_be_counted": "Sommige uitbetalingen van deze automaat kunnen niet worden geteld.",
   "arcade.wizard.start_moves_the_reels": "Start beweegt de rollen",
   "arcade.wizard.start_pressed": "Start ingedrukt",
+  "arcade.wizard.started_again_without_the": "Opnieuw gestart zonder het opgeslagen geheugen van het spel om de spellen te wissen",
   "arcade.wizard.started_from_the_game_s": "gestart vanuit de eigen bestanden van het spel: de opgeslagen stand kon niet worden gebruikt",
   "arcade.wizard.starting_the_machine": "De automaat starten…",
   "arcade.wizard.starts_the_machine_from_cold": "Zet de automaat aan en controleert of hij opstart.",
@@ -1150,7 +1152,7 @@
   "main.brightness": "Helderheid",
   "main.brightness_n": "Helderheid {0}%",
   "main.brightness_n_press_to_reset": "Helderheid {0}% - druk om te herstellen",
-  "main.build": "Build",
+  "main.build": "Versie",
   "main.bulb_lab": "Lampenlab",
   "main.cache_corrupt_please_delete_and": "cache beschadigd - verwijder dit spel en upload het opnieuw",
   "main.close_menu": "Menu sluiten",
@@ -1268,7 +1270,6 @@
   "main.reverse_virtual_display": "Virtueel display spiegelen",
   "main.reverse_virtual_display_text": "Tekst van virtueel display omdraaien",
   "main.save_snapshot": "Snapshot opslaan",
-  "main.saving_for_offline_n_n": "Offline opslaan… {0}/{1}",
   "main.saving_the_file": "Het bestand opslaan…",
   "main.sets_that_failed_part_way": {
     "one": "Sets die halverwege mislukten, lieten ook {n} spel achter in de bibliotheek; Verwijderen haalt die ook weg.",
@@ -1511,6 +1512,9 @@
   "ui.tip.my_games": "Je bibliotheek: voeg nieuwe spellen toe en beheer de spellen die je hebt.",
   "ui.tip.my_games_name": "Mijn spellen",
   "ui.toast.dismiss": "Sluiten",
+  "update.unable_to_update_fruitulator": "Fruitulator kon niet worden bijgewerkt. De update wordt later opnieuw geprobeerd.",
+  "update.updating": "Bijwerken…",
+  "update.updating_n_n": "Bijwerken… {0}/{1}",
   "versionpicker.last_played": "Laatst gespeeld",
   "versionpicker.n_versions_grouped": {
     "one": "{n} versie gegroepeerd",

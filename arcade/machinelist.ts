@@ -7,9 +7,11 @@ import { parseTitle } from '../web/title';
 import { closeSheet, escapeCloses, sheetLine, sheetRow, showSheet } from '../web/ui/sheet';
 import { statusIcon, type Mark } from '../web/ui/status';
 import { str } from '../web/i18n';
+import type { GameVariant } from '../src/machine/registry';
+import { buildName, machineBuildId } from './builds';
 
-export function machineTitle(name: string, held: GameMeta | null): string {
-  return held ? displayTitle(held) : parseTitle(name).title || name;
+export function machineTitle(name: string, held: GameMeta | null, build?: GameVariant): string {
+  return buildName(held ? displayTitle(held) : parseTitle(name).title || name, build);
 }
 
 export interface Holdings { content: ReadonlySet<string>; program: ReadonlySet<string> }
@@ -43,13 +45,14 @@ export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService' | 'h
   return { mark: 'warn', label: str('arcade.machinelist.not_in_your_library') };
 }
 
-type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'contentHash' | 'formerContentHashes' | 'programHash' | 'name'>;
+type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'contentHash' | 'formerContentHashes' | 'programHash' | 'name' | 'build' | 'gameConfig'>;
 
 export interface ListedGame<M extends Listed = Listed> { machines: M[]; shown: M }
 
 export function gamesOf<M extends Listed>(machines: readonly M[]): ListedGame<M>[] {
   const by = new Map<string, M[]>();
-  for (const m of machines) by.set(m.contentHash, [...(by.get(m.contentHash) ?? []), m]);
+  const keyOf = (m: M): string => `${m.contentHash}\u0000${machineBuildId(m) ?? ''}`;
+  for (const m of machines) by.set(keyOf(m), [...(by.get(keyOf(m)) ?? []), m]);
   return [...by.values()].map((ms) => ({
     machines: ms,
     shown: ms.find((m) => m.status === 'installed' && !switchedOff(m)) ?? ms.find((m) => m.status === 'installed') ?? ms[0],
@@ -78,7 +81,7 @@ export async function openMachineList(doc: ArcadeDoc, o: {
     const said = !games.length ? str('arcade.machinelist.this_arcade_has_no_machines')
       : missing || other ? '' : str('arcade.machinelist.you_have_every_game_here');
     if (said) lines.push(sheetLine(said, '', { quiet: true }));
-    const titled = games.map((g) => ({ ...g, name: machineTitle(g.shown.name, machineKeys(g.shown).map((k) => byContent.get(k)).find((h) => !!h) ?? null) }))
+    const titled = games.map((g) => ({ ...g, name: machineTitle(g.shown.name, machineKeys(g.shown).map((k) => byContent.get(k)).find((h) => !!h) ?? null, g.shown.build) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
     for (const { machines, shown, name } of titled) {
       const s = machineStatus(shown, holding(shown, lib));

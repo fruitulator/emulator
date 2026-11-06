@@ -201,7 +201,9 @@ export interface Machine {
   insertCoin(bit: number): void;
   readonly coinBusy: boolean;
   readonly coinRefusing?: number;
+  readonly coinRefusingHi?: number;
   readonly coinLinesShut?: number;
+  readonly coinLinesShutHi?: number;
   readonly coinChutes?: readonly CoinChute[];
   readonly uncountedCoinLines?: readonly number[];
   readonly unpricedPayoutLines?: readonly number[];

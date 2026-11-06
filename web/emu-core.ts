@@ -5,7 +5,7 @@ import { slotlessLines, type CoinLineTable, type CoinMeasurement } from '../src/
 import { measureCoinLines, type CreditWatch } from '../src/machine/coinmeasure';
 import { applyState, captureState } from './snapshot';
 import { readCoinWiring, type CoinWiring } from './coinask';
-import type { FrameLayout } from '../src/machine/framestate';
+import { coinLineRefused, type FrameLayout } from '../src/machine/framestate';
 import type { Game } from '../src/machine/registry';
 import { gamMasterVolume } from '../src/machine/gam';
 import type { Schematic, SchematicNode } from '../src/machine/schematic';
@@ -604,7 +604,7 @@ export class CoinPacer {
 
   private deliver(m: Machine, bit: number): void {
     this.owed = Math.round(m.clockHz * COIN_SPACING_SECONDS);
-    const refusing = (((m.coinRefusing ?? 0) >>> bit) & 1) === 1;
+    const refusing = coinLineRefused(m, bit);
     const before = m.coinsRefused;
     m.insertCoin(bit);
     const refused = refusing || (before !== undefined && m.coinsRefused !== before);

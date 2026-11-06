@@ -5,6 +5,7 @@ import { listGames, CONTENT_RULE, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 
 const keysOf = (g: GameMeta): string[] => (g.contentHash ? contentKeys(g) : [g.hash]);
+const nameOf = (m: Pick<DocMachine, 'name' | 'build'>): string => buildName(m.name, m.build);
 import { MENU_ICONS, UI_ICONS, rowIcon } from '../web/ui/icons';
 import { card, menuRow, setKvValue, statRow } from '../web/ui/rows';
 import { openLayer, type Layer } from '../web/ui/layer';
@@ -27,6 +28,7 @@ import { cellCentre, doorway } from './floor';
 import { posterArt, POSTER_FRAME, POSTER_H, POSTERS, PROP_KINDS, propKind, PROPS_MAX, type PosterArt, type Prop, type PropKind } from './proplist';
 import { deleteArcade, listArcades, putArcade, setCurrentArcade, currentArcade } from './docstore';
 import { arcadeSettingsParts, darkNote, openArcadeSettings, type SettingsHooks, type SettingsParts } from './hostsettings';
+import { buildName, buildsHere, buildsOf, buildToAdd } from './builds';
 import { lookOf, THEMES, themeOfLook } from './roomlook';
 import { ArcadeServer, arcadeServer, NAME_TAKEN, nameTakenHere, newHostKey, publishRefusal, shareHooks, syncArcade, carryArcadeName, floorLink } from './share';
 import { showToast, type ToastKind } from '../web/ui/toast';
@@ -614,13 +616,13 @@ function marqueeOn(grid: HTMLElement): void {
 
 function machineCard(d: ArcadeDoc, m: DocMachine, held: GameMeta | null): HTMLElement {
   const p = m.place!;
-  const c = el('div', null, { class: 'fp-machine', tabindex: '0', 'aria-label': m.name, 'data-id': m.id, role: 'button' });
+  const c = el('div', null, { class: 'fp-machine', tabindex: '0', 'aria-label': nameOf(m), 'data-id': m.id, role: 'button' });
   c.dataset.face = facingEdge(p);
   c.append(el('span', null, { class: 'fp-face', 'aria-hidden': 'true' }));
   const dark = !m.source;
-  bubbleTip(c, m.name, dark ? str('arcade.host.dark_for_visitors') : '');
+  bubbleTip(c, nameOf(m), dark ? str('arcade.host.dark_for_visitors') : '');
   putMachine(c, p);
-  const art = artwork(held?.hasThumb ? held.hash : null, m.name, () => {
+  const art = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => {
     if (dragged) return;
     if (editor) { picked.machines.clear(); picked.props.clear(); picked.machines.add(m.id); showPicked(); return; }
     openMachineMenu(d, m, c, held);
@@ -1152,7 +1154,7 @@ function openStats(m: DocMachine, d: ArcadeDoc): void {
   plays.textContent = String(st?.plays ?? 0);
   playsRow = plays.parentElement;
   statRow(box, str('arcade.host.last_played')).textContent = st?.lastPlayedAt ? new Date(st.lastPlayedAt).toLocaleString() : 'never';
-  openDialog({ title: m.name, body: [box] });
+  openDialog({ title: nameOf(m), body: [box] });
 }
 
 function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, held: GameMeta | null = null): void {
@@ -1173,7 +1175,7 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
     await saveDoc();
     if (m.hash) await invalidateRec(m.hash).catch(() => undefined);
     await refreshIn();
-    say(m.outOfService ? str('arcade.host.n_is_out_of_service', { 0: m.name }) : str('arcade.host.n_is_back_in_service', { 0: m.name }));
+    say(m.outOfService ? str('arcade.host.n_is_out_of_service', { 0: nameOf(m) }) : str('arcade.host.n_is_back_in_service', { 0: nameOf(m) }));
   });
   const turnRow = facingRow((f) => turnOf(m.place) === f.turn, (f) => {
     closeSheet();
@@ -1192,7 +1194,7 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
       if (!copy) return;
       await saveDoc();
       await refreshIn();
-      say(str('arcade.host.another_n_was_added', { 0: m.name }), 'ok');
+      say(str('arcade.host.another_n_was_added', { 0: nameOf(m) }), 'ok');
     })();
   });
   const stats = sheetRow(str('arcade.host.stats'), str('arcade.host.money_in_and_out_and'));
@@ -1200,11 +1202,11 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
   const del = sheetRow(str('arcade.host.delete'), str('arcade.host.takes_it_out_of_this'));
   dangerRow(del);
   del.addEventListener('click', () => askDelete(d, m));
-  showSheet(m.name, [edit, power, turnRow, dup, stats, del], returnTo);
+  showSheet(nameOf(m), [edit, power, turnRow, dup, stats, del], returnTo);
   escapeCloses();
   const title = document.getElementById('sheet-title');
   if (title) {
-    const thumb = artwork(held?.hasThumb ? held.hash : null, m.name, () => undefined);
+    const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined);
     thumb.classList.add('ml-thumb', 'sheet-machine-thumb');
     const words = el('div', null, { class: 'sheet-machine-words' });
     title.before(thumb);
@@ -1215,7 +1217,7 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
 
 function askDelete(d: ArcadeDoc, m: DocMachine, returnTo?: HTMLElement): void {
   const ask = {
-    ask: str('arcade.host.delete_n_from_this_arcade', { 0: m.name }), sub: str('arcade.host.its_settings_and_stats_go'),
+    ask: str('arcade.host.delete_n_from_this_arcade', { 0: nameOf(m) }), sub: str('arcade.host.its_settings_and_stats_go'),
     keep: str('arcade.host.keep_it'), yes: str('arcade.host.yes_delete_it'),
     onYes: () => {
       void (async () => {
@@ -1223,11 +1225,11 @@ function askDelete(d: ArcadeDoc, m: DocMachine, returnTo?: HTMLElement): void {
         picked.machines.delete(m.id);
         await saveDoc();
         await refreshIn();
-        say(str('arcade.host.n_was_deleted_from_this', { 0: m.name }), 'ok');
+        say(str('arcade.host.n_was_deleted_from_this', { 0: nameOf(m) }), 'ok');
       })();
     },
   };
-  if (returnTo) { showSheet(m.name, [], returnTo); confirmInSheet(ask); return; }
+  if (returnTo) { showSheet(nameOf(m), [], returnTo); confirmInSheet(ask); return; }
   confirmInSheet(ask);
 }
 
@@ -1250,7 +1252,7 @@ function statusLine(m: DocMachine, fault: CoinFault | null = null, payoutsUnset 
 }
 
 function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElement[] {
-  const ms = [...d.machines].sort((a, b) => Number(switchedOff(b)) - Number(switchedOff(a)) || a.name.localeCompare(b.name));
+  const ms = [...d.machines].sort((a, b) => Number(switchedOff(b)) - Number(switchedOff(a)) || nameOf(a).localeCompare(nameOf(b)));
   const list = el('div', null, { class: 'ml-list nb-group' });
   const box = el('div', null, { class: 'ml-scroll' });
   box.append(list);
@@ -1278,10 +1280,10 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
 
 function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null, fault: CoinFault | null = null, payoutsUnset = false): HTMLElement {
   const row = el('button', null, { type: 'button', class: `ml-row ml-row--${machineState(m)}`, 'data-id': m.id }) as HTMLButtonElement;
-  const thumb = artwork(held?.hasThumb ? held.hash : null, m.name, () => undefined);
+  const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined);
   thumb.classList.add('ml-thumb');
   const words = el('span', null, { class: 'ml-words' });
-  words.append(el('span', m.name, { class: 'ml-name' }), statusLine(m, fault, payoutsUnset));
+  words.append(el('span', nameOf(m), { class: 'ml-name' }), statusLine(m, fault, payoutsUnset));
   if (fault) {
     row.classList.add('ml-row--fault');
     const fix = el('span', null, { class: 'ml-fix', 'aria-hidden': 'true' });
@@ -1299,7 +1301,7 @@ function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null, fault: C
     const sheet = document.getElementById('sheet');
     if (!sheet) return;
     const mo = new MutationObserver(() => {
-      if (sheet.classList.contains('open') && document.getElementById('sheet-title')?.textContent === m.name) return;
+      if (sheet.classList.contains('open') && document.getElementById('sheet-title')?.textContent === nameOf(m)) return;
       row.classList.remove('is-open');
       mo.disconnect();
     });
@@ -1447,10 +1449,10 @@ function syncSelBar(): void {
   if (p) { propBar(e.d, p, e.bar); return; }
   if (!m) { e.bar.replaceChildren(); return; }
   const held = e.byContent.get(m.contentHash) ?? null;
-  const thumb = artwork(held?.hasThumb ? held.hash : null, m.name, () => undefined);
+  const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined);
   thumb.classList.add('fp-selbar-thumb');
   const words = el('div', null, { class: 'fp-selbar-words' });
-  words.append(el('strong', m.name), el('span', str('arcade.host.facing_hint', { 0: TOWARD[turnOf(m.place)] }), { class: 'nb-meta' }));
+  words.append(el('strong', nameOf(m)), el('span', str('arcade.host.facing_hint', { 0: TOWARD[turnOf(m.place)] }), { class: 'nb-meta' }));
   const rot = button(str('arcade.host.rotate'), () => turn(e.d, m, 1, false), { class: 'nb-btn nb-btn--sm' });
   rot.prepend(rowIcon(UI_ICONS.reset, 'fp-selbar-icon', 16).firstElementChild!);
   const del = button(str('arcade.host.delete'), () => askDelete(e.d, m, del), { class: 'nb-btn nb-btn--sm fp-selbar-delete' });
@@ -1677,7 +1679,7 @@ function multiBar(d: ArcadeDoc, bar: HTMLElement): void {
   for (const m of d.machines) {
     if (!picked.machines.has(m.id) || things.length >= 3) continue;
     const held = editor?.byContent.get(m.contentHash) ?? null;
-    things.push(artwork(held?.hasThumb ? held.hash : null, m.name, () => undefined));
+    things.push(artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined));
   }
   for (const p of d.props ?? []) {
     if (!picked.props.has(p.id) || things.length >= 3) continue;
@@ -1941,7 +1943,8 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
   const here = new Map<string, DocMachine[]>();
   for (const m of d.machines) here.set(m.contentHash, [...(here.get(m.contentHash) ?? []), m]);
   const copiesOf = (g: GameMeta): DocMachine[] => keysOf(g).flatMap((k) => here.get(k) ?? []);
-  const free = games.filter((g) => !copiesOf(g).length);
+  const allHere = (g: GameMeta): boolean => { const c = copiesOf(g); return c.length > 0 && !buildToAdd(g, c); };
+  const free = games.filter((g) => !allHere(g));
   const sources = new SourceStore();
   const sourceOf = new Map(games.map((g) => [g.hash, librarySource(g, sources)]));
   let onlyNew = true;
@@ -1952,10 +1955,14 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
     mode: 'pick',
     unplayable: unplayableReason,
     onPick: (g) => { void install(d, g, copiesOf(g)); },
-    exclude: (g) => (onlyNew && copiesOf(g).length > 0) || (onlySourced && !sourceOf.get(g.hash)),
+    exclude: (g) => (onlyNew && allHere(g)) || (onlySourced && !sourceOf.get(g.hash)),
     chips: (g) => {
-      const n = copiesOf(g).length;
-      return n ? [chip(str('arcade.host.added_n', { n }))] : [];
+      const copies = copiesOf(g);
+      const n = copies.length;
+      if (!n) return [];
+      const builds = buildsOf(g).length;
+      const stood = buildsHere(g, copies);
+      return [chip(builds > 1 && stood < builds ? str('arcade.host.added_n_of_n', { 0: stood, 1: builds }) : str('arcade.host.added_n', { n }))];
     },
     onDrawn: (shown) => {
       none.replaceChildren();
@@ -2004,14 +2011,15 @@ function filterSwitch(label: string, on: boolean, onChange: (on: boolean) => voi
 async function install(d: ArcadeDoc, g: GameMeta, copies: DocMachine[] = []): Promise<void> {
   const why = cannotAdd(d);
   if (why) { say(why, 'warn'); return; }
-  const src = copies.find((m) => m.status === 'installed') ?? copies[0];
+  const build = buildToAdd(g, copies);
+  const src = build ? undefined : copies.find((m) => m.status === 'installed') ?? copies[0];
   if (src) {
     const copy = duplicateMachine(d, src.id, wantedCell());
     if (!copy) return;
     await saveDoc();
     if (copy.status === 'installed') {
       go('');
-      say(str('arcade.host.another_n_was_added', { 0: src.name }), 'ok');
+      say(str('arcade.host.another_n_was_added', { 0: nameOf(src) }), 'ok');
     } else go(`&install=${encodeURIComponent(copy.id)}`);
     return;
   }
@@ -2021,6 +2029,7 @@ async function install(d: ArcadeDoc, g: GameMeta, copies: DocMachine[] = []): Pr
     contentHash: ch, contentRule: g.contentRule ?? CONTENT_RULE, hash: g.hash, name: g.name, board: g.system,
     ...(g.programHash ? { programHash: g.programHash } : {}),
     ...(source ? { source } : {}),
+    ...(build ? { build: { ...build } } : {}),
   }, wantedCell());
   await saveDoc();
   go(`&install=${encodeURIComponent(m.id)}`);

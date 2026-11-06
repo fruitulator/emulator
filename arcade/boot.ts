@@ -1,5 +1,8 @@
 import { AGE_OK_CLASS, APP_READY_CLASS, ageGate } from '../web/agegate';
+import { updateGate } from '../web/updategate';
 import { followOtherTabs } from '../web/ui/theme';
+
+await updateGate('arcade');
 
 followOtherTabs();
 

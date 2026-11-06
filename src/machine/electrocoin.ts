@@ -905,6 +905,7 @@ export class Electrocoin implements Machine {
     return this.coinLockSeen && lockoutOpen(COIN_LOCKOUT, this.out[COIN_LOCKOUT_PORT]) === 0;
   }
   get coinRefusing(): number { return this.coinsShut ? 0xffffffff : 0; }
+  get coinRefusingHi(): number { return this.coinsShut ? 0xffffffff : 0; }
 
   private static readonly JUDGE_WAIT = Math.round(1.5 * CLOCK);
   private judging = false;

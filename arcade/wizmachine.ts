@@ -1,4 +1,4 @@
-import { FrameView, type FrameLayout } from '../src/machine/framestate';
+import { FrameView, HEADER_BYTES, REEL_BYTES, type FrameLayout } from '../src/machine/framestate';
 import { configOf, type Game } from '../src/machine/registry';
 import type { CashLedger } from '../src/machine/machine';
 import {
@@ -27,8 +27,6 @@ export const WINDOW_S = ATTRACT_WINDOW_S;
 export const TRACE_S = 30;
 const VK_SPACE = 32;
 const VIDEO_KEEP = 50;
-const HEADER_BYTES = 24;
-const REEL_BYTES = 12;
 
 export { attractBudgetS } from './bootdoor';
 
@@ -62,7 +60,7 @@ export function buttonsOnly(lamps: readonly CabLamp[]): Set<CabLamp> {
 }
 
 export type BootFrom =
-  | { kind: 'files' }
+  | { kind: 'files'; blank?: boolean }
   | { kind: 'saved' }
   | { kind: 'cycle'; snap: Snapshot | null };
 
@@ -121,7 +119,7 @@ export class WizardMachine {
     this.stopWatch();
     this.machine.config = config;
     await this.live.start(this.glass, from.kind === 'files'
-      ? { cold: true, stampPlay: false, saveOnLeave: false }
+      ? { cold: true, blankMemory: !!from.blank, stampPlay: false, saveOnLeave: false }
       : { snapshot: from.kind === 'cycle' ? from.snap ?? undefined : undefined,
         powerCycle: from.kind === 'cycle', stampPlay: false, saveOnLeave: false });
     if (!this.live.running) throw new Error(this.live.error || 'the machine did not start');

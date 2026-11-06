@@ -170,6 +170,7 @@
     "one": "Hinzugefügt",
     "other": "Hinzugefügt ×{n}"
   },
+  "arcade.host.added_n_of_n": "Hinzugefügt {0} von {1}",
   "arcade.host.align": "Ausrichten",
   "arcade.host.align_bottom": "Unten ausrichten",
   "arcade.host.align_centre": "Zentriert ausrichten",
@@ -721,6 +722,7 @@
   "arcade.wizard.some_payouts_cannot_be_counted": "Manche Auszahlungen dieses Automaten können nicht gezählt werden.",
   "arcade.wizard.start_moves_the_reels": "Start bewegt die Walzen",
   "arcade.wizard.start_pressed": "Start gedrückt",
+  "arcade.wizard.started_again_without_the": "Ohne den gespeicherten Speicher des Spiels neu gestartet, um die Spiele zu löschen",
   "arcade.wizard.started_from_the_game_s": "aus den Dateien des Spiels gestartet: Sein gespeicherter Stand konnte nicht verwendet werden",
   "arcade.wizard.starting_the_machine": "Der Automat startet…",
   "arcade.wizard.starts_the_machine_from_cold": "Schaltet den Automaten ein und prüft, ob er hochfährt.",
@@ -1150,7 +1152,7 @@
   "main.brightness": "Helligkeit",
   "main.brightness_n": "Helligkeit {0} %",
   "main.brightness_n_press_to_reset": "Helligkeit {0} % - zum Zurücksetzen drücken",
-  "main.build": "Build",
+  "main.build": "Version",
   "main.bulb_lab": "Birnenlabor",
   "main.cache_corrupt_please_delete_and": "Zwischenspeicher beschädigt - bitte dieses Spiel löschen und erneut hochladen",
   "main.close_menu": "Menü schließen",
@@ -1268,7 +1270,6 @@
   "main.reverse_virtual_display": "Virtuelle Anzeige spiegeln",
   "main.reverse_virtual_display_text": "Text der virtuellen Anzeige umkehren",
   "main.save_snapshot": "Snapshot speichern",
-  "main.saving_for_offline_n_n": "Wird offline gespeichert… {0}/{1}",
   "main.saving_the_file": "Die Datei wird gespeichert…",
   "main.sets_that_failed_part_way": {
     "one": "Teilweise fehlgeschlagene Sets haben außerdem {n} Spiel in der Bibliothek hinterlassen; „Entfernen“ nimmt auch diese heraus.",
@@ -1511,6 +1512,9 @@
   "ui.tip.my_games": "Deine Bibliothek: Füge neue Spiele hinzu und verwalte deine vorhandenen.",
   "ui.tip.my_games_name": "Meine Spiele",
   "ui.toast.dismiss": "Schließen",
+  "update.unable_to_update_fruitulator": "Fruitulator konnte nicht aktualisiert werden. Die Aktualisierung wird später erneut versucht.",
+  "update.updating": "Wird aktualisiert…",
+  "update.updating_n_n": "Wird aktualisiert… {0}/{1}",
   "versionpicker.last_played": "Zuletzt gespielt",
   "versionpicker.n_versions_grouped": {
     "one": "{n} Version gruppiert",

@@ -5,6 +5,7 @@ import { fingerprints } from '../web/hostfiles';
 import { byContentKey, contentIdentityOf, getPak, type GameMeta } from '../web/store';
 import { readCoinWiring } from '../web/coinask';
 import { wiringFor } from './coinwiring';
+import { labelledBuild } from './builds';
 import type { ArcadeDoc, DocMachine } from './doc';
 
 type Definition = Pick<DocMachine, 'hostFiles' | 'versions' | 'gameConfig'>;
@@ -49,8 +50,15 @@ async function hostsCopy(m: DocMachine, library: GameMeta[]): Promise<{ g: GameM
 
 export async function defineMachines(doc: ArcadeDoc, library: GameMeta[]): Promise<boolean> {
   let changed = false;
+  const by = byContentKey(library);
   for (const m of doc.machines) {
-    if (m.status !== 'installed' || m.hostFiles?.length) continue;
+    if (m.status !== 'installed') continue;
+    if (!m.build) {
+      const own = [m.contentHash, ...(m.formerContentHashes ?? [])].map((k) => by.get(k)).find((g) => !!g);
+      const b = own && labelledBuild(m, own);
+      if (b) { m.build = { ...b }; changed = true; }
+    }
+    if (m.hostFiles?.length) continue;
     const copy = await hostsCopy(m, library);
     if (!copy) {
       console.info(`[arcade] ${m.name}: not in this library, so it stays switched off`);
@@ -65,6 +73,10 @@ export async function defineMachines(doc: ArcadeDoc, library: GameMeta[]): Promi
       m.hostFiles = def.hostFiles;
       m.versions = def.versions;
       if (m.gameConfig === undefined) m.gameConfig = def.gameConfig;
+      if (!m.build) {
+        const b = labelledBuild(m, g);
+        if (b) m.build = { ...b };
+      }
       keepCoinAnswers(m, g.coinAnswers);
       changed = true;
       console.info(`[arcade] ${m.name}: switched on, as the host's copy of its set`);

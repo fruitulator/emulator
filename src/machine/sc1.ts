@@ -859,7 +859,7 @@ export class Sc1 implements Bus, Machine {
 
   private readIo(a: number): number {
     this.noteIo(a, false);
-    if (a >= 0x2a00 && a <= 0x2a02) return a === 0x2a00 ? this.mux1Input : 0;
+    if (a >= 0x2a00 && a <= 0x2a02) return a === 0x2a00 ? this.mux1Input & 0x7f : 0;
     if (a >= 0x2600 && a < 0x2800) return this.meterLatch;
     if (a === 0x2800) return this.triacLatch;
     if (a === 0x2e00) {

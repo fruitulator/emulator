@@ -48,8 +48,8 @@ export interface FrameLayout {
 
 const DIAG_RAM_BYTES: Readonly<Record<string, number>> = { SCORPION4: 4, SCORPION5: 3 };
 
-const HEADER_BYTES = 28;
-const REEL_BYTES = 12;
+export const HEADER_BYTES = 40;
+export const REEL_BYTES = 12;
 const OFF_EPOCH = 0;
 const OFF_SEQ = 4;
 const OFF_STEP_MS = 8;
@@ -60,7 +60,22 @@ const OFF_REEL_COUNT = 21;
 const OFF_LAMP_PHASE = 22;
 const OFF_LAMP_DIM = 23;
 const OFF_COIN_REFUSING = 24;
-const OFF_COIN_SHUT = 26;
+const OFF_COIN_REFUSING_HI = 28;
+const OFF_COIN_SHUT = 32;
+const OFF_COIN_SHUT_HI = 36;
+
+export const COIN_LINES = 64;
+
+export interface CoinLineWords {
+  readonly coinRefusing?: number;
+  readonly coinRefusingHi?: number;
+}
+
+export function coinLineRefused(x: CoinLineWords, line: number): boolean {
+  if (!(line >= 0 && line < COIN_LINES)) return false;
+  const word = line < 32 ? (x.coinRefusing ?? 0) : (x.coinRefusingHi ?? 0);
+  return ((word >>> (line & 31)) & 1) === 1;
+}
 
 export const LAMP_FULL = 255;
 export const LAMP_HALF = 128;
@@ -76,7 +91,7 @@ const FLAG_HALTED = 2;
 const FLAG_PAUSED = 4;
 
 export const EFFECT_LINES = 16;
-export const FRAME_FORMAT = 4;
+export const FRAME_FORMAT = 5;
 const EFFECT_BYTES = (EFFECT_LINES * 2 + 2) * 4 + 4 + 4 + 4;
 const TRIAC_LEVELS_KNOWN = 0x80000000;
 
@@ -420,8 +435,10 @@ export function captureFrame(
     | (meta.halted ? FLAG_HALTED : 0)
     | (meta.paused ? FLAG_PAUSED : 0));
   dv.setUint8(OFF_REEL_COUNT, layout.reelCount);
-  dv.setUint16(OFF_COIN_REFUSING, (m.coinRefusing ?? 0) & 0xffff, true);
-  dv.setUint16(OFF_COIN_SHUT, (m.coinLinesShut ?? 0) & 0xffff, true);
+  dv.setUint32(OFF_COIN_REFUSING, (m.coinRefusing ?? 0) >>> 0, true);
+  dv.setUint32(OFF_COIN_REFUSING_HI, (m.coinRefusingHi ?? 0) >>> 0, true);
+  dv.setUint32(OFF_COIN_SHUT, (m.coinLinesShut ?? 0) >>> 0, true);
+  dv.setUint32(OFF_COIN_SHUT_HI, (m.coinLinesShutHi ?? 0) >>> 0, true);
   dv.setUint8(OFF_LAMP_PHASE,
     (m as unknown as { lampPhase?(): number }).lampPhase?.() ?? 0);
   dv.setUint8(OFF_LAMP_DIM,
@@ -667,7 +684,9 @@ export class FrameView {
   readonly steps: number;
   readonly coinBusy: boolean;
   readonly coinRefusing: number;
+  readonly coinRefusingHi: number;
   readonly coinLinesShut: number;
+  readonly coinLinesShutHi: number;
   readonly halted: boolean;
   readonly paused: boolean;
   readonly reels: FrameReel[];
@@ -694,8 +713,10 @@ export class FrameView {
     this.steps = dv.getUint32(OFF_STEPS, true);
     const flags = dv.getUint8(OFF_FLAGS);
     this.coinBusy = (flags & FLAG_COIN_BUSY) !== 0;
-    this.coinRefusing = dv.getUint16(OFF_COIN_REFUSING, true);
-    this.coinLinesShut = dv.getUint16(OFF_COIN_SHUT, true);
+    this.coinRefusing = dv.getUint32(OFF_COIN_REFUSING, true);
+    this.coinRefusingHi = dv.getUint32(OFF_COIN_REFUSING_HI, true);
+    this.coinLinesShut = dv.getUint32(OFF_COIN_SHUT, true);
+    this.coinLinesShutHi = dv.getUint32(OFF_COIN_SHUT_HI, true);
     this.halted = (flags & FLAG_HALTED) !== 0;
     this.paused = (flags & FLAG_PAUSED) !== 0;
 

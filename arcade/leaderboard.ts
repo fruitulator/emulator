@@ -25,7 +25,7 @@ export function arcadeLeaders(api: ArcadeServer, arcadeId: string, own: boolean)
   if (!own) return { base: api.base, load: (m) => api.leaders(arcadeId, m), where: () => '' };
   const names = new Map<string, string>();
   const room = api.resolve(arcadeId).then((r) => {
-    for (const m of r?.doc.machines ?? []) names.set(m.id, machineTitle(m.name, null));
+    for (const m of r?.doc.machines ?? []) names.set(m.id, machineTitle(m.name, null, m.build));
   }, () => undefined);
   return {
     base: api.base,

@@ -2,7 +2,8 @@ import type { CoinWiring } from '../web/coinask';
 import type { RoomLook } from './roomlook';
 import { footprintAt, newPropId, posterArt, PROP_WALL_GAP, propFootprint, propKind, propOnWall, PROPS_MAX, readProps, wallHalfWidth, type PosterArt, type Prop, type PropKind } from './proplist';
 import type { CashLedger } from '../src/machine/machine';
-import type { GameConfig } from '../src/machine/registry';
+import type { InstallStart } from '../src/machine/ramstart';
+import type { GameConfig, GameVariant } from '../src/machine/registry';
 import type { HostFile } from '../web/hostfiles';
 import type { MachineInfo } from '../web/emu-protocol';
 import type { StateRec } from '../web/store';
@@ -85,6 +86,7 @@ export interface Validation {
   config: string;
   passed: boolean;
   checks: CheckResult[];
+  start?: InstallStart;
   skipped?: boolean;
 }
 
@@ -187,6 +189,7 @@ export interface DocMachine {
   gameConfig?: GameConfig | null;
   hostFiles?: HostFile[];
   versions?: number;
+  build?: GameVariant;
   coinStep?: CoinStepCache;
   config: MachineConfig;
   setup: MachineSetup;
@@ -562,6 +565,7 @@ export function duplicateMachine(doc: ArcadeDoc, id: string, place?: Place | nul
   if (src.gameConfig !== undefined) copy.gameConfig = structuredClone(src.gameConfig);
   if (src.hostFiles !== undefined) copy.hostFiles = src.hostFiles.map((f) => ({ ...f }));
   if (src.versions !== undefined) copy.versions = src.versions;
+  if (src.build !== undefined) copy.build = { ...src.build };
   if (src.formerContentHashes !== undefined) copy.formerContentHashes = [...src.formerContentHashes];
   if (src.detected !== undefined) copy.detected = structuredClone(src.detected);
   if (src.money !== undefined) copy.money = src.money;
