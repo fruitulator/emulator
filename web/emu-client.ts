@@ -25,6 +25,7 @@ export interface EmuLoadOptions {
   namedCoins?: Record<string, NamedCoin>;
   namedPayouts?: Record<string, number>;
   payoutMeters?: Record<string, boolean>;
+  notPayouts?: number[];
   coinWiring?: CoinWiring;
   powerCycle?: boolean;
   benchStep?: boolean;
@@ -66,6 +67,7 @@ export interface Emu {
   nameCoin(line: number, coin: NamedCoin): void;
   namePayout(line: number, pence: number): void;
   setPayoutMeter(line: number, token: boolean): void;
+  setNotPayouts(lines: readonly number[]): void;
   readonly payoutCounts: readonly number[];
   readonly meterTotals: MeterTotals | null;
   readonly unpricedPaid: readonly number[];
@@ -349,6 +351,7 @@ export class WorkerEmu implements Emu {
         namedCoins: opts.namedCoins,
         namedPayouts: opts.namedPayouts,
         payoutMeters: opts.payoutMeters,
+        notPayouts: opts.notPayouts,
         coinWiring: opts.coinWiring,
         powerCycle: opts.powerCycle,
         benchStep: opts.benchStep,
@@ -386,6 +389,10 @@ export class WorkerEmu implements Emu {
 
   setPayoutMeter(line: number, token: boolean): void {
     this.post({ type: 'payout-meter', epoch: this.epoch, line, token });
+  }
+
+  setNotPayouts(lines: readonly number[]): void {
+    this.post({ type: 'not-payouts', epoch: this.epoch, lines: [...lines] });
   }
 
   gateSeen(lamps: readonly number[]): void {

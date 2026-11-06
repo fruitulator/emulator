@@ -425,9 +425,22 @@
         "Solenoid Off"
       ],
       "confirmedEffectCodes": {
+        "": 0,
         "2p Slide": 42,
         "10p Slide": 5,
-        "20p Slide": 18
+        "20p Slide": 18,
+        "50p Slide": 19,
+        "£1 Slide": 34,
+        "Misc Slide": 35,
+        "Token Slide": 6,
+        "Meter": 13,
+        "Lockout On": 16,
+        "Lockout Off": 17,
+        "Sol/Wiper On": 20,
+        "Sol/Wiper Off": 21,
+        "Motor On": 1,
+        "Solenoid On": 2,
+        "Solenoid Off": 3
       }
     },
     "Version": {

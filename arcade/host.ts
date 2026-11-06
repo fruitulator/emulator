@@ -18,8 +18,8 @@ import { unplayableReason } from '../web/libimport';
 import { openDialog } from '../web/ui/dialog';
 import { dangerRow, closeSheet, confirmInSheet, escapeCloses, optionRow, sheetRow, showSheet } from '../web/ui/sheet';
 import { statusRow } from '../web/ui/status';
-import { COIN_SETUP_FAULT_HOST_TEXT, PAYOUTS_UNSET_HOST_TEXT, outputName } from './coinfault';
-import type { CoinFault } from './serverwire';
+import { COIN_SETUP_FAULT_HOST_TEXT, PAYOUTS_UNSET_HOST_TEXT, hostPayoutsUnset, outputName } from './coinfault';
+import type { CoinFault, MachineMoney } from './serverwire';
 import {
   ARCADE_MAX_MACHINES, FLOOR_CENTRE, FLOOR_COLS, FLOOR_GEOM, FLOOR_ROWS, FLOOR_STEP, addMachine, addProp, aligned, arrange, cannotAdd, distributed, duplicateMachine, facedAll, fits, moveMachine, moveProp, turnedAsGroup, turnedEach, type AlignEdge, type Arranged, type ArrangeTarget,
   faceProp, groupMoved, moveGroup, propFits, propSize, propStand, removeMachine, removeProp, switchedOff, snapProp, turnMachine, turnOf, turnProp, type ArcadeDoc, type DocMachine, type FloorGroup, type Place, type Turn,
@@ -1258,9 +1258,11 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
   box.append(list);
   const more = (): void => { box.classList.toggle('ml-more', box.scrollTop + box.clientHeight < box.scrollHeight - 1); };
   const faults = new Map<string, CoinFault>();
-  const unset = new Set<string>();
+  const records = new Map<string, MachineMoney>();
+  const unset = (m: DocMachine): boolean =>
+    hostPayoutsUnset(m, records.get(m.id), byContent.get(m.contentHash)?.system ?? m.gameConfig?.system);
   const fill = (): void => {
-    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null, faults.get(m.id) ?? null, unset.has(m.id))));
+    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null, faults.get(m.id) ?? null, unset(m))));
     box.hidden = !ms.length;
     more();
   };
@@ -1268,8 +1270,8 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
     void Promise.all(ms.map(async (m) => {
       const r = await serverMoney(d.id, m.id);
       if (r?.coinFault) faults.set(m.id, r.coinFault);
-      if (r?.payoutsUnset !== undefined) unset.add(m.id);
-    })).then(() => { if (faults.size || unset.size) fill(); });
+      if (r) records.set(m.id, r);
+    })).then(() => { if (faults.size || records.size) fill(); });
   }
   box.addEventListener('scroll', more);
   new ResizeObserver(more).observe(box);

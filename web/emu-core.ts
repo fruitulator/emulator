@@ -360,6 +360,11 @@ export function applyPayoutMeters(m: Machine, answers: Record<string, boolean> |
   for (const [line, token] of Object.entries(answers)) m.setPayoutMeter(Number(line), token);
 }
 
+export function applyNotPayouts(m: Pick<Machine, 'setNotPayouts'>, lines: readonly number[] | undefined): void {
+  if (!lines?.length || !m.setNotPayouts) return;
+  m.setNotPayouts(lines);
+}
+
 export function applyCoinWiring(m: Machine, wiring: CoinWiring | undefined): void {
   if (!wiring || !m.setCoinWiring) return;
   const w = readCoinWiring(wiring);

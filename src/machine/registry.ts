@@ -41,15 +41,15 @@ import { picDriverScan, picTypeFromLayout } from '../hw/pic';
 import { deviceFor, Sch2Hopper } from '../hw/cctalk';
 import { Sc5, adder5ScreenSize } from './sc5';
 import { Mps2 } from './mps2';
-import { Sys80, PortType as Sys80PortType } from './sys80';
-import { Sru, SRU_TONE_POT_DEFAULT, SRU_COIN_ROW, sruCoinsFromCabinet, sruFittedCoinLines, sruUnmarkedCoinLines } from './sru';
+import { Sys80, PortType as Sys80PortType, sys80WiredTriacLines } from './sys80';
+import { Sru, SRU_TONE_POT_DEFAULT, SRU_COIN_ROW, sruCoinsFromCabinet, sruFittedCoinLines, sruUnmarkedCoinLines, sruWiredTriacLines } from './sru';
 import { BlackBox } from './blackbox';
 import { Mpu3, Mpu3DisplayPort } from './mpu3';
 import { Mmm } from './mmm';
 import { Mpu2, Mpu2ReelType } from './mpu2';
 import { Sys83 } from './sys83';
 import { AceVideo, ACEVIDEO_COIN_LINES } from './acevideo';
-import { directCoinSlots, type BookedCoin } from './coinbook';
+import { directCoinSlots, unnamedOutputLines, type BookedCoin } from './coinbook';
 import { Pluto5 } from './pluto5';
 import { M1Video } from './m1video';
 import { PclMaxi } from './pclmaxi';
@@ -75,7 +75,7 @@ import { noteBoardDefault } from './boarddefaults';
 import { TAILORED_IDS } from './schematic';
 import {
   fittedPeripheralsFrom, type FittedPeripherals,
-  decodedLayout, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
+  decodedLayout, effectGrid, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
   dipSwitchLabelsFrom,
   triacSlidePence, readSwitchNumber, readWidthHeight, readOperatorTag, readOperatorSwitch, readNumber, mpu4CharacteriserConfigFrom,
   mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, mpu5Ram128kFrom, layoutSwitchIdsFrom, m1abDongleConfig, sc2DongleConfig, spaceDongleConfig, type SlideEffect,
@@ -2513,7 +2513,10 @@ const sys80: Platform = {
       node: TAILORED_IDS.meters,
     });
     if (s80Meters) m.setMeterMoney(s80Meters.meterIn, s80Meters.meterOut, s80Meters.triacOut);
-    if (payload) m.setPayoutSlides(triacSlidePence(payload, 'SYSTEM80'));
+    if (payload) {
+      m.setPayoutSlides(triacSlidePence(payload, 'SYSTEM80'));
+      m.setOutputLines(unnamedOutputLines(sys80WiredTriacLines(m.portMap), effectGrid(payload, 'SYSTEM80', 'Triac Effects')));
+    }
     m.setLayoutCoins(declaredCoins(game.layout), layoutInputButtons(game.layout) ?? [], layoutInputLettering(game.layout) ?? new Map());
     if (m.coinsPricedByPlays) {
       noteBoardDefault(m, {
@@ -2796,6 +2799,7 @@ const sru: Platform = {
     if (payload) {
       const slides = triacSlidePence(payload, 'SRU');
       if (slides) m.setSlidePence(slides);
+      m.setOutputLines(unnamedOutputLines(sruWiredTriacLines(m.portMap), effectGrid(payload, 'SRU', 'Triac Effects')));
     }
     const sruCoins = sruCoinsFromCabinet(cabinetCoinSlots(game.layout, SRU_COIN_ROW));
     m.setCoinPence(sruCoins);

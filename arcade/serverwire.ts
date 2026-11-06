@@ -49,7 +49,7 @@ export interface SaveBody {
   meterFault?: boolean;
 }
 export interface CoinFault { at: number; outputs: PaidOutput[] }
-export interface PaidOutput { line: number; kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper'; n: number }
+export interface PaidOutput { line: number; kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper' | 'output'; n: number }
 export interface CreditSince { inPence: number; tokenInPence: number }
 export interface LostCredit { at: number; savedAt: number; version: number; n: number; sinceGame: CreditSince | null }
 export type SaveReply = { ok: true; n: number; wallet?: WalletBalance } | { ok: false; why: 'not-holder' };

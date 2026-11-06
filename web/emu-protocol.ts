@@ -85,6 +85,7 @@ export type EmuRequest =
       namedCoins?: Record<string, NamedCoin>;
       namedPayouts?: Record<string, number>;
       payoutMeters?: Record<string, boolean>;
+      notPayouts?: number[];
       coinWiring?: CoinWiring;
       powerCycle?: boolean;
       benchStep?: boolean;
@@ -100,6 +101,7 @@ export type EmuRequest =
   | { type: 'name-coin'; epoch: number; line: number; coin: NamedCoin }
   | { type: 'name-payout'; epoch: number; line: number; pence: number }
   | { type: 'payout-meter'; epoch: number; line: number; token: boolean }
+  | { type: 'not-payouts'; epoch: number; lines: number[] }
   | { type: 'gate-seen'; epoch: number; lamps: number[] }
   | { type: 'coin-wiring'; epoch: number; wiring: CoinWiring }
   | { type: 'note'; epoch: number; billType: number; parallel?: boolean }

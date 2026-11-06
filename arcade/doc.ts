@@ -1,4 +1,5 @@
 import type { CoinWiring } from '../web/coinask';
+import { boardStamp } from '../web/boardstamp';
 import type { RoomLook } from './roomlook';
 import { footprintAt, newPropId, posterArt, PROP_WALL_GAP, propFootprint, propKind, propOnWall, PROPS_MAX, readProps, wallHalfWidth, type PosterArt, type Prop, type PropKind } from './proplist';
 import type { CashLedger } from '../src/machine/machine';
@@ -228,6 +229,10 @@ export function configDigest(c: MachineConfig): string {
     .sort(([a], [b]) => Number(a) - Number(b))
     .map(([k, s]) => [k, s.coins.map((x) => x.coin), !!s.checked]);
   return JSON.stringify([sort(c.optionKeys), sort(c.panelSwitches), ...(marked.length ? [marked] : [])]);
+}
+
+export function coinStepKey(m: Pick<DocMachine, 'contentHash' | 'config'>, build: string | undefined, system: string): string {
+  return `${m.contentHash}${build ? `|${build}` : ''}|${configDigest(m.config)}|${boardStamp(system)}`;
 }
 
 export function newArcade(name = ''): ArcadeDoc {

@@ -13,7 +13,7 @@ import { stampVersion } from './play/savedversion';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { Follower, diffPaths, followBudget, settleSound, signalsOf, snapshotHash, type Check, type RelayInput } from './relay';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyPayoutMeters, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyPayoutMeters, applyNotPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
@@ -315,6 +315,7 @@ function load(req: Extract<EmuRequest, { type: 'load' }>): void {
     applyNamedCoins(m, req.namedCoins);
     applyNamedPayouts(m, req.namedPayouts);
     applyPayoutMeters(m, req.payoutMeters);
+    applyNotPayouts(m, req.notPayouts);
     applyCoinWiring(m, req.coinWiring);
     if (req.powerCycle) powerCycleOrThrow(m);
     layout = frameLayoutFor(req.game.system, m, req.game.layout);
@@ -476,6 +477,9 @@ function handle(req: EmuRequest): void {
       break;
     case 'payout-meter':
       m.setPayoutMeter?.(req.line, req.token);
+      break;
+    case 'not-payouts':
+      m.setNotPayouts?.(req.lines);
       break;
     case 'gate-seen':
       gateSeen = gatesOf({ gates: req.lamps });

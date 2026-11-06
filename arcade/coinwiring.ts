@@ -1,7 +1,7 @@
 import type { MachineInfo } from '../web/emu-protocol';
 import type { Emu } from '../web/emu-client';
 import { markableLine, viewFor, type PlatformView } from '../web/platform';
-import { CASH_COINS, wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, slotCoinPence, type CoinWiring, type SlotCoin } from '../web/coinask';
+import { CASH_COINS, isTokenCoin, wiringFromAnswers, readCoinWiring, namedCoinsOf, wiredCoinOn, markedSlots, playableWiring, slotCoinPence, type CoinWiring, type SlotCoin } from '../web/coinask';
 import { hasInput, type CabLamp } from '../web/dat';
 import type { NamedCoin } from '../src/machine/machine';
 import { detectCoins, detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
@@ -108,6 +108,28 @@ export function lineCoins(info: MachineInfo | null, refusing: number, w: CoinWir
     else if (p > 0) out.push({ line, coin: p });
   }
   return out;
+}
+
+export const sameKindCoin = (a: SlotCoin, b: SlotCoin): boolean => (isTokenCoin(a) ? isTokenCoin(b) : a === b);
+
+export function slotOffer(coinOf: ReadonlyMap<number, SlotCoin>, unnamedCoins: readonly number[]): {
+  takes: ReadonlySet<number> | null;
+  token: boolean;
+  unnamed: number[];
+  lineFor(s: { lines: readonly number[] }, c: SlotCoin): number | null;
+} {
+  const unnamed = unnamedCoins.filter((l) => !coinOf.has(l));
+  const takes = new Set<number>();
+  let token = unnamed.length > 0;
+  for (const c of coinOf.values()) {
+    if (isTokenCoin(c)) token = true;
+    else takes.add(c);
+  }
+  const lineFor = (s: { lines: readonly number[] }, c: SlotCoin): number | null => {
+    const match = (l: number): boolean => { const o = coinOf.get(l); return o !== undefined && sameKindCoin(c, o); };
+    return s.lines.find(match) ?? [...coinOf.keys()].find(match) ?? s.lines.find((l) => unnamed.includes(l)) ?? unnamed[0] ?? null;
+  };
+  return { takes: unnamed.length ? null : takes, token, unnamed, lineFor };
 }
 
 export function wiringFor(configCoins: unknown, oldAnswers: unknown, info: MachineInfo | null): CoinWiring {

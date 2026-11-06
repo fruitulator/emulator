@@ -1,6 +1,10 @@
-import type { SlideEffect } from '../layout/fmlconfig';
+import type { EffectGridRow, SlideEffect } from '../layout/fmlconfig';
 import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
-import type { CashLedger, CoinChute, NamedCoin } from './machine';
+import type { CashLedger, CoinChute, NamedCoin, PayoutRow } from './machine';
+
+export function unnamedOutputLines(wired: Iterable<number>, grid: readonly EffectGridRow[] | null): number[] {
+  return [...new Set(wired)].filter((line) => !(grid?.[line]?.on)).sort((a, b) => a - b);
+}
 
 export type BookedCoin = number | { token: number } | 'token' | null;
 
@@ -30,6 +34,13 @@ export class TokenPayouts {
 
   value(line: number): number | undefined { return this.named.get(line) ?? this.defaults.get(line); }
 
+  private readonly cash = new Set<number>();
+  setCash(line: number, cash: boolean): void {
+    if (cash) this.cash.add(line);
+    else this.cash.delete(line);
+  }
+  isCash(line: number): boolean { return this.cash.has(line); }
+
   setDefault(line: number, pence: number | null): void {
     if (pence !== null && Number.isInteger(pence) && pence > 0) this.defaults.set(line, pence);
     else this.defaults.delete(line);
@@ -54,12 +65,40 @@ export class TokenPayouts {
 }
 
 export class CoinBook {
-  static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'openOnCoin', 'payouts'];
+  static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'openOnCoin', 'payouts', 'outputs', 'notPayouts'];
 
   readonly payouts = new TokenPayouts();
   get unpricedPaidLines(): readonly number[] { return this.payouts.unpricedLines; }
 
   slides: SlideEffect[] = [];
+  outputs: number[] = [];
+  setOutputLines(lines: readonly number[]): void {
+    this.outputs = [...new Set(lines)];
+  }
+
+  notPayouts: number[] = [];
+  setNotPayouts(lines: readonly number[]): void {
+    this.notPayouts = [...new Set(lines)].sort((a, b) => a - b);
+  }
+
+  get outputRows(): PayoutRow[] {
+    return this.outputs.map((line) => ({ kind: 'output' as const, line, pence: null, token: false }));
+  }
+
+  output(line: number, unit: 'token' | 'unpriced'): void {
+    if (this.notPayouts.includes(line)) return;
+    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
+    const v = this.payouts.value(line);
+    if (v === undefined) {
+      this.pay(unit);
+      if (this.open) this.payouts.noteUnpriced(line);
+    } else if (this.payouts.isCash(line)) this.cashOut(v);
+    else this.pay({ token: v });
+  }
+
+  get outputCounts(): number[] {
+    return this.outputs.map((line) => this.lineCoins[line] ?? 0);
+  }
   changeWindow = 0;
   open: boolean;
 
@@ -131,8 +170,9 @@ export class CoinBook {
   }
 
   slide(line: number): void {
-    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
     const s = this.slides[line] ?? null;
+    if (s === null && this.outputs.includes(line)) { this.output(line, 'token'); return; }
+    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
     const named = s === 'token' || s === 'unpriced' ? this.payouts.value(line) : undefined;
     if (named !== undefined && s === 'unpriced') this.pay(named);
     else this.pay(named === undefined ? s : { token: named });

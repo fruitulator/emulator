@@ -1,7 +1,7 @@
 import { WorkerEmu, type AutosaveBlob } from '../web/emu-client';
 import { blankMemoryGame } from '../web/emu-core';
 import { getMeta, playCountOf, putMeta } from '../web/store';
-import { payoutsAnswered, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
+import { readNotPayoutLines, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
 import { coinsForLoad, markedChutes, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
 import { openCoinMenu } from '../web/ui/coinmenu';
@@ -40,7 +40,7 @@ import type { ClaimEvents, ClaimResult, MoneyHooks, SlotKeyframe, StateSlot, Vis
 import type { RelayBatch } from './serverwire';
 import { isToken, payForCoin, penceOf, unpriced, type Wallet } from './wallet';
 import { unknownMoneyMoved } from './moneygate';
-import { COIN_SETUP_FAULT_TEXT, FREE_PLAY_TEXT, paidOutputs, paidUnpriced } from './coinfault';
+import { COIN_SETUP_FAULT_TEXT, FREE_PLAY_TEXT, freePlayOn, paidOutputs, paidUnpriced, payoutsUnsetFor } from './coinfault';
 import { payoutFaultLinesSince } from '../web/emu-protocol';
 import { attractBudgetS, BootDoor, BootWatch } from './bootdoor';
 import type { CashLedger, CoinChute } from '../src/machine/machine';
@@ -219,13 +219,10 @@ export class Live {
   private coinFaultNow = false;
   private payoutFaultsAtStart = 0;
   private get freePlay(): boolean {
-    return this.glass?.machine?.config?.freePlay === true || this.emu.info?.meterOnlyPayout === true
-      || this.payoutsUnset;
+    return freePlayOn(this.emu.info, this.glass?.machine?.config) || this.payoutsUnset;
   }
   private get payoutsUnset(): boolean {
-    const info = this.emu.info;
-    const c = this.glass?.machine?.config;
-    return !!info?.unpricedPayouts?.length && !payoutsAnswered(info, c?.payouts, info.unpricedPayouts, c?.notPayouts);
+    return payoutsUnsetFor(this.emu.info, this.glass?.machine?.config);
   }
   private get pricing(): Live['wallet'] { return this.freePlay ? null : this.wallet; }
   private freePlayTold = false;
@@ -634,6 +631,7 @@ export class Live {
         ...coinsForLoad(cfg.coins, ownAnswers, null),
         namedPayouts: readPayoutValues(cfg.payouts),
         payoutMeters: readPayoutMeters(cfg.payoutMeters),
+        notPayouts: readNotPayoutLines(cfg.notPayouts),
       };
       this.oldCoinAnswers = ownAnswers;
       this.lastStart = { t0, resumed: !!snapshot, why };
@@ -1211,6 +1209,7 @@ export class Live {
         ...coinsForLoad(cfg.coins, g.machine.hostFiles ? undefined : meta?.coinAnswers, null),
         namedPayouts: readPayoutValues(cfg.payouts),
         payoutMeters: readPayoutMeters(cfg.payoutMeters),
+        notPayouts: readNotPayoutLines(cfg.notPayouts),
         snapshot,
         follow: { cycle: k.cycle, seq: k.seq, bufferMs: WATCH_BUFFER_MS },
       });

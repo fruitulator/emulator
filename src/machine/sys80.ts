@@ -1,5 +1,5 @@
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
+import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind, PayoutRow } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
@@ -102,6 +102,7 @@ export class Sys80 implements Machine {
     'rom', 'romBytes',
     'hopperSwitch',
     'slideNames', 'triacOutRaw',
+    'triacOutputs',
   ];
 
   readonly digitKind: DigitKind = 'words';
@@ -161,14 +162,42 @@ export class Sys80 implements Machine {
     this.meterInPence = inMult.map((x) => x * Sys80.METER_UNIT_PENCE);
     const second = (mult: readonly number[]): number => mult.flatMap((x, i) => (x ? [i] : []))[1] ?? -1;
     this.tokenInMeter = second(inMult);
+    this.refreshOutputs();
   }
 
   setPayoutSlides(slides: readonly SlideEffect[] | null): void {
     this.slideNames = slides ?? [];
     this.coinBook.setSlides(this.slideNames);
+    this.refreshOutputs();
   }
 
   private static readonly HOPPER_LINE = 8;
+
+  static readonly METER_OUTPUT_BASE = 16;
+
+  private triacOutputs: number[] = [];
+
+  setOutputLines(lines: readonly number[]): void {
+    this.triacOutputs = [...new Set(lines)].sort((a, b) => a - b);
+    this.refreshOutputs();
+  }
+
+  private get meterOutputLines(): number[] {
+    if (!this.meterOutUnpriced || this.payoutDevices.length > 0) return [];
+    return this.meterOutRaw.flatMap((x, i) => (x > 0 ? [Sys80.METER_OUTPUT_BASE + i] : []));
+  }
+
+  private refreshOutputs(): void {
+    this.coinBook.setOutputLines([...this.triacOutputs, ...this.meterOutputLines]);
+  }
+
+  get payoutRows(): readonly PayoutRow[] {
+    return this.coinBook.outputRows.map((r, i) => ({ ...r, displayNumber: i + 1 }));
+  }
+  get payoutCounts(): readonly number[] { return this.coinBook.outputCounts; }
+
+  setPayoutMeter(line: number, token: boolean): void { this.coinBook.payouts.setCash(line, !token); }
+  setNotPayouts(lines: readonly number[]): void { this.coinBook.setNotPayouts(lines); }
 
   private isPayoutTriac(i: number): boolean {
     return this.slideNames[i] != null || (this.triacOutRaw[i] ?? 0) > 0;
@@ -223,7 +252,9 @@ export class Sys80 implements Machine {
     this.gridTotals.in += this.meterInRaw[i] ?? 0;
     this.gridTotals.out += this.meterOutRaw[i] ?? 0;
     countOutClick(this.outClicks, i, this.meterOutRaw[i]);
-    if (this.meterOutUnpriced && this.booksMoney && (this.meterOutRaw[i] ?? 0) > 0 && this.payoutDevices.length === 0) this.coinBook.pay('unpriced');
+    if (this.meterOutUnpriced && this.booksMoney && (this.meterOutRaw[i] ?? 0) > 0 && this.payoutDevices.length === 0) {
+      this.coinBook.output(Sys80.METER_OUTPUT_BASE + i, 'unpriced');
+    }
   }
 
   protected readonly sreels: Sys80Reel[] = [];
@@ -540,7 +571,10 @@ export class Sys80 implements Machine {
           const mask = 1 << (e.value - 1);
           if (value && !(this.triacs & mask)) {
             this.triacPulses[e.value - 1]++;
-            if (this.isPayoutTriac(e.value - 1)) { if (this.booksMoney) this.coinBook.tube(e.value - 1); } else this.coinBook.unnamed(e.value - 1);
+            const line = e.value - 1;
+            if (this.isPayoutTriac(line)) { if (this.booksMoney) this.coinBook.tube(line); }
+            else if (this.triacOutputs.includes(line)) { if (this.booksMoney) this.coinBook.output(line, 'token'); }
+            else this.coinBook.unnamed(line);
             triacSenseRelease(this, mask);
           }
           this.triacs = (this.triacs & ~mask) | (value ? mask : 0);
@@ -1024,6 +1058,14 @@ export class Sys80 implements Machine {
   get meterTotals(): { in: number; out: number } | undefined {
     return this.readsProgramCoins ? { in: this.gridTotals.in, out: this.gridTotals.out } : undefined;
   }
+}
+
+export function sys80WiredTriacLines(portMap: readonly { type: PortType; value: number }[]): number[] {
+  const out = new Set<number>();
+  for (const e of portMap) {
+    if ((e.type === PortType.Triac || e.type === PortType.TriacLamp) && e.value >= 1 && e.value <= 8) out.add(e.value - 1);
+  }
+  return [...out].sort((a, b) => a - b);
 }
 
 export function sys80SlotLine(c: Pick<DeclaredCoin, 'line' | 'button' | 'token'> & { note?: number | null }): number {

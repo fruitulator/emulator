@@ -1,4 +1,4 @@
-import { Sys80 } from './sys80';
+import { PortType, Sys80, sys80WiredTriacLines } from './sys80';
 import { noteRomCut } from './boarddefaults';
 import { v20LoadRamFile } from './v20ramfile';
 import type { BoardPart } from './parts';
@@ -6,7 +6,7 @@ import { OneBitSpeaker } from '../hw/speaker';
 import { SRU_BASS_FREQ } from '../hw/blipleak';
 import { AY_RATE } from '../hw/ay8910';
 import { Mixer } from '../hw/mixer';
-import { newCashLedger, type CashLedger, type CabinetSwitch, type CoinChute, type NamedCoin } from './machine';
+import { newCashLedger, type CashLedger, type CabinetSwitch, type CoinChute, type NamedCoin, type PayoutRow } from './machine';
 import { CoinBook, namedBooking, type BookedCoin } from './coinbook';
 import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import type { SlideEffect } from '../layout/fmlconfig';
@@ -287,10 +287,14 @@ export class Sru extends Sys80 {
   private readonly book = new CoinBook(this.gross, CHANGE_GAP);
   override get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   override get cashLedger(): CashLedger | undefined {
-    return this.coinPence.some((p) => p !== null) || this.slides.some((s) => s !== null)
+    return this.coinPence.some((p) => p !== null) || this.slides.some((s) => s !== null) || this.book.outputs.length > 0
       ? this.gross
       : undefined;
   }
+
+  override setOutputLines(lines: readonly number[]): void { this.book.setOutputLines(lines); }
+  override get payoutRows(): readonly PayoutRow[] { return this.book.outputRows; }
+  override get payoutCounts(): readonly number[] { return this.book.outputCounts; }
 
   private slides: SlideEffect[] = [null, null, null, null, null, null, null, null];
   setSlidePence(slides: readonly SlideEffect[]): void {
@@ -324,6 +328,8 @@ export class Sru extends Sys80 {
   protected override meterOutUnpriced = false;
   override get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   override namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  override setPayoutMeter(line: number, token: boolean): void { this.book.payouts.setCash(line, !token); }
+  override setNotPayouts(lines: readonly number[]): void { this.book.setNotPayouts(lines); }
 
   nameCoin(line: number, coin: NamedCoin): void {
     const i = line - 20;
@@ -406,4 +412,8 @@ export class Sru extends Sys80 {
         note: 'Each triac sits out on the solenoid it switches. What a payout line throws is this cabinet\u2019s own data.' },
     ];
   }
+}
+
+export function sruWiredTriacLines(portMap: readonly { type: PortType; value: number }[]): number[] {
+  return sys80WiredTriacLines(portMap);
 }

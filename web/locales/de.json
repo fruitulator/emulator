@@ -671,6 +671,7 @@
   "arcade.wizard.no_coin_slot_layout_needs_fixing": "dieser Automat hat keinen Münzschlitz, über den er Geld annehmen kann, daher muss sein Layout korrigiert werden, bevor er in die Spielhalle kann",
   "arcade.wizard.no_display_on_this_cabinet": "keine Anzeige an diesem Gehäuse, die diese Prüfung lesen kann",
   "arcade.wizard.no_money_booked_after_a": "nach einer Münze wurde kein Geld gebucht",
+  "arcade.wizard.no_payout_slide_found_set": "Kein Auszahlungsschacht gefunden, bitte unten manuell einrichten",
   "arcade.wizard.no_picture_from_the_machine": "kein Bild vom Automaten",
   "arcade.wizard.no_reading": "kein Messwert",
   "arcade.wizard.no_reels_on_this_machine": "Dieser Automat hat keine Walzen",

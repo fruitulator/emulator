@@ -671,6 +671,7 @@
   "arcade.wizard.no_coin_slot_layout_needs_fixing": "cette machine n'a aucune fente par laquelle elle peut prendre de l'argent, son layout doit donc être corrigé avant qu'elle puisse entrer dans la salle",
   "arcade.wizard.no_display_on_this_cabinet": "aucun afficheur de ce meuble n'est lisible par cette vérification",
   "arcade.wizard.no_money_booked_after_a": "aucun argent comptabilisé après une pièce",
+  "arcade.wizard.no_payout_slide_found_set": "Aucune glissière de paiement trouvée, configurez-la manuellement ci-dessous",
   "arcade.wizard.no_picture_from_the_machine": "aucune image de la machine",
   "arcade.wizard.no_reading": "aucune lecture",
   "arcade.wizard.no_reels_on_this_machine": "Pas de rouleaux sur cette machine",

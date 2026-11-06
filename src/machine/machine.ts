@@ -18,6 +18,7 @@ export interface PayoutRow {
   line: number;
   pence: number | null;
   token: boolean;
+  displayNumber?: number;
 }
 
 export type NamedCoin = number | { token: number } | 'token';
@@ -218,6 +219,7 @@ export interface Machine {
   namePayout?(line: number, pence: number): void;
   readonly payoutRows?: readonly PayoutRow[];
   setPayoutMeter?(line: number, token: boolean): void;
+  setNotPayouts?(lines: readonly number[]): void;
   readonly payoutCounts?: readonly number[];
   readonly unpricedPaidLines?: readonly number[];
   readonly rowCoins?: Readonly<Record<number, number>>;

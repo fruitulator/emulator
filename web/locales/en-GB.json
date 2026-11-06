@@ -671,6 +671,7 @@
   "arcade.wizard.no_coin_slot_layout_needs_fixing": "this machine has no coin slot it can take money on, so its layout needs fixing before it can go in the arcade",
   "arcade.wizard.no_display_on_this_cabinet": "no display on this cabinet this check can read",
   "arcade.wizard.no_money_booked_after_a": "no money booked after a coin",
+  "arcade.wizard.no_payout_slide_found_set": "No payout slide found, set up manually below",
   "arcade.wizard.no_picture_from_the_machine": "no picture from the machine",
   "arcade.wizard.no_reading": "no reading",
   "arcade.wizard.no_reels_on_this_machine": "No reels on this machine",
