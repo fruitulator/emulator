@@ -4,7 +4,10 @@ import { groupTitle, preferredOf, type Grouping } from './versions';
 import { libraryMaker } from './maker';
 import { enhanceSelect, type Dropdown } from './ui/dropdown';
 import { artwork, releaseArtwork } from './ui/art';
-import { actionButton, chip, searchBar, sectionHeading, tileCard, tileGrid, type SearchBar } from './ui/list';
+import {
+  actionButton, chip, searchBar, sectionHeading, isWindowed, syncWindowedGrids, tileCard, windowedGrid, windowedNeighbour,
+  type SearchBar, type WindowedGrid,
+} from './ui/list';
 import { UI_ICONS } from './ui/icons';
 import { str } from './i18n';
 import { bubbleTip } from './ui/tip';
@@ -179,6 +182,12 @@ const reveal = typeof IntersectionObserver === 'undefined' ? null
     }
   }, { rootMargin: '80px 0px' });
 
+function forgetCard(el: HTMLElement): void {
+  reveal?.unobserve(el);
+  drawnAtY.delete(el);
+  for (const f of el.querySelectorAll<HTMLElement>('.art')) releaseArtwork(f);
+}
+
 const animated = new Set<string>();
 
 if (typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches) {
@@ -324,6 +333,7 @@ function featuredCard(
   const name = document.createElement('h3');
   name.className = 'nb-display lib-featured-title';
   name.textContent = title;
+  name.title = title;
   const chips = document.createElement('div');
   chips.className = 'chips';
   chips.append(chip(systemLabel(g.system), 'plat'), chip(activity(g)));
@@ -334,12 +344,12 @@ function featuredCard(
     chips.append(tag);
   }
   body.append(name, chips);
-  box.append(art, body);
   if (!blocked) {
     const go = actionButton(hasState ? str('orbit.resume') : str('orbit.play'), 'primary', open);
     go.classList.add('lib-featured-go');
-    box.append(go);
+    body.append(go);
   }
+  box.append(art, body);
   return box;
 }
 
@@ -384,6 +394,12 @@ export function gridArrowNav(ev: KeyboardEvent): void {
   const card = target.closest('.card') as HTMLElement | null;
   if (!card) return;
   const container = card.parentElement!;
+  const dir = ({ ArrowRight: 'right', ArrowLeft: 'left', ArrowDown: 'down', ArrowUp: 'up' } as const)[ev.key];
+  if (dir && isWindowed(container)) {
+    const next = windowedNeighbour(card, dir);
+    if (next) { ev.preventDefault(); next.focus(); }
+    return;
+  }
   const cards = [...container.querySelectorAll<HTMLElement>('.card')];
   const i = cards.indexOf(card);
   if (i < 0) return;
@@ -492,6 +508,13 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     return card;
   };
 
+  let windows: WindowedGrid[] = [];
+  const gridOf = (gs: GameMeta[]): HTMLElement => {
+    const w = windowedGrid(gs.length, (i) => cardFor(gs[i]), forgetCard);
+    windows.push(w);
+    return w.grid;
+  };
+
   const draw = (games: GameMeta[], s: ReadonlySet<string> = saved, grouping?: Grouping | null): void => {
     saved = s;
     groupOf = new Map();
@@ -524,6 +547,8 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
       }
     }
     heads = [];
+    for (const w of windows) w.dispose();
+    windows = [];
     for (const c of [...root.children]) if (c !== bar?.wrap) c.remove();
     if (bar && bar.wrap.parentNode !== root) root.prepend(bar.wrap);
     if (o.mode === 'browse' && sort === 'played' && !search) {
@@ -536,7 +561,7 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
       }
     }
     root.append(...sections.flatMap(({ label, games: gs }) => {
-      if (flat) return [tileGrid(gs.map(cardFor))];
+      if (flat) return [gridOf(gs)];
       let head: HTMLElement;
       if (o.mode === 'pick' && o.chosen) {
         const chosen = o.chosen;
@@ -549,8 +574,9 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
       } else {
         head = sectionHeading(label, chip(str('gamelist.n_games', { n: gs.length })));
       }
-      return [head, tileGrid(gs.map(cardFor))];
+      return [head, gridOf(gs)];
     }));
+    syncWindowedGrids();
     markHeadings();
     if (o.mode === 'pick') o.onDrawn?.(games.length);
   };

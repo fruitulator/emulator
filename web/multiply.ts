@@ -1,3 +1,12 @@
+const rectClipped = new WeakSet<CanvasRenderingContext2D>();
+
+export function rectClipOnly(ctx: CanvasRenderingContext2D, on: boolean): boolean {
+  const was = rectClipped.has(ctx);
+  if (on) rectClipped.add(ctx);
+  else rectClipped.delete(ctx);
+  return was;
+}
+
 export function multiplyImage(ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, dx: number, dy: number, dw?: number, dh?: number): void;
 export function multiplyImage(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number },
@@ -14,6 +23,16 @@ export function multiplyImage(
     dw = c; dh = d;
   }
   if (!(sw > 0 && sh > 0 && dw > 0 && dh > 0)) return;
+  if (rectClipped.has(ctx)) {
+    const t = ctx.getTransform();
+    if (t.b === 0 && t.c === 0) {
+      const op0 = ctx.globalCompositeOperation;
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+      ctx.globalCompositeOperation = op0;
+      return;
+    }
+  }
   const pattern = ctx.createPattern(img, 'no-repeat');
   if (!pattern) return;
   const kx = dw / sw, ky = dh / sh;

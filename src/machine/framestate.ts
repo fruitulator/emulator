@@ -267,7 +267,7 @@ export function frameLayoutFor(
       lampKind = 'epoch';
       break;
     case 'MPS2':
-      lampKind = 'byte256';
+      lampKind = 'mfmelevel';
       break;
     case 'ASTRASYSA1':
       lampKind = 'mfmelevel';

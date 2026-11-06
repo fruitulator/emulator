@@ -7,7 +7,7 @@ import {
 import { localStateStore } from './statestore';
 import { parseTitle } from './title';
 import { clearArtwork, fillArtwork, releaseArtwork } from './ui/art';
-import { chip } from './ui/list';
+import { chip, syncWindowedGrids } from './ui/list';
 import {
   activity, displayTitle, gridArrowNav, groupVersionsRow, mountGameList, systemLabel, viewDropdown,
   type GameList, type SortKey,
@@ -283,6 +283,7 @@ function storageReadout(count: number, unreadable: string | null, est: StorageEs
 }
 
 export async function settleArtwork(capMs = 2000): Promise<void> {
+  syncWindowedGrids();
   const margin = 100;
   const frames = [...document.querySelectorAll<HTMLElement>('#tiles .art[data-hash], #orbit-wrap .art[data-hash]')]
     .filter((f) => {

@@ -74,6 +74,9 @@
   position: relative;
   z-index: 0;
 }
+.tile-spacer {
+  grid-column: 1 / -1;
+}
 @media (hover: hover) {
   .card:hover,
   .card:focus-within {
@@ -414,68 +417,61 @@ body.cards-scrolling .card {
 .lib-featured {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);
-  grid-template-areas: "art body" "art go";
-  align-content: center;
+  align-items: stretch;
   column-gap: 28px;
-  row-gap: 22px;
+  padding: 28px;
   width: min(620px, 100%);
+  box-sizing: border-box;
   overflow: hidden;
 }
 .lib-featured-art {
-  grid-area: art;
   width: 210px;
   height: 250px;
   aspect-ratio: auto;
-  border-radius: 0;
-}
-.lib-featured-art::after {
-  background: linear-gradient(90deg, transparent 55%, rgba(18, 12, 38, 0.95));
+  border-radius: 16px;
+  align-self: center;
 }
 .lib-featured-art .art-img {
   object-fit: cover;
   object-position: top;
 }
 .lib-featured-body {
-  grid-area: body;
-  align-self: end;
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
   gap: 14px;
   min-width: 0;
-  padding-right: 28px;
 }
-.lib-featured-title {
+.lib-featured .lib-featured-title {
   margin: 0;
-  font-size: 32px;
+  max-width: 100%;
+  font-size: clamp(28px, 3.2vw, 44px);
+  line-height: 1.05;
+  letter-spacing: .04em;
+  text-wrap: balance;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.lib-featured-body > .chips {
+  gap: 8px 6px;
 }
 .lib-featured-go {
-  grid-area: go;
-  align-self: start;
-  justify-self: start;
+  margin-top: 4px;
 }
 @media (max-width: 720px) {
   .lib-featured {
     grid-template-columns: 110px minmax(0, 1fr);
-    grid-template-areas: "art body" "go go";
-    column-gap: 16px;
-    row-gap: 14px;
+    column-gap: 20px;
+    padding: 20px;
   }
   .lib-featured-art {
     width: 110px;
     height: 130px;
-  }
-  .lib-featured-body {
-    align-self: center;
-    padding: 0 16px 0 0;
-    gap: 10px;
-  }
-  .lib-featured-title {
-    font-size: 24px;
-  }
-  .lib-featured-go {
-    justify-self: stretch;
-    margin: 0 16px 16px;
   }
 }
 

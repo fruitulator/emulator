@@ -63,6 +63,174 @@ export function tileGrid(cards: HTMLElement[] = []): HTMLDivElement {
   return grid;
 }
 
+export interface WindowedGrid {
+  readonly grid: HTMLDivElement;
+  dispose(): void;
+}
+
+interface Win {
+  grid: HTMLDivElement;
+  count: number;
+  make(i: number): HTMLElement;
+  drop(el: HTMLElement): void;
+  cards: Map<number, HTMLElement>;
+  first: number;
+  last: number;
+  cols: number;
+  width: number;
+  head: HTMLElement;
+  foot: HTMLElement;
+}
+
+const wins = new Set<Win>();
+const winOf = new WeakMap<Element, Win>();
+const indexOf = new WeakMap<Element, number>();
+const rowHeights = new Map<string, number>();
+
+const resized = typeof ResizeObserver === 'undefined' ? null
+  : new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const w = winOf.get(e.target);
+      if (w) updateWin(w);
+    }
+  });
+
+if (typeof document !== 'undefined') {
+  const all = (): void => { for (const w of wins) updateWin(w); };
+  document.addEventListener('scroll', all, { capture: true, passive: true });
+  window.addEventListener('resize', all, { passive: true });
+}
+
+export function syncWindowedGrids(): void {
+  for (const w of wins) updateWin(w);
+}
+
+function spacer(): HTMLElement {
+  const s = document.createElement('div');
+  s.className = 'tile-spacer';
+  s.setAttribute('aria-hidden', 'true');
+  s.hidden = true;
+  return s;
+}
+
+function setSpacer(s: HTMLElement, rows: number, pitch: number, gap: number): void {
+  s.hidden = rows <= 0;
+  if (rows > 0) s.style.height = `${rows * pitch - gap}px`;
+}
+
+function updateWin(w: Win, extend?: number): void {
+  const g = w.grid;
+  if (!g.isConnected) return;
+  const r = g.getBoundingClientRect();
+  if (r.width === 0) return;
+  const cs = getComputedStyle(g);
+  const cols = Math.max(1, cs.gridTemplateColumns.split(' ').filter(Boolean).length);
+  const gap = parseFloat(cs.rowGap) || 0;
+  const colGap = parseFloat(cs.columnGap) || 0;
+  w.cols = cols;
+  w.width = r.width;
+  const key = `${Math.round(r.width)}:${cols}:${gap}`;
+  for (let pass = 0; pass < 2; pass++) {
+    const colW = (r.width - colGap * (cols - 1)) / cols;
+    const known = rowHeights.get(key);
+    const pitch = (known ?? colW * 1.25 + 100) + gap;
+    const rows = Math.ceil(w.count / cols);
+    const margin = window.innerHeight;
+    let fr = Math.max(0, Math.min(rows, Math.floor((-r.top - margin) / pitch)));
+    let lr = Math.max(fr, Math.min(rows, Math.ceil((window.innerHeight - r.top + margin) / pitch)));
+    if (extend !== undefined) {
+      const er = Math.floor(extend / cols);
+      fr = Math.min(fr, er);
+      lr = Math.max(lr, er + 1);
+    }
+    const first = fr * cols;
+    const last = Math.min(w.count, lr * cols);
+    reconcile(w, first, last);
+    if (first === last) {
+      setSpacer(w.head, rows, pitch, gap);
+      setSpacer(w.foot, 0, pitch, gap);
+    } else {
+      setSpacer(w.head, fr, pitch, gap);
+      setSpacer(w.foot, rows - lr, pitch, gap);
+    }
+    if (known !== undefined || first === last) break;
+    let h = 0;
+    for (const el of w.cards.values()) h = Math.max(h, el.offsetHeight);
+    if (!h) break;
+    rowHeights.set(key, h);
+    if (Math.abs(h + gap - pitch) < 1) break;
+    for (const o of wins) if (o !== w && o.width === w.width) updateWin(o);
+  }
+}
+
+function reconcile(w: Win, first: number, last: number): void {
+  if (first === w.first && last === w.last) return;
+  for (const [i, el] of w.cards) {
+    if (i >= first && i < last) continue;
+    el.remove();
+    w.cards.delete(i);
+    w.drop(el);
+  }
+  const kf = Math.max(first, w.first);
+  const kl = Math.min(last, w.last);
+  const build = (from: number, to: number): DocumentFragment => {
+    const f = document.createDocumentFragment();
+    for (let i = from; i < to; i++) {
+      const el = w.make(i);
+      indexOf.set(el, i);
+      w.cards.set(i, el);
+      f.append(el);
+    }
+    return f;
+  };
+  if (kf >= kl) {
+    w.foot.before(build(first, last));
+  } else {
+    w.head.after(build(first, kf));
+    w.foot.before(build(kl, last));
+  }
+  w.first = first;
+  w.last = last;
+}
+
+export function windowedGrid(
+  count: number, make: (i: number) => HTMLElement, drop: (el: HTMLElement) => void = () => undefined,
+): WindowedGrid {
+  const grid = tileGrid();
+  const w: Win = {
+    grid, count, make, drop, cards: new Map(), first: 0, last: 0,
+    cols: 0, width: 0, head: spacer(), foot: spacer(),
+  };
+  grid.append(w.head, w.foot);
+  wins.add(w);
+  winOf.set(grid, w);
+  resized?.observe(grid);
+  return {
+    grid,
+    dispose() {
+      if (!wins.delete(w)) return;
+      resized?.unobserve(grid);
+      for (const el of w.cards.values()) { el.remove(); drop(el); }
+      w.cards.clear();
+      w.first = w.last = 0;
+    },
+  };
+}
+
+export function windowedNeighbour(card: Element, step: 'left' | 'right' | 'up' | 'down'): HTMLElement | null {
+  const w = card.parentElement && winOf.get(card.parentElement);
+  const i = indexOf.get(card);
+  if (!w || i === undefined) return null;
+  const j = i + { left: -1, right: 1, up: -w.cols, down: w.cols }[step];
+  if (j < 0 || j >= w.count) return null;
+  if (!w.cards.has(j)) updateWin(w, j);
+  return w.cards.get(j) ?? null;
+}
+
+export function isWindowed(grid: Element): boolean {
+  return winOf.has(grid);
+}
+
 const STRIP_DRAG_PX = 6;
 
 export function tileStrip(cards: HTMLElement[] = []): HTMLDivElement {

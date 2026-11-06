@@ -2,7 +2,7 @@ import {
   classifyGame, linkedInstances, missingProgramRoms, platformFor, type Game,
 } from '../src/machine/registry';
 import { sources } from './sources/feature';
-import { Presenter, planSize, uniformPlan } from './present';
+import { Presenter, mergeBoxes, planSize, uniformPlan, type DirtyBox } from './present';
 import { damagedRoms } from '../src/machine/textcopy';
 import { coinLineRefused, type FrameView } from '../src/machine/framestate';
 import { SchematicPanel } from './schematic';
@@ -137,6 +137,9 @@ canvas.height = 480;
 const screenEl = document.getElementById('screen') as HTMLCanvasElement;
 const screenCtx = screenEl.getContext('2d')!;
 let screenDirty = true;
+let screenWhole = true;
+let screenArea: DirtyBox[] = [];
+function screenAll(): void { screenDirty = true; screenWhole = true; }
 const smoothFit = bootValue('smooth');
 const stage = document.getElementById('stage') as HTMLElement;
 const ctx = canvas.getContext('2d')!;
@@ -2371,7 +2374,7 @@ function frame(now: number): void {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(fatal, canvas.width / 2, canvas.height / 2);
-    screenDirty = true;
+    screenAll();
   }
   presentScreen();
   magnifier.present();
@@ -2512,14 +2515,19 @@ function draw(m: FrameView): void {
       ctx.fillStyle = '#0a0a12';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       painter.drawFallback(m);
-      screenDirty = true;
+      screenAll();
     }
     return;
   }
   painter.advance(m, cab);
   numberReelDiagnostic(m, cab);
   mainReelDriftWatch(m, cab);
-  if (painter.paint(m, cab)) screenDirty = true;
+  if (painter.paint(m, cab)) {
+    screenDirty = true;
+    const p = painter.lastPainted;
+    if (!p) screenWhole = true;
+    else if (!screenWhole) screenArea = mergeBoxes([...screenArea, ...p]);
+  }
   if (reelBandsOn()) {
     reelBands.machine(m);
     reelBands.paint();
@@ -2767,11 +2775,14 @@ function presentScreen(): void {
   if (screenEl.width !== bw || screenEl.height !== bh) {
     screenEl.width = bw;
     screenEl.height = bh;
-    screenDirty = true;
+    screenAll();
   }
   if (!screenDirty) return;
+  const area = screenWhole ? null : screenArea;
   screenDirty = false;
-  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh);
+  screenWhole = false;
+  screenArea = [];
+  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh, area);
 }
 
 const screenPresenter = new Presenter();

@@ -1,3 +1,4 @@
+import { mergeBoxes } from './present';
 import { IGT_VFD_COLS, IGT_VFD_ROWS, igtVfdDotAt, igtVfdLit } from './igtvfd';
 import { loadShippedFaces } from './captionfont';
 import { discAngleDeg, discLampWedges } from './discreel';
@@ -73,7 +74,7 @@ import { drawLightSource } from './lightsource';
 import { paintCheckBox } from './checkbox';
 import { prismBothLitPlan } from './prismplan';
 import { peekable } from './play/peek';
-import { multiplyImage } from './multiply';
+import { multiplyImage, rectClipOnly } from './multiply';
 
 const EPOCH_ALPHA_PANEL_BYTES = 32;
 const BFM_COLOUR_LED_COLOURS = ['', '#ff0000', '#00ff00', '#ffff00'];
@@ -222,6 +223,10 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     canvasH: number;
   } | null = null;
 
+  let lastPainted: { x0: number; y0: number; x1: number; y1: number }[] | null = null;
+
+  const drumCache = new WeakMap<object, WeakMap<object, { key: string; seen: string; c: HTMLCanvasElement | null }>>();
+
   const drawLog: { t: number; rects: 'full' | IntRect[] }[] = [];
 
   function paint(m: FrameView, cab: Cabinet): boolean {
@@ -275,27 +280,37 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     renderIndex.canvasW = canvas.width;
     renderIndex.canvasH = canvas.height;
 
+    lastPainted = rects
+      ? rects.map((r) => ({
+        x0: Math.max(0, r.left - cab.content.left),
+        y0: Math.max(0, r.top - cab.content.top),
+        x1: Math.min(canvas.width, r.right - cab.content.left),
+        y1: Math.min(canvas.height, r.bottom - cab.content.top),
+      }))
+      : null;
     drawLog.push({ t: performance.now(), rects: rects ? rects.map((r) => ({ ...r })) : 'full' });
     if (drawLog.length > 40) drawLog.shift();
 
-    ctx.save();
-    ctx.beginPath();
-    if (rects) {
-      for (const r of rects) {
-        const left = Math.max(0, r.left - cab.content.left);
-        const top = Math.max(0, r.top - cab.content.top);
-        const right = Math.min(canvas.width, r.right - cab.content.left);
-        const bottom = Math.min(canvas.height, r.bottom - cab.content.top);
-        if (right > left && bottom > top) ctx.rect(left, top, right - left, bottom - top);
-      }
-    } else {
-      ctx.rect(0, 0, canvas.width, canvas.height);
+    const clips = rects
+      ? mergeBoxes(rects.map((r) => ({
+        x0: Math.max(0, r.left - cab.content.left),
+        y0: Math.max(0, r.top - cab.content.top),
+        x1: Math.min(canvas.width, r.right - cab.content.left),
+        y1: Math.min(canvas.height, r.bottom - cab.content.top),
+      })))
+      : [{ x0: 0, y0: 0, x1: canvas.width, y1: canvas.height }];
+    const wasRect = rectClipOnly(ctx, true);
+    for (const c of clips) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0);
+      ctx.clip();
+      ctx.fillStyle = '#0a0a12';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      drawCabinet(m, cab);
+      ctx.restore();
     }
-    ctx.clip();
-    ctx.fillStyle = '#0a0a12';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    drawCabinet(m, cab);
-    ctx.restore();
+    rectClipOnly(ctx, wasRect);
     return true;
   }
 
@@ -1476,7 +1491,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.beginPath();
       for (const c of cl.clips) ctx.rect(c.left, c.top, c.width, c.height);
       ctx.clip();
+      const wasRect = rectClipOnly(ctx, false);
       multiplyImage(ctx, cl.canvas, cl.bbox.left, cl.bbox.top);
+      rectClipOnly(ctx, wasRect);
       ctx.restore();
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -1563,19 +1580,25 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     return true;
   }
 
-  const opaqueBackgrounds = new WeakMap<ReelBand, OffscreenCanvas>();
+  const opaqueBackgrounds = new WeakMap<ReelBand, OffscreenCanvas | ImageBitmap>();
   function opaqueBackground(reel: ReelBand, band: CanvasImageSource & { width: number; height: number }):
-    OffscreenCanvas {
-    let out = opaqueBackgrounds.get(reel);
-    if (out) return out;
-    out = new OffscreenCanvas(band.width, band.height);
-    const ox = out.getContext('2d')!;
+    OffscreenCanvas | ImageBitmap {
+    const had = opaqueBackgrounds.get(reel);
+    if (had) return had;
+    const c = new OffscreenCanvas(band.width, band.height);
+    const ox = c.getContext('2d', { willReadFrequently: true })!;
     ox.drawImage(band, 0, 0);
     const img = ox.getImageData(0, 0, band.width, band.height);
     keepOnlyColour(img, reel.opaqueKey!);
     ox.putImageData(img, 0, 0);
-    opaqueBackgrounds.set(reel, out);
-    return out;
+    opaqueBackgrounds.set(reel, c);
+    if (typeof createImageBitmap === 'function') {
+      void createImageBitmap(img).then((bmp) => {
+        if (opaqueBackgrounds.get(reel) === c) opaqueBackgrounds.set(reel, bmp);
+        else bmp.close();
+      }, () => undefined);
+    }
+    return c;
   }
 
   interface DiscScratch {
@@ -1765,9 +1788,39 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
           }
         }
         const slices = horiz ? 0 : Math.max(8, Math.min(64, Math.ceil(height / 4)));
-        for (const p of drumBandSlices(height, slices, centreRow, rowAt, stops, nativeSymH)) {
-          ctx.drawImage(img, 0, p.sy, band.width, p.sh, bandLeft, top + p.dy, bandWidth, p.dh);
+        if (!slices) return;
+        const drawSlices = (to: CanvasRenderingContext2D, x: number, y: number): void => {
+          for (const p of drumBandSlices(height, slices, centreRow, rowAt, stops, nativeSymH)) {
+            to.drawImage(img, 0, p.sy, band.width, p.sh, x, y + p.dy, bandWidth, p.dh);
+          }
+        };
+        const key = `${centreRow}|${height}|${bandWidth}|${slices}`;
+        const t = ctx.getTransform();
+        const whole = Number.isInteger(bandLeft) && Number.isInteger(top)
+          && t.a === 1 && t.b === 0 && t.c === 0 && t.d === 1 && Number.isInteger(t.e) && Number.isInteger(t.f);
+        let byImg = drumCache.get(reel);
+        if (!byImg) drumCache.set(reel, byImg = new WeakMap());
+        let e = byImg.get(img as object);
+        if (!e) byImg.set(img as object, e = { key: '', seen: '', c: null });
+        if (whole && e.c && e.key === key) {
+          ctx.drawImage(e.c, bandLeft, top);
+          return;
         }
+        if (whole && e.seen === key) {
+          const c = e.c ?? document.createElement('canvas');
+          if (c.width !== bandWidth || c.height !== height) { c.width = bandWidth; c.height = height; }
+          const cx = c.getContext('2d')!;
+          cx.clearRect(0, 0, bandWidth, height);
+          cx.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+          cx.imageSmoothingQuality = ctx.imageSmoothingQuality;
+          drawSlices(cx, 0, 0);
+          e.c = c;
+          e.key = key;
+          ctx.drawImage(c, bandLeft, top);
+          return;
+        }
+        e.seen = key;
+        drawSlices(ctx, bandLeft, top);
       };
       blitBand(band);
       const zones = backlightSlots(reel);
@@ -2193,6 +2246,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     drawFallback,
     stillFrames,
     drawLog,
+    get lastPainted() { return lastPainted; },
     invalidate(): void { if (renderIndex) renderIndex.lastKeys = null; },
     forget(): void { renderIndex = null; },
     resetDisplay,

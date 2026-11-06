@@ -32,7 +32,8 @@ const RAM_LO = 0xe800;
 const RAM_HI = 0xf0fc;
 const CLOCK = 1_500_000;
 
-const LAMP_PERSISTENCE = 12;
+const LAMP_FULL = 0xff;
+const LAMP_FLICKER = 0x7f;
 
 const LAMP_AGE_INSTRUCTIONS = 500;
 
@@ -104,7 +105,12 @@ export class Mps2 implements Machine {
 
   readonly lamps = new Uint8Array(256);
   readonly digits = new Uint16Array(16);
-  private lampData = 0;
+  private lampCol = 0;
+  private lampPending = false;
+  private lampSeenA = false;
+  private lampSeenB = false;
+  private lampFlicker = 0;
+  private readonly lampHist = new Uint8Array(64);
   private lampAge = 0;
   private readonly digitTime = new Uint8Array(16);
   readonly meterCounts = new Uint32Array(8);
@@ -584,8 +590,8 @@ export class Mps2 implements Machine {
     },
   }, { modeSetKeepsLatches: true });
   private readonly ppi25 = new I8255({
-    outA: (v) => { this.ppi25a = v; this.refreshLamps(); },
-    outB: (v) => { this.ppi25b = v; this.refreshLamps(); },
+    outA: (v) => { this.ppi25a = v; },
+    outB: (v) => { this.ppi25b = v; },
     outC: (v) => { this.ppi25c = v; },
   }, { modeSetKeepsLatches: true });
 
@@ -862,7 +868,12 @@ export class Mps2 implements Machine {
     this.mechHeld = -1;
     this.mechTimer = 0;
     this.mechSettling = false;
-    this.lampData = 0;
+    this.lampCol = 0;
+    this.lampPending = false;
+    this.lampSeenA = false;
+    this.lampSeenB = false;
+    this.lampFlicker = 0;
+    this.lampHist.fill(0);
     this.lampAge = 0;
     this.hopper.reset();
     this.hopperBooked.paid = 0;
@@ -936,17 +947,47 @@ export class Mps2 implements Machine {
         break;
       case 0x4: this.ppi21.write(a & 3, v); break;
       case 0x8: this.ppi22.write(a & 3, v); break;
-      default: this.ppi25.write(a & 3, v); break;
+      default: {
+        const c0 = this.ppi25.drivenC();
+        this.ppi25.write(a & 3, v);
+        this.ppi25Lamps(a & 3, v, c0);
+        break;
+      }
     }
   }
 
-  private refreshLamps(): void {
-    const data = (this.ppi25b << 8) | this.ppi25a;
-    if (data === this.lampData) return;
-    this.lampData = data;
-    const base = (this.ppi25c & 0x0f) * 16;
-    for (let bit = 0; bit < 16; bit++) {
-      if ((data >> bit) & 1) this.lamps[base + bit] = LAMP_PERSISTENCE;
+  private ppi25Lamps(reg: number, v: number, c0: number): void {
+    const modeSet = reg === 3 && (v & 0x80) !== 0;
+    const cWritten = reg === 2 || reg === 3;
+    if (cWritten && ((c0 ^ this.ppi25.drivenC()) & 0x0f) !== 0) {
+      this.lampCol = this.ppi25.drivenC() & 0x0f;
+      this.lampPending = true;
+      this.lampSeenA = false;
+      this.lampSeenB = false;
+    }
+    const col = this.lampCol, h = this.lampHist;
+    if ((reg === 0 || modeSet) && !this.lampSeenA) {
+      const a = this.ppi25a & 0xff, p = h[col], c = h[16 + col];
+      this.lampFlicker = (this.lampFlicker & 0xff00) | ((p ^ c) & (c ^ a));
+      h[col] = c; h[16 + col] = a;
+      this.lampSeenA = true;
+    }
+    if (reg === 1 || modeSet) {
+      if (!this.lampSeenB) {
+        const b = this.ppi25b & 0xff, p = h[32 + col], c = h[48 + col];
+        this.lampFlicker = (this.lampFlicker & 0x00ff) | (((p ^ c) & (c ^ b)) << 8);
+        h[32 + col] = c; h[48 + col] = b;
+        this.lampSeenB = true;
+      }
+      if (this.lampPending) {
+        const data = ((this.ppi25b & 0xff) << 8) | (this.ppi25a & 0xff);
+        const fl = this.lampFlicker, base = col * 16;
+        for (let bit = 0; bit < 16; bit++) {
+          const f = (fl >> bit) & 1;
+          this.lamps[base + bit] = ((data >> bit) & 1) | f ? (f ? LAMP_FLICKER : LAMP_FULL) : 0;
+        }
+        this.lampPending = false;
+      }
     }
   }
 
@@ -992,13 +1033,6 @@ export class Mps2 implements Machine {
       hd10 |= (a & 0x4) >> 1;
     }
     this.hopper.motorDrive((hd10 & 4) !== 0);
-  }
-
-  private ageLamps(): void {
-    for (let i = 0; i < this.lamps.length; i++) {
-      const v = this.lamps[i];
-      if (v > 0 && v !== 0xff) this.lamps[i] = v - 1;
-    }
   }
 
   private refreshSeg(): void {
@@ -1069,7 +1103,7 @@ export class Mps2 implements Machine {
     this.now += c;
     this.tickMeters(c);
     if (this.reelBonus) this.tickReelBonus(c);
-    if (++this.lampAge >= LAMP_AGE_INSTRUCTIONS) { this.lampAge = 0; this.ageSeg(); this.ageLamps(); }
+    if (++this.lampAge >= LAMP_AGE_INSTRUCTIONS) { this.lampAge = 0; this.ageSeg(); }
     this.hopper.tick(c);
     if (this.hopper.paid !== this.hopperBooked.paid) this.bookHoppers();
     this.duart1.tick(c);
@@ -1162,6 +1196,11 @@ export class Mps2 implements Machine {
   layoutLamp(n: number): boolean {
     if (n >= this.lampsDriven) return true;
     return n >= 0 && this.lamps[n] !== 0;
+  }
+
+  layoutLampLevel(n: number): number {
+    if (n >= this.lampsDriven) return 255;
+    return n >= 0 ? this.lamps[n] : 0;
   }
 
   layoutDigit(n: number): number {

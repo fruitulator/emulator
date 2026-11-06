@@ -1,6 +1,7 @@
 import { unbuiltParts } from '../src/machine/boarddefaults';
 import { isNoteId } from '../src/machine/effects';
 import type { UnbuiltPart } from '../src/machine/boarddefaults';
+import { decodeLamp, type FrameLayout } from '../src/machine/framestate';
 import { str } from './i18n';
 import { BAR_PLACED_FROM_PX, barClearance, placeBar, type CabinetBox } from './ui/barplace';
 import { holdClock } from './ui/holdclock';
@@ -9,6 +10,8 @@ import { UI_ICONS, rowIcon } from './ui/icons';
 export interface StopSample {
   lampsRaw: Uint8Array;
   reels: readonly { travel: number }[];
+  lampPhase?: number;
+  layout?: Pick<FrameLayout, 'lampKind'>;
 }
 
 export const QUIET_MS = 25_000;
@@ -16,6 +19,7 @@ export const QUIET_MS = 25_000;
 export class StopWatch {
   private lamps: Uint8Array | null = null;
   private travel = '';
+  private phase = 0;
   private lastMotion = 0;
   private engaged = false;
   private everMoved = false;
@@ -25,6 +29,7 @@ export class StopWatch {
   reset(now: number): void {
     this.lamps = null;
     this.travel = '';
+    this.phase = 0;
     this.lastMotion = now;
     this.engaged = false;
     this.everMoved = false;
@@ -39,6 +44,7 @@ export class StopWatch {
       this.lamps = new Uint8Array(v.lampsRaw.length);
       this.lamps.set(v.lampsRaw);
       this.travel = v.reels.map((r) => r.travel).join(',');
+      this.phase = v.lampPhase ?? 0;
       this.lastMotion = now;
       return false;
     }
@@ -46,6 +52,17 @@ export class StopWatch {
     for (let i = 0; i < v.lampsRaw.length; i++) {
       if (this.lamps[i] !== v.lampsRaw[i]) { moved = true; break; }
     }
+    const phase = v.lampPhase ?? 0;
+    if (!moved && phase !== this.phase && v.layout) {
+      const kind = v.layout.lampKind;
+      for (let i = 0; i < v.lampsRaw.length; i++) {
+        if (decodeLamp(kind, v.lampsRaw, i, this.phase) !== decodeLamp(kind, v.lampsRaw, i, phase)) {
+          moved = true;
+          break;
+        }
+      }
+    }
+    this.phase = phase;
     if (!moved) {
       const travel = v.reels.map((r) => r.travel).join(',');
       if (travel !== this.travel) moved = true;
