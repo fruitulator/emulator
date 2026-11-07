@@ -103,6 +103,10 @@
   user-select: none;
   transition: background 120ms ease, color 120ms ease;
 }
+.dd-opt[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .nb-menu > .dd-opt.active {
   background: rgba(255, 255, 255, 0.06);
   color: #fff;

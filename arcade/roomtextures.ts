@@ -1,4 +1,31 @@
 import * as THREE from 'three';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { cabinetEnvironment } from './cabinetlight';
+import { wallSurface, type UpperWall } from './roomlook';
+import brickDiff from './textures/red_brick/red_brick_diff_1k.ktx2?url';
+import brickNor from './textures/red_brick/red_brick_nor_gl_1k.ktx2?url';
+import brickArm from './textures/red_brick/red_brick_arm_1k.ktx2?url';
+import stockDiff from './textures/yellow_brick/yellow_brick_diff_1k.ktx2?url';
+import stockNor from './textures/yellow_brick/yellow_brick_nor_gl_1k.ktx2?url';
+import stockArm from './textures/yellow_brick/yellow_brick_arm_1k.ktx2?url';
+import paintBrickDiff from './textures/painted_brick/painted_brick_diff_1k.ktx2?url';
+import paintBrickNor from './textures/painted_brick/painted_brick_nor_gl_1k.ktx2?url';
+import paintBrickArm from './textures/painted_brick/painted_brick_arm_1k.ktx2?url';
+import panellingDiff from './textures/wooden_panels/wooden_panels_diff_1k.ktx2?url';
+import panellingNor from './textures/wooden_panels/wooden_panels_nor_gl_1k.ktx2?url';
+import panellingArm from './textures/wooden_panels/wooden_panels_arm_1k.ktx2?url';
+import glazedDiff from './textures/glazed_tiles/glazed_tiles_diff_1k.ktx2?url';
+import glazedNor from './textures/glazed_tiles/glazed_tiles_nor_gl_1k.ktx2?url';
+import glazedArm from './textures/glazed_tiles/glazed_tiles_arm_1k.ktx2?url';
+import mirrorDiff from './textures/mirror_tiles/mirror_tiles_diff_1k.ktx2?url';
+import mirrorNor from './textures/mirror_tiles/mirror_tiles_nor_gl_1k.ktx2?url';
+import mirrorArm from './textures/mirror_tiles/mirror_tiles_arm_1k.ktx2?url';
+import laminateDiff from './textures/laminate/laminate_diff_1k.ktx2?url';
+import laminateNor from './textures/laminate/laminate_nor_gl_1k.ktx2?url';
+import laminateArm from './textures/laminate/laminate_arm_1k.ktx2?url';
+import flockDiff from './textures/flock/flock_diff_1k.ktx2?url';
+import flockNor from './textures/flock/flock_nor_gl_1k.ktx2?url';
+import flockArm from './textures/flock/flock_arm_1k.ktx2?url';
 import woodDiff from './textures/synthetic_wood/synthetic_wood_diff_1k.jpg?url';
 import woodNor from './textures/synthetic_wood/synthetic_wood_nor_gl_1k.jpg?url';
 import woodArm from './textures/synthetic_wood/synthetic_wood_arm_1k.jpg?url';
@@ -39,7 +66,8 @@ import veneerDiff from './textures/black_oak_veneer/black_oak_veneer_diff_1k.jpg
 import veneerNor from './textures/black_oak_veneer/black_oak_veneer_nor_gl_1k.jpg?url';
 import veneerArm from './textures/black_oak_veneer/black_oak_veneer_arm_1k.jpg?url';
 
-export type SurfaceId = 'wood' | 'planks' | 'plaster' | 'woodchip' | 'plush' | 'cord' | 'squares' | 'checker' | 'boards' | 'lino' | 'tile' | 'powder' | 'veneer';
+export type SurfaceId = 'wood' | 'planks' | 'plaster' | 'woodchip' | 'plush' | 'cord' | 'squares' | 'checker' | 'boards' | 'lino' | 'tile' | 'powder' | 'veneer'
+  | 'brick' | 'stock' | 'paintbrick' | 'panelling' | 'glazed' | 'mirror' | 'laminate' | 'flock';
 
 interface Surface {
   tileM: number;
@@ -49,6 +77,9 @@ interface Surface {
   rough?: string;
   relief?: number;
   roughness?: number;
+  env?: number;
+  mirror?: boolean;
+  sheen?: boolean;
 }
 
 const SURFACES: Record<SurfaceId, Surface> = {
@@ -65,11 +96,39 @@ const SURFACES: Record<SurfaceId, Surface> = {
   tile: { tileM: 3.0, colour: tileDiff, normal: tileNor, arm: tileArm, roughness: 0.6 },
   powder: { tileM: 0.5, colour: powderColour, normal: powderNor, rough: powderRough },
   veneer: { tileM: 1.0, colour: veneerDiff, normal: veneerNor, arm: veneerArm, relief: 2.5 },
+  brick: { tileM: 1.5, colour: brickDiff, normal: brickNor, arm: brickArm },
+  stock: { tileM: 1.95, colour: stockDiff, normal: stockNor, arm: stockArm },
+  paintbrick: { tileM: 0.83, colour: paintBrickDiff, normal: paintBrickNor, arm: paintBrickArm },
+  panelling: { tileM: 2.1, colour: panellingDiff, normal: panellingNor, arm: panellingArm },
+  glazed: { tileM: 1.216, colour: glazedDiff, normal: glazedNor, arm: glazedArm, env: 0.15 },
+  mirror: { tileM: 1.2, colour: mirrorDiff, normal: mirrorNor, arm: mirrorArm, env: 0.15, mirror: true },
+  laminate: { tileM: 1.22, colour: laminateDiff, normal: laminateNor, arm: laminateArm, env: 0.25 },
+  flock: { tileM: 0.53, colour: flockDiff, normal: flockNor, arm: flockArm, sheen: true },
 };
 
 const loader = new THREE.TextureLoader();
+let ktx2: KTX2Loader | null = null;
+function ktx2Loader(renderer: THREE.WebGLRenderer): KTX2Loader {
+  if (!ktx2) {
+    ktx2 = new KTX2Loader().setTranscoderPath(`${import.meta.env.BASE_URL}basis/`);
+    ktx2.detectSupport(renderer);
+  }
+  return ktx2;
+}
 const cache = new Map<string, THREE.Texture>();
 const waiting = new Map<THREE.Texture, THREE.Texture[]>();
+
+function adopt(into: THREE.Texture, from: THREE.CompressedTexture): void {
+  const t = into as THREE.CompressedTexture;
+  t.image = from.image;
+  t.mipmaps = from.mipmaps;
+  t.format = from.format;
+  t.type = from.type;
+  t.minFilter = from.minFilter;
+  t.magFilter = from.magFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+}
 
 let anisotropy = 8;
 let plain = false;
@@ -81,7 +140,7 @@ export function setSurfaceOptions(o: { aniso: number; textures: boolean }): void
 function map(url: string, colour: boolean, renderer: THREE.WebGLRenderer): THREE.Texture {
   const base = baseMap(url, colour, renderer);
   const c = base.clone();
-  if (base.image === null) {
+  if (waiting.has(base)) {
     c.version = 0;
     waiting.get(base)!.push(c);
   }
@@ -91,10 +150,21 @@ function map(url: string, colour: boolean, renderer: THREE.WebGLRenderer): THREE
 function baseMap(url: string, colour: boolean, renderer: THREE.WebGLRenderer): THREE.Texture {
   let t = cache.get(url);
   if (!t) {
-    const loading = loader.load(url, () => {
-      for (const c of waiting.get(loading) ?? []) c.needsUpdate = true;
-      waiting.delete(loading);
-    });
+    let loading: THREE.Texture;
+    if (url.endsWith('.ktx2')) {
+      const stand = new THREE.CompressedTexture([], 0, 0);
+      loading = stand;
+      ktx2Loader(renderer).load(url, (got) => {
+        adopt(stand, got);
+        for (const c of waiting.get(stand) ?? []) adopt(c, got);
+        waiting.delete(stand);
+      }, undefined, (e) => console.warn('[arcade] a wall texture did not load', url, e));
+    } else {
+      loading = loader.load(url, () => {
+        for (const c of waiting.get(loading) ?? []) c.needsUpdate = true;
+        waiting.delete(loading);
+      });
+    }
     waiting.set(loading, []);
     t = loading;
     if (colour) t.colorSpace = THREE.SRGBColorSpace;
@@ -127,10 +197,11 @@ export function sharedMaps(id: SurfaceId, renderer: THREE.WebGLRenderer): Shared
 }
 
 export function surfaceMaterial(
-  id: SurfaceId, w: number, h: number, renderer: THREE.WebGLRenderer, tint: THREE.ColorRepresentation = 0xffffff, uOffset = 0,
+  kind: SurfaceId | UpperWall, w: number, h: number, renderer: THREE.WebGLRenderer, tint: THREE.ColorRepresentation = 0xffffff, uOffset = 0,
   glow = 0,
+  vOffset = 0,
 ): THREE.MeshStandardMaterial {
-  const s = SURFACES[id];
+  const s = SURFACES[kind in SURFACES ? kind as SurfaceId : wallSurface(kind as UpperWall)];
   if (plain) {
     const m = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.9, metalness: 0 });
     if (glow > 0) { m.emissive.set(tint); m.emissiveIntensity = glow * 0.5; }
@@ -138,16 +209,19 @@ export function surfaceMaterial(
   }
   const fit = (t: THREE.Texture): THREE.Texture => {
     t.repeat.set(w / s.tileM, h / s.tileM);
-    t.offset.set(uOffset / s.tileM, 0);
+    t.offset.set(uOffset / s.tileM, vOffset / s.tileM);
     return t;
   };
-  const m = new THREE.MeshStandardMaterial({
+  const opts: THREE.MeshStandardMaterialParameters = {
     color: tint,
     map: fit(map(s.colour, true, renderer)),
     normalMap: fit(map(s.normal, false, renderer)),
     roughness: s.roughness ?? 1,
     metalness: 0,
-  });
+  };
+  const m = s.sheen
+    ? new THREE.MeshPhysicalMaterial({ ...opts, sheen: 1, sheenRoughness: 0.45, sheenColor: new THREE.Color(tint).multiplyScalar(0.6) })
+    : new THREE.MeshStandardMaterial(opts);
   m.normalScale.setScalar(s.relief ?? 1);
   if (glow > 0) {
     m.emissive.set(tint);
@@ -162,5 +236,33 @@ export function surfaceMaterial(
   } else if (s.rough) {
     m.roughnessMap = fit(map(s.rough, false, renderer));
   }
+  if (s.env) {
+    m.envMap = cabinetEnvironment(renderer);
+    m.envMapIntensity = s.env;
+  }
+  if (s.mirror) {
+    m.metalness = 1;
+    m.metalnessMap = m.roughnessMap;
+  }
+  if (s.mirror || s.sheen) {
+    const tiles = s.mirror ? MIRROR_TILES : 0;
+    m.onBeforeCompile = (sh) => {
+      if (s.mirror) {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          vec2 cell = floor( vNormalMapUv * ${tiles.toFixed(1)} );
+          vec2 tilt = fract( sin( vec2( dot( cell, vec2( 127.1, 311.7 ) ), dot( cell, vec2( 269.5, 183.3 ) ) ) ) * 43758.5453 ) - 0.5;
+          normal = normalize( normal + ${(MIRROR_TILT * 2).toFixed(4)} * ( tilt.x * tbn[ 0 ] + tilt.y * tbn[ 1 ] ) );
+        }`);
+      } else {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+        material.sheenColor *= texture2D( roughnessMap, vRoughnessMapUv ).b;`);
+      }
+    };
+    m.customProgramCacheKey = () => (s.mirror ? 'wall-mirror' : 'wall-flock');
+  }
   return m;
 }
+
+const MIRROR_TILES = 4;
+const MIRROR_TILT = 0.035;

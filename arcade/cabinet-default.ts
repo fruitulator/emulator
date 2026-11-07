@@ -116,10 +116,10 @@ const DECK_LIP = 0;
 const DECK_MAX = 0.41;
 const BUTTONS_MAX = 0.22;
 
-function extrudeBody(shape: THREE.Shape, w: number, curveSegments = 12): THREE.ExtrudeGeometry {
+function extrudeBody(shape: THREE.Shape, w: number, curveSegments = 12, x1 = w / 2): THREE.ExtrudeGeometry {
   const g = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false, curveSegments });
   g.rotateY(-Math.PI / 2);
-  g.translate(w / 2, 0, 0);
+  g.translate(x1, 0, 0);
   const cap = g.groups[0];
   const uv = g.attributes.uv as THREE.BufferAttribute;
   if (cap) for (let i = cap.start; i < cap.start + cap.count; i++) uv.setXY(i, uv.getY(i), uv.getX(i));
@@ -180,6 +180,95 @@ function frontZAt(pts: readonly THREE.Vector2[], y: number, fallback: number): n
   return Number.isFinite(z) ? z : fallback;
 }
 
+const WELL_H = 0.12;
+const WELL_D = 0.09;
+const WELL_SIDE = 0.08;
+const WELL_UNDER_LIP = 0.15;
+const BEZEL_W = 0.015;
+const BEZEL_T = 0.004;
+const WELL_GLOW = 0.22;
+
+interface PayoutWell {
+  outline: THREE.Vector2[];
+  w: number;
+  y0: number; y1: number;
+  z0: number; z1: number; zIn: number;
+}
+
+function payoutWell(outline: readonly THREE.Vector2[], yLip: number, W: number): PayoutWell | null {
+  const y1 = yLip - WELL_UNDER_LIP;
+  const y0 = y1 - WELL_H;
+  const start = outline.findIndex((q, i) => i > 1 && q.y < yLip - 1e-6);
+  if (start < 1) return null;
+  const cross = (y: number, from: number): { i: number; z: number } | null => {
+    for (let i = from; i < outline.length - 1; i++) {
+      const a = outline[i - 1] ?? outline[i], b = outline[i];
+      if (a.y >= y && b.y < y) return { i, z: a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y) };
+    }
+    return null;
+  };
+  const top = cross(y1, start);
+  const bot = top && cross(y0, top.i);
+  if (!top || !bot) return null;
+  const zIn = Math.min(top.z, bot.z) - WELL_D;
+  const notched = [
+    ...outline.slice(0, top.i),
+    new THREE.Vector2(top.z, y1), new THREE.Vector2(zIn, y1),
+    new THREE.Vector2(zIn, y0), new THREE.Vector2(bot.z, y0),
+    ...outline.slice(bot.i),
+  ];
+  return { outline: notched, w: W - 2 * WELL_SIDE, y0, y1, z0: bot.z, z1: top.z, zIn };
+}
+
+function wellFurniture(well: PayoutWell, trimColour: THREE.Color, dress: CabinetDress | null): THREE.Group {
+  const { w, y0, y1, z0, z1, zIn } = well;
+  const g = new THREE.Group();
+  g.name = 'payout-well';
+  const steelLit = (glow: number) => lit(new THREE.MeshStandardMaterial({
+    color: 0xb8bec7, roughness: 0.32, metalness: 1, side: THREE.DoubleSide,
+    emissive: trimColour.clone().multiplyScalar(glow),
+  }), dress);
+  const steel = steelLit(WELL_GLOW * 0.35);
+  const chrome = lit(new THREE.MeshStandardMaterial({ color: 0xe6e9ee, roughness: 0.12, metalness: 1 }), dress);
+  const inset = 0.0015;
+  const add = (m: THREE.Mesh): void => { g.add(m); };
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, z0 - zIn), steelLit(WELL_GLOW));
+  floor.rotation.x = -Math.PI / 2; floor.position.set(0, y0 + inset, (z0 + zIn) / 2); add(floor);
+  const roof = new THREE.Mesh(new THREE.PlaneGeometry(w, z1 - zIn), steel);
+  roof.rotation.x = Math.PI / 2; roof.position.set(0, y1 - inset, (z1 + zIn) / 2); add(roof);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(w, y1 - y0), steel);
+  back.position.set(0, (y0 + y1) / 2, zIn + inset); add(back);
+  const section = new THREE.Shape([
+    new THREE.Vector2(z1, y1), new THREE.Vector2(zIn, y1), new THREE.Vector2(zIn, y0), new THREE.Vector2(z0, y0),
+  ]);
+  for (const side of [-1, 1]) {
+    const s = new THREE.ShapeGeometry(section);
+    s.rotateY(-Math.PI / 2);
+    s.translate(side * (w / 2 - inset), 0, 0);
+    add(new THREE.Mesh(s, steel));
+  }
+  const slot = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(0.22, w * 0.5), 0.028), lit(new THREE.MeshStandardMaterial({ color: 0x020203, roughness: 0.9 }), dress));
+  slot.rotation.x = Math.PI / 2; slot.position.set(0, y1 - 0.003, zIn + 0.022); add(slot);
+  const flap = new THREE.Mesh(new THREE.BoxGeometry(Math.min(0.22, w * 0.5) + 0.01, 0.002, 0.012), chrome);
+  flap.rotation.x = 0.35; flap.position.set(0, y1 - 0.006, zIn + 0.04); add(flap);
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.02, 0.014), new THREE.MeshBasicMaterial({ color: trimColour }));
+  strip.rotation.x = Math.PI / 2; strip.position.set(0, y1 - 0.003, z1 - 0.015); add(strip);
+  const ow = w + 2 * BEZEL_W, ih = Math.hypot(y1 - y0, z1 - z0), oh = ih + 2 * BEZEL_W, r = 0.012;
+  const f = new THREE.Shape();
+  const x = -ow / 2, y = -oh / 2;
+  f.moveTo(x + r, y); f.lineTo(x + ow - r, y); f.quadraticCurveTo(x + ow, y, x + ow, y + r);
+  f.lineTo(x + ow, y + oh - r); f.quadraticCurveTo(x + ow, y + oh, x + ow - r, y + oh);
+  f.lineTo(x + r, y + oh); f.quadraticCurveTo(x, y + oh, x, y + oh - r); f.lineTo(x, y + r); f.quadraticCurveTo(x, y, x + r, y);
+  const hole = new THREE.Path();
+  hole.moveTo(-w / 2, -ih / 2); hole.lineTo(-w / 2, ih / 2); hole.lineTo(w / 2, ih / 2); hole.lineTo(w / 2, -ih / 2); hole.lineTo(-w / 2, -ih / 2);
+  f.holes.push(hole);
+  const bezel = new THREE.Mesh(new THREE.ExtrudeGeometry(f, { depth: BEZEL_T, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 3, curveSegments: 8 }), chrome);
+  bezel.rotation.x = -Math.atan2(z0 - z1, y1 - y0);
+  bezel.position.set(0, (y0 + y1) / 2, (z0 + z1) / 2);
+  add(bezel);
+  return g;
+}
+
 function styledCabinet(
   opts: FruitCabinetOptions, st: CabinetStyle,
   k: {
@@ -203,16 +292,19 @@ function styledCabinet(
   const shape = new THREE.Shape();
   const edge: THREE.Vector2[] = [];
   let at = new THREE.Vector2(zBack, 0);
+  const outline: THREE.Vector2[] = [at];
   shape.moveTo(at.x, at.y);
   const L = (z: number, y: number, onEdge = true): void => {
     shape.lineTo(z, y);
     at = new THREE.Vector2(z, y);
+    outline.push(at);
     if (onEdge) edge.push(at);
   };
   const Q = (cz: number, cy: number, z: number, y: number): void => {
     const c = new THREE.QuadraticBezierCurve(at.clone(), new THREE.Vector2(cz, cy), new THREE.Vector2(z, y));
     shape.quadraticCurveTo(cz, cy, z, y);
     edge.push(...c.getPoints(10).slice(1));
+    outline.push(...c.getPoints(16).slice(1));
     at = new THREE.Vector2(z, y);
   };
   L(zBack, H, false);
@@ -259,7 +351,15 @@ function styledCabinet(
   const bodyMat = opts.plastic
     ? lit(new THREE.MeshStandardMaterial({ color: opts.body ?? st.body, roughness: PLASTIC_ROUGH, metalness: 0 }), dress)
     : bodyMaterial(bodyTint(opts.body ?? st.body), dress, st.gloss);
-  group.add(new THREE.Mesh(extrudeBody(shape, W, 16), bodyMat));
+  const well = opts.furniture ? payoutWell(outline, yLip, W) : null;
+  if (well) {
+    const half = well.w / 2;
+    group.add(new THREE.Mesh(extrudeBody(shape, W / 2 - half, 16, -half), bodyMat));
+    group.add(new THREE.Mesh(extrudeBody(new THREE.Shape(well.outline), well.w, 16, half), bodyMat));
+    group.add(new THREE.Mesh(extrudeBody(shape, W / 2 - half, 16, W / 2), bodyMat));
+  } else {
+    group.add(new THREE.Mesh(extrudeBody(shape, W, 16), bodyMat));
+  }
 
   const trim = lit(new THREE.MeshStandardMaterial({ color: opts.trim, roughness: 0.35, metalness: 0.25 }), dress);
   const stripMat = st.strip === 'chrome'
@@ -306,13 +406,7 @@ function styledCabinet(
   const lowerAt = (y: number): number => frontZAt(edge.filter((q) => q.y <= yLip), y, zLow);
   if (opts.furniture) {
     const mat = (c: THREE.ColorRepresentation, r: number, m = 0.08) => lit(new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m }), dress);
-    const tray = new THREE.Mesh(new THREE.BoxGeometry(W * 0.44, 0.10, 0.02), mat(0x0a0b0d, 0.9));
-    tray.position.set(0, 0.30, lowerAt(0.30) + 0.002);
-    group.add(tray);
-    const trayLip = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, W * 0.46, 20, 1, false, 0, Math.PI), trim);
-    trayLip.rotation.set(0, 0, Math.PI / 2);
-    trayLip.position.set(0, 0.252, lowerAt(0.252) + 0.004);
-    group.add(trayLip);
+    if (well) group.add(wellFurniture(well, trimColour, dress));
     const coin = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.055, 0.012), mat(0xb9c0cc, 0.3, 0.6));
     coin.position.set(W * 0.5 - 0.05, yLip - 0.12, lowerAt(yLip - 0.12) + 0.006);
     group.add(coin);

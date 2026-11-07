@@ -22,7 +22,7 @@ export interface Sys80CoinCode {
   lines: Sys80CoinLine[];
   gate: { flags: number; mask: number } | null;
   refillInput: number | null;
-  shared: { accept: number; refill: number | null; first: number; ignore: number; ignoreShift: number; reg?: number; stride?: number } | null;
+  shared: { accept: number; refill: number | null; first: number; ignore: number | null; ignoreShift: number; reg?: number; stride?: number } | null;
   judgeOnly?: boolean;
 }
 
@@ -314,9 +314,49 @@ export function locateSys80Coins(rom: Uint8Array): Sys80CoinCode | Refusal {
   if (a && !('refused' in a)) return a;
   const b = locateScript(rom, end);
   if (b && !('refused' in b)) return b;
+  const f = locateEntryWalk(rom, end);
+  if (f) return f;
   const j = locateJudged(rom, end);
   if (j) return j;
   return a ?? b ?? { refused: 'no System 80 coin code this board reads was found in the program' };
+}
+
+function locateEntryWalk(rom: Uint8Array, end: number): Sys80CoinCode | null {
+  for (let a = 0; a + 20 <= end; a += 2) {
+    if (w16(rom, a) !== 0x020c || w16(rom, a + 4) !== 0x0200 || w16(rom, a + 8) !== 0x0201) continue;
+    const loop = a + 12;
+    if (w16(rom, loop) !== 0xd090 || (w16(rom, loop + 2) & 0xff00) !== 0x1600 || w16(rom, loop + 4) !== 0x1f00 || (w16(rom, loop + 6) & 0xff00) !== 0x1600) continue;
+    const base = w16(rom, a + 2);
+    const table = w16(rom, a + 10);
+    let stride = -1; let last = -1;
+    for (let pc = loop + 8; pc < loop + 240 && pc + 12 <= end; pc += insnLength(rom, pc)) {
+      if (w16(rom, pc) === 0x05cc && w16(rom, pc + 2) === 0x0221 && w16(rom, pc + 6) === 0x028c
+        && (w16(rom, pc + 10) & 0xff00) === 0x1600 && jumpTo(pc + 10, w16(rom, pc + 10)) === loop) {
+        stride = w16(rom, pc + 4); last = w16(rom, pc + 8); break;
+      }
+    }
+    if (stride < 3 || stride > 8 || last <= base || ((last - base) & 1)) continue;
+    let zero = -1; let accept = -1; let metered = false;
+    for (let pc = loop + 8; pc < loop + 240 && pc + 6 <= end; pc += insnLength(rom, pc)) {
+      const w = w16(rom, pc);
+      if (w === 0xd1b5 && (w16(rom, pc + 2) & 0xff00) === 0x1600 && w16(rom, pc + 4) === 0x0206 && zero < 0) zero = w16(rom, pc + 6) >> 8;
+      if (w === 0xb806 && accept < 0) accept = pc;
+      if (accept >= 0 && w === 0x0585) { metered = true; break; }
+    }
+    if (zero <= 0 || accept < 0 || !metered) continue;
+    const count = (last - base) >> 1;
+    if (count < 1 || count > 8 || table + stride * count > rom.length) continue;
+    const lines: Sys80CoinLine[] = [];
+    for (let k = 0; k < count; k++) {
+      const e = table + stride * k;
+      lines.push({ line: (base >> 1) + k, credits: rom[e]! || zero, meters: [{ port: rom[e + 2]!, count: 1 }], change: [], accept, refill: null });
+    }
+    return {
+      shape: 'scan', at: a, lines, gate: null, refillInput: null,
+      shared: { accept, refill: null, first: table, ignore: null, ignoreShift: 0, reg: 1, stride },
+    };
+  }
+  return null;
 }
 
 function locateJudged(rom: Uint8Array, end: number): Sys80CoinCode | null {

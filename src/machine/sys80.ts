@@ -900,7 +900,7 @@ export class Sys80 implements Machine {
     let m = 0;
     const gated = !!code.gate && (ram(code.gate.flags) & code.gate.mask) === code.gate.mask;
     const refill = made(code.refillInput);
-    const ignored = code.shared ? ram(code.shared.ignore) : 0;
+    const ignored = code.shared && code.shared.ignore !== null ? ram(code.shared.ignore) : 0;
     code.lines.forEach((l, k) => {
       const tube = refill && (code.shape === 'script' || l.refill !== null);
       if (gated || tube || (ignored >> k) & 1) m |= 1 << l.line;

@@ -14,6 +14,8 @@ export interface UnreadSetting {
 const GAM_NOT_REPORTED = new Set([
   'rating', 'tags', 'wip', 'lotech', 'played', 'hidden', 'loadmode', 'displayposition',
   'croppedposition', 'mastervolume', 'totalin', 'totalout', 'setpercent', 'linktype',
+  'delay', 'dmdelay', 'videodelay',
+  'dx',
   'game', 'version', 'name',
 ]);
 

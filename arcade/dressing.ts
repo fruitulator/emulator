@@ -1,12 +1,25 @@
 import { windowWidth } from './floor';
 import * as THREE from 'three';
+import { buildCeiling, ceilingKey, ceilingOf } from './ceiling';
 import { surfaceMaterial } from './roomtextures';
 import viewHarbour from './views/harbour.jpg?url';
 import viewSquare from './views/square.jpg?url';
 import viewOldtown from './views/oldtown.jpg?url';
-import { copyLook, HOUSE_LOOK, isHardFloor, type RoomLook } from './roomlook';
-import { VIEW_EYE_DEFAULT, viewParallax } from './windowview';
+import viewCarpark from './views/carpark.jpg?url';
+import { copyLook, fullHeight, HOUSE_LOOK, isHardFloor, SCONCE_SHADES, WALL_LIGHT_STRENGTHS, type RoomLook } from './roomlook';
+import viewHarbourNear from './views/harbour-near.webp?url';
+import {
+  VIEW_CONTRAST, VIEW_DISTANCE_M, VIEW_EXTERIOR, VIEW_EXTERIOR_LEVEL, VIEW_HAZE, VIEW_HORIZON_Y, VIEW_LAYERS, VIEW_LEVEL, VIEW_MID, VIEW_MIP_BIAS,
+  VIEW_RADIUS_M, viewBackdrop,
+} from './windowview';
+import { edgeMaterial, edgeShade, glassMaterial, SPILL, viewColour, WindowEnv } from './windowglass';
+import { glazing, revealGeometry, type RevealData, type RevealSpec, wallHole } from './windowreveal';
+import extBrick from './textures/Bricks005/Bricks005_Color_512.jpg?url';
+import extRender from './textures/Plaster001/Plaster001_Color_512.jpg?url';
 import { str } from '../web/i18n';
+import { paintWall, placeWallLights, wallFixture, type WallLight, type WallRun } from './walllayout';
+import { buildWallLights } from './walllights';
+import type { WallFixture } from './roomlook';
 
 const CEILING = 3.1;
 const MARGIN_SIDE = 2.4;
@@ -15,6 +28,26 @@ const MARGIN_FRONT = 2.6;
 const DADO = 1.0;
 const RAIL_H = 0.06;
 const RAIL_D = 0.03;
+const WIN_TRANSOM_AT = 0.6;
+const WIN_SILL_Y = DADO + RAIL_H / 2 + 0.27;
+const WIN_H = 1.2;
+const WIN_BEAD = 0.006;
+const WIN_FRAME_SET = 0.23;
+const WIN_OUTSIDE = 0.05;
+const WIN_BOARD_T = 0.025;
+const WIN_BOARD_PROUD = 0.035;
+const WIN_BOARD_EARS = 0.04;
+const WIN_FRAME = 0.06;
+const WIN_BAR = 0.04;
+const WIN_REVEAL_D = WIN_FRAME_SET + WIN_FRAME + WIN_OUTSIDE;
+const WIN_SPLIT = WIN_FRAME_SET + WIN_FRAME / 2;
+const EXT_TILE_M = { brick: 1.2, render: 2.0 };
+const WIN_HEAD_BOUNCE = 0.28;
+const WIN_FROST_LEVEL = 0.5;
+const WIN_WARM = 0.3;
+const BLIND_SLAT_M = 0.025;
+const BLIND_SLATS_PER_TILE = 8;
+const BLIND_GLOW = 0.08;
 const SHADE_CORNER_M = 0.7;
 const SHADE_CEILING_M = 0.9;
 const SHADE_FLOOR_M = 0.35;
@@ -24,64 +57,36 @@ const SHADE_MAX = 0.55;
 const POOL_PX_M = 48;
 const POOL_INTENSITY = 4;
 const RELIEF_INTENSITY = 1.6;
-const POOL_FOOT_M = 0.75;
+const ROOM_LIGHT = 0.45;
 
-function poolMap(w: number): THREE.Texture {
-  const c = document.createElement('canvas');
-  c.width = Math.max(16, Math.round(w * POOL_PX_M));
-  c.height = Math.round(CEILING * POOL_PX_M);
+function paintPool(
+  c: HTMLCanvasElement, len: number, kind: WallFixture | null, lights: WallLight[], panelWash: boolean, look: RoomLook,
+): void {
+  const sconce = kind === 'sconces';
+  const strength = WALL_LIGHT_STRENGTHS.find((s) => s.id === look.wallLightStrength)!.k;
+  const p = paintWall(len, CEILING, POOL_PX_M, kind, lights, panelWash, strength);
+  c.width = p.w;
+  c.height = p.h;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#000';
-  g.fillRect(0, 0, c.width, c.height);
-  g.globalCompositeOperation = 'lighter';
-  const col = new THREE.Color(WASH_COLOUR).lerp(new THREE.Color(0xffffff), 0.35);
-  const rgb = `${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)}`;
-  const n = Math.max(1, Math.round(w / WASH_EVERY_M));
-  const blob = (x: number, y: number, rx: number, ry: number, a: number): void => {
-    g.save();
-    g.translate(x, y);
-    g.scale(1, ry / rx);
-    const r = g.createRadialGradient(0, 0, 0, 0, 0, rx);
-    r.addColorStop(0, `rgba(${rgb},${a})`);
-    r.addColorStop(0.45, `rgba(${rgb},${a * 0.45})`);
-    r.addColorStop(1, `rgba(${rgb},0)`);
-    g.fillStyle = r;
-    g.fillRect(-rx, -rx, rx * 2, rx * 2);
-    g.restore();
-  };
-  const m = POOL_PX_M;
-  const foot = (CEILING - POOL_FOOT_M) * m;
-  g.filter = `blur(${Math.round(0.06 * m)}px)`;
-  const bell = (x: number, k: number, a: number): void => {
-    const half = (y: number): number => (0.18 + 0.8 * Math.pow(Math.sin(Math.min(1, Math.max(0, y) / foot) * Math.PI / 2), 0.75)) * m * k;
-    g.beginPath();
-    g.moveTo(x, 0.05 * m);
-    for (let y = 0.05 * m; y <= foot; y += 2) g.lineTo(x + half(y), y);
-    g.ellipse(x, foot, half(foot), 0.4 * m * k, 0, 0, Math.PI);
-    for (let y = foot; y >= 0.05 * m; y -= 2) g.lineTo(x - half(y), y);
-    g.closePath();
-    const grad = g.createLinearGradient(0, 0, 0, foot + 0.4 * m);
-    grad.addColorStop(0, `rgba(${rgb},${a})`);
-    grad.addColorStop(0.35, `rgba(${rgb},${a * 0.75})`);
-    grad.addColorStop(1, `rgba(${rgb},${a * 0.4})`);
-    g.fillStyle = grad;
-    g.fill();
-  };
-  for (let i = 0; i < n; i++) {
-    const x = ((i + 0.5) / n) * c.width;
-    for (const [k, a] of [[1, 0.28], [0.8, 0.28], [0.6, 0.28], [0.4, 0.25]] as const) bell(x, k, a);
+  const wash = new THREE.Color(WASH_COLOUR);
+  if (sconce) wash.lerp(new THREE.Color(SCONCE_SHADES.find((s) => s.id === look.sconceShade)!.glow), SCONCE_TINT);
+  const col = wash.lerp(new THREE.Color(0xffffff), 0.35);
+  const img = g.createImageData(p.w, p.h);
+  for (let i = 0; i < p.level.length; i++) {
+    const v = p.level[i] * POOL_PEAK;
+    img.data[i * 4] = Math.round(col.r * 255 * v);
+    img.data[i * 4 + 1] = Math.round(col.g * 255 * v);
+    img.data[i * 4 + 2] = Math.round(col.b * 255 * v);
+    img.data[i * 4 + 3] = 255;
   }
-  g.filter = 'none';
-  for (let i = 0; i < n; i++) blob(((i + 0.5) / n) * c.width, 0.25 * m, 0.35 * m, 0.4 * m, 0.7);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  g.putImageData(img, 0, 0);
 }
 
-const WASH_EVERY_M = 3.2;
-const WASH_OFF_M = 0.45;
+const POOL_PEAK = 1;
 const WASH_MAX = 12;
 const WASH_COLOUR = 0xffd2a0;
+const SCONCE_TINT = 0.3;
+const WALL_LIGHT_CLEAR_M = 0.35;
 const WASH_CANDELA = 9;
 const WASH_ANGLE = 0.8;
 
@@ -320,7 +325,33 @@ function pileTexture(data: Uint8Array, size: number, repeat: number, renderer: T
   return t;
 }
 
-const VIEWS: Record<RoomLook['window'], string> = { harbour: viewHarbour, square: viewSquare, oldtown: viewOldtown };
+const VIEWS: Partial<Record<RoomLook['window'], string>> = { harbour: viewHarbour, square: viewSquare, oldtown: viewOldtown, carpark: viewCarpark };
+const LAYER_URLS: Record<string, string> = { 'harbour-near.webp': viewHarbourNear };
+const VIEW_HAZE_COLOUR = new THREE.Color(0x30404c);
+
+function gradeView(mat: THREE.MeshBasicMaterial): void {
+  const haze = VIEW_HAZE_COLOUR.toArray().map((x) => x.toFixed(4)).join(', ');
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
+      #ifdef USE_MAP
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv, ${VIEW_MIP_BIAS.toFixed(2)} );
+        sampledDiffuseColor.rgb = mix( vec3( ${VIEW_MID.toFixed(4)} ), sampledDiffuseColor.rgb, ${VIEW_CONTRAST.toFixed(3)} );
+        sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, vec3( ${haze} ), ${VIEW_HAZE.toFixed(3)} );
+        diffuseColor *= sampledDiffuseColor;
+      #endif`);
+  };
+}
+
+function viewTexture(t: THREE.Texture, renderer: THREE.WebGLRenderer): THREE.Texture {
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  return t;
+}
+const FROSTED_VIEW = viewSquare;
 const viewLoader = new THREE.TextureLoader();
 
 export interface Dressing {
@@ -330,8 +361,12 @@ export interface Dressing {
   lights: number;
   door: { box: THREE.Box3; stand: { x: number; z: number } };
   tick(t: number, eye?: THREE.Vector3): void;
+  seenFrom(eye: THREE.Vector3): void;
   motion: boolean;
+  captureWindow(renderer: THREE.WebGLRenderer, scene: THREE.Scene): void;
+  dispose(): void;
   floor: THREE.Mesh;
+  backWall: { mesh: THREE.Mesh; w: number; along: number; vOff: number; y0: number; h: number };
   setRealism(o: { shadow: boolean; halos: boolean; picture?: boolean }): void;
   dim(k: number): void;
 }
@@ -374,8 +409,8 @@ function chasePattern(): THREE.Texture {
     const grad = g.createLinearGradient(0, 0, 0, 64);
     grad.addColorStop(0, '#ffffff');
     grad.addColorStop(0.5, '#ffffff');
-    grad.addColorStop(0.62, '#4a4a4a');
-    grad.addColorStop(1, '#262626');
+    grad.addColorStop(0.62, '#b4b4b4');
+    grad.addColorStop(1, '#9c9c9c');
     g.fillStyle = grad;
     g.fillRect(0, 0, 4, 64);
     chaseTex = new THREE.CanvasTexture(c);
@@ -487,7 +522,7 @@ function buildDoorway(
       t.repeat.set(lit.w, DOOR_H / CEILING);
       t.offset.set(lit.u - lit.w / 2, 0);
       m.lightMap = t;
-      m.lightMapIntensity = POOL_INTENSITY;
+      m.lightMapIntensity = POOL_INTENSITY * ROOM_LIGHT;
     }
   }
   const metalMat = surfaceMaterial('powder', 0.7, 0.3, renderer, 0xd8d8d8);
@@ -541,7 +576,7 @@ export const BANK_MARGINS = { side: MARGIN_SIDE, back: MARGIN_BACK, front: MARGI
 
 export function buildRoom(
   box: { minX: number; maxX: number; minZ: number; maxZ: number }, renderer: THREE.WebGLRenderer, look: RoomLook = HOUSE_LOOK,
-  sw: { lights: number; shade: boolean; pools: boolean } = { lights: 0, shade: true, pools: true },
+  sw: { lights: number; shade: boolean; pools: boolean; winEnv?: boolean } = { lights: 0, shade: true, pools: true },
   doorAt?: number,
 ): Dressing {
   const group = new THREE.Group();
@@ -602,6 +637,9 @@ void main() {`)
   const skirtMat = new THREE.MeshStandardMaterial({ color: 0x1a120c, roughness: 0.7 });
   const railMat = surfaceMaterial('wood', 4, 0.06, renderer, look.rail);
   type Piece = { m: THREE.Mesh; w: number; along: number; pool: THREE.Texture | null; v0: number; v1: number };
+  const lowerKind = (l: RoomLook): RoomLook['lower'] | RoomLook['upper'] => (fullHeight(l.upper) ? l.upper : l.lower);
+  const lowerTint = (l: RoomLook): string => (fullHeight(l.upper) ? l.upperColour : l.lowerColour);
+  const rails: THREE.Mesh[] = [];
   const lowers: Piece[] = [];
   const uppers: Piece[] = [];
   const poolOn = (p: Piece): void => {
@@ -611,23 +649,32 @@ void main() {`)
     t.offset.set(0, p.v0);
     const mat = p.m.material as THREE.MeshStandardMaterial;
     mat.lightMap = t;
-    mat.lightMapIntensity = POOL_INTENSITY;
+    mat.lightMapIntensity = POOL_INTENSITY * ROOM_LIGHT;
     mat.needsUpdate = true;
   };
   let along = 0;
-  let lights = 0;
-  const wall = (w: number, x: number, z: number, rotY: number): void => {
+  const pools: { c: HTMLCanvasElement; w: number; tex: THREE.Texture }[] = [];
+  const ceilingShades: THREE.Object3D[] = [];
+  const wall = (w: number, x: number, z: number, rotY: number, hole?: { x: number; w: number; y0: number; y1: number }): void => {
     const piece = (h: number, y: number, mat: THREE.Material): THREE.Mesh => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+      const cut = hole && hole.y0 >= y - h / 2 && hole.y1 <= y + h / 2 ? { ...hole, y0: hole.y0 - y, y1: hole.y1 - y } : undefined;
+      const m = new THREE.Mesh(cut ? holedPlane(w, h, cut) : new THREE.PlaneGeometry(w, h), mat);
       m.position.set(x, y, z);
       m.rotation.y = rotY;
       group.add(m);
       return m;
     };
-    const pool = sw.pools ? poolMap(w) : null;
-    const low: Piece = { m: piece(DADO, DADO / 2, surfaceMaterial(look.lower, w, DADO, renderer, look.lowerColour, along)), w, along, pool, v0: 0, v1: DADO / CEILING };
+    let pool: THREE.Texture | null = null;
+    if (sw.pools) {
+      const c = document.createElement('canvas');
+      paintPool(c, w, null, [], false, look);
+      pool = new THREE.CanvasTexture(c);
+      pool.colorSpace = THREE.SRGBColorSpace;
+      pools.push({ c, w, tex: pool });
+    }
+    const low: Piece = { m: piece(DADO, DADO / 2, surfaceMaterial(lowerKind(look), w, DADO, renderer, lowerTint(look), along)), w, along, pool, v0: 0, v1: DADO / CEILING };
     const up: Piece = {
-      m: piece(CEILING - DADO, (CEILING + DADO) / 2, surfaceMaterial(look.upper, w, CEILING - DADO, renderer, look.upperColour, along)),
+      m: piece(CEILING - DADO, (CEILING + DADO) / 2, surfaceMaterial(look.upper, w, CEILING - DADO, renderer, look.upperColour, along, 0, DADO)),
       w, along, pool, v0: DADO / CEILING, v1: 1,
     };
     poolOn(low);
@@ -635,83 +682,274 @@ void main() {`)
     lowers.push(low);
     uppers.push(up);
     along += w;
-    const ledge = (h: number, d: number, y: number, mat: THREE.Material): void => {
+    const ledge = (h: number, d: number, y: number, mat: THREE.Material): THREE.Mesh => {
       const s = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
       s.position.set(x, y, z);
       s.rotation.y = rotY;
       s.translateZ(d / 2);
       group.add(s);
+      return s;
     };
     ledge(0.12, 0.02, 0.06, skirtMat);
-    ledge(RAIL_H, RAIL_D, DADO, railMat);
-    if (sw.shade) shadeWall(group, w, x, z, rotY);
-    const n = Math.max(1, Math.round(w / WASH_EVERY_M));
-    for (let i = 0; i < n && lights < Math.min(WASH_MAX, sw.lights); i++, lights++) {
-      const u = -w / 2 + (w * (i + 0.5)) / n;
-      const at = new THREE.Group();
-      at.position.set(x, 0, z);
-      at.rotation.y = rotY;
-      group.add(at);
-      const l = new THREE.SpotLight(WASH_COLOUR, WASH_CANDELA, 7, WASH_ANGLE, 0.85, 2);
-      l.position.set(u, CEILING - 0.08, WASH_OFF_M);
-      l.target.position.set(u, 0.9, 0);
-      at.add(l, l.target);
-    }
+    const rail = ledge(RAIL_H, RAIL_D, DADO, railMat);
+    rail.visible = !fullHeight(look.upper);
+    rails.push(rail);
+    if (sw.shade) ceilingShades.push(shadeWall(group, w, x, z, rotY, hole));
   };
   wall(W, cx, minZ, 0);
   wall(W, cx, maxZ, Math.PI);
-  wall(D, minX, cz, Math.PI / 2);
+  const winW = windowWidth(D);
+  const revealSpec: RevealSpec = {
+    winW, sillY: WIN_SILL_Y, headY: WIN_SILL_Y + WIN_H, depth: WIN_REVEAL_D, split: WIN_SPLIT, bead: WIN_BEAD,
+    wallW: D, wallH: CEILING - DADO, wallY0: DADO,
+  };
+  wall(D, minX, cz, Math.PI / 2, wallHole(revealSpec));
+  const leftUpper = uppers[uppers.length - 1].m;
+  const leftHoled = leftUpper.geometry;
+  const leftWhole = new THREE.PlaneGeometry(D, CEILING - DADO);
   wall(D, maxX, cz, -Math.PI / 2);
   if (sw.shade) shadeFloor(group, box);
 
-  const ceil = new THREE.Mesh(
-    new THREE.PlaneGeometry(W, D).rotateX(Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0x0c0b0d, roughness: 1 }),
-  );
-  ceil.position.set(cx, CEILING, cz);
-  group.add(ceil);
+  let ceiling = buildCeiling(ceilingOf(look), W, D, cx, cz, CEILING, renderer);
+  group.add(ceiling.group);
 
-  const winW = windowWidth(D);
-  const winH = 1.2;
-  const winY = 1.55;
-  const winZ = cz;
-  const paneMat = new THREE.MeshBasicMaterial({ color: 0x0a0c14 });
-  const pane = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), paneMat);
-  pane.position.set(minX + 0.01, winY, winZ);
-  pane.rotation.y = Math.PI / 2;
-  group.add(pane);
-  const viewEye = new THREE.Vector3(VIEW_EYE_DEFAULT.x, VIEW_EYE_DEFAULT.y, VIEW_EYE_DEFAULT.z);
-  const aimView = (): void => {
-    const t = paneMat.map;
-    if (!t) return;
-    const img = t.image as { width: number; height: number };
-    const p = viewParallax(viewEye, { w: winW, h: winH }, img.width / img.height);
-    t.repeat.set(p.repeat[0], p.repeat[1]);
-    t.offset.set(p.offset[0], p.offset[1]);
+  const win = new THREE.Group();
+  win.position.set(minX, 0, cz);
+  win.rotation.y = Math.PI / 2;
+  group.add(win);
+  const winY = WIN_SILL_Y + WIN_H / 2;
+  const woodAlong = mouldingMaterial(look.rail, false);
+  const woodUp = mouldingMaterial(look.rail, true);
+  const woods = [woodAlong, woodUp];
+  const warmGlow = (rail: string): THREE.Color => new THREE.Color(rail).lerp(new THREE.Color(WASH_COLOUR), WIN_WARM);
+  for (const m of woods) m.emissive.copy(warmGlow(look.rail));
+  const winBox = (w: number, h: number, d: number, x: number, y: number, z: number, mat?: THREE.Material): THREE.Mesh => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat ?? (h > w ? woodUp : woodAlong));
+    m.position.set(x, y, z);
+    win.add(m);
+    return m;
   };
-  const viewOn = (v: RoomLook['window']): void => {
-    viewLoader.load(VIEWS[v], (t) => {
+  const meshOf = (d: RevealData): THREE.BufferGeometry => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(d.position, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(d.normal, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(d.uv, 2));
+    g.setIndex(new THREE.BufferAttribute(d.index, 1));
+    g.addGroup(d.groups.interior[0], d.groups.interior[1], 0);
+    g.addGroup(d.groups.head[0], d.groups.head[1], 1);
+    g.addGroup(d.groups.exterior[0], d.groups.exterior[1], 2);
+    return g;
+  };
+  const headMatOf = (l: RoomLook): THREE.MeshStandardMaterial => {
+    const m = (leftUpper.material as THREE.MeshStandardMaterial).clone();
+    m.emissive.set(l.upperColour).multiply(new THREE.Color(WASH_COLOUR));
+    m.emissiveMap = m.map;
+    m.emissiveIntensity = WIN_HEAD_BOUNCE * ROOM_LIGHT;
+    return m;
+  };
+  let headMat = headMatOf(look);
+  const extMat = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false, fog: false });
+  gradeView(extMat);
+  const extHue = new THREE.Color(0.55, 0.62, 0.8);
+  const extTextures = new Map<string, THREE.Texture>();
+  const extOn = (v: RoomLook['window']): void => {
+    const kind = VIEW_EXTERIOR[v] ?? 'render';
+    let t = extTextures.get(kind);
+    if (!t) {
+      t = viewLoader.load(kind === 'brick' ? extBrick : extRender, () => { extMat.needsUpdate = true; });
       t.colorSpace = THREE.SRGBColorSpace;
-      paneMat.map?.dispose();
-      paneMat.map = t;
-      paneMat.color.set(0xffffff);
-      paneMat.needsUpdate = true;
-      aimView();
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.setScalar(1 / EXT_TILE_M[kind]);
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      extTextures.set(kind, t);
+    }
+    if (extMat.map !== t) { extMat.map = t; extMat.needsUpdate = true; }
+  };
+  const reveal = new THREE.Mesh(meshOf(revealGeometry(revealSpec)), [leftUpper.material as THREE.Material, headMat, extMat]);
+  reveal.onBeforeRender = (r) => { extMat.color.copy(extHue).multiplyScalar(VIEW_EXTERIOR_LEVEL * VIEW_LEVEL * r.toneMappingExposure); };
+  win.add(reveal);
+  const frameSpan: [number, number] = [WIN_FRAME_SET - WIN_BEAD, WIN_FRAME_SET + WIN_FRAME - WIN_BEAD];
+  const edges: ReturnType<typeof edgeMaterial>[] = [];
+  const overlay = (corners: number[][], st: [number, number][], shade: Parameters<typeof edgeShade>[0], lift: number[]): THREE.Mesh => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(corners.flatMap((c) => [c[0] + lift[0], c[1] + lift[1], c[2] + lift[2]])), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(st.flat()), 2));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    const mat = edgeMaterial(edgeShade(shade));
+    mat.side = THREE.DoubleSide;
+    edges.push(mat);
+    const m = new THREE.Mesh(g, mat);
+    m.renderOrder = 2;
+    win.add(m);
+    return m;
+  };
+  const headY = WIN_SILL_Y + WIN_H;
+  const zIn = -WIN_BEAD, zOut = -WIN_SPLIT;
+  const flatD = WIN_SPLIT - WIN_BEAD;
+  const lift = 0.0005;
+  const jamb = { depth: flatD, len: WIN_H, frame: frameSpan, ends: true, spill: true };
+  for (const side of [-1, 1]) {
+    const x = side * winW / 2;
+    overlay([[x, WIN_SILL_Y, zIn], [x, WIN_SILL_Y, zOut], [x, headY, zOut], [x, headY, zIn]], [[0, 0], [1, 0], [1, 1], [0, 1]], jamb, [-side * lift, 0, 0]);
+  }
+  overlay([[-winW / 2, headY, zIn], [-winW / 2, headY, zOut], [winW / 2, headY, zOut], [winW / 2, headY, zIn]], [[0, 0], [1, 0], [1, 1], [0, 1]],
+    { depth: flatD, len: winW, frame: frameSpan, ends: true, spill: true }, [0, -lift, 0]);
+  const boardW = winW + 2 * (WIN_BEAD + WIN_BOARD_EARS);
+  const boardBack = -(WIN_FRAME_SET + 0.01);
+  const noseZ = WIN_BOARD_PROUD - WIN_BOARD_T / 2;
+  const boardY = WIN_SILL_Y - WIN_BOARD_T / 2;
+  winBox(boardW, WIN_BOARD_T, noseZ - boardBack, 0, boardY, (noseZ + boardBack) / 2, woodAlong);
+  const nose = new THREE.Mesh(new THREE.CylinderGeometry(WIN_BOARD_T / 2, WIN_BOARD_T / 2, boardW, 16, 1, false, -Math.PI / 2, Math.PI).rotateZ(Math.PI / 2), woodAlong);
+  nose.position.set(0, boardY, noseZ);
+  win.add(nose);
+  const boardD = noseZ + WIN_FRAME_SET;
+  overlay([[-winW / 2, WIN_SILL_Y, noseZ], [-winW / 2, WIN_SILL_Y, -WIN_FRAME_SET], [winW / 2, WIN_SILL_Y, -WIN_FRAME_SET], [winW / 2, WIN_SILL_Y, noseZ]],
+    [[0, 0], [1, 0], [1, 1], [0, 1]], { depth: boardD, len: winW, frame: [boardD, boardD + WIN_FRAME], ends: true, spill: true }, [0, lift, 0]);
+  const underTop = WIN_SILL_Y - WIN_BOARD_T, underFoot = DADO + RAIL_H / 2;
+  const underH = underTop - underFoot;
+  overlay([[-boardW / 2, underTop, 0], [-boardW / 2, underFoot, 0], [boardW / 2, underFoot, 0], [boardW / 2, underTop, 0]],
+    [[0, 0], [1, 0], [1, 1], [0, 1]], { depth: underH, len: boardW, frame: null, ends: false, spill: false, from: 'top' }, [0, 0, lift]);
+  const fz = -(WIN_FRAME_SET + WIN_FRAME / 2);
+  const glaze = glazing({ w: winW, y0: WIN_SILL_Y, h: WIN_H, frame: WIN_FRAME, bar: WIN_BAR, transomAt: WIN_TRANSOM_AT });
+  for (const m of glaze.members) winBox(m.w, m.h, WIN_FRAME, m.x, m.y, fz);
+  const glassMat = glassMaterial({ w: winW, h: WIN_H, frame: WIN_FRAME, bar: WIN_BAR, transomY: glaze.members[5].y - winY });
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(winW, WIN_H), glassMat);
+  glass.position.set(0, winY, fz - WIN_FRAME / 4);
+  glass.renderOrder = 3;
+  win.add(glass);
+  let winEnv: WindowEnv | null = null;
+  let glassLevel = 1;
+  const frostMat = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false, fog: false });
+  const frost = new THREE.Mesh(new THREE.PlaneGeometry(winW, WIN_H), frostMat);
+  frost.position.copy(glass.position);
+  frost.onBeforeRender = (r) => { frostMat.color.setScalar(WIN_FROST_LEVEL * r.toneMappingExposure); };
+  win.add(frost);
+  const slats = blindSlats();
+  slats.repeat.set(1, WIN_H / (BLIND_SLATS_PER_TILE * BLIND_SLAT_M));
+  const blindMat = new THREE.MeshStandardMaterial({
+    color: 0xa89e8c, map: slats, roughness: 0.7, emissive: 0xa89e8c, emissiveMap: slats, emissiveIntensity: BLIND_GLOW,
+  });
+  const blinds = new THREE.Group();
+  const blindZ = fz + WIN_FRAME / 2 + 0.012;
+  const blindPanel = new THREE.Mesh(new THREE.PlaneGeometry(winW - 0.02, WIN_H - 0.05), blindMat);
+  blindPanel.position.set(0, winY - 0.02, blindZ);
+  blinds.add(blindPanel);
+  const headRail = new THREE.Mesh(new THREE.BoxGeometry(winW - 0.01, 0.045, 0.03), blindMat);
+  headRail.position.set(0, WIN_SILL_Y + WIN_H - 0.025, blindZ + 0.005);
+  blinds.add(headRail);
+  win.add(blinds);
+  const viewData = viewBackdrop(1);
+  const viewGeom = new THREE.BufferGeometry();
+  viewGeom.setAttribute('position', new THREE.BufferAttribute(viewData.position, 3));
+  viewGeom.setAttribute('uv', new THREE.BufferAttribute(viewData.uv, 2));
+  viewGeom.setIndex(new THREE.BufferAttribute(viewData.index, 1));
+  const viewMat = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false, fog: false });
+  viewMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      gl_Position.z = gl_Position.w * 0.999999;`);
+  };
+  gradeView(viewMat);
+  const backdrop = new THREE.Mesh(viewGeom, viewMat);
+  backdrop.position.set(0, VIEW_HORIZON_Y, 0);
+  backdrop.frustumCulled = false;
+  backdrop.onBeforeRender = (r) => { viewMat.color.setScalar(VIEW_LEVEL * r.toneMappingExposure); };
+  win.add(backdrop);
+  const layers = new THREE.Group();
+  layers.position.set(0, VIEW_HORIZON_Y, 0);
+  win.add(layers);
+  const clearLayers = (): void => {
+    for (const m of [...layers.children] as THREE.Mesh[]) {
+      layers.remove(m);
+      m.geometry.dispose();
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.map?.dispose();
+      mat.dispose();
+    }
+  };
+  const addLayer = (url: string, distance: number, topDeg: number, v: RoomLook['window']): void => {
+    const d = viewBackdrop(1, undefined, undefined, undefined, 48, 16, topDeg);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(d.position, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(d.uv, 2));
+    g.setIndex(new THREE.BufferAttribute(d.index, 1));
+    const mat = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false, fog: false, transparent: true, depthWrite: false });
+    gradeView(mat);
+    const m = new THREE.Mesh(g, mat);
+    m.scale.setScalar(distance);
+    m.renderOrder = 1;
+    m.visible = false;
+    m.onBeforeRender = (r) => { mat.color.setScalar(VIEW_LEVEL * r.toneMappingExposure); };
+    layers.add(m);
+    viewLoader.load(url, (t) => {
+      if (windowKind !== v || m.parent !== layers) { t.dispose(); return; }
+      mat.map = viewTexture(t, renderer);
+      mat.needsUpdate = true;
+      m.visible = true;
     });
   };
-  viewOn(look.window);
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0x2a1a10, roughness: 0.6 });
-  const bar = (w: number, h: number, y: number, z: number): void => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, h, w), frameMat);
-    m.position.set(minX + 0.03, y, z);
-    group.add(m);
+  const spillFrom = (img: CanvasImageSource | null, level: number): void => {
+    const c = img ? viewColour(img).multiplyScalar(SPILL * level) : new THREE.Color(0, 0, 0);
+    for (const e of edges) e.uniforms.spill.value.copy(c);
+    if (img) {
+      const hue = viewColour(img);
+      extHue.copy(hue).multiplyScalar(1 / Math.max(hue.r, hue.g, hue.b, 1e-6));
+    }
   };
-  bar(winW + 0.12, 0.06, winY + winH / 2, winZ);
-  bar(winW + 0.12, 0.08, winY - winH / 2, winZ);
-  bar(0.06, winH, winY, winZ - winW / 2);
-  bar(0.06, winH, winY, winZ + winW / 2);
-  bar(0.04, winH, winY, winZ);
-  bar(winW, 0.04, winY + winH * 0.1, winZ);
+  let windowKind: RoomLook['window'] = look.window;
+  let inRoom = true;
+  const viewOn = (v: RoomLook['window']): void => {
+    windowKind = v;
+    const street = VIEWS[v];
+    win.visible = v !== 'none';
+    leftUpper.geometry = v === 'none' ? leftWhole : leftHoled;
+    blinds.visible = v === 'blinds';
+    frost.visible = v === 'frosted';
+    glass.visible = v !== 'frosted';
+    backdrop.visible = inRoom && !!street;
+    layers.visible = inRoom && !!street;
+    clearLayers();
+    if (!street && v !== 'frosted') spillFrom(null, 0);
+    extOn(v);
+    if (street) {
+      backdrop.scale.setScalar(VIEW_DISTANCE_M[v] ?? VIEW_RADIUS_M);
+      for (const l of VIEW_LAYERS[v]?.layers ?? []) {
+        const url = LAYER_URLS[l.texture];
+        if (url) addLayer(url, l.distance, l.crop.topDeg, v);
+      }
+      viewLoader.load(street, (t) => {
+        if (windowKind !== v) { t.dispose(); return; }
+        viewMat.map?.dispose();
+        viewMat.map = viewTexture(t, renderer);
+        viewMat.needsUpdate = true;
+        spillFrom(t.image as CanvasImageSource, VIEW_LEVEL);
+      });
+    } else if (v === 'frosted') {
+      viewLoader.load(FROSTED_VIEW, (t) => {
+        if (!frostMat.map) {
+          frostMat.map = frostFrom(t.image as CanvasImageSource & { width: number; height: number });
+          frostMat.needsUpdate = true;
+        }
+        if (windowKind === v) spillFrom(t.image as CanvasImageSource, WIN_FROST_LEVEL);
+        t.dispose();
+      });
+    }
+  };
+  viewOn(look.window);
+  const roomBox = new THREE.Box3(new THREE.Vector3(minX, 0, minZ), new THREE.Vector3(maxX, CEILING, maxZ));
+  const seenFrom = (eye: THREE.Vector3): void => {
+    inRoom = roomBox.containsPoint(eye);
+    backdrop.visible = layers.visible = inRoom && !!VIEWS[windowKind];
+  };
+  const captureWindow = (r: THREE.WebGLRenderer, scene: THREE.Scene): void => {
+    if (sw.winEnv === false || !win.visible || !glass.visible) return;
+    winEnv ??= new WindowEnv();
+    win.updateMatrixWorld(true);
+    const at = new THREE.Vector3(0, winY, 0.25).applyMatrix4(win.matrixWorld);
+    winEnv.capture(r, scene, at, [glass, frost]);
+    glassMat.uniforms.envMap.value = winEnv.target.texture;
+    glassMat.uniforms.envOn.value = 1;
+    glassMat.uniforms.level.value = glassLevel;
+  };
 
   const doorX = doorAt ?? cx + Math.max(0, Math.min(W * 0.28, W / 2 - DOOR_CORNER_M));
   const frontPool = lowers[1].pool;
@@ -720,6 +958,50 @@ void main() {`)
   group.add(doorway.group);
   doorway.group.updateMatrixWorld(true);
   const door = { box: new THREE.Box3().setFromObject(doorway.group), stand: { x: doorX, z: maxZ - DOOR_STAND_M } };
+
+  const doorHalf = DOOR_LEAF_W + ARCHITRAVE_W + WALL_LIGHT_CLEAR_M;
+  const wallRuns = (l: RoomLook): WallRun[] => {
+    const winHalf = windowWidth(D) / 2 + WALL_LIGHT_CLEAR_M;
+    return [
+      { x: cx, z: minZ, rotY: 0, len: W, keepOut: [] },
+      { x: cx, z: maxZ, rotY: Math.PI, len: W, keepOut: [{ u0: cx - doorX - doorHalf, u1: cx - doorX + doorHalf, only: 'sconces' }] },
+      { x: minX, z: cz, rotY: Math.PI / 2, len: D, keepOut: l.window === 'none' ? [] : [{ u0: -winHalf, u1: winHalf }] },
+      { x: maxX, z: cz, rotY: -Math.PI / 2, len: D, keepOut: [] },
+    ];
+  };
+  const lightsKey = (l: RoomLook): string =>
+    `${l.ceiling}|${l.wallLights}|${l.window === 'none'}|${l.sconceShade}|${l.sconceMetal}|${l.wallLightStrength}`;
+  let fixtures: ReturnType<typeof buildWallLights> | null = null;
+  let lights = 0;
+  const hangLights = (l: RoomLook): void => {
+    const kind = wallFixture(l.ceiling, l.wallLights);
+    const runs = wallRuns(l);
+    const placed = placeWallLights(kind, { W, D, cx, cz }, CEILING, runs);
+    if (fixtures) { group.remove(fixtures.group); fixtures.dispose(); }
+    fixtures = buildWallLights(kind, placed, runs, CEILING, { shade: l.sconceShade, metal: l.sconceMetal, strength: l.wallLightStrength });
+    group.add(fixtures.group);
+    for (const [i, p] of placed.slice(0, Math.min(WASH_MAX, sw.lights)).entries()) {
+      const r = runs[p.wall];
+      const at = new THREE.Group();
+      at.position.set(r.x, 0, r.z);
+      at.rotation.y = r.rotY;
+      const sl = new THREE.SpotLight(WASH_COLOUR, WASH_CANDELA, 7, WASH_ANGLE, 0.85, 2);
+      sl.position.set(p.u, p.y, Math.max(p.off, 0.2));
+      sl.target.position.set(p.u, 0.9, 0);
+      at.add(sl, sl.target);
+      fixtures.group.add(at);
+      lights = i + 1;
+    }
+    const panelWash = !kind && l.ceiling === 'tiles';
+    for (const t of ceilingShades) t.visible = !panelWash;
+    pools.forEach((pl, i) => paintPool(pl.c, pl.w, kind, placed.filter((p) => p.wall === i), panelWash, l));
+    const sources = new Set(pools.map((pl) => pl.tex.source));
+    group.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (m && !Array.isArray(m) && m.lightMap && sources.has(m.lightMap.source)) m.lightMap.needsUpdate = true;
+    });
+  };
+  hangLights(look);
 
   const tubes: Tube[] = [];
   const tube = (len: number, col: string, x: number, z: number, rotY: number): void => {
@@ -748,16 +1030,16 @@ void main() {`)
 
   let relief: THREE.DirectionalLight | null = null;
   if (sw.pools) {
-    const down = new THREE.DirectionalLight(WASH_COLOUR, RELIEF_INTENSITY);
+    const down = new THREE.DirectionalLight(WASH_COLOUR, RELIEF_INTENSITY * ROOM_LIGHT);
     relief = down;
     down.position.set(cx + 0.01, CEILING + 6, cz + 0.02);
     down.target.position.set(cx, 0, cz);
     group.add(down, down.target);
   }
 
-  group.add(new THREE.AmbientLight(0x6a5a66, 0.8));
-  group.add(new THREE.HemisphereLight(0x3a4a80, 0x201014, 0.6));
-  const key = new THREE.DirectionalLight(0xffe2c0, 0.8);
+  group.add(new THREE.AmbientLight(0x6a5a66, 0.8 * ROOM_LIGHT));
+  group.add(new THREE.HemisphereLight(0x3a4a80, 0x201014, 0.6 * ROOM_LIGHT));
+  const key = new THREE.DirectionalLight(0xffe2c0, 0.8 * ROOM_LIGHT);
   key.position.set(cx + 2, CEILING + 2, maxZ);
   key.target.position.set(cx, 0, cz);
   group.add(key, key.target);
@@ -765,24 +1047,41 @@ void main() {`)
   let halosOn = false;
   let now = copyLook(look);
   const restyle = (next: RoomLook): void => {
-    const wallPieces = (pieces: typeof lowers, kind: RoomLook['lower'] | RoomLook['upper'], was: string, tint: string, h: number): void => {
+    const wallPieces = (pieces: typeof lowers, kind: RoomLook['lower'] | RoomLook['upper'], was: string, tint: string, h: number, vOff: number): void => {
       for (const p of pieces) {
         const mat = p.m.material as THREE.MeshStandardMaterial;
         if (kind !== was) {
-          p.m.material = surfaceMaterial(kind, p.w, h, renderer, tint, p.along);
+          p.m.material = surfaceMaterial(kind, p.w, h, renderer, tint, p.along, 0, vOff);
           poolOn(p);
           mat.dispose();
-        } else mat.color.set(tint);
+        } else {
+          mat.color.set(tint);
+          const phys = mat as THREE.MeshPhysicalMaterial;
+          if (phys.isMeshPhysicalMaterial) phys.sheenColor.set(tint).multiplyScalar(0.6);
+        }
       }
     };
-    wallPieces(lowers, next.lower, now.lower, next.lowerColour, DADO);
-    wallPieces(uppers, next.upper, now.upper, next.upperColour, CEILING - DADO);
+    wallPieces(lowers, lowerKind(next), lowerKind(now), lowerTint(next), DADO, 0);
+    wallPieces(uppers, next.upper, now.upper, next.upperColour, CEILING - DADO, DADO);
+    for (const r of rails) r.visible = !fullHeight(next.upper);
     railMat.color.set(next.rail);
+    for (const m of woods) { m.color.set(next.rail); m.emissive.copy(warmGlow(next.rail)); }
+    const was = headMat;
+    headMat = headMatOf(next);
+    reveal.material = [leftUpper.material as THREE.Material, headMat, extMat];
+    was.dispose();
     doorway.leafMat.color.set(next.rail);
     doorway.leafMat.emissive.set(next.rail);
     tubes.forEach((t, i) => { t.base.set(next.neon[i]); t.mat.color.copy(t.base); t.mesh.visible = next.neonOn; });
     if (halosOn) showHalos();
     if (next.window !== now.window) viewOn(next.window);
+    if (lightsKey(next) !== lightsKey(now)) hangLights(next);
+    if (ceilingKey(next) !== ceilingKey(now)) {
+      group.remove(ceiling.group);
+      ceiling.dispose();
+      ceiling = buildCeiling(ceilingOf(next), W, D, cx, cz, CEILING, renderer);
+      group.add(ceiling.group);
+    }
     setChase(next.neonMotion === 'chase' || next.neonMotion === 'chase-back');
     if (next.carpet === 'neon' && (next.carpetGround !== now.carpetGround || next.carpetInks.join() !== now.carpetInks.join())) {
       tex.image = neonCanvas(next);
@@ -800,19 +1099,20 @@ void main() {`)
     now = copyLook(next);
   };
   const dressing: Dressing = {
-    group, box: { minX, maxX, minZ, maxZ, height: CEILING }, restyle, lights, door, motion: true,
+    group, box: { minX, maxX, minZ, maxZ, height: CEILING }, restyle, lights, door, motion: true, seenFrom, captureWindow,
+    dispose(): void { winEnv?.dispose(); clearLayers(); headMat.dispose(); for (const t of extTextures.values()) t.dispose(); },
+    backWall: { mesh: uppers[0].m, w: uppers[0].w, along: uppers[0].along, vOff: DADO, y0: DADO, h: CEILING - DADO },
     tick(t: number, eye?: THREE.Vector3): void {
-      if (eye) {
-        pane.updateWorldMatrix(true, false);
-        pane.worldToLocal(viewEye.copy(eye));
-        aimView();
-      }
+      if (eye) seenFrom(eye);
       const mo = now.neonMotion;
       if (mo === 'still') return;
+      const chasing = mo === 'chase' || mo === 'chase-back';
       if (!dressing.motion) {
+        if (chasing && tubes.some((tb) => tb.chase)) setChase(false);
         for (const tb of tubes) tb.mat.color.copy(tb.base).multiplyScalar(dimK);
         return;
       }
+      if (chasing && tubes.some((tb) => !tb.chase)) setChase(true);
       const ts = t * now.neonSpeed;
       tubes.forEach((tb, k) => {
         if (tb.chase) { tb.chase.offset.y = ((mo === 'chase' ? 1 : -1) * ts * CHASE_MPS) / (CHASE_M * 2); tb.mat.color.copy(tb.base).multiplyScalar(dimK); }
@@ -831,6 +1131,8 @@ void main() {`)
       for (const l of lightsBase) l.light.intensity = l.base * k;
       dimMaterials(group, k);
       for (const tb of tubes) tb.mat.color.copy(tb.base).multiplyScalar(k);
+      glassLevel = k;
+      glassMat.uniforms.level.value = k;
       if (halosOn) showHalos();
     },
     setRealism,
@@ -993,6 +1295,91 @@ function shadeRamp(): THREE.Texture {
   return shadeTex;
 }
 
+function mouldingMaterial(tint: THREE.ColorRepresentation, upright: boolean): THREE.MeshStandardMaterial {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 32;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#c8c8c8';
+  g.fillRect(0, 0, c.width, c.height);
+  let seed = 7;
+  const rnd = (): number => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 70; i++) {
+    const y = rnd() * c.height;
+    const shade = Math.round(160 + rnd() * 70);
+    g.strokeStyle = `rgba(${shade},${shade},${shade},0.35)`;
+    g.lineWidth = 0.5 + rnd() * 1.5;
+    g.beginPath();
+    g.moveTo(0, y);
+    for (let x = 32; x <= c.width; x += 32) g.lineTo(x, y + (rnd() - 0.5) * 1.5);
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.center.set(0.5, 0.5);
+  if (upright) t.rotation = Math.PI / 2;
+  return new THREE.MeshStandardMaterial({
+    color: tint, map: t, roughness: 0.55, metalness: 0, emissive: tint, emissiveMap: t, emissiveIntensity: DOOR_GLOW,
+  });
+}
+
+function blindSlats(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  const per = 32;
+  c.width = 8;
+  c.height = per * BLIND_SLATS_PER_TILE;
+  const g = c.getContext('2d')!;
+  for (let i = 0; i < BLIND_SLATS_PER_TILE; i++) {
+    const y = i * per;
+    const r = g.createLinearGradient(0, y, 0, y + per);
+    r.addColorStop(0, '#ffffff');
+    r.addColorStop(0.6, '#d6d6d6');
+    r.addColorStop(0.92, '#9a9a9a');
+    r.addColorStop(1, '#3a3a3a');
+    g.fillStyle = r;
+    g.fillRect(0, y, c.width, per);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+function frostFrom(img: CanvasImageSource & { width: number; height: number }): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 12;
+  c.height = 6;
+  const g = c.getContext('2d')!;
+  g.drawImage(img, img.width / 3, img.height * 0.36, img.width / 3, img.height * 0.28, 0, 0, c.width, c.height);
+  g.fillStyle = 'rgba(205,212,222,0.28)';
+  g.fillRect(0, 0, c.width, c.height);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = false;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  return t;
+}
+
+function holedPlane(w: number, h: number, hole: { x: number; w: number; y0: number; y1: number }): THREE.BufferGeometry {
+  const shape = new THREE.Shape([
+    new THREE.Vector2(-w / 2, -h / 2), new THREE.Vector2(w / 2, -h / 2),
+    new THREE.Vector2(w / 2, h / 2), new THREE.Vector2(-w / 2, h / 2),
+  ]);
+  const x0 = hole.x - hole.w / 2, x1 = hole.x + hole.w / 2;
+  shape.holes.push(new THREE.Path([
+    new THREE.Vector2(x0, hole.y0), new THREE.Vector2(x0, hole.y1),
+    new THREE.Vector2(x1, hole.y1), new THREE.Vector2(x1, hole.y0),
+  ]));
+  const g = new THREE.ShapeGeometry(shape);
+  const pos = g.getAttribute('position');
+  const uv = g.getAttribute('uv');
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / w + 0.5, pos.getY(i) / h + 0.5);
+  uv.needsUpdate = true;
+  return g;
+}
+
 function shadeStrip(len: number, reach: number): THREE.Mesh {
   return new THREE.Mesh(
     new THREE.PlaneGeometry(len, reach),
@@ -1003,7 +1390,7 @@ function shadeStrip(len: number, reach: number): THREE.Mesh {
   );
 }
 
-function shadeWall(group: THREE.Group, w: number, x: number, z: number, rotY: number): void {
+function shadeWall(group: THREE.Group, w: number, x: number, z: number, rotY: number, hole?: { x: number; w: number; y0: number; y1: number }): THREE.Object3D {
   const on = new THREE.Group();
   on.position.set(x, 0, z);
   on.rotation.y = rotY;
@@ -1019,8 +1406,43 @@ function shadeWall(group: THREE.Group, w: number, x: number, z: number, rotY: nu
   const right = shadeStrip(CEILING, SHADE_CORNER_M);
   right.rotation.z = Math.PI / 2;
   right.position.set(w / 2 - SHADE_CORNER_M / 2, CEILING / 2, 0);
+  if (hole) for (const m of [top, bottom, left, right]) cutStrip(m, hole);
   on.add(top, bottom, left, right);
   group.add(on);
+  return top;
+}
+
+function cutStrip(m: THREE.Mesh, hole: { x: number; w: number; y0: number; y1: number }): void {
+  const g = m.geometry as THREE.PlaneGeometry;
+  const { width: sw, height: sh } = g.parameters;
+  const c = Math.cos(-m.rotation.z), sn = Math.sin(-m.rotation.z);
+  const local = (px: number, py: number): [number, number] => {
+    const dx = px - m.position.x, dy = py - m.position.y;
+    return [dx * c - dy * sn, dx * sn + dy * c];
+  };
+  const a = local(hole.x - hole.w / 2, hole.y0), b = local(hole.x + hole.w / 2, hole.y1);
+  const x0 = Math.max(Math.min(a[0], b[0]), -sw / 2), x1 = Math.min(Math.max(a[0], b[0]), sw / 2);
+  const y0 = Math.max(Math.min(a[1], b[1]), -sh / 2), y1 = Math.min(Math.max(a[1], b[1]), sh / 2);
+  if (x1 - x0 < 1e-6 || y1 - y0 < 1e-6) return;
+  m.geometry = framedPlane(sw, sh, x0, x1, y0, y1);
+  g.dispose();
+}
+
+function framedPlane(w: number, h: number, x0: number, x1: number, y0: number, y1: number): THREE.BufferGeometry {
+  const L = -w / 2, R = w / 2, B = -h / 2, T = h / 2;
+  const rects: [number, number, number, number][] = [[L, R, y1, T], [L, R, B, y0], [L, x0, y0, y1], [x1, R, y0, y1]];
+  const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  for (const [ax, bx, ay, by] of rects) {
+    if (bx - ax < 1e-6 || by - ay < 1e-6) continue;
+    const k = pos.length / 3;
+    for (const [px, py] of [[ax, ay], [bx, ay], [bx, by], [ax, by]]) { pos.push(px, py, 0); uv.push(px / w + 0.5, py / h + 0.5); }
+    idx.push(k, k + 1, k + 2, k, k + 2, k + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
 }
 
 function shadeFloor(group: THREE.Group, b: { minX: number; maxX: number; minZ: number; maxZ: number }): void {

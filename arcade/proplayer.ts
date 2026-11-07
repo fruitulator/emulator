@@ -14,6 +14,7 @@ import bench from './props/painted_wooden_bench.glb?url';
 import posTable from './props/round_wooden_table_01.glb?url';
 import coffeeTable from './props/coffee_table_round_01.glb?url';
 import { surfaceMaterial } from './roomtextures';
+import { contactShadow } from './contactshadow';
 import {
   CIG_MACHINE_D, CIG_MACHINE_H, CIG_MACHINE_W, CIG_MACHINE_Y0, footprintAt, posterArt, POSTER_FRAME, POSTER_H, POSTER_Y, PROP_WALL_GAP, propFootprint,
   propKind, propOnWall, type PosterArt, type Prop, type PropKind,
@@ -422,11 +423,22 @@ function skin(root: THREE.Object3D, id: 'powder', renderer: THREE.WebGLRenderer)
 
 type Box = { minX: number; maxX: number; minZ: number; maxZ: number };
 
+const PROP_SHADOW = 0.65;
+
+function castAll(root: THREE.Object3D, on: boolean): void {
+  root.traverse((o) => {
+    if (o.userData.contactShadow) o.visible = on;
+    else if ((o as THREE.Mesh).isMesh) o.castShadow = on;
+  });
+}
+
 export class PropLayer {
   readonly group = new THREE.Group();
   private readonly items = new Map<string, { prop: Prop; holder: THREE.Group; rig?: CigRig }>();
   private box: Box;
   onCue: ((c: VendCue) => void) | null = null;
+  onStand: (() => void) | null = null;
+  private cast = false;
 
   constructor(box: Box, private readonly renderer?: THREE.WebGLRenderer) {
     this.box = box;
@@ -434,6 +446,11 @@ export class PropLayer {
 
   get centre(): { x: number; z: number } {
     return { x: (this.box.minX + this.box.maxX) / 2, z: (this.box.minZ + this.box.maxZ) / 2 };
+  }
+
+  setCast(on: boolean): void {
+    this.cast = on;
+    castAll(this.group, on);
   }
 
   setBox(box: Box): void {
@@ -463,7 +480,20 @@ export class PropLayer {
           holder.add(c.root);
           it.rig = c.rig;
         }
-        else void model(p.kind, this.renderer).then((m) => { if (m && this.items.get(p.id)?.holder === holder) holder.add(m.clone(true)); });
+        else void model(p.kind, this.renderer).then((m) => {
+          if (!m || this.items.get(p.id)?.holder !== holder) return;
+          const copy = m.clone(true);
+          castAll(copy, this.cast);
+          holder.add(copy);
+          this.onStand?.();
+        });
+        castAll(holder, this.cast);
+        const k = propKind(p.kind);
+        if (!k.wall) {
+          const shadow = contactShadow(k.w, k.d, PROP_SHADOW);
+          shadow.visible = this.cast;
+          holder.add(shadow);
+        }
       }
       it.prop = { ...p };
       this.place(it.prop, it.holder);

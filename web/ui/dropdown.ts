@@ -101,6 +101,10 @@ export function enhanceSelect(
     const ic = o.icons?.(opt.value);
     if (ic) li.append(leadIcon(ic));
     li.append(document.createTextNode(opt.text));
+    if (opt.disabled) {
+      li.setAttribute('aria-disabled', 'true');
+      if (opt.title) li.title = opt.title;
+    }
     li.addEventListener('pointerenter', () => setActive(i));
     li.addEventListener('click', () => pick(i));
     return li;
@@ -216,6 +220,7 @@ export function enhanceSelect(
   }
 
   function pick(i: number): void {
+    if (opts[i].getAttribute('aria-disabled') === 'true') return;
     const v = opts[i].dataset.value!;
     const changed = select.value !== v;
     select.value = v;

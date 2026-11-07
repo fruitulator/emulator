@@ -24,10 +24,24 @@ import { isCoinSlot, type CoinEntry } from './coinentry';
 import { trimFromArt } from './trimcolour';
 import { boundsOf } from './quad';
 import { str } from '../web/i18n';
+import { LOGO_SRC } from '../web/ui/logo';
 import { followGate } from '../web/play/gates';
 import { SwitchLevels } from '../web/checkbox';
 
 export type GlassMode = 'loading' | 'front' | 'attract' | 'still' | 'dark' | 'live' | 'failed';
+
+const LOAD_TRIES = 3;
+const LOAD_RETRY_MS = 600;
+const DARK_LOGO_W = 0.42;
+const DARK_LOGO_ALPHA = 0.16;
+let logoImg: HTMLImageElement | null = null;
+function darkLogo(): HTMLImageElement {
+  if (!logoImg) {
+    logoImg = new Image();
+    logoImg.src = LOGO_SRC;
+  }
+  return logoImg;
+}
 
 export const TEX_ATTRACT = 768;
 export const TEX_WHOLE = 1024;
@@ -53,6 +67,7 @@ export class Glass {
   mode: GlassMode = 'loading';
   readonly peek = new ReelPeek();
   note = '';
+  darkWhy = '';
   game: Game | null = null;
   cab: Cabinet | null = null;
   column: { left: number; top: number; width: number; height: number } | null = null;
@@ -117,6 +132,11 @@ export class Glass {
     this.texture.colorSpace = THREE.SRGBColorSpace;
     if (!machine.held) {
       this.mode = 'dark';
+      if (import.meta.env.DEV) {
+        this.darkWhy = machine.outOfService ? 'switched off by the host'
+          : machine.installing ? 'not installed yet'
+            : `not in this library (no game here carries ${machine.contentHash.slice(0, 12)}…)`;
+      }
       this.drawDark();
     }
   }
@@ -257,6 +277,26 @@ export class Glass {
   async load(): Promise<void> {
     const held = this.machine.held;
     if (!held) return;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.loadOnce(held);
+        return;
+      } catch (e) {
+        const why = (e as Error).message;
+        if (attempt >= LOAD_TRIES) {
+          this.mode = 'failed';
+          this.note = why;
+          if (import.meta.env.DEV) this.darkWhy = `could not be opened (${attempt} tries): ${why}`;
+          this.drawDark();
+          return;
+        }
+        if (import.meta.env.DEV) console.warn(`[arcade] ${this.machine.name}: opening it failed (${why}); trying again`);
+        await new Promise((r) => setTimeout(r, LOAD_RETRY_MS * 4 ** (attempt - 1)));
+      }
+    }
+  }
+
+  private async loadOnce(held: NonNullable<ArcadeMachine['held']>): Promise<void> {
     const T = this.times;
     let t = performance.now();
     const lap = (k: keyof LoadTimes): void => { const n = performance.now(); T[k] += n - t; t = n; };
@@ -338,10 +378,7 @@ export class Glass {
       }
       await this.showThumb(held.hash);
       lap('thumb');
-    } catch (e) {
-      this.mode = 'failed';
-      this.note = (e as Error).message;
-      this.drawDark();
+    } finally {
     }
   }
 
@@ -390,7 +427,12 @@ export class Glass {
 
   private async showThumb(hash: string): Promise<void> {
     const bytes = await getThumb(hash).catch(() => null);
-    if (!bytes) { this.mode = 'dark'; this.drawDark(); return; }
+    if (!bytes) {
+      this.mode = 'dark';
+      if (import.meta.env.DEV) this.darkWhy = `${this.note || 'no art'}, and the library has no picture of it`;
+      this.drawDark();
+      return;
+    }
     const bmp = await createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>]));
     this.aspect = bmp.width / bmp.height;
     this.sizeTexture(bmp.width, bmp.height, TEX_ATTRACT);
@@ -407,16 +449,26 @@ export class Glass {
     const g = this.texCanvas.getContext('2d')!;
     const w = this.texCanvas.width;
     const h = this.texCanvas.height;
-    g.fillStyle = '#050507';
+    const glow = g.createRadialGradient(w / 2, h * 0.45, 0, w / 2, h * 0.45, Math.max(w, h) * 0.7);
+    glow.addColorStop(0, '#0e0e14');
+    glow.addColorStop(1, '#040406');
+    g.fillStyle = glow;
     g.fillRect(0, 0, w, h);
-    g.fillStyle = '#3a3a44';
-    g.font = `${Math.round(h / 22)}px system-ui, sans-serif`;
-    g.textAlign = 'center';
-    g.fillText(this.machine.name, w / 2, h / 2, w * 0.9);
+    const logo = darkLogo();
+    if (logo.complete && logo.naturalWidth) {
+      const lw = w * DARK_LOGO_W;
+      const lh = (lw * logo.naturalHeight) / logo.naturalWidth;
+      g.globalAlpha = DARK_LOGO_ALPHA;
+      g.drawImage(logo, (w - lw) / 2, h * 0.45 - lh / 2, lw, lh);
+      g.globalAlpha = 1;
+    } else {
+      logo.addEventListener('load', () => { if (this.mode === 'dark' || this.mode === 'failed') this.drawDark(); }, { once: true });
+    }
     if (this.machine.outOfService) {
       g.fillStyle = '#b8323a';
       g.font = `600 ${Math.round(h / 16)}px system-ui, sans-serif`;
-      g.fillText(str('arcade.glass.out_of_service'), w / 2, h / 2 + h / 10, w * 0.9);
+      g.textAlign = 'center';
+      g.fillText(str('arcade.glass.out_of_service'), w / 2, h * 0.62, w * 0.9);
     }
     this.texture.needsUpdate = true;
   }

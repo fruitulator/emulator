@@ -16,6 +16,7 @@ export interface RoomSwitches {
   focusFreeze: boolean;
   dim: boolean;
   glow: boolean;
+  tint: boolean;
   lamp: boolean;
   realism: boolean | null;
   rShadow: boolean;
@@ -24,6 +25,7 @@ export interface RoomSwitches {
   rGlow: boolean;
   rFloor: boolean;
   rGlass: boolean;
+  winEnv: boolean;
 }
 
 export const WASH_DEFAULT = 0;
@@ -44,8 +46,8 @@ const num = (q: URLSearchParams, k: string, lo: number, hi: number): number | nu
 export const DEFAULT_SWITCHES: Readonly<RoomSwitches> = Object.freeze<RoomSwitches>({
   lights: WASH_DEFAULT, pools: true, shade: true, textures: true, aniso: 8, dpr: null, aa: true, env: true,
   glass: GLASS_DEFAULT, glassTex: GLASS_TEX_DEFAULT, glassPs: GLASS_PS_DEFAULT, glassNearMs: GLASS_NEAR_MS_DEFAULT,
-  glassPresent: true, focusFreeze: true, dim: true, glow: false, lamp: true,
-  realism: null, rShadow: true, rEnv: true, rHalo: true, rGlow: true, rFloor: true, rGlass: true,
+  glassPresent: true, focusFreeze: true, dim: true, glow: false, tint: true, lamp: true,
+  realism: null, rShadow: true, rEnv: true, rHalo: true, rGlow: true, rFloor: true, rGlass: true, winEnv: true,
 });
 
 const defaults = (): RoomSwitches => ({ ...DEFAULT_SWITCHES });
@@ -77,6 +79,7 @@ function parseSwitches(search: string): RoomSwitches {
     focusFreeze: q.get('freeze') !== '0',
     dim: q.get('dim') !== '0',
     glow: q.get('glow') === '1',
+    tint: q.get('tint') !== '0',
     lamp: q.get('lamp') !== '0',
     realism: q.get('realism') === '1' ? true : q.get('realism') === '0' ? false : null,
     rShadow: q.get('rshadow') !== '0',
@@ -85,6 +88,7 @@ function parseSwitches(search: string): RoomSwitches {
     rGlow: q.get('rglow') !== '0',
     rFloor: q.get('rfloor') !== '0',
     rGlass: q.get('rglass') !== '0',
+    winEnv: q.get('wenv') !== '0',
   };
 }
 
@@ -110,6 +114,7 @@ export function switchesSaid(s: RoomSwitches): string {
   if (!s.focusFreeze) on.push('freeze=0');
   if (!s.dim) on.push('dim=0');
   if (s.glow) on.push('glow=1');
+  if (!s.tint) on.push('tint=0');
   if (!s.lamp) on.push('lamp=0');
   if (s.realism !== null) on.push(`realism=${s.realism ? 1 : 0}`);
   if (!s.rShadow) on.push('rshadow=0');
@@ -118,5 +123,6 @@ export function switchesSaid(s: RoomSwitches): string {
   if (!s.rGlow) on.push('rglow=0');
   if (!s.rFloor) on.push('rfloor=0');
   if (!s.rGlass) on.push('rglass=0');
+  if (!s.winEnv) on.push('wenv=0');
   return on.length ? on.join(' ') : 'defaults';
 }

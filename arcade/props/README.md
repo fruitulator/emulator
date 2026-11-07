@@ -47,7 +47,20 @@ npx @gltf-transform/cli@4 optimize <id>.gltf <id>.glb --compress false \
 
 That means textures at 512 px in WebP, and meshes simplified where the
 simplifier could (the plants' leaves are separate pieces and stay ~55k
-triangles each). The plan to search: Poly Haven's model API for stools, bins,
+triangles each).
+
+**The plants' leaves need a second step (2026-11-07).** Poly Haven's glTF
+marks the leaves `alphaMode: MASK` but points them at a JPG colour map, which
+has no alpha, so every leaf card drew its black backdrop as a solid edge (a
+black outline round each leaf; measured: none of the twelve packed textures
+carried alpha). Poly Haven publishes the cut-out separately as
+`<id>_leaves_alpha_1k.png`. `node tools/prop-leaf-alpha.cjs <in.glb>
+<id>_leaves_diff_1k.png <id>_leaves_alpha_1k.png <out.glb>` puts it into the
+leaves' colour texture (512 px WebP with alpha, the leaf colour spread into
+the cut-away texels so filtering at an edge never reaches the black), and
+rewrites nothing else in the file. Both plants are packed that way.
+
+The plan to search: Poly Haven's model API for stools, bins,
 plants, signs and change machines. Its bin (`metal_trash_can`) is a rusty
 outdoor dustbin and its extinguisher is Korean-labelled, so neither is used.
 No CC0 change machine was found (Poly Haven, Sketchfab's CC0 filter); the
