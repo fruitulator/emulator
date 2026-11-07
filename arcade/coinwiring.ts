@@ -112,7 +112,7 @@ export function lineCoins(info: MachineInfo | null, refusing: number, w: CoinWir
 
 export const sameKindCoin = (a: SlotCoin, b: SlotCoin): boolean => (isTokenCoin(a) ? isTokenCoin(b) : a === b);
 
-export function slotOffer(coinOf: ReadonlyMap<number, SlotCoin>, unnamedCoins: readonly number[]): {
+export function slotOffer(coinOf: ReadonlyMap<number, SlotCoin>, unnamedCoins: readonly number[], tokenForCash = false): {
   takes: ReadonlySet<number> | null;
   token: boolean;
   unnamed: number[];
@@ -125,9 +125,13 @@ export function slotOffer(coinOf: ReadonlyMap<number, SlotCoin>, unnamedCoins: r
     if (isTokenCoin(c)) token = true;
     else takes.add(c);
   }
+  if (tokenForCash && takes.size) token = true;
+  const cashLine = (l: number): boolean => { const o = coinOf.get(l); return o !== undefined && !isTokenCoin(o); };
   const lineFor = (s: { lines: readonly number[] }, c: SlotCoin): number | null => {
     const match = (l: number): boolean => { const o = coinOf.get(l); return o !== undefined && sameKindCoin(c, o); };
-    return s.lines.find(match) ?? [...coinOf.keys()].find(match) ?? s.lines.find((l) => unnamed.includes(l)) ?? unnamed[0] ?? null;
+    const asCash = tokenForCash && isTokenCoin(c) ? s.lines.find(cashLine) : undefined;
+    return s.lines.find(match) ?? [...coinOf.keys()].find(match) ?? s.lines.find((l) => unnamed.includes(l)) ?? asCash ?? unnamed[0]
+      ?? (tokenForCash && isTokenCoin(c) ? [...coinOf.keys()].find(cashLine) : undefined) ?? null;
   };
   return { takes: unnamed.length ? null : takes, token, unnamed, lineFor };
 }

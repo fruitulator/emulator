@@ -127,6 +127,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       : {}),
     ...(m.coinChutes ? { coins: m.coinChutes.map((c) => ({ ...c })) } : {}),
     ...(m.unnamedCoinLines?.length ? { unnamedCoins: [...m.unnamedCoinLines] } : {}),
+    ...(m.tokenForCash ? { tokenForCash: true } : {}),
     ...(m.unpricedCoinLines?.length ? { unpricedCoins: m.unpricedCoinLines.map((c) => ({ ...c })) } : {}),
     ...(m.uncountedCoinLines?.length ? { uncountedCoins: [...m.uncountedCoinLines] } : {}),
     ...(payoutLines.length ? { unpricedPayouts: payoutLines } : {}),

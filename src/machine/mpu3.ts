@@ -859,6 +859,8 @@ export class Mpu3 implements Bus, Machine {
     this.plainInputs = [...new Set(plain.filter((b) => Number.isInteger(b) && b >= 0 && b < 0x80))].sort((a, b) => a - b);
   }
 
+  readonly tokenForCash = true;
+
   get unnamedCoinLines(): readonly number[] {
     const coins = this.programCoins() ?? [];
     const plain = this.plainInputs.map((b) => 0x100 | b).filter((id) => coins.some((c) => c.id === id)).map((id) => this.keyOf(id));

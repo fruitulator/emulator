@@ -1970,7 +1970,7 @@ class Wizard {
         else if (p > 0) coinOf.set(c.bit, p);
       }
     }
-    const offer = slotOffer(coinOf, info.unnamedCoins ?? []);
+    const offer = slotOffer(coinOf, info.unnamedCoins ?? [], !!info.tokenForCash);
     const { lineFor } = offer;
 
     const sameKind = sameKindCoin;

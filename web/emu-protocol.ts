@@ -49,6 +49,7 @@ export interface MachineInfo {
   coins?: CoinChute[];
   coinPort?: { compare: number; lines: { bit: number; mask: number }[] };
   unnamedCoins?: number[];
+  tokenForCash?: boolean;
   unpricedCoins?: { line: number; credits: number | null }[];
   uncountedCoins?: number[];
   unpricedPayouts?: number[];

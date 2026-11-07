@@ -232,6 +232,7 @@ export interface Machine {
   readonly coinsRefused?: number;
   readonly acceptedPence?: number;
   readonly unnamedCoinLines?: readonly number[];
+  readonly tokenForCash?: boolean;
   readonly unpricedCoinLines?: readonly { line: number; credits: number | null }[];
   readonly coinLineTable?: CoinLineTable | null;
   readonly coinLineTableRefusal?: string | null;
