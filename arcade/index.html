@@ -24,6 +24,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='50' y='50' text-anchor='middle' dominant-baseline='central' font-size='80'%3E%F0%9F%8D%92%3C/text%3E%3C/svg%3E" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <style>@import "/web/ui/ui.css";</style>
+    <style>@import "/web/sources/sources.css";</style>
     <style>
       :root { color-scheme: dark; }
       html, body { margin: 0; height: 100%; background: var(--nb-ink); overflow: hidden; }
@@ -306,7 +307,7 @@
       .ml-row:focus-visible { outline: none; box-shadow: var(--nb-focus); }
       .ml-thumb { flex: none; width: 40px; height: 46px; aspect-ratio: auto; border-radius: 8px; pointer-events: none; }
       .ml-thumb::after { content: none; }
-      .ml-row--off .ml-thumb { filter: grayscale(0.8) brightness(0.5); }
+      .ml-row--off .ml-thumb, .ml-row--pending .ml-thumb { filter: grayscale(0.8) brightness(0.5); }
       .ml-words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
       .ml-name { font: 600 15px var(--nb-font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ml-status { display: flex; align-items: center; gap: 7px; font-size: 12.5px; }
@@ -315,8 +316,8 @@
       .ml-status--dark .ml-dot { background: #FFC93D; }
       .ml-status--open { color: #7FF0C0; }
       .ml-status--open .ml-dot { background: #3DE8A0; box-shadow: 0 0 6px #3DE8A0; }
-      .ml-status--off { color: var(--nb-text-3); }
-      .ml-status--off .ml-dot { background: var(--nb-text-3); }
+      .ml-status--off, .ml-status--pending { color: var(--nb-text-3); }
+      .ml-status--off .ml-dot, .ml-status--pending .ml-dot { background: var(--nb-text-3); }
       .ml-status--fault { color: var(--nb-cherry); }
       .ml-status--fault .ml-dot { background: var(--nb-cherry); box-shadow: 0 0 6px var(--nb-cherry); }
       .ml-status { min-width: 0; }
@@ -482,6 +483,7 @@
       #host .host-picker .nb-sheet-head { margin: 0; }
       #host .host-picker .host-actions { display: flex; gap: 10px; }
       #host .host-pick-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      #host .host-picker [hidden] { display: none !important; }
       :is(#host, .floor-dock) .host-caveat { width: fit-content; max-width: 100%; box-sizing: border-box; margin: 0; }
       :is(#host, .floor-dock) .host-caveat[hidden] { display: none; }
       :is(#host, .floor-dock) .host-caveat-icon { flex: none; display: inline-flex; color: var(--nb-gold); }
@@ -564,8 +566,13 @@
         cursor: pointer; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 4px 14px rgba(0, 0, 0, 0.45); }
       #host .wz-live-chip:focus-visible { outline: none; box-shadow: var(--nb-focus); }
       #host .wz-off { display: none !important; }
-      #host .wiz-wait { margin: 0; font: 700 15px var(--nb-font-display); color: #fff; }
-      #host .wz-ready { margin: 8px 0 0; }
+      #host .wz-ready { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 -2px; }
+      #host .wz-ready-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+        font: 500 14px/1.3 var(--nb-font-body); }
+      #host .wz-ready-label { min-width: 0; color: var(--nb-text-2); }
+      #host .wz-ready-pct { flex: none; color: var(--nb-text-3); font-variant-numeric: tabular-nums; }
+      #host .wz-ready--bare .wz-ready-head { display: none; }
+      #host .wz-ready-track { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); }
       #host .wz-ready-fill { width: 0; transition: width 0.25s linear; }
       #host .menu-key .dd { flex: 1; min-width: 0; }
       #host .menu-key .dd-btn { width: 100%; justify-content: space-between; }
@@ -685,6 +692,7 @@
       .nb-dlstack { --foot: 20px; position: fixed; z-index: 15; left: 24px; right: 24px; margin-inline: auto; max-width: 420px;
         bottom: calc(var(--foot) + env(safe-area-inset-bottom)); }
       body.hosting .nb-dlstack, body:has(#menu.open) .nb-dlstack { visibility: hidden; }
+      body:has(.host-picker) .nb-dlstack { visibility: visible; z-index: 25; }
       body:has(#stopnote.open) .nb-dlstack { --foot: calc(var(--toast-h, 66px) + 26px); }
       @media (max-width: 819px) {
         .nb-dlstack { align-items: stretch; }

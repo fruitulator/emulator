@@ -186,6 +186,10 @@
 .layer-by-pointer .nb-btn--primary:focus-visible {
   box-shadow: var(--nb-shadow-primary);
 }
+.layer-frame:focus,
+.layer-frame:focus-visible {
+  outline: none;
+}
 
 .ui-dialog.help p { line-height: 1.45; margin: 0 0 10px; }
 .ui-dialog.help h3 { margin: 16px 0 6px; scroll-margin-top: 8px; }

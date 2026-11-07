@@ -111,6 +111,7 @@ export class RoomLive {
     }
     if (!this.latest || this.h.loading()) return;
     const shown = this.h.shown();
+    if ((this.latest.updatedAt ?? 0) < (shown.updatedAt ?? 0)) { this.latest = null; return; }
     const next = keepPlayed(this.latest, shown, this.played);
     if (!next) return;
     const was = roomLook(shown);

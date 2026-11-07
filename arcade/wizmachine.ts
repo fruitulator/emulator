@@ -309,9 +309,14 @@ export class WizardMachine {
       if (typeof w === 'number') return w;
       return chutes.find((c) => c.bit === line)?.pence ?? null;
     };
+    const named = (line: number): number | null => {
+      const c = (info.coins ?? view.coins).find((x) => x.bit === line);
+      const p = c ? costOf(c) : -1;
+      return p >= 0 ? p : null;
+    };
     const creditsNone = (line: number): boolean => info.coinTable?.lines.find((l) => l.line === line)?.credits === 0;
     const chosen = (line: number): boolean => Object.values(wiring).some((s) => s.how === 'asked' && s.coins.some((c) => c.line === line));
-    const worth = (line: number, pence: number | null): number => (creditsNone(line) ? -2 : (chosen(line) ? 1e6 : 0) + (pence ?? -1));
+    const worth = (line: number, pence: number | null): number => (creditsNone(line) ? -2 : (chosen(line) ? 1e6 : 0) + (pence ?? named(line) ?? -1));
     let best: { line: number; pence: number | null; from: 'layout' } | null = null;
     for (const lp of cab.lamps) {
       if (!lp.acceptor) continue;

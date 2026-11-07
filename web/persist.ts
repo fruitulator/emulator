@@ -195,6 +195,7 @@ async function writeGame(
     ...(prev?.groupWith ? { groupWith: prev.groupWith } : {}),
     ...(prev?.ungrouped ? { ungrouped: true as const } : {}),
     ...(prev?.coinAnswers ? { coinAnswers: prev.coinAnswers } : {}),
+    ...(prev?.origin ? { origin: prev.origin } : {}),
     hasThumb: prev?.hasThumb || !!thumb,
     thumbFromPlay: prev?.thumbFromPlay,
     thumbRule: thumb && !prev?.thumbFromPlay ? THUMB_RULE : prev?.thumbRule,

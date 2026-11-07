@@ -18,7 +18,7 @@ import { openVersionPicker } from '../versionpicker';
 import { cleanTitle, titleKey } from '../versionkey';
 
 export interface ViewHost {
-  importQuietly(file: File, origin: string): Promise<string | null>;
+  importQuietly(file: File, origin: string, title: string): Promise<string | null>;
   busy(msg: string | null, fraction?: number): void;
   originsHeld(): Promise<Map<string, string>>;
   play(hash: string): void;
@@ -26,6 +26,14 @@ export interface ViewHost {
   signIn(idx: SourceIndex, s: Source, button: HTMLButtonElement): void;
   addSource(returnTo: HTMLElement, then: (host: string) => void): void;
   errText(e: unknown): string;
+  shown?(on: boolean): void;
+}
+
+export interface ViewOptions {
+  page: boolean;
+  scroller?: HTMLElement;
+  remember?: string;
+  canAdd?: boolean;
 }
 
 export const LOCAL = 'local';
@@ -70,7 +78,7 @@ export class SourceView {
   private busy = new Set<string>();
   private waiting = new Map<string, number>();
 
-  constructor(private readonly store: SourceStore, private readonly host: ViewHost) {
+  constructor(private readonly store: SourceStore, private readonly host: ViewHost, private readonly opts: ViewOptions = { page: true }) {
     this.wrap.id = 'source-wrap';
     this.wrap.append(this.select);
     this.categoryWrap.id = 'category-wrap';
@@ -128,10 +136,11 @@ export class SourceView {
   refresh(): void {
     const opts: HTMLOptionElement[] = [new Option(str('sources.my_games'), LOCAL)];
     for (const idx of this.store.hosts()) for (const s of idx.sources) opts.push(new Option(s.name, sourceKey(idx.host, s.id)));
-    opts.push(new Option(str('sources.add_source_option'), ADD));
+    const sources = opts.length - 1;
+    if (this.opts.canAdd !== false) opts.push(new Option(str('sources.add_source_option'), ADD));
     this.select.replaceChildren(...opts);
     this.select.value = this.chosen ? sourceKey(this.chosen.idx.host, this.chosen.s.id) : LOCAL;
-    this.wrap.hidden = opts.length <= 2;
+    this.wrap.hidden = sources === 0;
     this.dd?.root.remove();
     this.dd = enhanceSelect(this.select, {
       name: (c) => str('sources.library_n', { 0: c }),
@@ -149,23 +158,37 @@ export class SourceView {
 
   show(key: string): void {
     const found = key === LOCAL ? null : this.find(key);
-    const named = new URL(location.href).searchParams.get(LIBRARY_PARAM);
-    const kept = named !== null && this.store.keyOfSlug(named) === key ? new URL(location.href).searchParams.get(CATEGORY_PARAM) : null;
     this.chosen = found;
-    setParams(found ? this.store.slugOf(key) : null, kept);
+    if (this.opts.page) {
+      const named = new URL(location.href).searchParams.get(LIBRARY_PARAM);
+      const kept = named !== null && this.store.keyOfSlug(named) === key ? new URL(location.href).searchParams.get(CATEGORY_PARAM) : null;
+      setParams(found ? this.store.slugOf(key) : null, kept);
+      document.body.classList.toggle('source-view', !!found);
+      const add = document.getElementById('addBtn');
+      add?.setAttribute('aria-label', found ? str('sources.add_source') : str('index.add_games'));
+    }
+    if (this.opts.remember) save(this.opts.remember, found ? key : null);
     this.refresh();
-    document.body.classList.toggle('source-view', !!found);
-    const add = document.getElementById('addBtn');
-    add?.setAttribute('aria-label', found ? str('sources.add_source') : str('index.add_games'));
+    this.host.shown?.(!!found);
     this.root.hidden = !found;
     this.more.hidden = !found;
     this.categoryWrap.hidden = true;
     this.offerSearch(false);
     this.drawBanner();
     if (!found) { this.root.replaceChildren(); this.host.backToLibrary(); return; }
-    window.scrollTo(0, 0);
+    this.toTop();
     void this.open();
     void this.readAgain(found.idx.host);
+  }
+
+  showRemembered(): void {
+    const key = this.opts.remember ? load(this.opts.remember) : null;
+    this.show(key && this.find(key) ? key : LOCAL);
+  }
+
+  private toTop(): void {
+    if (this.opts.scroller) this.opts.scroller.scrollTop = 0;
+    else window.scrollTo(0, 0);
   }
 
   private drawBanner(): void {
@@ -270,7 +293,7 @@ export class SourceView {
       if (!sh.group) group = null;
       (group ?? sel).append(o);
     });
-    const remembered = new URL(location.href).searchParams.get(CATEGORY_PARAM) ?? load(`${CATEGORY}:${sourceKey(idx.host, s.id)}`);
+    const remembered = (this.opts.page ? new URL(location.href).searchParams.get(CATEGORY_PARAM) : null) ?? load(`${CATEGORY}:${sourceKey(idx.host, s.id)}`);
     const start = [...byId].find(([, sh]) => `${sh.group ?? ''}/${sh.id}` === remembered)?.[0] ?? '0';
     sel.value = start;
     this.categoryWrap.replaceChildren(sel);
@@ -279,8 +302,8 @@ export class SourceView {
     sel.addEventListener('change', () => {
       const sh = byId.get(sel.value)!;
       save(`${CATEGORY}:${sourceKey(idx.host, s.id)}`, `${sh.group ?? ''}/${sh.id}`);
-      setParams(this.store.slugOf(sourceKey(idx.host, s.id)), `${sh.group ?? ''}/${sh.id}`);
-      window.scrollTo(0, 0);
+      if (this.opts.page) setParams(this.store.slugOf(sourceKey(idx.host, s.id)), `${sh.group ?? ''}/${sh.id}`);
+      this.toTop();
       void this.list(c, sh);
     });
     void this.list(c, byId.get(start));
@@ -335,9 +358,10 @@ export class SourceView {
       } finally {
         loading = false;
       }
-      if (gen === this.gen && page < pages && end.getBoundingClientRect().top < innerHeight + 400) void next();
+      const bottom = this.opts.scroller?.getBoundingClientRect().bottom ?? innerHeight;
+      if (gen === this.gen && page < pages && end.getBoundingClientRect().top < bottom + 400) void next();
     };
-    const seen = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) void next(); }, { rootMargin: '400px' });
+    const seen = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) void next(); }, { root: this.opts.scroller ?? null, rootMargin: '400px' });
     seen.observe(end);
     const stop = (): void => { if (gen !== this.gen) { seen.disconnect(); clearInterval(watch); } };
     const watch = setInterval(stop, 2000);
@@ -371,7 +395,7 @@ export class SourceView {
     this.typing = setTimeout(() => {
       if (text === this.q || !this.listing) return;
       this.q = text;
-      window.scrollTo(0, 0);
+      this.toTop();
       void this.list(this.listing.c, this.listing.category);
     }, 350);
   }
@@ -512,7 +536,7 @@ export class SourceView {
         waiting: (n) => { if (n === null) this.waiting.delete(origin); else this.waiting.set(origin, n); status(); },
       });
       this.host.busy(str('main.importing_n', { 0: m.title }));
-      const hash = await this.host.importQuietly(file, origin);
+      const hash = await this.host.importQuietly(file, origin, m.title);
       this.host.busy(null);
       if (hash) { this.held.set(origin, hash); this.busy.delete(origin); status(); this.host.play(hash); return; }
     } catch (e) {

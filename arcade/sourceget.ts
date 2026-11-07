@@ -1,5 +1,5 @@
 import { fillSources, type ArcadeDoc, type MachineSource } from './doc';
-import { uploadToLibrary } from './upload';
+import { uploadToLibrary, type UploadResult } from './upload';
 import { putMeta, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import { SourceClient, SourceError } from '../web/sources/client';
@@ -41,6 +41,13 @@ function confirmAdd(name: string, site: string, returnTo: HTMLElement): Promise<
   return askInSheet({ title: name, line, yes: str('arcade.source.add_n', { 0: name }), yesSub: site, returnTo });
 }
 
+export async function importGot(file: File, origin: string, title: string, progress: GetProgress): Promise<UploadResult> {
+  progress(str('arcade.source.importing_n', { 0: title }));
+  const result = await uploadToLibrary([file], (text, done) => progress(text, done));
+  for (const g of result.games) if (!g.origin) await putMeta({ ...g, origin }).catch(() => undefined);
+  return result;
+}
+
 export async function getMachineSet(
   m: { source: MachineSource; contentHash: string; name: string },
   progress: GetProgress, returnTo: HTMLElement,
@@ -63,11 +70,9 @@ export async function getMachineSet(
       return null;
     }
     const file = await fetchFromSource(new SourceClient(s, tokens), { id: m.source.item }, title, { busy: progress, returnTo });
-    progress(str('arcade.source.importing_n', { 0: title }));
-    const result = await uploadToLibrary([file], (text, done) => progress(text, done));
+    const result = await importGot(file, `${sourceKey(idx.host, s.id)}#${m.source.item}`, title, progress);
     progress(null);
     const exact = result.games.find((g) => contentKeys(g).includes(m.contentHash));
-    for (const g of result.games) if (!g.origin) await putMeta({ ...g, origin: `${sourceKey(idx.host, s.id)}#${m.source.item}` }).catch(() => undefined);
     if (exact) return exact;
     if (result.games.length) return 'other';
     showToast(str('sources.get_failed', { title, why: result.problems[0]?.reason ?? str('sources.err_download') }), { error: true, sticky: true });

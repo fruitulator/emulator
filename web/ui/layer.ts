@@ -120,6 +120,7 @@ function focusInto(e: Entry): void {
     ?? stops(e)[0]
     ?? e.roots[0];
   if (pick && !pick.matches(FOCUSABLE) && pick.tabIndex < 0) pick.tabIndex = -1;
+  if (pick && e.roots.includes(pick)) pick.classList.add('layer-frame');
   pick?.focus({ preventScroll: true });
 }
 

@@ -1310,9 +1310,13 @@ class Wizard {
   }
 
   private readonly readyBar = (() => {
-    const track = el('div', null, { class: 'wz-ready nb-meter', 'data-wz': 'ready', role: 'progressbar', 'aria-label': str('arcade.wizard.getting_the_machine_ready'), 'aria-valuemin': '0', 'aria-valuemax': '100' });
+    const block = el('div', null, { class: 'wz-ready', 'data-wz': 'ready', role: 'progressbar', 'aria-labelledby': 'wzReadyLabel', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0' });
+    const head = el('div', null, { class: 'wz-ready-head' });
+    head.append(el('span', str('arcade.wizard.getting_the_machine_ready_2'), { class: 'wz-ready-label', id: 'wzReadyLabel' }), el('span', null, { class: 'wz-ready-pct' }));
+    const track = el('div', null, { class: 'wz-ready-track nb-meter' });
     track.append(el('span', null, { class: 'wz-ready-fill' }));
-    return track;
+    block.append(head, track);
+    return block;
   })();
   private testFrom: number | null = null;
 
@@ -1331,12 +1335,17 @@ class Wizard {
     if (!bar.isConnected) return;
     const f = this.readiness();
     const pct = f === null ? 100 : Math.round(f * 1000) / 10;
-    const fill = bar.firstElementChild as HTMLElement;
+    const fill = bar.querySelector<HTMLElement>('.wz-ready-fill')!;
     const w = `${pct}%`;
     if (fill.style.width !== w) {
       fill.style.width = w;
       bar.setAttribute('aria-valuenow', String(Math.round(pct)));
     }
+    const counted = this.rec === 'recording' && !this.testing && f !== null;
+    bar.classList.toggle('wz-ready--bare', this.testing);
+    const shown = bar.querySelector<HTMLElement>('.wz-ready-pct')!;
+    const t = counted ? `${Math.round(pct)}%` : '';
+    if (shown.textContent !== t) shown.textContent = t;
   }
 
   private async record(): Promise<void> {
@@ -2691,6 +2700,10 @@ class Wizard {
     if (stop()) return;
     if (wm.coinsStopped()) { this.setCheck('coin', false, COINS_STOPPED_HOST_TEXT); return; }
     const moneyMoved = booked(after) > 0;
+    if (!moneyMoved && !noBooks && slot) {
+      const others = new Set(skip).add(slot.line);
+      if (wm.coinSlot(others)) return this.coinAndStart(others);
+    }
     if (!moneyMoved) {
       const f = wm.live.emu.latestFrame();
       const game = wm.glass.game;
@@ -2806,7 +2819,7 @@ class Wizard {
     this.nav(str('arcade.wizard.finish'), !why.length && this.rec === 'done', () => { void this.finish(); });
     if (this.rec === 'needs') this.panel.append(el('p', NEEDS_TEXT, { class: 'host-note' }));
     else if (this.rec === 'broken') this.panel.append(el('p', this.recNote, { class: 'host-note' }));
-    else if (this.rec !== 'done' && this.booted) this.panel.append(el('p', str('arcade.wizard.getting_the_machine_ready_2'), { class: 'wiz-wait' }), this.readyBar);
+    else if (this.rec !== 'done' && this.booted) this.panel.append(this.readyBar);
     else if (this.testing) this.panel.append(this.readyBar);
     else if (why.length) this.panel.append(el('p', str('arcade.wizard.not_yet_n', { 0: why.join('; ') }), { class: 'host-note' }));
   }

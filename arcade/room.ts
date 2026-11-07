@@ -48,6 +48,7 @@ const PILL_LIFT_M = 0.08;
 const PILL_FALLBACK_M = 2;
 const READY_WAIT_MS = 60_000;
 const EYE = 1.6;
+const EMPTY_BACK_M = 1;
 const AISLE_Z = 2.3;
 const REST_SLOPE = (1.1 - EYE) / AISLE_Z;
 const SIGN_Y_M = 2.5;
@@ -226,7 +227,7 @@ export class Room {
     cs.position = 'relative';
     cs.zIndex = String(CANVAS_OVER_GLASS_Z);
     const size = { width: DERIVED.width, depth: DERIVED.depth };
-    this.plan = machines.length && machines.every((m) => m.place)
+    this.plan = machines.every((m) => m.place)
       ? gridPlan(machines.map((m) => m.place!), size)
       : banksPlan(machines.length, size, BANK_MARGINS);
     this.look = opts.look ?? roomLook(null);
@@ -251,7 +252,7 @@ export class Room {
     else {
       const b = this.plan.box;
       this.pos.x = (b.minX + b.maxX) / 2;
-      this.pos.z = (b.minZ + b.maxZ) / 2;
+      this.pos.z = Math.max((b.minZ + b.maxZ) / 2, b.maxZ - EMPTY_BACK_M);
       this.head.yaw = Math.PI;
     }
     this.camPos.set(this.pos.x, EYE, this.pos.z);

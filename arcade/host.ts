@@ -42,8 +42,11 @@ import { siteNav } from '../web/ui/sitenav';
 import { betaBrand } from '../web/ui/beta';
 import { bubbleTip, hideBubble, showBubble } from '../web/ui/tip';
 import { openAlert } from '../web/ui/dialog';
-import { fillDocSources, librarySource } from './sourceget';
+import { fillDocSources, importGot, librarySource, settleSignIn } from './sourceget';
 import { SourceStore } from '../web/sources/store';
+import { SourceView } from '../web/sources/view';
+import { errText, startSignIn } from '../web/sources/get';
+import { downloadCard, type DownloadCard } from '../web/ui/progress';
 
 let dockBody: HTMLElement | null = null;
 let onPlaced: ((places: Map<string, Place>) => void) | null = null;
@@ -1233,8 +1236,8 @@ function askDelete(d: ArcadeDoc, m: DocMachine, returnTo?: HTMLElement): void {
   confirmInSheet(ask);
 }
 
-function machineState(m: DocMachine): 'off' | 'dark' | 'open' {
-  return switchedOff(m) ? 'off' : !m.source ? 'dark' : 'open';
+function machineState(m: DocMachine): 'pending' | 'off' | 'dark' | 'open' {
+  return m.status !== 'installed' ? 'pending' : switchedOff(m) ? 'off' : !m.source ? 'dark' : 'open';
 }
 
 function statusLine(m: DocMachine, fault: CoinFault | null = null, payoutsUnset = false): HTMLElement {
@@ -1242,6 +1245,7 @@ function statusLine(m: DocMachine, fault: CoinFault | null = null, payoutsUnset 
   const line = el('span', null, { class: `ml-status ml-status--${fault ? 'fault' : st}` });
   const names = fault?.outputs.map(outputName).join(', ');
   const words = fault ? (names ? `${COIN_SETUP_FAULT_HOST_TEXT} \u00b7 ${names}` : COIN_SETUP_FAULT_HOST_TEXT)
+    : st === 'pending' ? str('arcade.host.not_finished_installing')
     : st === 'off' ? str('arcade.host.powered_off')
     : payoutsUnset ? PAYOUTS_UNSET_HOST_TEXT
     : st === 'dark' ? str('arcade.host.visitors_need_this_game') : str('arcade.host.playable_by_everyone');
@@ -1252,7 +1256,7 @@ function statusLine(m: DocMachine, fault: CoinFault | null = null, payoutsUnset 
 }
 
 function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElement[] {
-  const ms = [...d.machines].sort((a, b) => Number(switchedOff(b)) - Number(switchedOff(a)) || nameOf(a).localeCompare(nameOf(b)));
+  const ms = [...d.machines].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
   const list = el('div', null, { class: 'ml-list nb-group' });
   const box = el('div', null, { class: 'ml-scroll' });
   box.append(list);
@@ -1998,6 +2002,56 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
   controls.append(newControl, sourcedControl);
   page.append(head, controls, ownFilesNote, scroll);
   list.load(games);
+  mountPickerSources(d, { controls, scroll, grid, acts, mine: [grid, none, newControl, sourcedControl], ownFilesNote, searchButton: list.searchButton, onlySourced: () => onlySourced, copiesOf });
+}
+
+interface PickerParts {
+  controls: HTMLElement; scroll: HTMLElement; grid: HTMLElement; acts: HTMLElement;
+  mine: HTMLElement[];
+  ownFilesNote: HTMLElement;
+  searchButton: HTMLElement | null | undefined;
+  onlySourced(): boolean;
+  copiesOf(g: GameMeta): DocMachine[];
+}
+
+function mountPickerSources(d: ArcadeDoc, p: PickerParts): void {
+  const store = new SourceStore();
+  let card: DownloadCard | null = null;
+  const busy = (text: string | null, share?: number): void => {
+    if (text === null) { card?.remove(); card = null; return; }
+    card ??= downloadCard();
+    card.update(text, share);
+  };
+  const pick = async (hash: string): Promise<void> => {
+    const g = (await listGames().catch(() => [] as GameMeta[])).find((x) => x.hash === hash);
+    if (g) await install(d, g, p.copiesOf(g));
+  };
+  const view = new SourceView(store, {
+    importQuietly: async (file, origin, title) => {
+      const result = await importGot(file, origin, title, busy);
+      const got = result.games[0];
+      if (!got) showToast(str('sources.get_failed', { title, why: result.problems[0]?.reason ?? str('sources.err_download') }), { error: true, sticky: true });
+      return got?.hash ?? null;
+    },
+    originsHeld: async () => new Map((await listGames().catch(() => [] as GameMeta[])).filter((g) => g.origin).map((g) => [g.origin!, g.hash])),
+    play: (hash) => { void pick(hash); },
+    backToLibrary: () => undefined,
+    busy,
+    signIn: (idx, s, b) => {
+      b.disabled = true;
+      startSignIn(store, idx, s).catch((e) => { b.disabled = false; b.textContent = errText(e); });
+    },
+    addSource: () => undefined,
+    errText,
+    shown: (on) => {
+      for (const e of p.mine) e.hidden = on;
+      p.ownFilesNote.hidden = on || p.onlySourced();
+      if (p.searchButton) p.searchButton.hidden = on;
+    },
+  }, { page: false, scroller: p.scroll, remember: 'fruitulator.arcade.pickSource', canAdd: false });
+  view.mount(p.controls, p.grid, p.acts);
+  settleSignIn();
+  view.showRemembered();
 }
 
 function filterSwitch(label: string, on: boolean, onChange: (on: boolean) => void): HTMLElement {
@@ -2011,10 +2065,12 @@ function filterSwitch(label: string, on: boolean, onChange: (on: boolean) => voi
 }
 
 async function install(d: ArcadeDoc, g: GameMeta, copies: DocMachine[] = []): Promise<void> {
+  const build = buildToAdd(g, copies);
+  const unfinished = build || copies.some((m) => m.status === 'installed') ? undefined : copies[0];
+  if (unfinished) { go(`&install=${encodeURIComponent(unfinished.id)}`); return; }
   const why = cannotAdd(d);
   if (why) { say(why, 'warn'); return; }
-  const build = buildToAdd(g, copies);
-  const src = build ? undefined : copies.find((m) => m.status === 'installed') ?? copies[0];
+  const src = build ? undefined : copies.find((m) => m.status === 'installed');
   if (src) {
     const copy = duplicateMachine(d, src.id, wantedCell());
     if (!copy) return;

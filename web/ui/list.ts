@@ -82,6 +82,9 @@ interface Win {
   foot: HTMLElement;
 }
 
+const BUILD_SCREENS = 3;
+const KEEP_SCREENS = 5;
+
 const wins = new Set<Win>();
 const winOf = new WeakMap<Element, Win>();
 const indexOf = new WeakMap<Element, number>();
@@ -135,9 +138,17 @@ function updateWin(w: Win, extend?: number): void {
     const known = rowHeights.get(key);
     const pitch = (known ?? colW * 1.25 + 100) + gap;
     const rows = Math.ceil(w.count / cols);
-    const margin = window.innerHeight;
-    let fr = Math.max(0, Math.min(rows, Math.floor((-r.top - margin) / pitch)));
-    let lr = Math.max(fr, Math.min(rows, Math.ceil((window.innerHeight - r.top + margin) / pitch)));
+    const span = (screens: number): [number, number] => {
+      const m = window.innerHeight * screens;
+      const f = Math.max(0, Math.min(rows, Math.floor((-r.top - m) / pitch)));
+      return [f, Math.max(f, Math.min(rows, Math.ceil((window.innerHeight - r.top + m) / pitch)))];
+    };
+    const [wf, wl] = span(BUILD_SCREENS);
+    const [kf, kl] = span(KEEP_SCREENS);
+    const cf = Math.floor(w.first / cols);
+    const cl = Math.ceil(w.last / cols);
+    let fr = w.first === w.last ? wf : Math.max(kf, Math.min(cf, wf));
+    let lr = w.first === w.last ? wl : Math.min(kl, Math.max(cl, wl));
     if (extend !== undefined) {
       const er = Math.floor(extend / cols);
       fr = Math.min(fr, er);
@@ -416,6 +427,14 @@ export function searchBar(o: {
     open: () => { wrap.classList.add('open'); input.focus({ preventScroll: true }); },
     close: () => { wrap.classList.remove('open'); },
   };
+}
+
+export function startsTypeToSearch(ev: KeyboardEvent): boolean {
+  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.isComposing) return false;
+  if (!/^[a-z0-9]$/i.test(ev.key)) return false;
+  const t = ev.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return false;
+  return !(t instanceof HTMLElement && t.isContentEditable);
 }
 
 export function emptyState(o: {

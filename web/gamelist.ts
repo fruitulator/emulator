@@ -5,10 +5,11 @@ import { libraryMaker } from './maker';
 import { enhanceSelect, type Dropdown } from './ui/dropdown';
 import { artwork, releaseArtwork } from './ui/art';
 import {
-  actionButton, chip, searchBar, sectionHeading, isWindowed, syncWindowedGrids, tileCard, windowedGrid, windowedNeighbour,
+  actionButton, chip, searchBar, sectionHeading, isWindowed, startsTypeToSearch, syncWindowedGrids, tileCard, windowedGrid, windowedNeighbour,
   type SearchBar, type WindowedGrid,
 } from './ui/list';
 import { UI_ICONS } from './ui/icons';
+import { inTopLayer } from './ui/layer';
 import { str } from './i18n';
 import { bubbleTip } from './ui/tip';
 
@@ -182,6 +183,8 @@ const reveal = typeof IntersectionObserver === 'undefined' ? null
     }
   }, { rootMargin: '80px 0px' });
 
+let drawing = false;
+
 function forgetCard(el: HTMLElement): void {
   reveal?.unobserve(el);
   drawnAtY.delete(el);
@@ -312,7 +315,7 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
     if (ev.button !== 0) ev.preventDefault();
   });
   el.dataset.hash = g.hash;
-  if (!animated.has(g.hash) && reveal) {
+  if (drawing && !animated.has(g.hash) && reveal) {
     drawnAtY.set(el, window.scrollY);
     reveal.observe(el);
   }
@@ -576,7 +579,8 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
       }
       return [head, gridOf(gs)];
     }));
-    syncWindowedGrids();
+    drawing = true;
+    try { syncWindowedGrids(); } finally { drawing = false; }
     markHeadings();
     if (o.mode === 'pick') o.onDrawn?.(games.length);
   };
@@ -607,6 +611,14 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
     searchButton = find;
     root.prepend(sb.wrap);
     root.addEventListener('keydown', gridArrowNav);
+    const typed = (ev: KeyboardEvent): void => {
+      if (!root.isConnected) { document.removeEventListener('keydown', typed, true); return; }
+      if (!startsTypeToSearch(ev) || root.offsetParent === null || find.hidden) return;
+      if (!inTopLayer(root) || !inTopLayer(ev.target)) return;
+      if (!sb.wrap.classList.contains('open')) sb.open();
+      else sb.input.focus({ preventScroll: true });
+    };
+    document.addEventListener('keydown', typed, true);
   }
   if (o.mode === 'pick' && !flat) {
     const wrap = document.createElement('div');

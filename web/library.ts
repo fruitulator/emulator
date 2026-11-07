@@ -7,7 +7,7 @@ import {
 import { localStateStore } from './statestore';
 import { parseTitle } from './title';
 import { clearArtwork, fillArtwork, releaseArtwork } from './ui/art';
-import { chip, syncWindowedGrids } from './ui/list';
+import { chip, startsTypeToSearch, syncWindowedGrids } from './ui/list';
 import {
   activity, displayTitle, gridArrowNav, groupVersionsRow, mountGameList, systemLabel, viewDropdown,
   type GameList, type SortKey,
@@ -665,13 +665,7 @@ function searchChord(ev: KeyboardEvent): boolean {
 }
 
 function typeToSearch(ev: KeyboardEvent): boolean {
-  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.isComposing) return false;
-  if (!/^[a-z0-9]$/i.test(ev.key)) return false;
-  if (!gridInFront()) return false;
-  const t = ev.target;
-  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return false;
-  if (t instanceof HTMLElement && t.isContentEditable) return false;
-  return true;
+  return startsTypeToSearch(ev) && gridInFront();
 }
 
 const ICONS: Record<string, string> = {
