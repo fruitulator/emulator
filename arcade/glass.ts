@@ -32,8 +32,6 @@ export type GlassMode = 'loading' | 'front' | 'attract' | 'still' | 'dark' | 'li
 
 const LOAD_TRIES = 3;
 const LOAD_RETRY_MS = 600;
-const DARK_LOGO_W = 0.42;
-const DARK_LOGO_ALPHA = 0.16;
 let logoImg: HTMLImageElement | null = null;
 function darkLogo(): HTMLImageElement {
   if (!logoImg) {
@@ -41,6 +39,71 @@ function darkLogo(): HTMLImageElement {
     logoImg.src = LOGO_SRC;
   }
   return logoImg;
+}
+
+export type DarkState = 'download' | 'downloading' | 'mismatch' | 'missing' | 'incomplete' | 'offline';
+
+export function darkState(m: Pick<ArcadeMachine, 'held' | 'outOfService' | 'installing' | 'otherVersion' | 'source'>, downloading: boolean): DarkState | null {
+  if (m.outOfService) return 'offline';
+  if (m.installing) return 'incomplete';
+  if (m.held) return null;
+  if (downloading) return 'downloading';
+  if (m.otherVersion) return 'mismatch';
+  if (m.source) return 'download';
+  return 'missing';
+}
+
+const DARK_ICONS: Record<DarkState, readonly string[]> = {
+  download: ['M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14'],
+  downloading: ['M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0', 'M12 7v5l3.5 2'],
+  mismatch: ['M7.5 3.5 4 7l3.5 3.5M4 7h16', 'M16.5 13.5 20 17l-3.5 3.5M20 17H4'],
+  missing: ['M5 19.5V4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5a1.5 1.5 0 0 0 1.5 1.5H19v-3',
+    'M10 8.2a2 2 0 0 1 3.9.5c0 1.3-1.9 1.6-1.9 3', 'M12 14.6h.01'],
+  incomplete: ['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'],
+  offline: ['M12 3v8', 'M6.3 6.8a8 8 0 1 0 11.4 0'],
+};
+
+const DARK_WORD: Record<DarkState, string> = {
+  download: str('arcade.glass.download'), downloading: str('arcade.glass.downloading'), mismatch: str('arcade.glass.mismatch'),
+  missing: str('arcade.glass.missing'), incomplete: str('arcade.glass.incomplete'), offline: str('arcade.glass.offline'),
+};
+const DARK_DESC: Record<DarkState, string> = {
+  download: str('arcade.glass.download_desc'), downloading: str('arcade.glass.downloading_desc'), mismatch: str('arcade.glass.mismatch_desc'),
+  missing: str('arcade.glass.missing_desc'), incomplete: str('arcade.glass.incomplete_desc'), offline: str('arcade.glass.offline_desc'),
+};
+
+const DARK_TEX_W = 1024;
+
+let darkFonts: Promise<unknown> | null = null;
+let darkFontsReady = false;
+function loadDarkFonts(): Promise<unknown> {
+  darkFonts ??= Promise.all([
+    document.fonts.load('700 40px "Barlow Condensed"'),
+    document.fonts.load('400 20px Inter'),
+    document.fonts.load('500 20px Inter'),
+  ]).catch(() => undefined).then(() => { darkFontsReady = true; });
+  return darkFonts;
+}
+
+function balancedLines(g: CanvasRenderingContext2D, text: string, max: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const wrap = (width: number): string[] => {
+    const lines: string[] = [];
+    let line = '';
+    for (const w of words) {
+      const next = line ? `${line} ${w}` : w;
+      if (line && g.measureText(next).width > width) { lines.push(line); line = w; } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  const best = wrap(max);
+  let lo = 0, hi = max;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (wrap(mid).length > best.length) lo = mid; else hi = mid;
+  }
+  return wrap(hi);
 }
 
 export const TEX_ATTRACT = 768;
@@ -444,33 +507,113 @@ export class Glass {
     this.mode = 'still';
   }
 
+  private download: number | null = null;
+  setDownload(f: number | null): void {
+    const was = this.download === null ? -1 : Math.round(this.download * 100);
+    this.download = f === null ? null : Math.max(0, Math.min(1, f));
+    const now = this.download === null ? -1 : Math.round(this.download * 100);
+    if (now !== was && (this.mode === 'dark' || this.mode === 'failed')) this.drawDark();
+  }
+
   drawDark(): void {
-    this.sizeTexture(this.aspect * 512, 512, 512);
+    const m = this.machine;
+    const state = darkState(m, this.download !== null);
+    const pct = state === 'downloading' ? Math.round((this.download ?? 0) * 100) : -1;
+    if (!darkFontsReady && state) void loadDarkFonts().then(() => { if (this.mode === 'dark' || this.mode === 'failed') this.drawDark(); });
+    const W = DARK_TEX_W;
+    this.sizeTexture(W, W / this.aspect, Math.max(W, W / this.aspect));
     const g = this.texCanvas.getContext('2d')!;
     const w = this.texCanvas.width;
     const h = this.texCanvas.height;
-    const glow = g.createRadialGradient(w / 2, h * 0.45, 0, w / 2, h * 0.45, Math.max(w, h) * 0.7);
-    glow.addColorStop(0, '#0e0e14');
-    glow.addColorStop(1, '#040406');
-    g.fillStyle = glow;
-    g.fillRect(0, 0, w, h);
+    g.save();
+    g.translate(w * 0.5, h * 0.45);
+    g.scale(w * 0.7, h * 0.55);
+    const bg = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    bg.addColorStop(0, '#15121F');
+    bg.addColorStop(0.7, '#0A0910');
+    bg.addColorStop(1, '#0A0910');
+    g.fillStyle = bg;
+    g.fillRect(-2, -2, 4, 4);
+    g.restore();
+    g.save();
+    g.translate(w * 0.5, h * 0.5);
+    g.scale(w * 0.75, h * 0.75);
+    const vig = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    vig.addColorStop(0.55, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+    g.fillStyle = vig;
+    g.fillRect(-2, -2, 4, 4);
+    g.restore();
     const logo = darkLogo();
     if (logo.complete && logo.naturalWidth) {
-      const lw = w * DARK_LOGO_W;
+      const lw = w * 0.38;
       const lh = (lw * logo.naturalHeight) / logo.naturalWidth;
-      g.globalAlpha = DARK_LOGO_ALPHA;
-      g.drawImage(logo, (w - lw) / 2, h * 0.45 - lh / 2, lw, lh);
+      g.globalAlpha = 0.3;
+      g.drawImage(logo, (w - lw) / 2, w * 0.1, lw, lh);
       g.globalAlpha = 1;
     } else {
       logo.addEventListener('load', () => { if (this.mode === 'dark' || this.mode === 'failed') this.drawDark(); }, { once: true });
     }
-    if (this.machine.outOfService) {
-      g.fillStyle = '#b8323a';
-      g.font = `600 ${Math.round(h / 16)}px system-ui, sans-serif`;
-      g.textAlign = 'center';
-      g.fillText(str('arcade.glass.out_of_service'), w / 2, h * 0.62, w * 0.9);
-    }
+    if (state && darkFontsReady) this.drawDarkState(g, state, pct, w, h);
     this.texture.needsUpdate = true;
+  }
+
+  private drawDarkState(g: CanvasRenderingContext2D, state: DarkState, pct: number, w: number, h: number): void {
+    const cx = w / 2;
+    let y = h * 0.36;
+    const r = (w * 0.178) / 2;
+    const is = w * 0.083;
+    g.save();
+    g.translate(cx - is / 2, y + r - is / 2);
+    g.scale(is / 24, is / 24);
+    g.strokeStyle = 'rgba(185,178,208,0.7)';
+    g.lineWidth = 1.6;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (const d of DARK_ICONS[state]) g.stroke(new Path2D(d));
+    g.restore();
+    y += r * 2 + w * 0.05;
+    const ws = w * 0.078;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = `700 ${ws}px "Barlow Condensed", sans-serif`;
+    g.letterSpacing = `${ws * 0.06}px`;
+    g.fillStyle = 'rgba(230,225,242,0.9)';
+    g.fillText(DARK_WORD[state].toLocaleUpperCase(), cx + (ws * 0.06) / 2, y + ws / 2, w * 0.9);
+    g.letterSpacing = '0px';
+    y += ws + w * 0.028;
+    const ds = w * 0.039;
+    const lh = ds * 1.45;
+    g.font = `400 ${ds}px Inter, sans-serif`;
+    g.fillStyle = '#8E87A8';
+    for (const line of balancedLines(g, DARK_DESC[state], w * 0.82)) {
+      g.fillText(line, cx, y + lh / 2);
+      y += lh;
+    }
+    if (pct < 0) return;
+    y += w * 0.044;
+    const ps = w * 0.033;
+    g.font = `500 ${ps}px Inter, sans-serif`;
+    const textW = g.measureText('100%').width;
+    const gap = w * 0.025;
+    const rowW = w * 0.62;
+    const left = cx - rowW / 2;
+    const trackW = rowW - gap - textW;
+    const th = w * 0.011;
+    const mid = y + ps / 2;
+    g.fillStyle = 'rgba(255,255,255,0.08)';
+    g.beginPath();
+    g.roundRect(left, mid - th / 2, trackW, th, th / 2);
+    g.fill();
+    if (pct > 0) {
+      g.fillStyle = 'rgba(157,134,240,0.85)';
+      g.beginPath();
+      g.roundRect(left, mid - th / 2, Math.max(th, (trackW * pct) / 100), th, th / 2);
+      g.fill();
+    }
+    g.fillStyle = '#8E87A8';
+    g.textAlign = 'right';
+    g.fillText(`${pct}%`, left + rowW, mid);
   }
 
   private sizeTexture(w: number, h: number, max: number): void {

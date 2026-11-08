@@ -1505,11 +1505,13 @@ export class Room {
         if (text === null) return;
         if (!card) { note?.clear(); card = downloadCard(); }
         card.update(text, f);
+        s.glass.setDownload(f ?? 0);
       });
       if (got) card?.done(); else card?.remove();
       if (!this.slots.includes(s)) return;
       if (got === 'other') {
         m.otherVersion = true;
+        s.glass.setDownload(null);
         this.sayOtherVersion(m.name);
         return;
       }
@@ -1519,6 +1521,7 @@ export class Room {
       await this.standFresh(s);
       if (this.focus === s) this.walkUp(s);
     } finally {
+      if (!m.held) s.glass.setDownload(null);
       this.getting.delete(m.id);
     }
   }
