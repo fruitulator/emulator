@@ -10,8 +10,8 @@ import { V20Reels } from './v20reels';
 import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, NamedCoin } from './machine';
-import { newCashLedger } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, NamedCoin, PayoutDeviceRow } from './machine';
+import { ledgerOutMults, newCashLedger } from './machine';
 import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
 import type { SlideEffect } from '../layout/fmlconfig';
 import type { BoardPart } from './parts';
@@ -61,7 +61,7 @@ const COIN_GAP = Math.round(0.005 * PCLMAXI_CLOCK);
 export class PclMaxi implements Machine {
   triacSenseLine = -1;
   triacSenseMask = 0xff;
-  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'nvram', 'opticMode', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw'];
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'nvram', 'opticMode', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'meterLedgerOut', 'triacLedgerOut'];
 
   readonly clockHz = PCLMAXI_CLOCK;
   readonly cpu: Scmp;
@@ -102,6 +102,8 @@ export class PclMaxi implements Machine {
   private meterOutRaw: number[] = [];
   private triacInRaw: number[] = [];
   private triacOutRaw: number[] = [];
+  private meterLedgerOut: number[] = [];
+  private triacLedgerOut: number[] = [];
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
 
@@ -173,7 +175,8 @@ export class PclMaxi implements Machine {
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube'>[] { return this.book.slideRows; }
+  get meterOnlyPayout(): boolean { return this.book.namesNoPayout; }
   readonly outClicks: number[] = [];
   get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
   get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
@@ -189,6 +192,10 @@ export class PclMaxi implements Machine {
     this.meterOutRaw = [...map.meterOut];
     this.triacInRaw = [...map.triacIn];
     this.triacOutRaw = [...map.triacOut];
+    [this.meterLedgerOut, this.triacLedgerOut] = ledgerOutMults(
+      { in: this.meterInRaw, out: this.meterOutRaw },
+      { in: this.triacInRaw, out: this.triacOutRaw },
+    );
   }
 
   layoutInput(id: number, on: boolean): void {
@@ -360,6 +367,7 @@ export class PclMaxi implements Machine {
       this.gridTotals.in += this.meterInRaw[i] ?? 0;
       this.gridTotals.out += this.meterOutRaw[i] ?? 0;
       countOutClick(this.outClicks, i, this.meterOutRaw[i]);
+      if (!this.book.hasSlides) this.cashLedger.unpricedOut += this.meterLedgerOut[i] ?? 0;
     }
   }
 
@@ -373,16 +381,17 @@ export class PclMaxi implements Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
-      this.book.slide(i);
+      if (this.book.hasSlides) this.book.slide(i);
+      else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }
   }
 
   insertCoin(id: number): void {
     if (this.coinTimer > 0) return;
     const raw = id >= 0x100 && id < 0x180 ? id : COIN_RAW[id];
-    if (raw === undefined || !(raw & 0x100)) return;
+    if (raw === undefined || !(raw & 0x100)) { this.coinsRefused++; return; }
     const row = (raw & 0x78) >> 3;
-    if (row >= this.matrix.length) return;
+    if (row >= this.matrix.length) { this.coinsRefused++; return; }
     this.coinRow = row;
     this.coinMask = 1 << (raw & 7);
     this.coinTimer = COIN_HOLD_LINE + COIN_GAP;
@@ -391,6 +400,8 @@ export class PclMaxi implements Machine {
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }
+
+  coinsRefused = 0;
 
   get parts(): BoardPart[] {
     return [

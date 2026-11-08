@@ -5,6 +5,7 @@ import { parseCatalogue, type Catalogue, type CatSet } from './catalogue';
 import { ATTACHMENT, invisionCategoryPage, invisionDownloadFile, invisionCategories, parseInvisionFiles, parseInvisionTopics } from './invision';
 import { expand, templateVars } from './template';
 import { dropAnswers, keepAnswer, keptAnswer } from './answers';
+import { mergeKeyedList, readHeld, searchKeyedList, type KeyedList } from './keyedlist';
 
 export interface TokenBox {
   get(): Tokens | undefined;
@@ -32,12 +33,18 @@ const TICKET = 'fme-download-ticket';
 
 const ANSWER_TTL = 24 * 60 * 60_000;
 const answers = new Map<string, { at: number; json: Promise<unknown> }>();
+const lists = new Map<string, { at: number; list: Promise<KeyedList> }>();
 
 export function forgetAnswers(origins?: string[]): Promise<unknown> {
   for (const url of [...answers.keys()]) {
     let o = '';
     try { o = new URL(url).origin; } catch {  }
     if (!origins || origins.includes(o)) answers.delete(url);
+  }
+  for (const url of [...lists.keys()]) {
+    let o = '';
+    try { o = new URL(url).origin; } catch {  }
+    if (!origins || origins.includes(o)) lists.delete(url);
   }
   return dropAnswers(origins, ANSWER_TTL);
 }
@@ -158,6 +165,34 @@ export class SourceClient {
 
   catalogue(q: string, page = 1, category?: Category): Promise<Catalogue> {
     return this.answer(category?.list ?? this.source.endpoints.catalogue, { q, page, category: category?.id ?? '' });
+  }
+
+  searchesAll(): boolean { return this.source.endpoints.search?.format === 'keyed-list'; }
+
+  async searchAll(q: string, page = 1): Promise<Catalogue> {
+    return searchKeyedList(await this.wholeList(), q, page);
+  }
+
+  private wholeList(): Promise<KeyedList> {
+    const ep = this.source.endpoints.search;
+    if (!ep || ep.format !== 'keyed-list') return Promise.reject(new SourceError('missing'));
+    const key = expand(ep.url, { since: '' });
+    const held = lists.get(key);
+    if (held && Date.now() - held.at < ANSWER_TTL) return held.list;
+    const at = Date.now();
+    const list = (async () => {
+      const kept = await keptAnswer(key, Infinity);
+      const old = kept ? readHeld(kept.json) : undefined;
+      if (kept && old && Date.now() - kept.at < ANSWER_TTL) { const h = lists.get(key); if (h) h.at = kept.at; return old; }
+      const res = await this.fetchFor(expand(ep.url, { since: old?.at ?? 0 }), { headers: { Accept: 'application/json' } });
+      let next: KeyedList;
+      try { next = mergeKeyedList(old, await res.json()); } catch { throw new SourceError('bad_answer'); }
+      keepAnswer(key, at, next);
+      return next;
+    })();
+    lists.set(key, { at, list });
+    list.catch(() => { if (lists.get(key)?.list === list) lists.delete(key); });
+    return list;
   }
 
   lookup(sha256: string): Promise<Catalogue> { return this.answer(this.source.endpoints.lookup, { sha256: sha256.toLowerCase() }); }

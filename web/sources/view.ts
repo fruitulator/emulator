@@ -11,6 +11,7 @@ import type { CatSet, Machine } from './catalogue';
 import { SourceClient, SourceError, forgetAnswers, sourceOrigins } from './client';
 import { fetchIndex, type Category, type Source, type SourceIndex } from './index';
 import { templateVars } from './template';
+import { searchWords } from './keyedlist';
 import { SourceStore, sourceKey } from './store';
 import { fetchFromSource, getFailedText } from './get';
 import { versionsChip } from '../gamelist';
@@ -313,7 +314,10 @@ export class SourceView {
     const gen = ++this.gen;
     this.listing = { c, category };
     const url = (category?.list ?? c.source.endpoints.catalogue)?.url ?? '';
-    this.offerSearch(templateVars(url).includes('q'));
+    const own = templateVars(url).includes('q');
+    const whole = !own && c.searchesAll();
+    this.offerSearch(own || whole);
+    const searching = whole && searchWords(this.q).length > 0;
     this.root.replaceChildren(loadingLine(str('sources.loading')));
     const grid = tileGrid();
     const end = document.createElement('div');
@@ -328,11 +332,11 @@ export class SourceView {
       loading = true;
       end.replaceChildren(loadingLine(str('sources.loading')));
       try {
-        const cat = await c.catalogue(this.q, page + 1, category);
+        const cat = searching ? await c.searchAll(this.q, page + 1) : await c.catalogue(this.q, page + 1, category);
         if (gen !== this.gen) return;
         page = cat.page ?? page + 1;
         pages = cat.pages ?? page;
-        if (shown === 0) this.root.replaceChildren(...(category && !category.all ? [sectionHeading(category.name)] : []), grid, end);
+        if (shown === 0) this.root.replaceChildren(...(category && !category.all && !searching ? [sectionHeading(category.name)] : []), grid, end);
         for (const m of cat.machines) {
           const key = m.maker ? `${m.maker.toLowerCase()}|${titleKey(m.title)}` : `#${m.id}`;
           const had = groups.get(key);

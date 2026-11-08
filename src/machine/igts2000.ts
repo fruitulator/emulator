@@ -613,9 +613,9 @@ export class IgtS2000 implements Machine {
   insertCoin(id: number): void {
     if (this.coinHold > 0) return;
     const raw = id >= 0x100 && id < 0x180 ? id : COIN_RAW[id];
-    if (raw === undefined || !(raw & 0x100)) return;
+    if (raw === undefined || !(raw & 0x100)) { this.coinsRefused++; return; }
     const row = (raw & 0x78) >> 3;
-    if (row >= this.matrix.length) return;
+    if (row >= this.matrix.length) { this.coinsRefused++; return; }
     this.coinRow = row;
     this.coinMask = 1 << (raw & 7);
     this.coinHold = COIN_HOLD_LINE + COIN_GAP;
@@ -624,6 +624,8 @@ export class IgtS2000 implements Machine {
   }
 
   get coinBusy(): boolean { return this.coinHold > 0; }
+
+  coinsRefused = 0;
 
   get parts(): BoardPart[] {
     return [

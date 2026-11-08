@@ -87,7 +87,7 @@ export class Wallet {
       if (h.token) token -= h.pence;
       else cash -= h.pence;
     }
-    return { cashPence: cash, tokenPence: token, ...(this.known.payDay ? { payDay: this.known.payDay } : {}) };
+    return { cashPence: Math.max(0, cash), tokenPence: Math.max(0, token), ...(this.known.payDay ? { payDay: this.known.payDay } : {}) };
   }
 
   counts(at: number = Date.now()): CoinCounts | null {
@@ -184,9 +184,12 @@ export class Wallet {
     this.changed();
   }
 
-  settled(b: Balance, ledger: CashLedger | null): void {
+  settled(b: Balance, ledger: CashLedger | null, free = false): void {
     this.known = b;
-    if (ledger && this.base) this.base = { ...ledger };
+    if (ledger && this.base) {
+      this.base = { ...ledger };
+      if (free) this.now = { ...ledger };
+    }
     this.changed();
   }
 

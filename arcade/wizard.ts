@@ -46,7 +46,8 @@ import { listGames } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import { PlayPointer } from '../web/play/pointer';
 import { str } from '../web/i18n';
-import { coinGrid, coinTicks, slotCards } from '../web/ui/coinsetup';
+import { coinGrid, coinTicks, payoutDefaultNote, slotCards } from '../web/ui/coinsetup';
+
 import { segSwitch } from '../web/ui/segswitch';
 import { editedSlot, isTokenCoin, markedSlots, readCoinWiring, payoutsAnswered, readPayoutMeters, readPayoutValues, readNotPayoutLines, CASH_COINS, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
 import { acceptorSlots, coinLineSlots, type AcceptorSlot, type DrawnSlot } from '../web/coinslots';
@@ -192,6 +193,14 @@ function payoutRow(name: string, value: string | null, control: HTMLElement, mar
   if (note) label.append(el('p', note, { class: 'coin-slot-note' }));
   row.append(label, control);
   return row;
+}
+
+function setPayoutDefaultNote(row: HTMLElement, text: string | null): void {
+  const label = row.querySelector('.coin-payout-name')!;
+  let p = label.querySelector<HTMLElement>('.coin-payout-default');
+  if (!text) { p?.remove(); return; }
+  if (!p) { p = el('p', null, { class: 'coin-slot-note coin-payout-default' }); label.append(p); }
+  p.textContent = text;
 }
 
 function wizSection(name: string, body: HTMLElement): HTMLElement {
@@ -2196,13 +2205,16 @@ class Wizard {
           else delete c.notPayouts;
         }
         if (this.wm.live.running) this.wm.live.emu.namePayout(device.line, Number(sel.value) || 0);
+        setPayoutDefaultNote(row, payoutDefaultNote(device, next[String(device.line)]));
         void this.save();
         this.nav(undefined, this.coinsWired());
         this.renderStrip();
       });
       const faulty = this.serverFault?.outputs.some((o) => o.line === device.line) ?? false;
       const wrong = faulty && sel.value !== '' ? str('arcade.wizard.value_looks_wrong') : null;
-      box.append(payoutRow(name, null, sel, faulty ? statusIcon('warn') : null, wrong));
+      const row = payoutRow(name, null, sel, faulty ? statusIcon('warn') : null, wrong);
+      setPayoutDefaultNote(row, payoutDefaultNote(device, values[String(device.line)]));
+      box.append(row);
       enhanceSelect(sel, { small: true });
     }
   }

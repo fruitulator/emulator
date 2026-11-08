@@ -29,6 +29,27 @@ export type DrawItem<A> =
   | { kind: 'checkbox'; z: number; checkbox: CabCheckbox }
   | { kind: 'light'; z: number; light: LightSource<A> };
 
+export function drawItemOwner<A>(it: DrawItem<A>): object | undefined {
+  switch (it.kind) {
+    case 'lamp': return it.lamp;
+    case 'reel': return it.reel;
+    case 'band': return it.strip;
+    case 'flip': return it.flip;
+    case 'bonus': return it.bonus;
+    case 'frame': return it.frame;
+    case 'feature': return it.feature;
+    case 'vfd': return it.vfd;
+    case 'seg': return it.seg;
+    case 'rgbLed': return it.led;
+    case 'prism': return it.prism;
+    case 'panel': return it.panel;
+    case 'bfmLed': return it.panel;
+    case 'video': return it.screen;
+    case 'checkbox': return it.checkbox;
+    case 'reelLight': case 'bitmap': case 'dotLcd': case 'cmVideo': case 'light': return undefined;
+  }
+}
+
 export const PASS = {
   bevel: 1000,
   reel: 2000, band: 2100, flip: 2200, bonus: 2250, frame: 2300, feature: 2400, reelLight: 2500,

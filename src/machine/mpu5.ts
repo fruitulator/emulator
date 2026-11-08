@@ -22,10 +22,10 @@ import { LAMP_FULL, MPU5_DIGITS, decodeDigit, decodeDigitSegLevel } from './fram
 import { MUX_LAMP_ALT } from '../hw/muxlamps';
 import { mpu5LampBanks, mpu5MatrixSwitches, type Mpu5LampBanks, type Mpu5MatrixSwitch } from './bcosdev';
 import type { LayoutSwitch } from './layoutswitches';
-import type { CabinetSwitch, CoinPortLines, Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult } from './machine';
+import type { CabinetSwitch, CoinPortLines, Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult, PayoutDeviceRow } from './machine';
 import { dilPlace, dilSwitchLabel } from './machine';
 import { newCashLedger } from './machine';
-import { TokenPayouts } from './coinbook';
+import { TokenPayouts, bookCoinIn, ccTalkCoin } from './coinbook';
 import { lockoutRefuses, type CoinLockoutWiring } from '../hw/coinlockout';
 import { fittedMech, mpu5CoinTable, readCoinValue, readMpu5Mechs, type CoinValue, type Mpu5Channel, type Mpu5Mechs } from './mpu5coins';
 import { COIN_NOTES, PARALLEL_NOTE_CHANNELS, coinRowPattern, type DeclaredCoin } from './layoutcoins';
@@ -478,19 +478,21 @@ export class Mpu5 implements Bus16, Machine {
   }
   get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
 
-  get payoutDevices(): readonly { line: number; kind: 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'hopper'>[] {
     if (this.serialHopper) {
       return this.vendHoppers.map((h, i) => ({
         line: 100 + i,
         kind: 'hopper',
         displayNumber: i + 1,
         defaultPence: /^GB(\d{3})/.test(h.coin) ? Number(/^GB(\d{3})/.exec(h.coin)?.[1]) : null,
+        ...(/^GB(\d{3})/.test(h.coin) ? { defaultFrom: 'machine' as const } : {}),
       }));
     }
     return [
-      { line: 0, kind: 'hopper', displayNumber: 1, defaultPence: this.hopperCoinPence[0] },
-      ...(this.hopper2Fitted ? [{ line: 1, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1] }] : []),
+      { line: 0, kind: 'hopper', displayNumber: 1, defaultPence: this.hopperCoinPence[0], ...(this.hopperCoinPence[0] ? { defaultFrom: 'machine' as const } : {}) },
+      ...(this.hopper2Fitted ? [{ line: 1, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1], ...(this.hopperCoinPence[1] ? { defaultFrom: 'machine' as const } : {}) }] : []),
     ];
+
   }
   namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
   private meterPort = 0;
@@ -1888,7 +1890,10 @@ export class Mpu5 implements Bus16, Machine {
     mech.onCredit = (channel) => {
       const pence = Sr5iMech.channelPence(channel);
       if (pence) this.acceptedPence += pence;
-      if (pence) this.cashLedger.inPence += pence;
+      const bit = Mpu5.VEND_CHANNELS.indexOf(channel);
+      const w = this.wiring;
+      const host = !w || bit < 0 ? undefined : w.conflicts.includes(bit) ? null : w.coins.get(bit);
+      bookCoinIn(this.cashLedger, ccTalkCoin(host, Sr5iMech.coinIdOf(mech.currency, channel)));
     };
     bus.fit(Mpu5.VEND_MECH, mech);
     const parts: Record<number, CcTalkDevice> = { [Mpu5.VEND_MECH]: mech };

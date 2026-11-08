@@ -1,12 +1,15 @@
 export const MACHINE_PATH = '/v1/machines';
 export const DEV_PLAYER_HEADER = 'x-arcade-dev-player';
+export const SESSION_PARAM = 'session';
+export const BUILT_PARAM = 'builtAt';
 
-export type AcquireReply = { ok: true; leaseMs: number } | { ok: false; why: 'busy' | 'moved'; holderName?: string };
-export interface ClaimBody { base: number; fresh: boolean; ledger?: Ledger; kept?: boolean }
+export type AcquireReply = { ok: true; leaseMs: number } | { ok: false; why: 'busy' | 'moved'; holderName?: string } | { ok: false; why: 'stale' };
+export interface ClaimBody { base: number; fresh: boolean; ledger?: Ledger; kept?: boolean; builtAt?: number }
+export const STALE_STATUS = 426;
 export type SeedReply = { ok: true; n: number } | { ok: false; why: 'saved' | 'held' | 'not-host' };
 export const SEED_OP = 'seed';
 export interface RestartBody extends SaveBody { base: number; stamp: string; kept: boolean }
-export type RestartReply = { ok: true; n: number } | { ok: false; why: 'held' | 'moved' | 'current' };
+export type RestartReply = { ok: true; n: number } | { ok: false; why: 'held' | 'moved' | 'current' | 'stale' };
 export const RESTART_OP = 'restart';
 export type VisitReply = LoadFault & (
   | { ok: true; holder: 'you' | 'other' | null; holderName?: string; base: number; player: string; save: SaveBody & { n: number } }
@@ -38,9 +41,11 @@ export interface SaveBody {
   cycles: number;
   build?: string;
   stamp?: string;
+  builtAt?: number;
   nvram?: string;
   data: string;
   ledger?: Ledger;
+  free?: true;
   coins?: CoinTally;
   sinceGame?: CreditSince;
   coinsStopped?: boolean;
@@ -51,13 +56,13 @@ export interface SaveBody {
 export interface CoinFault { at: number; outputs: PaidOutput[] }
 export interface PaidOutput { line: number; kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper' | 'output'; n: number }
 export interface CreditSince { inPence: number; tokenInPence: number }
-export interface LostCredit { at: number; savedAt: number; version: number; n: number; sinceGame: CreditSince | null }
+export interface LostCredit { at: number; savedAt: number; version: number; n: number; sinceGame: CreditSince | null; refunded?: CreditSince }
 export type SaveReply = { ok: true; n: number; wallet?: WalletBalance } | { ok: false; why: 'not-holder' };
 export type LoadReply =
   | ({ ok: true; save: SaveBody & { n: number } } & LoadFault)
   | ({ ok: true; save: null; why: 'none' | 'version' } & LoadFault)
   | ({ ok: true; save: null; why: 'battery'; nvram: string } & LoadFault)
-  | { ok: false; why: 'not-holder' };
+  | { ok: false; why: 'not-holder' | 'stale' };
 export interface LoadFault { coinFault?: CoinFault }
 
 export interface MachineMoney {
@@ -108,7 +113,7 @@ export type LiveToServer =
   | ({ type: 'relay' } & RelayBatch)
   | ({ type: 'key' } & KeyPart);
 export type LiveToPage =
-  | { type: 'standing'; you: Standing; leaseMs: number }
+  | { type: 'standing'; you: Standing; leaseMs: number; yours?: true }
   | { type: 'presence'; presence: Presence }
   | { type: 'watching'; ok: true }
   | { type: 'watching'; ok: false; why: 'free' | 'yours' }

@@ -21,6 +21,16 @@ export interface PayoutRow {
   displayNumber?: number;
 }
 
+export type PayoutDefaultSource = 'layout' | 'machine';
+
+export interface PayoutDeviceRow<K extends string = 'tube' | 'token-tube' | 'hopper' | 'token-hopper'> {
+  line: number;
+  kind: K;
+  displayNumber?: number;
+  defaultPence?: number | null;
+  defaultFrom?: PayoutDefaultSource;
+}
+
 export type NamedCoin = number | { token: number } | 'token';
 
 export interface CoinChute {
@@ -129,6 +139,18 @@ export function newCashLedger(): CashLedger {
   };
 }
 
+export const CASH_LEDGER_FIELDS = [
+  'inPence', 'outPence', 'unpricedOut', 'unpricedIn', 'euroInCents', 'euroOutCents',
+  'tokenInPence', 'tokenOutPence', 'unpricedTokenOut', 'unpricedTokenIn',
+] as const satisfies readonly (keyof CashLedger)[];
+
+export function landLedger(l: CashLedger, held: Readonly<CashLedger>): void {
+  for (const k of CASH_LEDGER_FIELDS) {
+    const v = held[k] ?? 0;
+    if (v) l[k] = (l[k] ?? 0) + v;
+  }
+}
+
 export function outMultToLedger(mult: number): number {
   return mult > 0 ? mult : 0;
 }
@@ -209,14 +231,10 @@ export interface Machine {
   readonly uncountedCoinLines?: readonly number[];
   readonly unpricedPayoutLines?: readonly number[];
   readonly tokenPayoutLines?: readonly number[];
-  readonly payoutDevices?: readonly {
-    line: number;
-    kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper';
-    displayNumber?: number;
-    defaultPence?: number | null;
-  }[];
+  readonly payoutDevices?: readonly PayoutDeviceRow[];
   readonly hopperPayoutLines?: readonly number[];
   namePayout?(line: number, pence: number): void;
+
   readonly payoutRows?: readonly PayoutRow[];
   setPayoutMeter?(line: number, token: boolean): void;
   setNotPayouts?(lines: readonly number[]): void;

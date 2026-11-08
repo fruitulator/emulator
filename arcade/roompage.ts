@@ -118,6 +118,7 @@ if (!doc) {
   let live: RoomLive | null = null;
   const room = new Room(host, machines, { name, look: lookOf(doc?.room), props: readProps(doc?.props) ?? [] });
   room.onLeave = leaveArcade;
+  room.live.operatorHands = isHost;
   room.getFromSource = (m, progress) => getMachineSet(m, progress, document.getElementById('hostBtn') ?? document.body);
   settleSignIn();
   const sound = new RoomSound(room.live);

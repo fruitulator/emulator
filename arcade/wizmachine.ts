@@ -79,7 +79,7 @@ function lampDigits(v: FrameView, segs: readonly SegDisplay[]): string {
 }
 
 export class WizardMachine {
-  readonly live = new Live();
+  readonly live = (() => { const l = new Live(); l.operatorHands = true; return l; })();
   readonly glass: Glass;
   secs: Second[] = [];
   reading: CoreReading | null = null;

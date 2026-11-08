@@ -9,7 +9,7 @@ import { V20Reels } from './v20reels';
 import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, NamedCoin } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, NamedCoin, PayoutDeviceRow } from './machine';
 import { ledgerOutMults, newCashLedger } from './machine';
 import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
 import type { SlideEffect } from '../layout/fmlconfig';
@@ -146,11 +146,14 @@ export class Mmm implements Machine {
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
-  get meterOnlyPayout(): boolean {
-    return !this.book.hasSlides && this.triacLedgerOut.some((x) => x > 0);
-  }
+  get meterOnlyPayout(): boolean { return this.book.namesNoPayout; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube'>[] {
+    return this.book.slideRows.map((r) => {
+      const seen = this.chuteSeen[r.line];
+      return r.kind === 'tube' && seen ? { ...r, defaultPence: seen, defaultFrom: 'machine' as const } : r;
+    });
+  }
   get outMeterClicks(): Readonly<Record<number, number>> { return {}; }
   get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
   get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
@@ -176,7 +179,8 @@ export class Mmm implements Machine {
   private chutePulse(i: number, seen: number): void {
     const sl = this.book.slides[i] ?? null;
     if (sl === null) { this.book.unnamed(i); return; }
-    if (sl !== 'token' && seen) {
+    if (sl !== 'token' && seen && this.book.payouts.value(i) === undefined) {
+
       this.book.lineCoins[i] = (this.book.lineCoins[i] ?? 0) + 1;
       this.book.cashOut(seen);
     } else this.book.slide(i);
@@ -372,9 +376,9 @@ export class Mmm implements Machine {
   insertCoin(id: number): void {
     if (this.coinTimer > 0) return;
     const raw = id >= 0x100 && id < 0x180 ? id : COIN_RAW[id];
-    if (raw === undefined || !(raw & 0x100)) return;
+    if (raw === undefined || !(raw & 0x100)) { this.coinsRefused++; return; }
     const row = (raw & 0x78) >> 3;
-    if (row >= this.matrix.length) return;
+    if (row >= this.matrix.length) { this.coinsRefused++; return; }
     this.coinRow = row;
     this.coinMask = 1 << (raw & 7);
     this.coinTimer = COIN_HOLD + COIN_GAP;
@@ -383,6 +387,8 @@ export class Mmm implements Machine {
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }
+
+  coinsRefused = 0;
 
   get parts(): BoardPart[] {
     return [

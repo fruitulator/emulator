@@ -27,6 +27,7 @@ import { PlayAutosave, type AutosaveSurface, type SaveMoment } from '../web/play
 
 import type { HintPlace } from '../web/keyhints';
 import { acceptorResolve, stampCoinInputs, viewFor } from '../web/platform';
+import { testLines } from '../web/switchids';
 import { hasInput, type CabLamp } from '../web/dat';
 import {
   HALT_NOTE_TEXT, StopWatch, judgeStop, sayCoinLocked, sayCoinRefused, noteReason, noteText, offersState, stopNoteParts, type StopNote, NOTE_ERROR, NOTE_INFO, NOTE_WARN,
@@ -65,6 +66,7 @@ export const MACHINE_BUSY_TEXT = str('arcade.live.someone_is_playing_this_machin
 export function machineBusyText(holderName: string | null): string {
   return holderName ? str('arcade.live.n_is_playing_this_machine', { 0: holderName }) : MACHINE_BUSY_TEXT;
 }
+export const OWN_OTHER_TAB_TEXT = str('arcade.live.you_opened_this_machine_in_another_tab');
 
 export function connectionLostText(holdMs: number): string {
   const s = Math.max(1, Math.round(holdMs / 1000));
@@ -304,7 +306,8 @@ export class Live {
         const m = this.loaded!;
         const slot = m.slot!;
         const money = this.emu.ledger().catch(() => null);
-        if (slot.left && !this.freePlay) void money.then((l) => slot.left!(l));
+        const free = this.freePlay;
+        if (slot.left) void money.then((l) => slot.left!(l, free));
         const rec = stateRecord(blob, m.hash, undefined, this.emu.info?.system);
         this.settle.saved();
         return this.queueSave(slot, rec, money)
@@ -327,11 +330,11 @@ export class Live {
     };
     const free = this.freePlay;
     const p = this.saveChain.then(async () => {
-      const l = free ? null : (await money) ?? null;
-      const coins = wallet && l ? wallet.takeCoins() : undefined;
+      const l = (await money) ?? null;
+      const coins = wallet && l && !free ? wallet.takeCoins() : undefined;
       try {
-        const r = await slot.save(rec, l, coins, credit, stopped, fault);
-        if (r?.wallet) wallet?.settled(r.wallet, l);
+        const r = await slot.save(rec, l, coins, credit, stopped, fault, free);
+        if (r?.wallet) wallet?.settled(r.wallet, l, free);
       } catch (e) {
         if (coins) wallet?.putBackCoins(coins);
         throw e;
@@ -361,7 +364,7 @@ export class Live {
           const v = this.emu.latestFrame();
           const pose = v ? reelPose(v.reels) : w.pose;
           if (pose !== w.pose) { w.pose = pose; this.credit.mark(r); } else this.credit.reading(r);
-          hooks?.reading(r);
+          hooks?.reading(r, this.freePlay);
           this.checkWiring(r);
         }, () => undefined).finally(() => { w.busy = false; });
       }, MONEY_WATCH_MS);
@@ -475,6 +478,20 @@ export class Live {
 
   paused = false;
   runHidden = false;
+  operatorHands = false;
+  private opLines: { info: MachineInfo; system: string; lines: Set<number> } | null = null;
+
+  private playerMay(lp: CabLamp): boolean {
+    if (this.operatorHands || lp.button === undefined || lp.button < 0 || lp.acceptor || lp.coinInput !== undefined) return true;
+    const info = this.emu.info;
+    const system = this.glass?.game?.system;
+    if (!info || !system) return true;
+    if (this.opLines?.info !== info || this.opLines.system !== system) {
+      this.opLines = { info, system, lines: testLines(viewFor(system).namedInputs, info.switchIds ?? {}) };
+    }
+    return !this.opLines.lines.has(lp.button);
+  }
+
   private get standsDown(): boolean { return document.hidden && !this.runHidden; }
 
   private hostRule: HostRule | null = null;
@@ -1033,13 +1050,18 @@ export class Live {
     return this.saving.then(() => this.saveChain);
   }
 
-  private lost(slot: StateSlot): void {
+  private lost(slot: StateSlot, yours = false): void {
     if (this.claimed !== slot) return;
     this.claimed = null;
     if (this.loaded) this.loaded.save = false;
-    console.warn('[arcade] the machine was lost to another player');
+    console.warn(yours ? '[arcade] the machine was taken by this player\'s other tab' : '[arcade] the machine was lost to another player');
     const glass = this.glass;
     this.stop();
+    if (yours) {
+      this.busyUp = null;
+      this.stopNote?.notice(OWN_OTHER_TAB_TEXT, undefined, undefined, undefined, NOTE_INFO);
+      return;
+    }
     const name = this.holderNames.get(slot) ?? null;
     if (glass) this.busyNotice(glass, slot, name);
     else this.stopNote?.notice(machineBusyText(name), undefined, undefined, undefined, NOTE_INFO);
@@ -1292,7 +1314,7 @@ export class Live {
 
   private claimEvents(slot: StateSlot, o: StartOpts): ClaimEvents {
     return {
-      lost: () => this.lost(slot),
+      lost: (yours) => this.lost(slot, yours),
       holderName: (name) => this.onHolderName(slot, name),
       dropped: (holdMs) => this.dropped(slot, holdMs),
       back: () => this.back(slot),
@@ -1519,13 +1541,13 @@ export class Live {
     if (!this.running || !g?.cab) return null;
     const box = checkboxAt(g.cab.checkboxes, x, y);
     if (box) {
-      if (!this.hostNow()) {
+      if (!this.hostNow() && this.operatorHands) {
         const row = this.emu.info?.switchPanel.find((sw) => sw.id === box.id);
         this.throwSwitch(row ?? { id: box.id }, !g.switchLevels.ticked(box, this.emu.info?.switchPanel));
       }
       return null;
     }
-    const lp = pickControl(g.cab.lamps, x, y, scale, (p) => this.clickable(p) && this.hostCan(p) && !skip?.has(p));
+    const lp = pickControl(g.cab.lamps, x, y, scale, (p) => this.clickable(p) && this.hostCan(p) && this.playerMay(p) && !skip?.has(p));
     if (lp) this.activate(lp, pointerId);
     return lp;
   }
@@ -1578,7 +1600,7 @@ export class Live {
       running: () => this.running,
       onScreen: () => this.running,
       hasKeyboard: () => this.running,
-      pressable: (lp) => this.clickable(lp) && this.hostCan(lp),
+      pressable: (lp) => this.clickable(lp) && this.hostCan(lp) && this.playerMay(lp),
       press: (lp, id) => this.activate(lp, id),
       release: (id) => this.release(id),
       hints: () => {

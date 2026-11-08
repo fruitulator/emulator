@@ -27,6 +27,7 @@ export interface Counters {
 
 export interface IndexedElement {
   extent: IntRect;
+  owner?: object;
   key(m: FrameView, c: Counters): number;
 }
 
@@ -53,6 +54,20 @@ function union(a: IntRect, b: IntRect): IntRect {
     right: Math.max(a.right, b.right),
     bottom: Math.max(a.bottom, b.bottom),
   };
+}
+
+export function ownerExtents(els: readonly IndexedElement[]): Map<object, IntRect> {
+  const out = new Map<object, IntRect>();
+  for (const e of els) {
+    if (!e.owner) continue;
+    const had = out.get(e.owner);
+    out.set(e.owner, had ? union(had, e.extent) : e.extent);
+  }
+  return out;
+}
+
+export function extentMisses(e: IntRect, clip: IntRect): boolean {
+  return e.right <= clip.left || e.left >= clip.right || e.bottom <= clip.top || e.top >= clip.bottom;
 }
 
 function mix(h: number, v: number): number {
@@ -218,7 +233,7 @@ export function buildRenderIndex(
   cab.reels.forEach((reel) => {
     const zoneLamps = (reel.lampTray ?? reel.lampNums).filter((n) => n >= 0);
     const moves = peekable(reel);
-    els.push({
+    els.push({ owner: reel,
       extent: turned(rect(reel.left, reel.top, reel.width, reel.height), reel),
       key: (m, c) => {
         const i = reelIndex(m, reel);
@@ -233,7 +248,7 @@ export function buildRenderIndex(
   });
 
   for (const strip of cab.bandReels ?? []) {
-    els.push({
+    els.push({ owner: strip,
       extent: turned(rect(strip.left, strip.top, strip.width, strip.height), strip),
       key: (m) => {
         const r = m.reels[reelIndex(m, strip)];
@@ -247,7 +262,7 @@ export function buildRenderIndex(
   }
 
   for (const f of cab.flipReels ?? []) {
-    els.push({
+    els.push({ owner: f,
       extent: turned(rect(f.left, f.top, f.width, f.height), f),
       key: (m) => {
         const r = m.reels[reelIndex(m, f)];
@@ -259,7 +274,7 @@ export function buildRenderIndex(
   }
 
   for (const b of cab.bonusReels ?? []) {
-    els.push({
+    els.push({ owner: b,
       extent: turned(rect(b.left, b.top, b.width, b.height), b),
       key: (m) => {
         const r = m.reels[reelIndex(m, b)];
@@ -271,7 +286,7 @@ export function buildRenderIndex(
   }
 
   cab.frameReels.forEach((fr) => {
-    els.push({
+    els.push({ owner: fr,
       extent: rect(fr.left, fr.top, fr.width, fr.height),
       key: (m, c) => {
         const i = reelIndex(m, fr);
@@ -283,7 +298,7 @@ export function buildRenderIndex(
 
   if (cab.featureReel) {
     const fr = cab.featureReel;
-    els.push({
+    els.push({ owner: fr,
       extent: rect(fr.left, fr.top, fr.width, fr.height),
       key: (m, c) => {
         const i = reelIndex(m, fr);
@@ -316,7 +331,7 @@ export function buildRenderIndex(
   };
   if (cab.vfd) {
     const r = cab.vfd;
-    els.push({ extent: turned(rect(r.left, r.top, r.width, r.height), r), key: displayKey });
+    els.push({ owner: r, extent: turned(rect(r.left, r.top, r.width, r.height), r), key: displayKey });
   } else {
     els.push({
       extent: rect(
@@ -329,7 +344,7 @@ export function buildRenderIndex(
 
   for (const lp of cab.lamps) {
     const extent = lampExtent(lp);
-    els.push({
+    els.push({ owner: lp,
       extent,
       key: (m) => {
         let h = 0;
@@ -350,14 +365,14 @@ export function buildRenderIndex(
   }
 
   for (const led of cab.rgbLeds ?? []) {
-    els.push({
+    els.push({ owner: led,
       extent: turned(rect(led.left, led.top, led.width, led.height), led),
       key: (m) => mix(0, rgbLedFrameColour(m, led) | 0),
     });
   }
 
   for (const p of cab.prismLamps ?? []) {
-    els.push({
+    els.push({ owner: p,
       extent: turned(rect(p.left, p.top, p.width, p.height), p),
       key: (m) => mix(
         mix(0, p.lamp1 >= 0 ? lampBit(m, p.lamp1) : 0),
@@ -367,7 +382,7 @@ export function buildRenderIndex(
   }
 
   for (const s of cab.segDisplays ?? []) {
-    els.push({
+    els.push({ owner: s,
       extent: turned(s.block ? rect(s.block.left, s.block.top, s.block.width, s.block.height)
         : rect(s.left, s.top, s.width, s.height), s),
       key: (m) => {
@@ -384,7 +399,7 @@ export function buildRenderIndex(
   }
 
   for (const b of cab.bfmLeds ?? []) {
-    els.push({
+    els.push({ owner: b,
       extent: turned(rect(b.left, b.top, b.width, b.height), b),
       key: (m) => {
         let h = 0;
@@ -396,7 +411,7 @@ export function buildRenderIndex(
 
   for (const d of [cab.dotMatrix, cab.plasmaPanel, cab.astraLed, cab.bfmColourLed, cab.igtVfd]) {
     if (!d) continue;
-    els.push({
+    els.push({ owner: d,
       extent: turned(rect(d.left, d.top, d.width, d.height), d),
       key: (m) => {
         let h = 0;
@@ -407,7 +422,7 @@ export function buildRenderIndex(
   }
   for (const d of [cab.epochDotAlpha, cab.maygayMatrix, cab.epochMatrix]) {
     if (!d) continue;
-    els.push({
+    els.push({ owner: d,
       extent: turned(rect(d.left, d.top, d.width, d.height), d),
       key: (m) => {
         let h = 0;
@@ -418,7 +433,7 @@ export function buildRenderIndex(
   }
   if (cab.proconnMatrix) {
     const d = cab.proconnMatrix;
-    els.push({
+    els.push({ owner: d,
       extent: turned(rect(d.left, d.top, d.width, d.height), d),
       key: (m) => {
         let h = 0;
@@ -429,13 +444,13 @@ export function buildRenderIndex(
   }
   if (cab.videoScreen) {
     const d = cab.videoScreen;
-    els.push({
+    els.push({ owner: d,
       extent: turned(rect(d.left, d.top, d.width, d.height), d),
       key: (m) => mix(m.epoch, m.videoSerial),
     });
   }
   for (const cb of cab.checkboxes ?? []) {
-    els.push({
+    els.push({ owner: cb,
       extent: turned(rect(cb.left, cb.top, cb.width, cb.height), cb),
       key: () => (checkboxTicked(cb) ? 1 : 0),
     });

@@ -44,9 +44,10 @@ export function adder5ScreenSize(mode: number): { width: number; height: number 
   }
 }
 import { opticWindowForFlag } from '../layout/datreels';
-import type { Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult, CabinetSwitch } from './machine';
+import type { Machine, MachineDisplay, AudioSource, OptionKey, DigitKind, NoteResult, CabinetSwitch, PayoutDeviceRow } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
-import { TokenPayouts } from './coinbook';
+import { TokenPayouts, bookCoinIn, ccTalkCoin } from './coinbook';
+import { linesOf, type CoinWiring, type SlotCoin } from './coinwiring';
 import type { BoardPart } from './parts';
 import { everyNth } from './schematic';
 import { resetReelsInPlace } from './v20optic';
@@ -129,7 +130,7 @@ function deviceAt(addr: number, model: string): CcTalkDevice {
 }
 
 export class Sc5 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency', 'noteCurrency'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency', 'noteCurrency', 'wiredCoins'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: Mcf5206e;
@@ -403,9 +404,34 @@ export class Sc5 implements Bus16, Machine {
   readonly cashLedger = newCashLedger();
   private readonly payoutNames = new TokenPayouts();
   get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
-  private unpricedHopperCoins = 0;
+  private heldHopperLines: number[] = [];
+  private heldHopperLeft: number[] = [];
+  private static readonly HELD_COIN_WINDOW = MASTER_CLOCK;
   private pendingDataPakCashOut: number[] = [];
   private hostPricedHopperCoins = 0;
+  private readonly hopperSeen: number[] = [0, 0];
+
+  private holdHopperCoin(line: number): void {
+    this.heldHopperLines.push(line);
+    this.heldHopperLeft.push(Sc5.HELD_COIN_WINDOW);
+  }
+
+  private shiftHeldCoin(): number {
+    this.heldHopperLeft.shift();
+    return this.heldHopperLines.shift()!;
+  }
+
+  private ageHeldCoins(span: number): void {
+    const left = this.heldHopperLeft;
+    if (left.length === 0) return;
+    for (let i = 0; i < left.length; i++) left[i]! -= span;
+    while (left.length && left[0]! <= 0) {
+      const line = this.shiftHeldCoin();
+      const seen = this.hopperSeen[line - 100] ?? 0;
+      if (this.payoutNames.value(line) === undefined && seen > 0) this.cashLedger.outPence += seen;
+      else this.payoutNames.bookCash(this.cashLedger, line);
+    }
+  }
 
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
@@ -448,13 +474,11 @@ export class Sc5 implements Bus16, Machine {
             return;
           }
           const pence = this.pendingDataPakCashOut.shift();
-          if (pence === undefined) {
-            this.unpricedHopperCoins++;
-            this.payoutNames.bookCash(this.cashLedger, line);
-          } else {
+          if (pence === undefined) this.holdHopperCoin(line);
+          else {
             this.cashLedger.outPence += pence;
+            if (pence > 0) this.hopperSeen[line - 100] = pence;
           }
-
         };
       }
     }
@@ -476,10 +500,10 @@ export class Sc5 implements Bus16, Machine {
         this.hostPricedHopperCoins--;
         return;
       }
-      if (this.unpricedHopperCoins > 0 || this.cashLedger.unpricedOut > 0) {
-        if (this.unpricedHopperCoins > 0) this.unpricedHopperCoins--;
-        this.cashLedger.unpricedOut--;
-        this.cashLedger.outPence += pence;
+      if (this.heldHopperLines.length) {
+        const line = this.shiftHeldCoin();
+        this.cashLedger.outPence += this.payoutNames.value(line) ?? pence;
+        if (pence > 0) this.hopperSeen[line - 100] = pence;
       } else {
         this.pendingDataPakCashOut.push(pence);
       }
@@ -498,19 +522,23 @@ export class Sc5 implements Bus16, Machine {
   }
   get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
 
-  get payoutDevices(): readonly { line: number; kind: 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'hopper'>[] {
     return [...this.bus.entries()]
       .filter(([, d]) => d instanceof Sch2Hopper)
       .map(([addr, d], i) => ({
         line: addr === CC_HOPPER ? 100 : 101,
         kind: 'hopper',
         displayNumber: i + 1,
-        defaultPence: d instanceof Sch2Hopper && /^GB(\d{3})/.test(d.coin)
-          ? Number(/^GB(\d{3})/.exec(d.coin)?.[1])
-          : null,
+        ...this.hopperDefault(addr === CC_HOPPER ? 0 : 1),
       }));
+
   }
   namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
+
+  private hopperDefault(i: number): { defaultPence: number | null; defaultFrom?: 'machine' } {
+    const seen = this.hopperSeen[i] ?? 0;
+    return seen > 0 ? { defaultPence: seen, defaultFrom: 'machine' } : { defaultPence: null };
+  }
 
   readonly unmodelled: string[] = [];
 
@@ -1407,6 +1435,7 @@ export class Sc5 implements Bus16, Machine {
 
   private tickDevices(span: number): void {
     this.sim.tick(span);
+    this.ageHeldCoins(span);
     this.duartAcc += span * DUART_CLOCK;
     if (this.duartAcc >= MASTER_CLOCK) {
       const ticks = (this.duartAcc / MASTER_CLOCK) | 0;
@@ -1806,7 +1835,13 @@ export class Sc5 implements Bus16, Machine {
     if (!this.mech.insert(channel)) { this.coinsRefused++; return; }
     const pence = this.mech.pence(channel) ?? 0;
     this.acceptedPence += pence;
-    this.cashLedger.inPence += pence;
+    const host = this.wiredCoins?.conflicts.includes(bit) ? null : this.wiredCoins?.coins.get(bit);
+    bookCoinIn(this.cashLedger, ccTalkCoin(host, Sr5iMech.coinIdOf(this.mech.currency, channel)));
+  }
+
+  private wiredCoins: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
+  setCoinWiring(w: CoinWiring): void {
+    this.wiredCoins = linesOf(w);
   }
 
   coinsRefused = 0;

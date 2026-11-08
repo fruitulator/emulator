@@ -1,7 +1,7 @@
 import { countOutClick, outClicksOf } from './payoutcheck';
 import { COIN_RAW } from './coinraw';
 import type { Bus16 } from '../cpu/bus68k';
-import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus, NoteResult } from './machine';
+import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind, CoinWiringStatus, NoteResult, PayoutDeviceRow } from './machine';
 import type { BoardPart } from './parts';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
@@ -191,10 +191,11 @@ export class Astra implements Bus16, Machine {
   get rowCoins(): Readonly<Record<number, number>> { return { 0: this.hoppers[0]!.paid, 1: this.hoppers[1]!.paid }; }
   get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
 
-  get payoutDevices(): readonly { line: number; kind: 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'hopper' | 'token-hopper'>[] {
     return [
-      { line: 0, kind: 'hopper', displayNumber: 1, defaultPence: ASTRA_HOPPER_PENCE[0] },
-      { line: 1, kind: 'token-hopper', displayNumber: 2, defaultPence: this.tokenCoinPence() },
+      { line: 0, kind: 'hopper', displayNumber: 1, defaultPence: ASTRA_HOPPER_PENCE[0], defaultFrom: 'machine' },
+      { line: 1, kind: 'token-hopper', displayNumber: 2, defaultPence: this.tokenCoinPence(), ...(this.tokenCoinPence() ? { defaultFrom: 'machine' as const } : {}) },
+
     ];
   }
   namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }

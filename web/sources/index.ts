@@ -5,10 +5,10 @@ export const APP_ID = 'fruitulator';
 
 export const INDEX_VERSION = 1;
 
-export type EndpointName = 'catalogue' | 'lookup' | 'byName' | 'download' | 'categories';
-export const ENDPOINTS: readonly EndpointName[] = ['catalogue', 'lookup', 'byName', 'download', 'categories'];
+export type EndpointName = 'catalogue' | 'lookup' | 'byName' | 'download' | 'categories' | 'search';
+export const ENDPOINTS: readonly EndpointName[] = ['catalogue', 'lookup', 'byName', 'download', 'categories', 'search'];
 
-export const FORMATS = ['fme-catalogue', 'fme-categories', 'invision-downloads', 'invision-categories', 'invision-topics', 'invision-download', 'wait-ticket'] as const;
+export const FORMATS = ['fme-catalogue', 'fme-categories', 'invision-downloads', 'invision-categories', 'invision-topics', 'invision-download', 'wait-ticket', 'keyed-list'] as const;
 
 export interface Endpoint { url: string; format: string; root?: string; group?: string }
 

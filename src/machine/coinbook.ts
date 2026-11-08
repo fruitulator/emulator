@@ -1,6 +1,6 @@
 import type { EffectGridRow, SlideEffect } from '../layout/fmlconfig';
 import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
-import type { CashLedger, CoinChute, NamedCoin, PayoutRow } from './machine';
+import type { CashLedger, CoinChute, NamedCoin, PayoutDeviceRow, PayoutRow } from './machine';
 
 export function unnamedOutputLines(wired: Iterable<number>, grid: readonly EffectGridRow[] | null): number[] {
   return [...new Set(wired)].filter((line) => !(grid?.[line]?.on)).sort((a, b) => a - b);
@@ -30,6 +30,7 @@ export class TokenPayouts {
 
   name(line: number, pence: number): void {
     if (Number.isInteger(pence) && pence > 0) this.named.set(line, pence);
+    else this.named.delete(line);
   }
 
   value(line: number): number | undefined { return this.named.get(line) ?? this.defaults.get(line); }
@@ -65,7 +66,7 @@ export class TokenPayouts {
 }
 
 export class CoinBook {
-  static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'openOnCoin', 'payouts', 'outputs', 'notPayouts'];
+  static readonly snapshotConfig: readonly string[] = ['slides', 'changeGap', 'payouts', 'outputs', 'notPayouts'];
 
   readonly payouts = new TokenPayouts();
   get unpricedPaidLines(): readonly number[] { return this.payouts.unpricedLines; }
@@ -74,6 +75,10 @@ export class CoinBook {
   outputs: number[] = [];
   setOutputLines(lines: readonly number[]): void {
     this.outputs = [...new Set(lines)];
+  }
+
+  get namesNoPayout(): boolean {
+    return !this.hasSlides;
   }
 
   notPayouts: number[] = [];
@@ -91,7 +96,7 @@ export class CoinBook {
     const v = this.payouts.value(line);
     if (v === undefined) {
       this.pay(unit);
-      if (this.open) this.payouts.noteUnpriced(line);
+      this.payouts.noteUnpriced(line);
     } else if (this.payouts.isCash(line)) this.cashOut(v);
     else this.pay({ token: v });
   }
@@ -100,13 +105,11 @@ export class CoinBook {
     return this.outputs.map((line) => this.lineCoins[line] ?? 0);
   }
   changeWindow = 0;
-  open: boolean;
 
   private declare readonly ledger: CashLedger;
 
-  constructor(ledger: CashLedger, private changeGap: number, private openOnCoin = false) {
+  constructor(ledger: CashLedger, private changeGap: number) {
     Object.defineProperty(this, 'ledger', { value: ledger, enumerable: false });
-    this.open = !openOnCoin;
   }
 
   lineCoins: number[] = [];
@@ -121,23 +124,23 @@ export class CoinBook {
   }
 
   unnamedPulses(rows: readonly { line: number }[]): Record<number, number> {
-    const isRow = new Set(rows.map((r) => r.line));
+    const isRow = new Set([...rows.map((r) => r.line), ...this.outputs]);
     const out: Record<number, number> = {};
     this.unnamedCount.forEach((n, i) => { if (n && !isRow.has(i)) out[i] = n; });
     this.lineCoins.forEach((n, i) => { if (n && !isRow.has(i)) out[i] = (out[i] ?? 0) + n; });
     return out;
   }
 
-  get slideRows(): { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
+  get slideRows(): PayoutDeviceRow<'tube' | 'token-tube'>[] {
     return this.slides.flatMap((s, line) => s === null ? [] : [{
       line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const,
       displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null,
+      ...(typeof s === 'number' ? { defaultFrom: 'layout' as const } : {}),
     }]);
   }
 
   reset(): void {
     this.changeWindow = 0;
-    this.open = !this.openOnCoin;
   }
 
   setSlides(slides: readonly SlideEffect[] | null): void {
@@ -157,7 +160,6 @@ export class CoinBook {
   }
 
   coin(c: BookedCoin, hold = 0): void {
-    this.open = true;
     const l = this.ledger;
     if (typeof c === 'number') l.inPence += c;
     else if (c === null) {
@@ -173,27 +175,35 @@ export class CoinBook {
     const s = this.slides[line] ?? null;
     if (s === null && this.outputs.includes(line)) { this.output(line, 'token'); return; }
     this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
-    const named = s === 'token' || s === 'unpriced' ? this.payouts.value(line) : undefined;
-    if (named !== undefined && s === 'unpriced') this.pay(named);
-    else this.pay(named === undefined ? s : { token: named });
-    if (this.open && named === undefined && (s === 'token' || s === 'unpriced')) this.payouts.noteUnpriced(line);
-  }
-
-  tube(line: number): void {
-    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
-    const s = this.slides[line] ?? null;
+    if (s === null) return;
     const named = this.payouts.value(line);
     if (named !== undefined) {
       if (s === 'token') this.pay({ token: named });
       else this.cashOut(named);
+      return;
+    }
+    this.pay(s);
+    if (s === 'token' || s === 'unpriced') this.payouts.noteUnpriced(line);
+  }
+
+  tube(line: number): void {
+    this.part(line, this.slides[line] ?? null);
+  }
+
+  part(line: number, stated: SlideEffect | { token: number }): void {
+    this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
+    const named = this.payouts.value(line);
+    if (named !== undefined) {
+      if (stated === 'token' || (stated !== null && typeof stated === 'object')) this.pay({ token: named });
+      else this.cashOut(named);
     } else {
-      this.pay(s ?? 'unpriced');
-      if (this.open && (s === null || s === 'token' || s === 'unpriced')) this.payouts.noteUnpriced(line);
+      this.pay(stated ?? 'unpriced');
+      if (stated === null || stated === 'token' || stated === 'unpriced') this.payouts.noteUnpriced(line);
     }
   }
 
   pay(s: SlideEffect | { token: number }): void {
-    if (!this.open || s === null) return;
+    if (s === null) return;
     const l = this.ledger;
     if (s === 'token') l.unpricedTokenOut++;
     else if (s === 'unpriced') l.unpricedOut++;
@@ -202,7 +212,6 @@ export class CoinBook {
   }
 
   cashOut(pence: number): void {
-    if (!this.open) return;
     const l = this.ledger;
     if (this.changeWindow > 0) {
       l.unpricedOut++;
@@ -277,6 +286,21 @@ export function slotStatedCoins(list: readonly DeclaredCoin[], idOf: (c: Declare
     out.set(id, had === undefined || JSON.stringify(had) === JSON.stringify(coin) ? coin : null);
   }
   return out;
+}
+
+export function ccTalkCoin(hostOnSlot: number | { token: number | null } | null | undefined, coinId: string): BookedCoin {
+  if (hostOnSlot === null) return null;
+  if (hostOnSlot !== undefined) return bookedOfSlotCoin(hostOnSlot);
+  const gb = /^GB(\d{3})/.exec(coinId);
+  if (gb) return Number(gb[1]);
+  return /^TK/.test(coinId) ? 'token' : null;
+}
+
+export function bookCoinIn(l: CashLedger, c: BookedCoin): void {
+  if (typeof c === 'number') l.inPence += c;
+  else if (c === null) l.unpricedIn = (l.unpricedIn ?? 0) + 1;
+  else if (c === 'token') l.unpricedTokenIn++;
+  else l.tokenInPence += c.token;
 }
 
 export function bookedOfSlotCoin(c: number | { token: number | null }): BookedCoin {

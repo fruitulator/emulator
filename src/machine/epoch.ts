@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus } from './machine';
+import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus, PayoutDeviceRow } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { TokenPayouts } from './coinbook';
 import type { Reel } from '../hw/reel';
@@ -134,15 +134,17 @@ export class Epoch implements Machine {
   }
   get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
 
-  get payoutDevices(): readonly { line: number; kind: 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'hopper' | 'token-hopper'>[] {
     return this.hopperCoinRecords.map((coin, line) => ({
       line,
       kind: coin?.token ? 'token-hopper' as const : 'hopper' as const,
       displayNumber: line + 1,
       defaultPence: coin?.pence ?? null,
+      ...(coin?.pence ? { defaultFrom: 'machine' as const } : {}),
     }));
   }
   get tokenPayoutLines(): readonly number[] {
+
     return this.hopperCoinRecords.flatMap((c, i) => (c?.token ? [i] : []));
   }
   namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }

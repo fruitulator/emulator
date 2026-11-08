@@ -7,7 +7,7 @@ import { LAMP_FULL, type FrameView } from '../src/machine/framestate';
 import { glassText } from '../src/machine/layoutdisplay';
 import { MATRIX_COLS, MATRIX_MAP, MATRIX_PLANE, MATRIX_ROWS } from '../src/hw/epochmatrix';
 import { drawBackdrop } from './cabjson';
-import { drawOrder, type PanelKind } from './draworder';
+import { drawItemOwner, drawOrder, type PanelKind } from './draworder';
 import { legendCaps, legendFamily } from './legendfonts';
 import {
   bonusReelFrame, flipLight, flipReelFace, mfmeBonusReelPosition, paintBonusLight, paintBonusReel,
@@ -64,6 +64,7 @@ import {
   advanceSettleCounters, featureReelContinuous, buildRenderIndex, cabLampLevel, cabLampLit, drawnBandIndex, rgbLampFace,
   newSettleMemory, parkedForDraw, platformReelOffsetSteps, platformRequiresReversal,
   reelCentreRow, rgbLedFrameColour, type IndexedElement, type IntRect, reelIndex,
+  extentMisses, ownerExtents,
 } from './render-index';
 import { fancyReelPool, keepOnlyColour, type FancyPool } from './reellight';
 import { PROCONN_LCD_FONT } from './proconnfont';
@@ -218,6 +219,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   let renderIndex: {
     cab: Cabinet;
     els: IndexedElement[];
+    bounds: Map<object, IntRect>;
     lastKeys: Int32Array | null;
     canvasW: number;
     canvasH: number;
@@ -237,15 +239,17 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       lightClusters = { cab, clusters: computeLightGeometry(cab) };
     }
     if (!renderIndex || renderIndex.cab !== cab) {
+      const els = buildRenderIndex(
+        cab,
+        lightClusters.clusters.map((c) => ({ bbox: c.bbox, lamps: c.sites.map((s) => s.lamp) })),
+        (input) => inputHeld(input),
+        () => reelPeek(),
+        (cb) => checkboxTicked(cb),
+      );
       renderIndex = {
         cab,
-        els: buildRenderIndex(
-          cab,
-          lightClusters.clusters.map((c) => ({ bbox: c.bbox, lamps: c.sites.map((s) => s.lamp) })),
-          (input) => inputHeld(input),
-          () => reelPeek(),
-          (cb) => checkboxTicked(cb),
-        ),
+        els,
+        bounds: ownerExtents(els),
         lastKeys: null,
         canvasW: 0,
         canvasH: 0,
@@ -307,14 +311,18 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.clip();
       ctx.fillStyle = '#0a0a12';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      drawCabinet(m, cab);
+      drawCabinet(m, cab, rects ? {
+        left: c.x0 + cab.content.left, top: c.y0 + cab.content.top,
+        right: c.x1 + cab.content.left, bottom: c.y1 + cab.content.top,
+      } : null);
       ctx.restore();
     }
     rectClipOnly(ctx, wasRect);
     return true;
   }
 
-  function drawCabinet(m: FrameView, cab: Cabinet): void {
+  function drawCabinet(m: FrameView, cab: Cabinet, pass: IntRect | null = null): void {
+    const bounds = pass ? renderIndex?.bounds : undefined;
     ctx.save();
     ctx.translate(-cab.content.left, -cab.content.top);
     if (cab.backgroundColour) {
@@ -550,6 +558,11 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     }
 
     for (const it of drawOrder(cab)) {
+      if (bounds && pass) {
+        const owner = drawItemOwner(it);
+        const e = owner ? bounds.get(owner) : undefined;
+        if (e && extentMisses(e, pass)) continue;
+      }
       switch (it.kind) {
         case 'lamp': drawLamp(it.lamp); break;
         case 'reel': drawReel(it.reel); break;

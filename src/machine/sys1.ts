@@ -295,6 +295,7 @@ export class Sys1 implements Machine {
     this.coinNext = -1;
     this.judgeWait.fill(0);
     this.judging = false;
+    this.landAllHeld();
   }
 
   private read(a: number): number {
@@ -634,7 +635,15 @@ export class Sys1 implements Machine {
     for (const d of this.payoutDevices) out[d.line] = this.slideEjects[d.line] ?? 0;
     return out;
   }
-  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+  get unnamedPulses(): Readonly<Record<number, number>> {
+    if (!('refused' in this.solenoidsFound())) return {};
+    const out: Record<number, number> = {};
+    for (let i = 0; i < 7; i++) {
+      if ((this.slidePence[i] ?? null) !== null && this.triacPulses[i]) out[i] = this.triacPulses[i];
+    }
+    return out;
+  }
+  get meterOnlyPayout(): boolean { return this.payoutDevices.length === 0; }
 
   setSlidePence(slides: readonly SlideEffect[]): void {
     for (let i = 0; i < 7; i++) this.slidePence[i] = slides[i] ?? null;
@@ -741,6 +750,7 @@ export class Sys1 implements Machine {
     this.coinTimer = COIN_HOLD + COIN_GAP;
     const v = this.programVerdict(bit);
     this.refusingCache = null;
+    if (bit < this.heldIn.length) this.landHeld(bit);
     if (code && bit < code.lines && v !== 'refused') {
       this.judgeWait[bit] = Sys1.JUDGE_UNSEEN;
       this.judgeSeen[bit] = false;
@@ -839,31 +849,38 @@ export class Sys1 implements Machine {
 
   private bookDropped(line: number, v: number | 'refused' | null): void {
     if (line < this.judgeVerdict.length) this.judgeVerdict[line] = v === 'refused' ? -1 : v === null ? -2 : v;
-    const l = this.cashLedger;
-    const [i0, t0, u0] = [l.inPence, l.tokenInPence, l.unpricedTokenIn];
     const c = this.verdictCoin(line, v);
-    if (c === 'refused') this.coinsRefused++;
-    else if (this.wiring) this.bookWiredCoin(line, c);
-    else this.bookProgramCoin(line, c);
-    if (line < this.judgeIn.length) {
-      this.judgeIn[line] = l.inPence - i0;
-      this.judgeToken[line] = l.tokenInPence - t0;
-      this.judgeUnpriced[line] = l.unpricedTokenIn - u0;
-    }
+    if (c === 'refused') { this.coinsRefused++; return; }
+    const watched = line < this.heldIn.length && this.judgeWait[line]! > 0;
+    const l = watched ? newCashLedger() : this.cashLedger;
+    if (this.wiring) this.bookWiredCoin(l, line, c);
+    else this.bookProgramCoin(l, line, c);
+    if (!watched) return;
+    this.heldIn[line] = l.inPence;
+    this.heldToken[line] = l.tokenInPence;
+    this.heldUnpriced[line] = l.unpricedTokenIn;
   }
 
-  private unbookDropped(line: number): void {
+  private landHeld(line: number): void {
     const l = this.cashLedger;
-    l.inPence -= this.judgeIn[line]!;
-    l.tokenInPence -= this.judgeToken[line]!;
-    l.unpricedTokenIn -= this.judgeUnpriced[line]!;
-    this.judgeIn[line] = this.judgeToken[line] = this.judgeUnpriced[line] = 0;
+    if (this.heldIn[line]) l.inPence += this.heldIn[line]!;
+    if (this.heldToken[line]) l.tokenInPence += this.heldToken[line]!;
+    if (this.heldUnpriced[line]) l.unpricedTokenIn += this.heldUnpriced[line]!;
+    this.heldIn[line] = this.heldToken[line] = this.heldUnpriced[line] = 0;
+  }
+
+  private landAllHeld(): void {
+    for (let line = 0; line < this.heldIn.length; line++) this.landHeld(line);
+  }
+
+  private discardHeld(line: number): void {
+    this.heldIn[line] = this.heldToken[line] = this.heldUnpriced[line] = 0;
     if (this.judgeVerdict[line] === -1) this.coinsRefused--;
   }
 
   private judgeCoinStep(cycles: number): void {
     const code = this.coinCode();
-    if (!code) { this.judgeWait.fill(0); this.judging = false; return; }
+    if (!code) { this.judgeWait.fill(0); this.judging = false; this.landAllHeld(); return; }
     const pc = this.cpu.pc;
     const atDispatch = pc === code.dispatch;
     const atRet = pc === code.ret;
@@ -882,6 +899,7 @@ export class Sys1 implements Machine {
       if (this.judgeWait[k]! <= 0) {
         this.judgeWait[k] = 0;
         if (!this.judgeSeen[k]) this.decide(k, 'refused');
+        else this.landHeld(k);
         continue;
       }
       any = true;
@@ -892,8 +910,8 @@ export class Sys1 implements Machine {
   private decide(line: number, v: number | 'refused'): void {
     const now = v === 'refused' ? -1 : v;
     this.refusingCache = null;
-    if (now === this.judgeVerdict[line]) return;
-    this.unbookDropped(line);
+    if (now === this.judgeVerdict[line]) { this.landHeld(line); return; }
+    this.discardHeld(line);
     this.bookDropped(line, v);
   }
 
@@ -904,11 +922,11 @@ export class Sys1 implements Machine {
   private readonly judgeSeen = [false, false, false, false, false, false, false, false];
   private readonly judgeTaken = [false, false, false, false, false, false, false, false];
   private readonly judgeVerdict = [0, 0, 0, 0, 0, 0, 0, 0];
-  private readonly judgeIn = [0, 0, 0, 0, 0, 0, 0, 0];
-  private readonly judgeToken = [0, 0, 0, 0, 0, 0, 0, 0];
-  private readonly judgeUnpriced = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly heldIn = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly heldToken = [0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly heldUnpriced = [0, 0, 0, 0, 0, 0, 0, 0];
 
-  private bookProgramCoin(line: number, c: SlotCoin | 0 | null): void {
+  private bookProgramCoin(l: CashLedger, line: number, c: SlotCoin | 0 | null): void {
     if (c === 0) return;
     if (c === null) {
       noteBoardDefault(this, {
@@ -917,12 +935,12 @@ export class Sys1 implements Machine {
         ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
       });
       const p = Sys1.COIN_PENCE[line];
-      if (typeof p === 'number') this.cashLedger.inPence += p;
+      if (typeof p === 'number') l.inPence += p;
       return;
     }
-    if (typeof c === 'number') this.cashLedger.inPence += c;
-    else if (c.token === null) this.cashLedger.unpricedTokenIn++;
-    else this.cashLedger.tokenInPence += c.token;
+    if (typeof c === 'number') l.inPence += c;
+    else if (c.token === null) l.unpricedTokenIn++;
+    else l.tokenInPence += c.token;
   }
 
   coinsRefused = 0;
@@ -964,18 +982,18 @@ export class Sys1 implements Machine {
     return true;
   }
 
-  private bookWiredCoin(line: number, taken: SlotCoin | 0 | null): void {
+  private bookWiredCoin(l: CashLedger, line: number, taken: SlotCoin | 0 | null): void {
     const w = this.wiring!;
     if (!this.booksMoney || w.conflicts.includes(line)) return;
     const c = w.coins.get(line);
-    if (c === undefined) { this.bookProgramCoin(line, taken); return; }
+    if (c === undefined) { this.bookProgramCoin(l, line, taken); return; }
     if (taken === 0) return;
     if (taken !== null) {
       this.wiringState.state = 'calibrated';
     }
-    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
-    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
-    this.cashLedger.tokenInPence += c.token;
+    if (typeof c === 'number') { l.inPence += c; return; }
+    if (c.token === null) { l.unpricedTokenIn++; return; }
+    l.tokenInPence += c.token;
   }
 
   private coinSlots: number[] = [];

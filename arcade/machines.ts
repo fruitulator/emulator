@@ -25,10 +25,10 @@ export interface SaveFault {
 
 export interface StateSlot {
   load(stamp?: string): Promise<StateRec | null | 'version' | SlotBattery>;
-  save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean, fault?: SaveFault): Promise<SaveResult | void>;
+  save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean, fault?: SaveFault, free?: boolean): Promise<SaveResult | void>;
   coinFault?(): CoinFault | null;
   visited?(): void;
-  left?(ledger: CashLedger | null): void;
+  left?(ledger: CashLedger | null, free?: boolean): void;
   money?: MoneyHooks;
   claim?(on: ClaimEvents, from?: ClaimFrom): Promise<ClaimResult>;
   visit?(on: VisitEvents, stamp?: string): Promise<Visit>;
@@ -44,7 +44,7 @@ export interface StateSlot {
 
 export interface MoneyHooks {
   start(ledger: CashLedger | null): void;
-  reading(ledger: CashLedger | null): void;
+  reading(ledger: CashLedger | null, free?: boolean): void;
   lost(version: number | null): void;
 }
 
@@ -91,7 +91,7 @@ export interface WatchHandle {
 
 export interface ClaimEvents {
   holderName?(name: string | null): void;
-  lost(): void;
+  lost(yours?: boolean): void;
   dropped?(holdMs: number): void;
   back?(): void;
   lapsed?(): void;
@@ -131,9 +131,9 @@ export function arcadeSlot(arcadeId: string, machine: string): StateSlot {
       void updateMachineStats(arcadeId, machine, (s) => ({ ...s, plays: s.plays + 1, lastPlayedAt: Date.now() }))
         .catch((e) => console.warn('[arcade] play count failed', e));
     },
-    left: (ledger) => {
+    left: (ledger, free) => {
       if (!ledger) return;
-      money.reading(ledger);
+      money.reading(ledger, free);
       void updateMachineStats(arcadeId, machine, (s) => ({ ...s, ledger, ledgerAt: Date.now() }))
         .catch((e) => console.warn('[arcade] money reading failed', e));
     },
@@ -144,23 +144,31 @@ export function arcadeSlot(arcadeId: string, machine: string): StateSlot {
 export function docMoney(arcadeId: string, machine: string): MoneyHooks {
   let run: CashLedger | null = null;
   let begun = false;
-  const write = (f: (rec: MoneyRecord) => MoneyRecord): void => {
+  let chain: Promise<void> = Promise.resolve();
+  const write = (f: (rec: MoneyRecord) => MoneyRecord): Promise<unknown> => {
     const now = Date.now();
-    void updateMachineMoney(arcadeId, machine, (m) => f(readMoneyRecord(m.moneyRecord, now) ?? startingRecord(m, now)))
-      .catch((e) => console.warn('[arcade] the money record could not be written', e));
+    return updateMachineMoney(arcadeId, machine, (m) => f(readMoneyRecord(m.moneyRecord, now) ?? startingRecord(m, now)));
+  };
+  const queue = (step: () => Promise<void>): void => {
+    chain = chain.then(step).catch((e) => console.warn('[arcade] the money record could not be written', e));
   };
   return {
     start: (ledger) => {
-      run = ledger ? { ...ledger } : null;
       begun = true;
-      write((rec) => rec);
+      queue(async () => {
+        run = ledger ? { ...ledger } : null;
+        await write((rec) => rec);
+      });
     },
-    reading: (ledger) => {
+    reading: (ledger, free) => {
       if (!ledger || !begun) return;
-      const from = run;
-      if (from && sameRun(from, ledger) && sameRun(ledger, from)) return;
-      run = { ...ledger };
-      write((rec) => addReading(rec, from, ledger, Date.now()));
+      queue(async () => {
+        if (free) { run = { ...ledger }; return; }
+        const from = run;
+        if (from && sameRun(from, ledger) && sameRun(ledger, from)) return;
+        await write((rec) => addReading(rec, from, ledger, Date.now()));
+        run = { ...ledger };
+      });
     },
     lost: (version) => {
       const now = Date.now();

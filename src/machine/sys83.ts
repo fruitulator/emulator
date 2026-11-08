@@ -16,7 +16,7 @@ import { V20Reels } from './v20reels';
 import { placeRomFlat } from './pairplacer';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, MachineDisplay, NamedCoin } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, DigitKind, Machine, MachineDisplay, NamedCoin, PayoutDeviceRow } from './machine';
 import { ledgerOutMults, newCashLedger } from './machine';
 import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
 import type { SlideEffect } from '../layout/fmlconfig';
@@ -51,7 +51,24 @@ const COIN_HOLD_ROW = Math.round(0.1 * SYS83_CLOCK);
 const COIN_HOLD_LINE = Math.round(0.07 * SYS83_CLOCK);
 const COIN_GAP = Math.round(0.05 * SYS83_CLOCK);
 
-export interface Sys83CoinRecord { readonly line: number; readonly state: number }
+export interface Sys83CoinRecord {
+  readonly line: number;
+  readonly state: number;
+  readonly outputs: readonly [number, number];
+}
+
+export function sys83LockoutTriacLines(records: readonly Sys83CoinRecord[]): number[] {
+  const lines = new Set<number>();
+  for (const r of records) {
+    for (const w of r.outputs) {
+      const image = w & 0xff;
+      const mask = w >> 8;
+      if (image === 8) { for (let b = 0; b < 8; b++) if (mask & (1 << b)) lines.add(b + 2); }
+      else if (image === 7) { if (mask & 0x40) lines.add(0); if (mask & 0x80) lines.add(1); }
+    }
+  }
+  return [...lines].sort((a, b) => a - b);
+}
 
 export function locateSys83CoinRecords(rom: Uint8Array): Sys83CoinRecord[] {
   const word = (a: number): number => (rom[a] << 8) | rom[a + 1];
@@ -66,7 +83,7 @@ export function locateSys83CoinRecords(rom: Uint8Array): Sys83CoinRecord[] {
       const state = word(r);
       const sw = word(r + 16);
       if (state >= 0x800 || sw < 0x0c00 || sw >= 0x1c00 || (sw & 0x3f8) !== 0) break;
-      out.push({ line: 0x100 | (((sw >> 10) - 2) << 3) | (sw & 7), state });
+      out.push({ line: 0x100 | (((sw >> 10) - 2) << 3) | (sw & 7), state, outputs: [word(r + 4), word(r + 6)] });
     }
     return out;
   }
@@ -85,7 +102,7 @@ const highSet = (latch: number, ctl: number): number => {
 export class Sys83 implements Bus, Machine {
   triacSenseLine = -1;
   triacSenseMask = 0xff;
-  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'meterLedgerOut', 'triacLedgerOut', 'nvram', 'coinRecords'];
+  static readonly snapshotConfig: readonly string[] = ['triacSenseLine', 'triacSenseMask', 'switches', 'meterInRaw', 'meterOutRaw', 'triacInRaw', 'triacOutRaw', 'meterLedgerOut', 'triacLedgerOut', 'nvram', 'coinRecords', 'lockoutTriacs'];
 
   readonly clockHz = SYS83_CLOCK;
   readonly cpu: HD6303Y;
@@ -143,7 +160,7 @@ export class Sys83 implements Bus, Machine {
   private readonly gridTotals = { in: 0, out: 0 };
   get meterTotals(): { readonly in: number; readonly out: number } { return this.gridTotals; }
   readonly cashLedger: CashLedger = newCashLedger();
-  private readonly book = new CoinBook(this.cashLedger, SYS83_CLOCK, true);
+  private readonly book = new CoinBook(this.cashLedger, SYS83_CLOCK);
   get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   private readonly slots = new SlotCoins();
 
@@ -161,6 +178,7 @@ export class Sys83 implements Bus, Machine {
   private coinTimer = 0;
 
   coinRecords: readonly Sys83CoinRecord[] = [];
+  lockoutTriacs: readonly number[] = [];
   coinsRefused = 0;
 
   readonly strays = new StrayCounter();
@@ -190,6 +208,7 @@ export class Sys83 implements Bus, Machine {
       this.rom[na] = codec[image[a]];
     }
     this.coinRecords = locateSys83CoinRecords(this.rom);
+    this.lockoutTriacs = sys83LockoutTriacLines(this.coinRecords);
   }
 
   private coinShut(raw: number): boolean {
@@ -238,12 +257,9 @@ export class Sys83 implements Bus, Machine {
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
-  get meterOnlyPayout(): boolean {
-    return !this.book.hasSlides
-      && (this.meterLedgerOut.some((x) => x > 0) || this.triacLedgerOut.some((x) => x > 0));
-  }
+  get meterOnlyPayout(): boolean { return this.book.namesNoPayout; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube'>[] { return this.book.slideRows; }
   readonly outClicks: number[] = [];
   get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutRaw); }
   get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
@@ -529,6 +545,7 @@ export class Sys83 implements Bus, Machine {
       this.triacPulses[i]++;
       this.gridTotals.in += this.triacInRaw[i] ?? 0;
       this.gridTotals.out += this.triacOutRaw[i] ?? 0;
+      if (this.lockoutTriacs.includes(i)) continue;
       if (this.book.hasSlides) this.book.slide(i);
       else this.cashLedger.unpricedOut += this.triacLedgerOut[i] ?? 0;
     }

@@ -1,7 +1,7 @@
 import type { Bus16 } from '../cpu/bus68k';
 import type { AudioSource, CabinetSwitch, Machine, MachineDisplay, DigitKind } from './machine';
 import type { BoardPart } from './parts';
-import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
+import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { Reel } from '../hw/reel';
 import { M68000 } from '../cpu/m68000';
 import { M68340Sim, MBAR_ADDR, RSR_WATCHDOG, SPURIOUS_VECTOR, OFF_PORTA, OFF_DDRA } from '../hw/m68340';
@@ -75,6 +75,7 @@ export class Pluto5 implements Bus16, Machine {
   static readonly HOPPER_WAVEFORM = v20Waveform((HOPPER_TICK_CYCLES / PLUTO5_CLOCK) * 1000, { beam: 0x19 + 1, gap: 0x96, start: 0x96, settle: 1 });
   readonly hopper = new Hopper(PLUTO5_CLOCK, Pluto5.HOPPER_WAVEFORM);
   hopperEjects = 0;
+  private hopperBooked = 0;
 
   readonly sec = (() => {
     const sec = new Sec();
@@ -108,9 +109,7 @@ export class Pluto5 implements Bus16, Machine {
   get unpricedPaidLines(): readonly number[] { return this.coinBook.unpricedPaidLines; }
   private secInMult: number[] = [];
   private secOutMult: number[] = [];
-  private secLedgerMult: number[] = [];
   readonly secTotals = { in: 0, out: 0 };
-  private static readonly SEC_UNIT_PENCE = 10;
 
   readonly io = new Map<string, number>();
   readonly strays = new StrayCounter();
@@ -173,7 +172,6 @@ export class Pluto5 implements Bus16, Machine {
   setSecMoneyMap(secIn: readonly number[], secOut: readonly number[]): void {
     this.secInMult = [...secIn];
     this.secOutMult = [...secOut];
-    this.secLedgerMult = ledgerOutMults({ in: [], out: [] }, { in: this.secInMult, out: this.secOutMult })[1];
   }
 
   get meterTotals(): { in: number; out: number } { return { ...this.secTotals }; }
@@ -183,11 +181,35 @@ export class Pluto5 implements Bus16, Machine {
     const inMult = this.secInMult[meter] ?? 0;
     const outMult = this.secOutMult[meter] ?? 0;
     if (inMult) this.secTotals.in += inMult * delta;
-    if (outMult) {
-      this.secTotals.out += outMult * delta;
-      const q = (this.secLedgerMult[meter] ?? 0) * Pluto5.SEC_UNIT_PENCE;
-      if (q > 0) for (let k = 0; k < delta; k++) this.coinBook.cashOut(q);
-    }
+    if (outMult) this.secTotals.out += outMult * delta;
+  }
+
+  static readonly HOPPER_LINE = 0;
+  get hopperPayoutLines(): readonly number[] { return [Pluto5.HOPPER_LINE]; }
+  get unpricedPayoutLines(): readonly number[] { return [Pluto5.HOPPER_LINE]; }
+  get payoutDevices(): readonly { line: number; kind: 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+    return [{ line: Pluto5.HOPPER_LINE, kind: 'hopper', displayNumber: 1, defaultPence: null }];
+  }
+  namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
+  get rowCoins(): Readonly<Record<number, number>> { return { [Pluto5.HOPPER_LINE]: this.hopper.paid }; }
+  get outMeterClicks(): Readonly<Record<number, number>> {
+    const out: Record<number, number> = {};
+    this.secOutMult.forEach((m, i) => { if (m > 0) out[i + 1] = this.secPulses[i] ?? 0; });
+    return out;
+  }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+
+  private bookHopper(): void {
+    const paid = this.hopper.paid;
+    if (paid > this.hopperEjects) this.hopperEjects = paid;
+    if (paid <= this.hopperBooked) return;
+    const fresh = paid - this.hopperBooked;
+    this.hopperBooked = paid;
+    const v = this.coinBook.payouts.value(Pluto5.HOPPER_LINE);
+    if (v === undefined) {
+      this.cashLedger.unpricedOut += fresh;
+      this.coinBook.payouts.noteUnpriced(Pluto5.HOPPER_LINE);
+    } else for (let k = 0; k < fresh; k++) this.coinBook.cashOut(v);
   }
 
   readonly secPulses = new Uint32Array(32);
@@ -308,6 +330,7 @@ export class Pluto5 implements Bus16, Machine {
     this.duartAcc = 0;
     this.i2c.reset();
     this.hopper.reset();
+    this.hopperBooked = 0;
     this.sec.reset();
     this.dataPak.reset();
     this.dataPakOut = [];
@@ -349,7 +372,7 @@ export class Pluto5 implements Bus16, Machine {
     this.soundTick(cycles);
     this.reelDrive.tick(cycles);
     this.hopper.tick(cycles);
-    if (this.hopper.paid > this.hopperEjects) this.hopperEjects = this.hopper.paid;
+    this.bookHopper();
     if (this.dataPakOut.length) this.tickDataPak(cycles);
     if (this.coinTimer > 0) {
       this.coinTimer -= cycles;

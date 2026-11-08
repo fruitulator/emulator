@@ -2,7 +2,7 @@ import { ROM_UNPLACED } from './pairplacer';
 import { TokenPayouts } from './coinbook';
 import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
-import type { CabinetSwitch, Machine, CoinWiringStatus } from './machine';
+import type { CabinetSwitch, CashLedger, Machine, CoinWiringStatus } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
@@ -151,9 +151,23 @@ export class Sys85 implements Bus, Machine {
 
   private readonly hostValues = new TokenPayouts();
   namePayout(line: number, pence: number): void { this.hostValues.name(line, pence); }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
-    return this.slidePence.flatMap((s, line) => s === null ? [] : [{ line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null }]);
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null; defaultFrom?: 'machine' }[] {
+    const token = this.programTokenPence();
+    return this.slidePence.flatMap((s, line) => s === null ? [] : [{
+      line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1,
+      defaultPence: typeof s === 'number' ? s : s === 'token' ? token : null,
+      ...(s === 'token' && token !== null ? { defaultFrom: 'machine' as const } : {}),
+    }]);
   }
+  private programTokenPence(): number | null {
+    const t = this.readCoinTable();
+    if ('refused' in t) return null;
+    const coins = detectCoins(t);
+    if (!(coins instanceof Map)) return null;
+    const v = new Set([...coins.values()].flatMap((c) => (typeof c === 'object' && c.token !== null && c.token > 0 ? [c.token] : [])));
+    return v.size === 1 ? [...v][0]! : null;
+  }
+
   readonly outClicks: number[] = [];
   get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
   get rowCoins(): Readonly<Record<number, number>> {
@@ -185,7 +199,11 @@ export class Sys85 implements Bus, Machine {
     }
     const price = this.slidePence[i];
     if (typeof price === 'number') this.cashLedger.outPence += price;
-    else if (price === 'token') this.cashLedger.tokenOutPence += Sys85.COIN_PENCE[Sys85.TOKEN_LINE] ?? 0;
+    else if (price === 'token') {
+      const pence = this.programTokenPence();
+      if (pence === null) { this.cashLedger.unpricedTokenOut++; this.unpricedPaid.add(i); }
+      else this.cashLedger.tokenOutPence += pence;
+    }
     else if (price === null && this.judgedByMeters) {  }
     else { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
   }
@@ -393,15 +411,15 @@ export class Sys85 implements Bus, Machine {
     this.pulseCoinSwitch(sw!);
     const t = this.coinTables();
     const mask = 'refused' in t ? 0 : sc1PlainCoinMask(t, this.rom, this.programMem, line);
-    this.judge.begin(line, mask, taken === 'refused', Sys85.JUDGE_WAIT);
+    this.judge.begin(line, mask, taken === 'refused', Sys85.JUDGE_WAIT, this.cashLedger);
     if (taken === 'refused') { this.coinsRefused++; return; }
     this.bookTakenCoin(line, taken);
   }
 
   private bookTakenCoin(line: number, taken: SlotCoin | null): void {
-    this.judge.book(this.cashLedger, () => {
-      if (this.wiring) this.bookWiredCoin(line, taken);
-      else this.bookProgramCoin(line, taken);
+    this.judge.hold(this.cashLedger, (l) => {
+      if (this.wiring) this.bookWiredCoin(l, line, taken);
+      else this.bookProgramCoin(l, line, taken);
     });
   }
 
@@ -424,7 +442,7 @@ export class Sys85 implements Bus, Machine {
     this.inputRegs[this.coinStrobe] |= this.coinMask;
   }
 
-  private bookProgramCoin(line: number, taken: SlotCoin | null): void {
+  private bookProgramCoin(l: CashLedger, line: number, taken: SlotCoin | null): void {
     if (taken === null) {
       noteBoardDefault(this, {
         axis: 'coin',
@@ -432,18 +450,18 @@ export class Sys85 implements Bus, Machine {
         ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
       });
       if (line === Sys85.TOKEN_LINE && this.tokenOr2p) {
-        this.cashLedger.unpricedIn = (this.cashLedger.unpricedIn ?? 0) + 1;
+        l.unpricedIn = (l.unpricedIn ?? 0) + 1;
         return;
       }
       const pence = Sys85.COIN_PENCE[line];
       if (pence === undefined) return;
-      if (line === Sys85.TOKEN_LINE) this.cashLedger.tokenInPence += pence;
-      else this.cashLedger.inPence += pence;
+      if (line === Sys85.TOKEN_LINE) l.tokenInPence += pence;
+      else l.inPence += pence;
       return;
     }
-    if (typeof taken === 'number') { this.cashLedger.inPence += taken; return; }
-    if (taken.token === null) this.cashLedger.unpricedTokenIn++;
-    else this.cashLedger.tokenInPence += taken.token;
+    if (typeof taken === 'number') { l.inPence += taken; return; }
+    if (taken.token === null) l.unpricedTokenIn++;
+    else l.tokenInPence += taken.token;
   }
 
   private coinTablesCache: { rom: Uint8Array; t: Sys85CoinTables | Refusal } | null = null;
@@ -511,20 +529,20 @@ export class Sys85 implements Bus, Machine {
     return true;
   }
 
-  private bookWiredCoin(line: number, taken: SlotCoin | null): void {
+  private bookWiredCoin(l: CashLedger, line: number, taken: SlotCoin | null): void {
     const w = this.wiring!;
     if (!this.booksMoney || w.conflicts.includes(line)) return;
     const c = w.coins.get(line);
     if (c === undefined) {
-      this.bookProgramCoin(line, taken);
+      this.bookProgramCoin(l, line, taken);
       return;
     }
     if (taken !== null) {
       w.state = 'calibrated';
     }
-    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
-    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
-    this.cashLedger.tokenInPence += c.token;
+    if (typeof c === 'number') { l.inPence += c; return; }
+    if (c.token === null) { l.unpricedTokenIn++; return; }
+    l.tokenInPence += c.token;
   }
 
   private coinSlots: number[] = [];

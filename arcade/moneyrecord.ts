@@ -26,9 +26,11 @@ export function readMoneyRecord(x: unknown, now: number): MoneyRecord | null {
     for (const x of o.lost as unknown[]) {
       const e = x as Record<string, unknown> | null;
       if (!e || typeof e !== 'object') continue;
+      const refunded = readCredit(e.refunded);
       lost.push({
         at: typeof e.at === 'number' ? e.at : now, savedAt: typeof e.savedAt === 'number' ? e.savedAt : 0,
         version: num(e.version), n: num(e.n), sinceGame: readCredit(e.sinceGame),
+        ...(refunded ? { refunded } : {}),
       });
     }
     if (lost.length) rec.lost = lost;

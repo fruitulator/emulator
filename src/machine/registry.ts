@@ -2996,7 +2996,7 @@ function wireCoinMoney(
   if (slideNote && !slides?.some((s) => s !== null)) {
     noteBoardDefault(m, {
       axis: 'peripheral',
-      text: 'the layout names no payout slide - money out is counted from the meters, not priced',
+      text: 'the layout names no payout slide - money out is counted, value not known',
       ifWrong: 'Bookkeeping shows payouts as a count with no value; play is not affected.',
       node,
     });

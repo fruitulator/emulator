@@ -1,5 +1,5 @@
 import { detectCoins, type CoinLine, type CoinLineTable, type Refusal } from './coinwiring';
-import type { CashLedger } from './machine';
+import { newCashLedger, type CashLedger } from './machine';
 
 const REC = 27;
 export const SC1_COIN_LINES = 5;
@@ -195,47 +195,61 @@ export class CoinLockJudge {
   locked = false;
   seen = false;
   wait = 0;
-  bookedIn = 0;
-  bookedToken = 0;
-  bookedUnpriced = 0;
-  bookedUnpricedIn = 0;
+  heldIn = 0;
+  heldToken = 0;
+  heldUnpriced = 0;
+  heldUnpricedIn = 0;
 
-  begin(line: number, mask: number, lockedAtDrop: boolean, waitCycles: number): void {
+  begin(line: number, mask: number, lockedAtDrop: boolean, waitCycles: number, l: CashLedger): void {
+    this.land(l);
     this.line = mask ? line : -1;
     this.mask = mask;
     this.locked = lockedAtDrop;
     this.seen = false;
     this.wait = waitCycles;
-    this.bookedIn = this.bookedToken = this.bookedUnpriced = this.bookedUnpricedIn = 0;
   }
 
-  book(l: CashLedger, booking: () => void): void {
-    const [i0, t0, u0, c0] = [l.inPence, l.tokenInPence, l.unpricedTokenIn, l.unpricedIn ?? 0];
-    booking();
-    this.bookedIn = l.inPence - i0;
-    this.bookedToken = l.tokenInPence - t0;
-    this.bookedUnpriced = l.unpricedTokenIn - u0;
-    this.bookedUnpricedIn = (l.unpricedIn ?? 0) - c0;
+  hold(l: CashLedger, booking: (into: CashLedger) => void): void {
+    if (this.line < 0) { booking(l); return; }
+    const s = newCashLedger();
+    booking(s);
+    this.heldIn = s.inPence;
+    this.heldToken = s.tokenInPence;
+    this.heldUnpriced = s.unpricedTokenIn;
+    this.heldUnpricedIn = s.unpricedIn ?? 0;
+  }
+
+  land(l: CashLedger): void {
+    if (this.heldIn) l.inPence += this.heldIn;
+    if (this.heldToken) l.tokenInPence += this.heldToken;
+    if (this.heldUnpriced) l.unpricedTokenIn += this.heldUnpriced;
+    if (this.heldUnpricedIn) l.unpricedIn = (l.unpricedIn ?? 0) + this.heldUnpricedIn;
+    this.discard();
+  }
+
+  discard(): void {
+    this.heldIn = this.heldToken = this.heldUnpriced = this.heldUnpricedIn = 0;
+  }
+
+  get holding(): boolean {
+    return (this.heldIn | this.heldToken | this.heldUnpriced | this.heldUnpricedIn) !== 0;
   }
 
   watch(cycles: number, lock: Sc1CoinLock | null | undefined, mem: Sc1Mem, l: CashLedger): 'refused' | 'taken' | null {
     if (this.line < 0) return null;
-    if (!lock) { this.line = -1; return null; }
+    if (!lock) { this.line = -1; this.land(l); return null; }
     const inLast = (mem(lock.lastByte) & this.mask) !== 0;
     if (!this.seen || inLast) {
       if (inLast) this.seen = true;
       this.wait -= cycles;
-      if (this.wait <= 0) this.line = -1;
+      if (this.wait <= 0) { this.line = -1; this.land(l); }
       return null;
     }
     this.line = -1;
     const lockedNow = (mem(lock.lockByte) & this.mask) !== 0;
-    if (lockedNow === this.locked) return null;
-    if (!lockedNow) return 'taken';
-    l.inPence -= this.bookedIn;
-    l.tokenInPence -= this.bookedToken;
-    l.unpricedTokenIn -= this.bookedUnpriced;
-    if (this.bookedUnpricedIn) l.unpricedIn = (l.unpricedIn ?? 0) - this.bookedUnpricedIn;
+    if (lockedNow === this.locked) { this.land(l); return null; }
+    if (!lockedNow) { this.land(l); return 'taken'; }
+    this.discard();
     return 'refused';
   }
 }

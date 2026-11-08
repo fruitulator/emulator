@@ -1,6 +1,6 @@
 import { withBuild } from '../web/updategate';
 import {
-  DEV_PLAYER_PARAM, LIVE_OP, LIVE_PING, LIVE_PONG,
+  DEV_PLAYER_PARAM, LIVE_OP, LIVE_PING, LIVE_PONG, SESSION_PARAM,
   type KeyPart, type LiveToPage, type LiveToServer, type Presence, type RelayBatch,
 } from './serverwire';
 
@@ -21,7 +21,7 @@ export interface LinkEvents {
   dropped(): void;
   back(): void;
   lapsed(): void;
-  lost(): void;
+  lost(yours?: boolean): void;
   presence?(p: Presence): void;
   keyAsk?(): void;
   watching?(why: null | 'free' | 'yours'): void;
@@ -38,10 +38,11 @@ export interface LinkOptions {
   clearTimeout(h: unknown): void;
 }
 
-export function liveUrl(machineBase: string, player: string): string {
+export function liveUrl(machineBase: string, player: string, session?: string): string {
   const u = new URL(`${machineBase}/${LIVE_OP}`);
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
   if (player) u.searchParams.set(DEV_PLAYER_PARAM, player);
+  if (session) u.searchParams.set(SESSION_PARAM, session);
   return withBuild(u).href;
 }
 
@@ -148,7 +149,7 @@ export class LiveLink {
     }
     this.stop();
     if (m.you === 'lapsed') this.on.lapsed();
-    else this.on.lost();
+    else this.on.lost(m.yours === true);
   }
 
   private onTick(): void {

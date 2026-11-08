@@ -50,7 +50,9 @@ export class PayoutCheck {
   windows = 0;
 
   named(line: number, pence: number): void {
-    this.hostPence[line] = pence;
+    if (pence > 0) this.hostPence[line] = pence;
+    else delete this.hostPence[line];
+
     for (const m of Object.values(this.meters)) {
       for (const b of BASES) if (b.endsWith('Pence') && b in m.ratio) m.ratio[b] = null;
     }

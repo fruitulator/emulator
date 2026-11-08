@@ -60,7 +60,9 @@ export interface MachineInfo {
     kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper';
     displayNumber?: number;
     defaultPence?: number | null;
+    defaultFrom?: 'layout' | 'machine';
   }[];
+
   meterOnlyPayout?: boolean;
   cashPayouts?: number[];
   payoutRows?: PayoutRow[];

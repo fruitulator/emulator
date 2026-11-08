@@ -94,3 +94,14 @@ export function testLabelsForPanel(
 export function hasOperatedSwitches(info: Pick<MachineInfo, 'switchPanel'>): boolean {
   return info.switchPanel.some((s) => !s.option);
 }
+
+export function testLines(
+  platform: readonly NamedInput[],
+  ids: Partial<Record<SwitchControl, number>>,
+): Set<number> {
+  const out = new Set<number>();
+  for (const n of layoutNamedInputs(platform, ids)) {
+    if (n.control && TEST_CONTROLS.includes(n.control)) out.add(namedInputId(n));
+  }
+  return out;
+}

@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { CabinetSwitch, CoinWiringStatus, Machine, DigitKind, NoteResult } from './machine';
+import type { CabinetSwitch, CoinWiringStatus, Machine, DigitKind, NoteResult, PayoutDeviceRow } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
@@ -809,7 +809,7 @@ export class Impact implements Bus16, Machine {
   }
   private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
 
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube' | 'hopper'>[] {
     return [
       ...this.slidePence.flatMap((effect, line) => effect === null ? [] : [{
         line,
@@ -817,8 +817,9 @@ export class Impact implements Bus16, Machine {
         displayNumber: line + 1,
         defaultPence: typeof effect === 'number' ? effect : null,
       }]),
-      ...(this.hopper1Fitted ? [{ line: 4, kind: 'hopper' as const, displayNumber: 1, defaultPence: this.hopperCoinPence[0] }] : []),
-      ...(this.hopper2Fitted ? [{ line: 5, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1] }] : []),
+      ...(this.hopper1Fitted ? [{ line: 4, kind: 'hopper' as const, displayNumber: 1, defaultPence: this.hopperCoinPence[0], defaultFrom: 'machine' as const }] : []),
+      ...(this.hopper2Fitted ? [{ line: 5, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1], defaultFrom: 'machine' as const }] : []),
+
     ];
   }
 
@@ -1380,16 +1381,12 @@ export class Impact implements Bus16, Machine {
     for (let i = 0; i < paid.length; i++) {
       const fresh = paid[i] - this.hopperPaid[i];
       if (fresh > 0) {
-        const value = this.hopperCoinPence[i];
+        const named = this.cashPayouts.value(4 + i);
+        const value = named ?? this.hopperCoinPence[i];
         if (value === null) {
-          const named = this.cashPayouts.value(4 + i);
-          if (named === undefined) {
-            this.cashLedger.unpricedOut += fresh;
-            this.cashPayouts.noteUnpriced(4 + i);
-          } else this.cashLedger.outPence += fresh * named;
-        } else {
-          this.cashLedger.outPence += fresh * value;
-        }
+          this.cashLedger.unpricedOut += fresh;
+          this.cashPayouts.noteUnpriced(4 + i);
+        } else this.cashLedger.outPence += fresh * value;
       }
       this.hopperPaid[i] = paid[i];
     }

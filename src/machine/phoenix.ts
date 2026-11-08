@@ -619,14 +619,14 @@ export class Phoenix implements Machine {
     let raw: number;
     if (id >= 0x100 && id < 0x180) raw = id;
     else if (coinReachesRow(id)) raw = COIN_RAW[id];
-    else return;
+    else { this.coinsRefused++; return; }
     const coins = this.coinsInForce();
     if (coins) {
       const reads = phxReadLines(coins);
       if (![...reads].some((l) => phxIdHits(id, l))) { this.coinsRefused++; return; }
     }
     this.coinNext = raw >>> 12;
-    this.pressCoin(raw & 0xfff);
+    if (!this.pressCoin(raw & 0xfff)) { this.coinsRefused++; return; }
     if (this.coinCode()) this.pend(id);
     else this.bookDropped(id);
   }
@@ -641,16 +641,17 @@ export class Phoenix implements Machine {
     this.coinBook.coin(slotOrNoteCoin(this.slotCoins, id));
   }
 
-  private pressCoin(code: number): void {
+  private pressCoin(code: number): boolean {
     const line = (code & 0x100) !== 0;
     this.coinRow = line ? (code & 0x78) >> 3 : 0;
     this.coinMask = line ? 1 << (code & 7) : code & 0xff;
-    if (this.coinRow >= this.matrix.length || !this.coinMask) { this.coinTimer = 0; this.coinNext = 0; return; }
+    if (this.coinRow >= this.matrix.length || !this.coinMask) { this.coinTimer = 0; this.coinNext = 0; return false; }
     const after = this.coinNext ? COIN_TAIL : COIN_GAP;
     this.coinTimer = (line ? COIN_HOLD_LINE : COIN_HOLD) + COIN_TAIL + after;
     this.coinReleaseAt = after;
     this.coinHeld = true;
     this.matrix[this.coinRow] |= this.coinMask;
+    return true;
   }
   private coinTimer = 0;
   private coinRow = 0;

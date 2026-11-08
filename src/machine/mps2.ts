@@ -23,7 +23,7 @@ import { noteRomCut } from './boarddefaults';
 import { COIN_RAW, coinMatrixSteps } from './coinraw';
 import { StrayCounter } from './strayaccess';
 import type { DigitKind, CoinWiringStatus } from './machine';
-import { calibratorState, changeOf, detectCoins, linesOf, MeterStepCalibrator, PairedMeterCheck, wiringKey, wiringStateFor, type CalibratorState, type CoinLineTable, type CoinWiring, type SlotCoin, type WatchedCoin } from './coinwiring';
+import { calibratorState, changeOf, detectCoins, linesOf, MeterStepCalibrator, PairedMeterCheck, wiringKey, wiringStateFor, type CalibratorState, type CoinLineTable, type CoinWiring, type SlotCoin, type StepState } from './coinwiring';
 import { metersInPairs, pairedBank, PendingCounterFinder, readCountedMeters, readCreditMeters, readMps2CoinTable } from './mps2coins';
 import { lockoutRefuses, type CoinLockoutWiring } from '../hw/coinlockout';
 import { CoinBook, bookedOfSlotCoin, statedCoinOf, type BookedCoin } from './coinbook';
@@ -69,7 +69,6 @@ const METER_TICK_CYCLES = 4000;
 const REEL_BONUS_TICKS = 10;
 const REEL_BONUS_SLOT = 4;
 
-const TOKEN_IN_LINE = 3;
 const TOKEN_OUT_LINE = 7;
 
 const REEL_STAND_IN_HALF_STEPS = 96;
@@ -173,7 +172,6 @@ export class Mps2 implements Machine {
   readonly meterTotals = { in: 0, out: 0 };
 
   private bookMeterLine(line: number): void {
-    if (this.wiring) { this.bookWiredLine(line); return; }
     if ((this.meterInPence[line] ?? 0) > 0) {
       this.findPending(line);
       if ((this.pendingAt[line] ?? -1) < 0) this.meterTakesCoin();
@@ -317,6 +315,8 @@ export class Mps2 implements Machine {
   }
 
   private dropCoin(line: number): BookedCoin {
+    const wired = this.wiredCoin(line);
+    if (wired !== undefined) return wired;
     const t = this.coinLineTable;
     const priced = t ? detectCoins(t) : null;
     const c = priced instanceof Map ? priced.get(line) : undefined;
@@ -326,6 +326,7 @@ export class Mps2 implements Machine {
 
   private bookCoinTaken(line: number): void {
     const coin = this.dropCoin(line);
+    if (this.wiredCoin(line)) this.wiringState.state = 'calibrated';
     this.coinBook.coin(coin);
   }
 
@@ -413,97 +414,33 @@ export class Mps2 implements Machine {
     this.dropping = any;
   }
 
-  private wiring: {
-    coins: Map<number, SlotCoin>;
-    conflicts: number[];
-    cal: MeterStepCalibrator;
-    unpricedTokens: boolean;
-    change: Map<number, number>;
-  } | null = null;
+  private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
 
-  private wiringState: { key: string; cal: CalibratorState; held: { inC: Float64Array }; windowLines: number[] } = Mps2.freshWiringState('');
-
-  private static freshWiringState(key: string): { key: string; cal: CalibratorState; held: { inC: Float64Array }; windowLines: number[] } {
-    return { key, cal: calibratorState(), held: { inC: new Float64Array(9) }, windowLines: [] };
-  }
-
-  private static readonly WIRING_QUIET = Math.round(1.5 * CLOCK);
-  private static readonly WIRING_FIRST_WAIT = Math.round(3 * CLOCK);
+  private wiringState: { key: string; state: StepState } = { key: '', state: 'waiting' };
 
   setCoinWiring(w: CoinWiring): void {
     const { coins, conflicts } = linesOf(w);
-    const pence = new Map<number, number>();
-    for (const [line, c] of coins) { const v = typeof c === 'number' ? c : c.token; if (v !== null) pence.set(line, v); }
-    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), Mps2.freshWiringState);
-    this.wiring = {
-      coins,
-      conflicts,
-      cal: this.meterLaw(this.wiringState.cal),
-      unpricedTokens: [...coins.values()].some((c) => typeof c === 'object' && c.token === null),
-      change: changeOf(this.coinLineTable, pence),
-    };
+    this.wiringState = wiringStateFor(this.wiringState, this.wiring !== null, wiringKey(w), (key) => ({ key, state: 'waiting' }));
+    this.wiring = { coins, conflicts };
   }
 
   get coinWiringStatus(): CoinWiringStatus | undefined {
     const w = this.wiring;
     if (!w) return undefined;
-    return { state: w.cal.state, step: w.cal.step, conflicts: [...w.conflicts] };
+    const st = this.wiringState.state;
+    return { state: st, step: st === 'calibrated' ? 1 : null, conflicts: [...w.conflicts] };
   }
 
-  private wiredValue(line: number): WatchedCoin {
-    const c = this.wiring?.coins.get(line);
-    if (c === undefined) return undefined;
-    const v = typeof c === 'number' ? c : c.token;
-    return v === null ? null : v - (this.wiring!.change.get(line) ?? 0);
+  private wiredCoin(line: number): BookedCoin | undefined {
+    const w = this.wiring;
+    if (!w) return undefined;
+    if (w.conflicts.includes(line)) return null;
+    const c = w.coins.get(line);
+    return c === undefined ? undefined : bookedOfSlotCoin(c);
   }
 
-  private bookWiredLine(line: number): void {
-    const w = this.wiring!;
-    let inC = this.meterInMult[line] ?? 0;
-    if (line === TOKEN_IN_LINE && w.unpricedTokens) inC = 0;
-    if (inC > 0) w.cal.count(inC, this.now);
-    const toToken = inC > 0 && line !== TOKEN_IN_LINE && this.windowIsTokens();
-    this.wiringState.held.inC[toToken ? TOKEN_IN_LINE : line] += inC;
-    this.flushWired();
-    this.countMeterOut(this.meterOutMultRaw[line] ?? 0);
-  }
-
-  private windowIsTokens(): boolean {
-    const lines = this.wiringState.windowLines;
-    if (!lines.length) return false;
-    return lines.every((l) => {
-      const c = this.wiring!.coins.get(l);
-      return typeof c === 'object' && c !== null && c.token !== null;
-    });
-  }
-
-  private flushWired(): void {
-    const w = this.wiring!;
-    if (w.cal.state !== 'calibrated' || w.cal.step === null) return;
-    const step = w.cal.step;
-    for (let line = 0; line < 9; line++) {
-      const inP = this.wiringState.held.inC[line]! * step;
-      this.wiringState.held.inC[line] = 0;
-      if (line === TOKEN_IN_LINE) this.ledger.tokenInPence += inP;
-      else this.ledger.inPence += inP;
-    }
-  }
-
-  private tickWiring(): void {
-    const w = this.wiring!;
-    const closed = w.cal.tick(this.now);
-    if (!closed) return;
-    const lines = this.wiringState.windowLines;
-    this.wiringState.windowLines = [];
-    if (closed.counts > 0) {
-      this.ledger.unpricedTokenIn += closed.coins.filter((c) => c === null).length;
-      for (const l of lines) {
-        const c = w.change.get(l);
-        if (c) this.ledger.inPence += c;
-      }
-    }
-    this.flushWired();
-  }
+  private static readonly WIRING_QUIET = Math.round(1.5 * CLOCK);
+  private static readonly WIRING_FIRST_WAIT = Math.round(3 * CLOCK);
 
   private coinSlots: { line: number; token: boolean }[] = [];
 
@@ -606,7 +543,6 @@ export class Mps2 implements Machine {
   private tickMeters(cycles: number): void {
     const confirmed = this.meterBank.advance(cycles, METER_TICK_CYCLES);
     if (confirmed) for (let l = 0; l < 9; l++) if (confirmed & (1 << l)) this.meterConfirmed(l);
-    if (this.wiring) this.tickWiring();
     if (this.dropping) this.tickDrops(cycles);
     if (this.unitState.cal.win.open) this.tickUnit();
     this.coinBook.elapse(cycles);
@@ -1008,14 +944,6 @@ export class Mps2 implements Machine {
     const inC = this.triacInMult[i] ?? 0;
     this.meterTotals.in += inC;
     this.meterTotals.out += this.triacOutMultRaw[i] ?? 0;
-    const w = this.wiring;
-    if (w) {
-      if (inC > 0) w.cal.count(inC, this.now);
-      this.wiringState.held.inC[0] += inC;
-      this.flushWired();
-      this.countMeterOut(this.triacOutMultRaw[i] ?? 0);
-      return;
-    }
     if (inC > 0) {
       this.meterTakesCoin();
       if (this.unitState.cal.win.open) this.unitCal().count(inC, this.now);
@@ -1232,10 +1160,7 @@ export class Mps2 implements Machine {
       this.coinsRefused++;
       return;
     }
-    if (this.wiring) {
-      this.wiring.cal.coin(this.wiredValue(bit), this.now);
-      this.wiringState.windowLines.push(bit);
-    } else if (!this.meterChecksCoins && !this.shutCoinWaits(bit)) {
+    if (!this.meterChecksCoins && !this.shutCoinWaits(bit)) {
       this.bookCoinTaken(bit);
     } else {
       this.pendingStillCounts();

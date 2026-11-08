@@ -1400,12 +1400,34 @@ export class Electro implements Machine {
 
   private payOut(p: Comp): void {
     const coin = this.payouts.get(p.id);
-    if (coin !== undefined) this.book.pay(coin);
+    if (coin === undefined) return;
+    this.book.part(p.id, coin);
   }
 
   get payoutParts(): { name: string; coin: PayoutCoin }[] {
     return [...this.payouts].map(([id, coin]) => ({ name: this.circuit.all[id].name, coin }));
   }
+
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
+    let tubes = 0;
+    let hoppers = 0;
+    return [...this.payouts].map(([id, coin]) => {
+      const hopper = this.circuit.all[id].type === T.HOPPER;
+      const token = coin === 'token' || typeof coin === 'object';
+      return {
+        line: id,
+        kind: hopper ? (token ? 'token-hopper' as const : 'hopper' as const) : (token ? 'token-tube' as const : 'tube' as const),
+        displayNumber: hopper ? ++hoppers : ++tubes,
+        defaultPence: typeof coin === 'number' ? coin : typeof coin === 'object' ? coin.token : null,
+      };
+    });
+  }
+  namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  get unpricedPayoutLines(): readonly number[] { return [...this.payouts].flatMap(([id, c]) => (c === 'unpriced' ? [id] : [])); }
+  get tokenPayoutLines(): readonly number[] { return [...this.payouts].flatMap(([id, c]) => (c === 'token' ? [id] : [])); }
+  get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.payoutDevices); }
+  get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
+  get meterOnlyPayout(): boolean { return this.payouts.size === 0; }
 
   private confirmMeters(confirmed: number): void {
     for (let i = 0; i < 16; i++) {
@@ -1419,9 +1441,9 @@ export class Electro implements Machine {
   insertCoin(id: number): void {
     if (this.coinTimer > 0) return;
     const raw = id >= 0x100 && id < 0x180 ? id : COIN_RAW[id];
-    if (raw === undefined) return;
+    if (raw === undefined) { this.coinsRefused++; return; }
     const steps = coinMatrixSteps(raw);
-    if (!steps) return;
+    if (!steps) { this.coinsRefused++; return; }
     this.coinSteps = steps.map((st) => st.strobe * 8 + st.bit);
     this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD);
     this.nextCoinStep();
@@ -1448,6 +1470,8 @@ export class Electro implements Machine {
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }
+
+  coinsRefused = 0;
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
 

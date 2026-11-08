@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { CoinChute, Machine, OptionKey, DigitKind, NoteResult, CoinPortLines, CoinWiringStatus } from './machine';
+import type { CoinChute, Machine, OptionKey, DigitKind, NoteResult, CoinPortLines, CoinWiringStatus, PayoutDeviceRow } from './machine';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel, type CabinetSwitch } from './machine';
 import { TokenPayouts } from './coinbook';
 import type { BoardPart } from './parts';
@@ -145,10 +145,28 @@ export class Sc4 implements Bus16, Machine {
 
   private payFrame: number[] = [];
   private readonly ccHoppers = new Map<number, Sch2Hopper>();
+  ccTalkParts: Record<number, Sch2Hopper> = {};
   private serialHopperModels: readonly string[] = ['SCH 2', 'SCH 2'];
 
   setSerialHoppers(models: readonly (string | null)[]): void {
     this.serialHopperModels = [models[0] ?? 'SCH 2', models[1] ?? 'SCH 2'];
+    this.fitSerialHoppers();
+  }
+
+  private fitSerialHoppers(): void {
+    this.ccHoppers.clear();
+    for (const dest of [3, 4]) {
+      const part = deviceFor(this.serialHopperModels[dest - 3]);
+      if (!(part instanceof Sch2Hopper)) continue;
+      const h = part;
+      h.desFitted = this.serialHopperDes[dest - 3] ?? false;
+      applyPartKeys(h, dest === 3 ? this.ccTalkKeys.hopper1 : this.ccTalkKeys.hopper2);
+      h.setPeriod(Math.floor(MASTER_CLOCK / 6));
+      const row = dest - 3;
+      h.onPaid = () => { this.bookHopperCoin(this.payingCoins().cctalk.get(dest) ?? null, row); };
+      this.ccHoppers.set(dest, h);
+    }
+    this.ccTalkParts = Object.fromEntries(this.ccHoppers);
   }
 
   private serialHopperDes: readonly [boolean, boolean] = [false, false];
@@ -283,18 +301,8 @@ export class Sc4 implements Bus16, Machine {
       return;
     }
     if (dest !== 3 && dest !== 4) return;
-    let h = this.ccHoppers.get(dest);
-    if (!h) {
-      const part = deviceFor(this.serialHopperModels[dest - 3]);
-      if (!(part instanceof Sch2Hopper)) return;
-      h = part;
-      h.desFitted = this.serialHopperDes[dest - 3] ?? false;
-      applyPartKeys(h, dest === 3 ? this.ccTalkKeys.hopper1 : this.ccTalkKeys.hopper2);
-      h.setPeriod(Math.floor(MASTER_CLOCK / 6));
-      const address = dest;
-      h.onPaid = () => { this.bookHopperCoin(this.payingCoins().cctalk.get(address) ?? null, address & 1); };
-      this.ccHoppers.set(dest, h);
-    }
+    const h = this.ccHoppers.get(dest);
+    if (!h) return;
     const rd = h.reply(header, f.slice(4, 4 + (len ?? 0)));
     if (rd === null) return;
     const b = [src ?? 1, rd.length, dest, 0, ...rd];
@@ -451,6 +459,12 @@ export class Sc4 implements Bus16, Machine {
   private bookHopperCoin(coin: Sc4Coin | null, line = 0): void {
     this.paidCoins[line] = (this.paidCoins[line] ?? 0) + 1;
     if (!this.booksMoney) return;
+    const named = this.payoutNames.value(line);
+    if (named !== undefined) {
+      if (coin?.token) this.cashLedger.tokenOutPence += named;
+      else this.cashLedger.outPence += named;
+      return;
+    }
     if (this.unpricedProgram()) {
       const pence = coin === null ? null : this.hostPriceOf(coin.pence);
       if (pence === null) this.payoutNames.bookCash(this.cashLedger, line);
@@ -464,11 +478,15 @@ export class Sc4 implements Bus16, Machine {
   private readonly payoutNames = new TokenPayouts();
   get unpricedPaidLines(): readonly number[] { return this.payoutNames.unpricedLines; }
   get unpricedPayoutLines(): readonly number[] {
-    const coins = this.payingCoins().line;
-    return coins.flatMap((c, i) => (c === null ? [i] : []));
+    return this.rowCoinUnits().flatMap((c, i) => (c === null ? [i] : []));
   }
   get tokenPayoutLines(): readonly number[] {
-    return this.payingCoins().line.flatMap((c, i) => (c?.token ? [i] : []));
+    return this.rowCoinUnits().flatMap((c, i) => (c?.token ? [i] : []));
+  }
+  private rowCoinUnits(): [Sc4Coin | null, Sc4Coin | null] {
+    const paying = this.payingCoins();
+    if (this.parHopperFitted || paying.cctalk.size === 0) return paying.line;
+    return [paying.cctalk.get(3) ?? null, paying.cctalk.get(4) ?? null];
   }
   readonly outClicks: number[] = [];
   readonly paidCoins: number[] = [];
@@ -485,14 +503,16 @@ export class Sc4 implements Bus16, Machine {
   }
   get unnamedPulses(): Readonly<Record<number, number>> { return {}; }
 
-  get payoutDevices(): readonly { line: number; kind: 'hopper' | 'token-hopper'; displayNumber: number; defaultPence: number | null }[] {
-    return this.payingCoins().line.map((coin, line) => ({
+  get payoutDevices(): readonly PayoutDeviceRow<'hopper' | 'token-hopper'>[] {
+    return this.rowCoinUnits().map((coin, line) => ({
       line,
       kind: coin?.token ? 'token-hopper' : 'hopper',
       displayNumber: line + 1,
       defaultPence: coin?.pence ?? null,
+      ...(coin?.pence ? { defaultFrom: 'machine' as const } : {}),
     }));
   }
+
   namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
   readonly seg7 = new BfmLed();
   private parHopperFitted = false;
@@ -1442,6 +1462,7 @@ export class Sc4 implements Bus16, Machine {
     };
     this.duart2.inputPort = 0x20;
     this.resetNoteLamps();
+    this.fitSerialHoppers();
     this.parHopper.onCoin = (h) => {
       this.bookHopperCoin(this.unpricedProgram() ? this.coinOutOf(h) : this.payingCoins().line[h - 1], h - 1);
     };

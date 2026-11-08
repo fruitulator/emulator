@@ -1,5 +1,5 @@
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind, PayoutRow } from './machine';
+import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind, PayoutDeviceRow, PayoutRow } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
@@ -226,7 +226,7 @@ export class Sys80 implements Machine {
   get rowCoins(): Readonly<Record<number, number>> { return this.coinBook.rowCoins(this.payoutDevices); }
   get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
 
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube' | 'hopper'>[] {
     const rows: { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] = Array.from({ length: 8 }, (_, i) => i).filter((i) => this.isPayoutTriac(i)).map((line) => {
       const p = this.slideNames[line];
       return {

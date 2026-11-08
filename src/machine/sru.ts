@@ -6,8 +6,9 @@ import { OneBitSpeaker } from '../hw/speaker';
 import { SRU_BASS_FREQ } from '../hw/blipleak';
 import { AY_RATE } from '../hw/ay8910';
 import { Mixer } from '../hw/mixer';
-import { newCashLedger, type CashLedger, type CabinetSwitch, type CoinChute, type NamedCoin, type PayoutRow } from './machine';
-import { CoinBook, namedBooking, type BookedCoin } from './coinbook';
+import { newCashLedger, type CashLedger, type CabinetSwitch, type CoinChute, type NamedCoin, type PayoutDeviceRow, type PayoutRow } from './machine';
+import { CoinBook, bookedOfSlotCoin, namedBooking, type BookedCoin } from './coinbook';
+import { linesOf, type CoinWiring } from './coinwiring';
 import { coinRowPattern, type DeclaredCoin } from './layoutcoins';
 import type { SlideEffect } from '../layout/fmlconfig';
 
@@ -104,6 +105,7 @@ export class Sru extends Sys80 {
   static override readonly snapshotConfig: readonly string[] = [
     ...Sys80.snapshotConfig, 'slides',
     'coinPence', 'layoutCoinPence', 'chuteCache',
+    'hostCoin',
     'fitted',
   ];
 
@@ -287,7 +289,7 @@ export class Sru extends Sys80 {
   private readonly book = new CoinBook(this.gross, CHANGE_GAP);
   override get unpricedPaidLines(): readonly number[] { return this.book.unpricedPaidLines; }
   override get cashLedger(): CashLedger | undefined {
-    return this.coinPence.some((p) => p !== null) || this.slides.some((s) => s !== null) || this.book.outputs.length > 0
+    return this.coinPence.some((p) => p !== null) || this.hostCoin.some((h) => h !== undefined) || this.slides.some((s) => s !== null) || this.book.outputs.length > 0
       ? this.gross
       : undefined;
   }
@@ -322,10 +324,11 @@ export class Sru extends Sys80 {
   }
 
   override get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
-  override get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  override get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube'>[] { return this.book.slideRows; }
   override get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
   override get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
   protected override meterOutUnpriced = false;
+  override get meterOnlyPayout(): boolean { return this.book.namesNoPayout; }
   override get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   override namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
   override setPayoutMeter(line: number, token: boolean): void { this.book.payouts.setCash(line, !token); }
@@ -340,11 +343,26 @@ export class Sru extends Sys80 {
     this.chuteCache = null;
   }
 
+  private hostCoin: (SruCoin | undefined)[] = [undefined, undefined, undefined, undefined];
+  override setCoinWiring(w: CoinWiring): void {
+    const { coins, conflicts } = linesOf(w);
+    for (let i = 0; i < 4; i++) {
+      const c = conflicts.includes(20 + i) ? undefined : coins.get(20 + i);
+      this.hostCoin[i] = c === undefined ? undefined : bookedOfSlotCoin(c);
+    }
+    this.chuteCache = null;
+  }
+  private slotCoin(i: number): SruCoin {
+    const h = this.hostCoin[i];
+    return h !== undefined ? h : this.coinPence[i] ?? null;
+  }
+
   private chuteCache: CoinChute[] | null = null;
   override get coinChutes(): readonly CoinChute[] | undefined {
-    if (this.coinPence.every((p) => p === null) && this.fitted.every(Boolean)) return undefined;
-    this.chuteCache ??= this.coinPence.flatMap((p, i): CoinChute[] => {
+    if ([0, 1, 2, 3].every((i) => this.slotCoin(i) === null) && this.fitted.every(Boolean)) return undefined;
+    this.chuteCache ??= this.coinPence.flatMap((_, i): CoinChute[] => {
       if (!this.fitted[i]) return [];
+      const p = this.slotCoin(i);
       const bit = 20 + i;
       if (typeof p === 'number') return [{ label: coinName(p), bit, pence: p }];
       if (p && typeof p === 'object') return [{ label: `${coinName(p.token)} token`, bit, pence: p.token, token: true }];
@@ -376,8 +394,7 @@ export class Sru extends Sys80 {
     this.coinInput = bit;
     this.layoutInput(bit, true);
     this.coinTimer = COIN_HOLD + COIN_GAP;
-    const p = this.coinPence[bit - 20];
-    if (p !== undefined) this.book.coin(p, COIN_HOLD);
+    if (bit >= 20 && bit <= 23) this.book.coin(this.slotCoin(bit - 20), COIN_HOLD);
   }
 
   override get parts(): BoardPart[] {

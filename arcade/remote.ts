@@ -8,7 +8,7 @@ import type {
   ClaimEvents, ClaimResult, ClaimFrom, SaveFault, SaveResult, SlotBattery, SlotKeyframe, StateSlot, Visit, VisitEvents, WatchEvents, WatchHandle,
 } from './machines';
 import {
-  DEV_PLAYER_HEADER, KEY_PART_MAX, MACHINE_PATH, RESTART_OP, SEED_OP, VISIT_OP, WALLET_PATH,
+  BUILT_PARAM, DEV_PLAYER_HEADER, KEY_PART_MAX, MACHINE_PATH, RESTART_OP, SEED_OP, SESSION_PARAM, VISIT_OP, WALLET_PATH,
   type AcquireReply, type ClaimBody, type CoinFault, type CreditSince, type InputBody, type KeyPart, type Ledger, type LoadReply, type ReleaseReply, type RestartBody,
   type RestartReply, type SaveBody, type SaveReply, type SeedReply, type VisitReply, type WalletReply,
 } from './serverwire';
@@ -142,10 +142,27 @@ function recFields(rec: StateRec): Omit<SaveBody, 'version'> {
 }
 
 function saveQuery(stamp: string | undefined): string {
-  return `version=${SNAPSHOT_VERSION}${stamp ? `&stamp=${encodeURIComponent(stamp)}` : ''}`;
+  const t = builtAt();
+  return `version=${SNAPSHOT_VERSION}${stamp ? `&stamp=${encodeURIComponent(stamp)}` : ''}${t !== undefined ? `&${BUILT_PARAM}=${t}` : ''}`;
 }
 
+declare const __BUILD_TIME__: string | undefined;
+export function builtAt(): number | undefined {
+  const t = typeof __BUILD_TIME__ === 'string' ? Date.parse(__BUILD_TIME__) : NaN;
+  return Number.isFinite(t) && t >= 0 ? t : undefined;
+}
+const withBuiltAt = (): { builtAt?: number } => {
+  const t = builtAt();
+  return t !== undefined ? { builtAt: t } : {};
+};
+
 const LOAD_OP = 'save';
+
+function newLockSession(): string {
+  const b = new Uint8Array(8);
+  crypto.getRandomValues(b);
+  return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
 
 export function remoteSlot(o: RemoteOptions): StateSlot {
   const f = o.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
@@ -169,9 +186,11 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
   let fault: CoinFault | null = null;
   let pausedNow = false;
   let pending: InputBody[] = [];
+  let session: string | null = null;
 
   const call = async <T>(op: string, method: string, body?: unknown): Promise<T> => {
-    const res = await f(`${base}/${op}`, {
+    const q = session ? `${op.includes('?') ? '&' : '?'}${SESSION_PARAM}=${session}` : '';
+    const res = await f(`${base}/${op}${q}`, {
       method,
       ...asPlayer(o.player, body === undefined ? {} : { 'content-type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -203,12 +222,14 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
 
   return {
     async claim(on: ClaimEvents, from?: ClaimFrom): Promise<ClaimResult> {
+      session = newLockSession();
       const r = await call<AcquireReply>('acquire', 'POST', from
         ? ({
           base: from.base, fresh: from.fresh, ...(from.ledger ? { ledger: wireLedger(from.ledger) } : {}), ...(from.kept ? { kept: true } : {}),
+          ...withBuiltAt(),
         } satisfies ClaimBody)
         : undefined);
-      if (!r.ok) return r.why === 'moved' ? 'moved' : { busy: true, holderName: r.holderName ?? null };
+      if (!r.ok) return r.why === 'moved' ? 'moved' : { busy: true, holderName: ('holderName' in r ? r.holderName : undefined) ?? null };
       stopVisit();
       held = true;
       pausedNow = false;
@@ -217,14 +238,14 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
       const ms = heartbeatMs(r.leaseMs);
       beat = every(() => { void flush(); }, ms);
       const end = (then: () => void) => () => { held = false; letGo(); then(); };
-      link = new LiveLink(liveUrl(base, o.player), ms, {
+      link = new LiveLink(liveUrl(base, o.player, session), ms, {
         dropped: () => on.dropped?.(r.leaseMs),
         back: () => {
           if (pausedNow) link?.sendMsg({ type: 'paused', paused: true });
           on.back?.();
         },
         lapsed: end(() => (on.lapsed ?? on.lost)()),
-        lost: end(() => on.lost()),
+        lost: (yours) => end(() => on.lost(yours))(),
         presence: (p) => {
           on.watchers?.(p.watchers.length);
           if (!held && p.holder !== null) on.holderName?.(p.holderName ?? null);
@@ -318,10 +339,11 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
 
     coinFault(): CoinFault | null { return fault; },
 
-    async save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean, saveFault?: SaveFault): Promise<SaveResult> {
+    async save(rec: StateRec, money?: CashLedger | null, coins?: CoinCounts, credit?: CreditSince | null, coinsStopped?: boolean, saveFault?: SaveFault, free?: boolean): Promise<SaveResult> {
       const body: SaveBody = {
-        version: SNAPSHOT_VERSION, ...recFields(rec),
+        version: SNAPSHOT_VERSION, ...recFields(rec), ...withBuiltAt(),
         ...(money ? { ledger: wireLedger(money) } : {}),
+        ...(free && money ? { free: true as const } : {}),
         ...(coins && (coins.spent || coins.rejected) ? { coins: { spent: coins.spent, rejected: coins.rejected } } : {}),
         ...(credit ? { sinceGame: { inPence: credit.inPence, tokenInPence: credit.tokenInPence } } : {}),
         ...(coinsStopped !== undefined ? { coinsStopped } : {}),
@@ -336,7 +358,7 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
 
     async restart(rec, from): Promise<number | null> {
       const body: RestartBody = {
-        version: SNAPSHOT_VERSION, ...recFields(rec), stamp: rec.stamp ?? '', base: from.base, kept: from.kept,
+        version: SNAPSHOT_VERSION, ...recFields(rec), ...withBuiltAt(), stamp: rec.stamp ?? '', base: from.base, kept: from.kept,
         ...(from.ledger ? { ledger: wireLedger(from.ledger) } : {}),
       };
       if (!body.stamp) return null;

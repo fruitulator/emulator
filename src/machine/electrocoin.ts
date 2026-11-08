@@ -1,5 +1,5 @@
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind } from './machine';
+import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, CoinWiringStatus, DigitKind, PayoutDeviceRow } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
@@ -377,7 +377,7 @@ export class Electrocoin implements Machine {
   get rowCoins(): Readonly<Record<number, number>> { const out = this.coinBook.rowCoins(this.payoutDevices); [0, 1].forEach((h) => { if (this.hopperWired(h)) out[Electrocoin.HOPPER_LINE[h]!] = this.hoppers[h]!.paid; }); return out; }
   get unnamedPulses(): Readonly<Record<number, number>> { return this.coinBook.unnamedPulses(this.payoutDevices); }
 
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube' | 'hopper'>[] {
     return [
       ...[0, 1, 2, 3].filter((i) => this.isPayoutTriac(i)).map((line) => {
         const p = this.slidePence[line];
@@ -388,12 +388,17 @@ export class Electrocoin implements Machine {
           defaultPence: typeof p === 'number' ? p : null,
         };
       }),
-      ...[0, 1].filter((h) => this.hopperWired(h)).map((h) => ({
-        line: Electrocoin.HOPPER_LINE[h],
-        kind: 'hopper' as const,
-        displayNumber: h + 1,
-        defaultPence: this.hopperPence(h),
-      })),
+      ...[0, 1].filter((h) => this.hopperWired(h)).map((h) => {
+        const pence = this.hopperCoinPence?.[h] ?? Electrocoin.HOPPER_PENCE[h] ?? null;
+        return {
+          line: Electrocoin.HOPPER_LINE[h],
+          kind: 'hopper' as const,
+          displayNumber: h + 1,
+          defaultPence: pence,
+          ...(pence !== null ? { defaultFrom: 'machine' as const } : {}),
+        };
+      }),
+
     ];
   }
   get meterOnlyPayout(): boolean {

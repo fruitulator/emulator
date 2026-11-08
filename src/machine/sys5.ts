@@ -451,6 +451,13 @@ export class Sys5 implements Bus16, Machine {
     this.coinCycles[b] = Sys5.COIN_HOLD + Sys5.COIN_TAIL;
     this.refusingCache = null;
     const code = this.coinCode();
+    const wired = this.wiring && !this.wiring.conflicts.includes(b) ? this.wiring.coins.get(b) : undefined;
+    if (!code && wired !== undefined) {
+      if (typeof wired === 'number') this.cashLedger.inPence += wired;
+      else if (wired.token === null) this.cashLedger.unpricedTokenIn++;
+      else this.cashLedger.tokenInPence += wired.token;
+      return;
+    }
     if (!code) {
       noteBoardDefault(this, {
         axis: 'coin',
@@ -578,7 +585,8 @@ export class Sys5 implements Bus16, Machine {
   private bookTaken(line: number, taken: SlotCoin): void {
     if (this.wiring) { this.bookWiredCoin(line, taken); return; }
     if (typeof taken === 'number') this.cashLedger.inPence += taken;
-    else this.cashLedger.tokenInPence += taken.token ?? 0;
+    else if (taken.token === null) this.cashLedger.unpricedTokenIn++;
+    else this.cashLedger.tokenInPence += taken.token;
   }
 
   private wiring: { coins: Map<number, SlotCoin>; conflicts: number[] } | null = null;
@@ -607,7 +615,8 @@ export class Sys5 implements Bus16, Machine {
     const c = w.coins.get(line);
     if (c === undefined) {
       if (typeof taken === 'number') this.cashLedger.inPence += taken;
-      else this.cashLedger.tokenInPence += taken.token ?? 0;
+      else if (taken.token === null) this.cashLedger.unpricedTokenIn++;
+      else this.cashLedger.tokenInPence += taken.token;
       return;
     }
     this.wiringState.state = 'calibrated';

@@ -1,6 +1,6 @@
 import type { Bus } from '../cpu/bus';
 import { TokenPayouts } from './coinbook';
-import type { Machine, DigitKind, CabinetSwitch, CoinPortLines, CoinWiringStatus } from './machine';
+import type { Machine, DigitKind, CabinetSwitch, CoinPortLines, CoinWiringStatus, PayoutDeviceRow } from './machine';
 import { newCashLedger, ledgerOutMults, dilPlace, dilSwitchLabel } from './machine';
 import type { SlideEffect, SwitchControl } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
@@ -1648,7 +1648,7 @@ export class Mpu4 implements Bus, Machine {
   get tokenPayoutLines(): readonly number[] {
     return this.outMetered ? [] : this.triacSlides.flatMap((s, i) => (s === 'token' ? [i] : []));
   }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube' | 'hopper'>[] {
     return [
       ...this.triacSlides.flatMap((slide, line) => slide === null ? [] : [{
         line,
@@ -1656,8 +1656,9 @@ export class Mpu4 implements Bus, Machine {
         displayNumber: line + 1,
         defaultPence: typeof slide === 'number' ? slide : null,
       }]),
-      ...(this.hopper1 ? [{ line: 8, kind: 'hopper' as const, displayNumber: 1, defaultPence: this.hopperCoinPence[0] }] : []),
-      ...(this.hopper2 ? [{ line: 9, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1] }] : []),
+      ...(this.hopper1 ? [{ line: 8, kind: 'hopper' as const, displayNumber: 1, defaultPence: this.hopperCoinPence[0], defaultFrom: 'machine' as const }] : []),
+      ...(this.hopper2 ? [{ line: 9, kind: 'hopper' as const, displayNumber: 2, defaultPence: this.hopperCoinPence[1], defaultFrom: 'machine' as const }] : []),
+
     ];
   }
   get unpricedPaidLines(): readonly number[] {
@@ -2183,11 +2184,9 @@ export class Mpu4 implements Bus, Machine {
     if (!this.hopper1) return;
     const book = (fresh: number, pence: number | null, line: number): void => {
       if (!this.booksMoney) return;
-      if (pence === null) {
-        const named = this.cashPayouts.value(line);
-        if (named === undefined) { this.cashLedger.unpricedOut += fresh; this.cashPayouts.noteUnpriced(line); }
-        else this.cashLedger.outPence += fresh * named;
-      }
+      const named = this.cashPayouts.value(line);
+      if (named !== undefined) this.cashLedger.outPence += fresh * named;
+      else if (pence === null) { this.cashLedger.unpricedOut += fresh; this.cashPayouts.noteUnpriced(line); }
       else this.cashLedger.outPence += fresh * pence;
     };
     this.hopper1.tick(cycles);

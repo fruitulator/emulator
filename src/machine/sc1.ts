@@ -245,9 +245,23 @@ export class Sc1 implements Bus, Machine {
 
   private readonly hostValues = new TokenPayouts();
   namePayout(line: number, pence: number): void { this.hostValues.name(line, pence); }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] {
-    return this.slidePence.flatMap((s, line) => s === null ? [] : [{ line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1, defaultPence: typeof s === 'number' ? s : null }]);
+  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null; defaultFrom?: 'machine' }[] {
+    const token = !this.wiring && this.unpricedProgramCoins() !== null ? null : this.programTokenPence();
+    return this.slidePence.flatMap((s, line) => s === null ? [] : [{
+      line, kind: s === 'token' ? 'token-tube' as const : 'tube' as const, displayNumber: line + 1,
+      defaultPence: typeof s === 'number' ? s : s === 'token' ? token : null,
+      ...(s === 'token' && token !== null ? { defaultFrom: 'machine' as const } : {}),
+    }]);
   }
+  private programTokenPence(): number | null {
+    const t = this.readCoinTable();
+    if ('refused' in t) return null;
+    const coins = detectCoins(t);
+    if (!(coins instanceof Map)) return null;
+    const v = new Set([...coins.values()].flatMap((c) => (typeof c === 'object' && c.token !== null && c.token > 0 ? [c.token] : [])));
+    return v.size === 1 ? [...v][0]! : null;
+  }
+
   readonly outClicks: number[] = [];
   get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
   get rowCoins(): Readonly<Record<number, number>> {
@@ -281,8 +295,9 @@ export class Sc1 implements Bus, Machine {
     const counted = !this.wiring && this.unpricedProgramCoins() !== null;
     if (typeof price === 'number' && !counted) this.cashLedger.outPence += price;
     else if (price === 'token') {
-      if (counted) { this.cashLedger.unpricedTokenOut++; this.unpricedPaid.add(i); }
-      else this.cashLedger.tokenOutPence += Sc1.TOKEN_PENCE;
+      const pence = counted ? null : this.programTokenPence();
+      if (pence === null) { this.cashLedger.unpricedTokenOut++; this.unpricedPaid.add(i); }
+      else this.cashLedger.tokenOutPence += pence;
     } else if (price === null && this.judgedByMeters) {  }
     else { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
   }
@@ -303,7 +318,6 @@ export class Sc1 implements Bus, Machine {
     }
   }
   private static readonly TOKEN_LINE = 4;
-  private static readonly TOKEN_PENCE = 20;
 
   readonly cashLedger = newCashLedger();
   private readonly unpricedPaid = new Set<number>();

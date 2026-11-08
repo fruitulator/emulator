@@ -11,7 +11,7 @@ import { placeRomFlat } from './pairplacer';
 import { v20PiaWrite } from './mpu3';
 import { StrayCounter } from './strayaccess';
 import { COIN_RAW } from './coinraw';
-import type { AudioSource, CabinetSwitch, CashLedger, Machine, NamedCoin } from './machine';
+import type { AudioSource, CabinetSwitch, CashLedger, Machine, NamedCoin, PayoutDeviceRow } from './machine';
 import { ledgerOutMults, newCashLedger } from './machine';
 import { CoinBook, SlotCoins, coinOfNote, type BookedCoin } from './coinbook';
 import type { SlideEffect } from '../layout/fmlconfig';
@@ -156,7 +156,7 @@ export class Mpu2 implements Bus, Machine {
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }
   get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube'; displayNumber: number; defaultPence: number | null }[] { return this.book.slideRows; }
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube'>[] { return this.book.slideRows; }
   get outMeterClicks(): Readonly<Record<number, number>> { return {}; }
   get rowCoins(): Readonly<Record<number, number>> { return this.book.rowCoins(this.book.slideRows); }
   get unnamedPulses(): Readonly<Record<number, number>> { return this.book.unnamedPulses(this.book.slideRows); }
@@ -165,9 +165,7 @@ export class Mpu2 implements Bus, Machine {
 
   get unnamedCoinLines(): readonly number[] { return this.slots.unnamed; }
   get unpricedPayoutLines(): readonly number[] { return this.book.unpricedSlides; }
-  get meterOnlyPayout(): boolean {
-    return !this.book.hasSlides && this.triacLedgerOut.some((x) => x > 0);
-  }
+  get meterOnlyPayout(): boolean { return this.book.namesNoPayout; }
 
   nameCoin(line: number, coin: NamedCoin): void { this.slots.name(line, coin); }
 

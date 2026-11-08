@@ -1,7 +1,7 @@
 import { placeRomFlat } from './pairplacer';
 import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
-import type { CabinetSwitch, CoinChute, CoinWiringStatus, Machine } from './machine';
+import type { CabinetSwitch, CoinChute, CoinWiringStatus, Machine, PayoutDeviceRow } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { SlideEffect } from '../layout/fmlconfig';
 import type { LayoutSwitch } from './layoutswitches';
@@ -322,7 +322,7 @@ export class M1ab implements Bus, Machine {
       else if (typeof price === 'number') this.cashLedger.outPence += this.payoutNames.value(i) ?? price;
       else if (price === 'token') {
         const pence = this.payoutNames.value(i) ?? this.tokenPence;
-        if (pence > 0) this.cashLedger.tokenOutPence += pence;
+        if (pence !== null && pence > 0) this.cashLedger.tokenOutPence += pence;
         else { this.cashLedger.unpricedTokenOut++; this.payoutNames.noteUnpriced(i); }
       }
       else if (price === 'unpriced') {
@@ -330,6 +330,7 @@ export class M1ab implements Bus, Machine {
         if (pence === undefined) { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
         else this.cashLedger.outPence += pence;
       }
+      else if (price === null && !this.judgedByMeters) { this.cashLedger.unpricedOut++; this.unpricedPaid.add(i); }
     }
   }
 
@@ -346,13 +347,15 @@ export class M1ab implements Bus, Machine {
     ];
   }
   get tokenPayoutLines(): readonly number[] {
-    return this.slidePence.flatMap((price, line) => price === 'token' && this.tokenPence === 0 ? [line] : []);
+    return this.slidePence.flatMap((price, line) => price === 'token' && this.tokenPence === null ? [line] : []);
   }
   get hopperPayoutLines(): readonly number[] {
     return this.hopperFitted() ? [M1ab.HOPPER_LINE] : [];
   }
   readonly outClicks: number[] = [];
   get outMeterClicks(): Readonly<Record<number, number>> { return outClicksOf(this.outClicks, this.meterOutMult); }
+  private get judgedByMeters(): boolean { return Object.keys(this.outMeterClicks).length > 0; }
+  get meterOnlyPayout(): boolean { return this.payoutDevices.length === 0; }
   get rowCoins(): Readonly<Record<number, number>> {
     const out: Record<number, number> = {};
     this.slidePence.forEach((p, i) => { if (p !== null) out[i] = this.slideCoins[i] ?? 0; });
@@ -365,12 +368,13 @@ export class M1ab implements Bus, Machine {
     return out;
   }
 
-  get payoutDevices(): readonly { line: number; kind: 'tube' | 'token-tube' | 'hopper'; displayNumber: number; defaultPence: number | null }[] {
+  get payoutDevices(): readonly PayoutDeviceRow<'tube' | 'token-tube' | 'hopper'>[] {
     const slides = this.slidePence.flatMap((price, line) => price === null ? [] : [{
       line,
       kind: price === 'token' ? 'token-tube' as const : 'tube' as const,
       displayNumber: line + 1,
-      defaultPence: typeof price === 'number' ? price : price === 'token' ? this.tokenPence || null : null,
+      defaultPence: typeof price === 'number' ? price : price === 'token' ? this.tokenPence : null,
+      ...(price === 'token' && this.programTokenPence !== null ? { defaultFrom: 'machine' as const } : {}),
     }]);
     if (!this.hopperFitted()) return slides;
     return [...slides, {
@@ -378,7 +382,9 @@ export class M1ab implements Bus, Machine {
       kind: 'hopper',
       displayNumber: (this.hoppersWord & 0x50) === 0x40 ? 2 : 1,
       defaultPence: this.hopperCoinPence,
+      ...(this.hopperCoinPence ? { defaultFrom: 'machine' as const } : {}),
     }];
+
   }
   namePayout(line: number, pence: number): void { this.payoutNames.name(line, pence); }
 
@@ -390,13 +396,21 @@ export class M1ab implements Bus, Machine {
     for (let i = 0; i < table.length && i < this.coinLinePence.length; i++) {
       const p = table[i];
       if (p !== undefined) this.coinLinePence[i] = p;
+      if (p !== undefined && i === M1ab.TOKEN_LINE) this.layoutTokenPence = p !== null && p > 0 ? p : null;
     }
   }
 
   private static readonly TOKEN_LINE = 4;
-  private get tokenPence(): number {
-    return this.coinLinePence[M1ab.TOKEN_LINE] ?? 0;
+  private get tokenPence(): number | null {
+    return this.programTokenPence ?? this.layoutTokenPence;
   }
+  private get programTokenPence(): number | null {
+    const t = this.readCoinTable();
+    if ('refused' in t) return null;
+    const values = new Set(t.coins.flatMap((c) => (c && c !== 'none' && c.token && c.pence > 0 ? [c.pence] : [])));
+    return values.size === 1 ? [...values][0]! : null;
+  }
+  private layoutTokenPence: number | null = null;
 
   readonly inputs: M1abInputs = { switches: new Uint8Array(8) };
 

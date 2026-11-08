@@ -417,3 +417,15 @@ export function coinGrid(o: {
   repaint();
   return { root, rows };
 }
+
+export function payoutDefaultNote(
+  row: { kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper'; defaultPence?: number | null; defaultFrom?: 'layout' | 'machine' },
+  typed: number | undefined,
+): string | null {
+  if (typed === undefined || typeof row.defaultPence !== 'number' || typed === row.defaultPence) return null;
+  const part = row.kind.endsWith('hopper') ? str('coinsetup.hopper') : str('coinsetup.tube');
+  const args = { coin: cashLabel(row.defaultPence), part };
+  return row.defaultFrom === 'machine'
+    ? str('coinsetup.machine_reports_value_used', args)
+    : str('coinsetup.layout_says_value_used', args);
+}

@@ -1,6 +1,6 @@
 import type { Bus } from '../cpu/bus';
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { CabinetSwitch, CoinWiringStatus, Machine, MachineDisplay, DigitKind } from './machine';
+import type { CabinetSwitch, CashLedger, CoinWiringStatus, Machine, MachineDisplay, DigitKind } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { TokenPayouts } from './coinbook';
 import type { BoardPart } from './parts';
@@ -539,6 +539,7 @@ export class AceSp implements Bus, Machine {
     this.coinMask = 1 << line;
     this.coinCycles = AceSp.COIN_DWELL;
     this.inputs.switches[COIN_BYTE] |= this.coinMask;
+    this.landHeld(bit);
     this.judgeWait[bit] = this.coinCode() ? AceSp.JUDGE_WAIT : 0;
     this.judgeSeen[bit] = false;
     this.bookDropped(bit, v);
@@ -546,47 +547,57 @@ export class AceSp implements Bus, Machine {
 
   private bookDropped(bit: number, v: number | 'locked' | null): void {
     this.judgeVerdict[bit] = v === 'locked' ? -1 : v === null ? -2 : v;
-    const l = this.cashLedger;
-    const [i0, t0, u0] = [l.inPence, l.tokenInPence, l.unpricedTokenIn];
-    if (v === 'locked') this.coinsRefused++;
-    else if (this.wiring) this.bookWiredCoin(bit, v);
-    else this.bookProgramCoin(bit, v);
-    this.judgeIn[bit] = l.inPence - i0;
-    this.judgeToken[bit] = l.tokenInPence - t0;
-    this.judgeUnpriced[bit] = l.unpricedTokenIn - u0;
+    if (v === 'locked') { this.coinsRefused++; return; }
+    const watched = this.judgeWait[bit]! > 0;
+    const l = watched ? newCashLedger() : this.cashLedger;
+    if (this.wiring) this.bookWiredCoin(l, bit, v);
+    else this.bookProgramCoin(l, bit, v);
+    if (!watched) return;
+    this.heldIn[bit] = l.inPence;
+    this.heldToken[bit] = l.tokenInPence;
+    this.heldUnpriced[bit] = l.unpricedTokenIn;
   }
 
-  private unbookDropped(bit: number): void {
+  private landHeld(bit: number): void {
     const l = this.cashLedger;
-    l.inPence -= this.judgeIn[bit]!;
-    l.tokenInPence -= this.judgeToken[bit]!;
-    l.unpricedTokenIn -= this.judgeUnpriced[bit]!;
-    this.judgeIn[bit] = this.judgeToken[bit] = this.judgeUnpriced[bit] = 0;
+    if (this.heldIn[bit]) l.inPence += this.heldIn[bit]!;
+    if (this.heldToken[bit]) l.tokenInPence += this.heldToken[bit]!;
+    if (this.heldUnpriced[bit]) l.unpricedTokenIn += this.heldUnpriced[bit]!;
+    this.heldIn[bit] = this.heldToken[bit] = this.heldUnpriced[bit] = 0;
+  }
+
+  private landAllHeld(): void {
+    for (let bit = 0; bit < MECH_LINES.length; bit++) this.landHeld(bit);
+  }
+
+  private discardHeld(bit: number): void {
+    this.heldIn[bit] = this.heldToken[bit] = this.heldUnpriced[bit] = 0;
     if (this.judgeVerdict[bit] === -1) this.coinsRefused--;
   }
 
   private judgeCoinLeaving(cycles: number): void {
     const code = this.coinCode();
-    if (!code) { this.judgeWait.fill(0); return; }
+    if (!code) { this.judgeWait.fill(0); this.landAllHeld(); return; }
     for (let bit = 0; bit < MECH_LINES.length; bit++) {
       if (this.judgeWait[bit]! <= 0) continue;
       const at = aceSpCounter(code, bit);
-      if (at < 0) { this.judgeWait[bit] = 0; continue; }
+      if (at < 0) { this.judgeWait[bit] = 0; this.landHeld(bit); continue; }
       const n = this.programMem(at);
       if (n !== 0 || !this.judgeSeen[bit]) {
         if (n !== 0) this.judgeSeen[bit] = true;
         this.judgeWait[bit] = this.judgeWait[bit]! - cycles;
         if (this.judgeWait[bit]! <= 0) {
           this.judgeWait[bit] = 0;
-          if (!this.judgeSeen[bit]) { this.unbookDropped(bit); this.bookDropped(bit, 'locked'); }
+          if (!this.judgeSeen[bit]) { this.discardHeld(bit); this.bookDropped(bit, 'locked'); }
+          else this.landHeld(bit);
         }
         continue;
       }
       this.judgeWait[bit] = 0;
       const v = this.programVerdict(bit);
       const now = v === 'locked' ? -1 : v === null ? -2 : v;
-      if (now === this.judgeVerdict[bit]) continue;
-      this.unbookDropped(bit);
+      if (now === this.judgeVerdict[bit]) { this.landHeld(bit); continue; }
+      this.discardHeld(bit);
       this.bookDropped(bit, v);
     }
   }
@@ -595,9 +606,9 @@ export class AceSp implements Bus, Machine {
   private readonly judgeWait = [0, 0, 0, 0, 0];
   private readonly judgeSeen = [false, false, false, false, false];
   private readonly judgeVerdict = [0, 0, 0, 0, 0];
-  private readonly judgeIn = [0, 0, 0, 0, 0];
-  private readonly judgeToken = [0, 0, 0, 0, 0];
-  private readonly judgeUnpriced = [0, 0, 0, 0, 0];
+  private readonly heldIn = [0, 0, 0, 0, 0];
+  private readonly heldToken = [0, 0, 0, 0, 0];
+  private readonly heldUnpriced = [0, 0, 0, 0, 0];
 
   private coinCodeCache: { rom: Uint8Array; c: AceSpCoinCode | Refusal } | null = null;
   private coinCodeFound(): AceSpCoinCode | Refusal {
@@ -653,7 +664,7 @@ export class AceSp implements Bus, Machine {
     return token ? { token: pence } : pence;
   }
 
-  private bookProgramCoin(bit: number, v: number | null): void {
+  private bookProgramCoin(l: CashLedger, bit: number, v: number | null): void {
     if (bit === MECH_LINES.indexOf(TOKEN_MECH_LINE)) return;
     if (v === null) {
       noteBoardDefault(this, {
@@ -662,11 +673,11 @@ export class AceSp implements Bus, Machine {
         ifWrong: 'A coin the program values differently, or does not take, books the wrong money.',
       });
       const pence = this.coinLinePence[bit];
-      if (pence !== null && pence !== undefined) this.cashLedger.inPence += pence;
+      if (pence !== null && pence !== undefined) l.inPence += pence;
       return;
     }
     const c = this.programCoin(bit, v);
-    if (typeof c === 'number') this.cashLedger.inPence += c;
+    if (typeof c === 'number') l.inPence += c;
   }
 
   coinsRefused = 0;
@@ -707,12 +718,12 @@ export class AceSp implements Bus, Machine {
     return !!this.wiring && (this.wiring.coins.has(t) || this.wiring.conflicts.includes(t));
   }
 
-  private bookWiredCoin(bit: number, v: number | null): void {
+  private bookWiredCoin(l: CashLedger, bit: number, v: number | null): void {
     const w = this.wiring!;
     if (!this.booksMoney || w.conflicts.includes(bit)) return;
     const c = w.coins.get(bit);
     if (c === undefined) {
-      this.bookProgramCoin(bit, v);
+      this.bookProgramCoin(l, bit, v);
       return;
     }
     if (v === 0) return;
@@ -720,9 +731,9 @@ export class AceSp implements Bus, Machine {
     if (taken !== null) {
       this.wiringState.state = 'calibrated';
     }
-    if (typeof c === 'number') { this.cashLedger.inPence += c; return; }
-    if (c.token === null) { this.cashLedger.unpricedTokenIn++; return; }
-    this.cashLedger.tokenInPence += c.token;
+    if (typeof c === 'number') { l.inPence += c; return; }
+    if (c.token === null) { l.unpricedTokenIn++; return; }
+    l.tokenInPence += c.token;
   }
 
   private coinSlots: number[] = [];
@@ -929,6 +940,7 @@ export class AceSp implements Bus, Machine {
     this.coinCycles = 0;
     this.coinMask = 0;
     this.judgeWait.fill(0);
+    this.landAllHeld();
 
     if (this.reelpcb) {
       this.reelpcb.reset();
