@@ -179,6 +179,7 @@ export interface CabinetPainterOptions {
   reelPeek?: () => number;
   onReelRow?: (reel: object, row: number) => void;
   checkboxTicked?: (cb: CabCheckbox) => boolean;
+  omits?: (part: CabLamp | CabCheckbox) => boolean;
 }
 
 export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPainterOptions = {}) {
@@ -190,6 +191,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   const reelPeek = opts.reelPeek ?? ((): number => 0);
   const onReelRow = opts.onReelRow ?? ((): void => undefined);
   const checkboxTicked = opts.checkboxTicked ?? ((cb: CabCheckbox): boolean => cb.checked);
+  const omits = opts.omits ?? ((): boolean => false);
 
   let vfdAtlas: HTMLCanvasElement | null = null;
 
@@ -564,7 +566,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         if (e && extentMisses(e, pass)) continue;
       }
       switch (it.kind) {
-        case 'lamp': drawLamp(it.lamp); break;
+        case 'lamp': if (!omits(it.lamp)) drawLamp(it.lamp); break;
         case 'reel': drawReel(it.reel); break;
         case 'band': drawBand(it.strip); break;
         case 'flip': drawFlip(it.flip); break;
@@ -583,7 +585,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         case 'cmVideo': { const cv = it.panel; withAngle(ctx, cv, cv.angle, () => drawCoinmasterVideo(cv)); break; }
         case 'video': { const vs = it.screen; withAngle(ctx, vs, vs.angle, () => drawVideoScreen(m, vs)); break; }
         case 'light': { const ls = it.light; withAngle(ctx, ls, ls.angle, () => drawLightSource(ctx, ls, ls.face)); break; }
-        case 'checkbox': drawCheckbox(it.checkbox); break;
+        case 'checkbox': if (!omits(it.checkbox)) drawCheckbox(it.checkbox); break;
       }
     }
     drawUnserved(m);

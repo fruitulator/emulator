@@ -6,7 +6,7 @@ import type { DiagEntry } from '../diaglog';
 import type { Game } from '../../src/machine/registry';
 import { card, menuRow } from '../ui/rows';
 import { MENU_ICONS } from '../ui/icons';
-import { cabinetSoundsRow, coinsPanel, cropRow, fillScreenRow, reelBandsRow, reelBounceRow, reelPeekRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
+import { cabinetSoundsRow, coinsPanel, notesPanel, cropRow, fillScreenRow, reelBandsRow, reelBounceRow, reelPeekRow, switchPanels, type CoinNaming, type OwnCoins } from '../menupanels';
 import { downloadRow, uploadRow, type PanelDownload, type PanelUpload } from '../panelmenu';
 import { buildStamp, saveDiagLog, saveSnapshot } from '../downloads';
 import { UNBUILT_NOTE_TEXT, stopNoteParts } from '../stopnote';
@@ -43,13 +43,14 @@ export interface ActionSurface {
 }
 
 export type ActionId =
-  | 'coins' | 'switches' | 'options' | 'keyboard' | 'download'
+  | 'coins' | 'switches' | 'options' | 'keyboard' | 'notes' | 'download'
   | 'system' | 'reboot' | 'quit' | 'stepBack';
 
 export const ACTIONS: Record<Exclude<ActionId, 'switches'>, { label: string; icon: string; sub?: string }> = {
   coins: { label: str('play.actions.coins'), icon: MENU_ICONS.coins },
   options: { label: str('play.actions.options'), icon: MENU_ICONS.options },
   keyboard: { label: str('play.actions.keyboard'), icon: MENU_ICONS.keyboard },
+  notes: { label: str('play.actions.notes'), icon: MENU_ICONS.notes },
   download: { label: str('play.actions.download'), icon: MENU_ICONS.download },
   system: { label: str('play.actions.system_status'), icon: MENU_ICONS.activity },
   reboot: { label: str('play.actions.reboot_machine'), icon: MENU_ICONS.reboot },
@@ -72,6 +73,7 @@ export interface MenuMachine {
   info: MachineInfo;
   view: PlatformView;
   system: string | undefined;
+  layout?: { notes?: string; splash?: ImageBitmap | null } | null;
 }
 
 export function saveState(s: ActionSurface): Promise<boolean> {
@@ -151,6 +153,11 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
         nav('keyboard', keys);
         break;
       }
+      case 'notes': {
+        const panel = notesPanel(m.layout);
+        if (panel) nav('notes', panel);
+        break;
+      }
       case 'download': {
         const dl = card();
         dl.classList.add('pm-rows');
@@ -183,7 +190,7 @@ export function menuItems(s: ActionSurface, m: MenuMachine, ids: readonly Action
 export function disabledItems(ids: readonly ActionId[]): MenuItem[] {
   const out: MenuItem[] = [];
   for (const id of ids) {
-    if (id === 'switches') continue;
+    if (id === 'switches' || id === 'notes') continue;
     const a = ACTIONS[id];
     if (id === 'system' || id === 'reboot' || id === 'quit' || id === 'stepBack') {
       out.push({ kind: 'row', id, label: a.label, icon: a.icon, ...(a.sub ? { sub: a.sub } : {}), run: () => {}, disabled: true });

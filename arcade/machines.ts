@@ -5,14 +5,14 @@ import { holdingLibrary } from './restamp';
 import { machineKeys, machineTitle } from './machinelist';
 import {
   ARCADE_MAX_MACHINES, fromBase64, fromMachineState, installNotReady, onFloor, switchedOff, toMachineState, traceId, turnOf, type NotReady,
-  type ArcadeDoc, type MachineConfig, type MachineSetup, type MachineSource, type Place,
+  type ArcadeDoc, type CoinStepCache, type MachineConfig, type MachineSetup, type MachineSource, type Place,
 } from './doc';
 import { currentArcade, getArcade, getMachineState, putMachineState, updateMachineMoney, updateMachineStats } from './docstore';
 import { addLost, addReading, readCredit, readMoneyRecord, sameRun, startingRecord, type MoneyRecord } from './moneyrecord';
 import type { CashLedger } from '../src/machine/machine';
 import type { StateStore } from '../web/statestore';
 import { devPlayerForPage, remoteSlot, serverFlag } from './remote';
-import type { CoinFault, CreditSince, PaidOutput, RelayBatch } from './serverwire';
+import type { CoinFault, CreditSince, PaidOutput, RelayBatch, StopCoin } from './serverwire';
 import type { Balance, CoinCounts } from './wallet';
 import type { GameConfig } from '../src/machine/registry';
 import type { HostFile } from '../web/hostfiles';
@@ -21,6 +21,7 @@ export interface SaveFault {
   unpricedPaid: PaidOutput[];
   meterFault?: boolean;
   payoutsUnset?: boolean;
+  stoppedBy?: StopCoin;
 }
 
 export interface StateSlot {
@@ -228,6 +229,7 @@ export interface ArcadeMachine {
   versions?: number;
   source?: MachineSource;
   place?: Place;
+  coinStep?: CoinStepCache;
 }
 
 export function arcadeName(doc: ArcadeDoc | null): string | null {
@@ -281,6 +283,7 @@ export async function loadMachines(doc?: ArcadeDoc | null, o: { visiting?: boole
       ...(m.source ? { source: m.source } : {}),
       setup: readSetup(m.setup ?? {}),
       config: m.config ?? {},
+      ...(m.coinStep ? { coinStep: m.coinStep } : {}),
       slot: server
         ? visiting
           ? remoteSlot({ server, arcadeId: arcade.id, machine: m.id, player })

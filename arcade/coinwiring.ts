@@ -6,6 +6,7 @@ import { hasInput, type CabLamp } from '../web/dat';
 import type { NamedCoin } from '../src/machine/machine';
 import { detectCoins, detectWiring, isLive, mapAsked as mapAskedByTable, measuredTable, measureWiring, NO_SINGLE_PRICE, markedCounted } from '../src/machine/coinwiring';
 import { penceOf } from './wallet';
+import { acceptorSlots, slotsToWire, type DrawnSlot } from '../web/coinslots';
 
 export type { WireSlot } from '../web/coinslots';
 
@@ -74,7 +75,7 @@ export function measureLines(req: WiringRequest): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-export { slotsToWire } from '../web/coinslots';
+export { slotsToWire };
 
 export function slotlessToWire(info: MachineInfo | null, refusing: number, w: CoinWiring): number[] {
   const all = info?.slotlessCoins ?? [];
@@ -111,6 +112,36 @@ export function lineCoins(info: MachineInfo | null, refusing: number, w: CoinWir
 }
 
 export const sameKindCoin = (a: SlotCoin, b: SlotCoin): boolean => (isTokenCoin(a) ? isTokenCoin(b) : a === b);
+
+export function stepLineCoins(info: MachineInfo, refusing: number, w: CoinWiring): Map<number, SlotCoin> {
+  const coinOf = new Map<number, SlotCoin>(lineCoins(info, refusing, w).map((c) => [c.line, c.coin]));
+  if (!info.coinTable) {
+    for (const c of info.coins ?? []) {
+      const p = penceOf(c);
+      if (coinOf.has(c.bit)) continue;
+      if (c.token) coinOf.set(c.bit, { token: p > 0 ? p : null });
+      else if (p > 0) coinOf.set(c.bit, p);
+    }
+  }
+  return coinOf;
+}
+
+export interface StepSlot { key: number; parts: readonly number[]; lines: readonly number[] }
+
+export function stepSlots(o: {
+  info: MachineInfo; lamps: readonly CabLamp[]; view: PlatformView; wiring: CoinWiring; refusing: number; drawn: readonly DrawnSlot[];
+}): StepSlot[] {
+  const wire = slotsToWire(o.lamps, o.view, o.info);
+  if (o.info.unpricedCoins) return wire.map((s) => ({ key: s.line, parts: [s.line], lines: [s.line] }));
+  return acceptorSlots([...wire, ...o.drawn], stepLineCoins(o.info, o.refusing, o.wiring));
+}
+
+export function slotNumberOf(line: number, w: CoinWiring, slots: readonly StepSlot[]): number | null {
+  let i = slots.findIndex((s) => w[String(s.key)]?.coins.some((c) => c.line === line) ?? false);
+  if (i < 0) i = slots.findIndex((s) => s.key === line || s.parts.includes(line));
+  if (i < 0) i = slots.findIndex((s) => s.lines.includes(line));
+  return i < 0 ? null : i + 1;
+}
 
 export function slotOffer(coinOf: ReadonlyMap<number, SlotCoin>, unnamedCoins: readonly number[], tokenForCash = false): {
   takes: ReadonlySet<number> | null;

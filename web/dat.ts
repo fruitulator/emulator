@@ -5,6 +5,7 @@ import { fillShape, flatTrim, isFmlLayout, ledFace, parseFmlLayout, sidewaysCrop
 import { shortcutKnown } from './shortcuts';
 import { PASS } from './draworder';
 import { str } from './i18n';
+import { readLayoutNotes } from './layoutnotes';
 
 export interface Rect {
   left: number;
@@ -454,6 +455,9 @@ export interface Cabinet<A = ImageBitmap> {
   backgroundColour?: number | null;
   backgroundKey?: number | null;
   backdrop?: A | null;
+  credit?: string;
+  notes?: string;
+  splash?: A | null;
   reels: ReelBand<A>[];
   bandReels?: BandStrip<A>[];
   flipReels?: FlipStrip<A>[];
@@ -895,6 +899,29 @@ export function reelEffectivePosition(
 }
 
 export const MPU5_V9_MIRROR = true;
+
+export interface OffsetSignWitness {
+  stops: number;
+  halfSteps: number;
+  bandOffset: number;
+  reversed: boolean;
+}
+
+export function preV6LiteralSign(reels: readonly OffsetSignWitness[]): boolean {
+  let literalOnly = false;
+  for (const r of reels) {
+    if (r.stops !== 16 || r.halfSteps !== 96) continue;
+    const o = r.bandOffset;
+    if (!o) continue;
+    const base = r.reversed ? 2 : 4;
+    const whole = (i: number): boolean => ((i % 6) + 6) % 6 === 0;
+    const v20 = whole(base + o);
+    const literal = whole(base - o);
+    if (v20 && !literal) return false;
+    if (literal && !v20) literalOnly = true;
+  }
+  return literalOnly;
+}
 
 export function mfmeBandIndex(
   system: string, position: number, bandOffset: number, reversed: boolean,
@@ -1978,7 +2005,7 @@ export async function extractCabinetFromPayload(
           ? 'none' : `#${(cab.backgroundColour >>> 0).toString(16)}`,
         cab.reels.length, cab.lamps.length, !!cab.vfd,
       );
-      return cab;
+      return withNotes(cab, dfm, true);
     }
   }
   const comps = convertNwColorBtns(parseDfm(dfm));
@@ -2367,7 +2394,22 @@ export async function extractCabinetFromPayload(
     : parts;
   const trimmed = flatTrim(content, column, background, backgroundRect.left, backgroundRect.top);
   bitmaps.unshift(...bevelBitmaps(comps));
-  return { width, height, background, backgroundRect, backgroundColour, reels, ...(bandReels.length ? { bandReels } : {}), ...(bitmaps.length ? { bitmaps } : {}), lamps, vfd, vfdIsDots, vfdFont, vfdGlyphWidth, vfdInk, vfdOffBrightness, vfdReversed, content, column, trimmed, featureReel, frameReels, segDisplays, ...(dotMatrix ? { dotMatrix } : {}), ...(bfmLeds.length ? { bfmLeds } : {}) };
+  return withNotes({ width, height, background, backgroundRect, backgroundColour, reels, ...(bandReels.length ? { bandReels } : {}), ...(bitmaps.length ? { bitmaps } : {}), lamps, vfd, vfdIsDots, vfdFont, vfdGlyphWidth, vfdInk, vfdOffBrightness, vfdReversed, content, column, trimmed, featureReel, frameReels, segDisplays, ...(dotMatrix ? { dotMatrix } : {}), ...(bfmLeds.length ? { bfmLeds } : {}) }, dfm, false);
+}
+
+function withNotes(cab: Cabinet<ImageData>, payload: Uint8Array, fml: boolean): Cabinet<ImageData> {
+  const n = readLayoutNotes(payload, fml);
+  if (n.credit) cab.credit = n.credit;
+  if (n.text) cab.notes = n.text;
+  if (n.splash) {
+    try {
+      const img = bmpToImageData(n.splash, 0, n.splash.length);
+      if (img) cab.splash = img;
+    } catch (e) {
+      console.warn('[dat] splash picture not read: %s', (e as Error).message);
+    }
+  }
+  return cab;
 }
 
 function datDotMatrix(comps: readonly Component[]): DotMatrix | null {

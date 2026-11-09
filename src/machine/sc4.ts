@@ -8,7 +8,6 @@ import { everyNth } from './schematic';
 import { M68000 } from '../cpu/m68000';
 import { M68307Sim, SIM_BASE } from '../hw/m68307';
 import { opticWindowForFlag } from '../layout/datreels';
-import { Eeprom24c } from '../hw/eeprom';
 import { findSecurityKey, Sc4Mbus } from '../hw/sc4mbus';
 import { Mc68681, X1_HZ } from '../hw/mc68681';
 import { RngUnit } from '../hw/rngunit';
@@ -127,8 +126,7 @@ export class Sc4 implements Bus16, Machine {
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: M68307Sim;
-  readonly eeprom = new Eeprom24c();
-  readonly mbus = new Sc4Mbus(this.eeprom);
+  readonly mbus = new Sc4Mbus();
   readonly duart = new Mc68681({
     irqChanged: () => this.refreshExternalInt(),
     txByte: (ch, v) => this.duartTx(ch, v),
@@ -927,7 +925,6 @@ export class Sc4 implements Bus16, Machine {
 
       { id: 'ram', label: 'BATTERY RAM', part: '64K', device: this.ram },
       { id: 'rom', label: 'PROGRAM ROM', part: '2M - even/odd pairs', device: this.rom },
-      { id: 'eeprom', label: 'EEPROM', part: '24Cxx - I2C', device: this.eeprom },
       { id: 'sec', label: 'SEC', part: 'security cartridge', device: this.sec,
         io: [[IO_BASE + SEC_OFF_A, IO_BASE + SEC_OFF_A + 1],
           [IO_BASE + SEC_OFF_B, IO_BASE + SEC_OFF_B + 1]] },

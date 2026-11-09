@@ -41,6 +41,7 @@ export class AstraDotAlpha implements MachineDisplay {
   readonly chars = new Uint8Array(16);
   duty = 0;
   charsetShift = false;
+  static readonly snapshotConfig: readonly string[] = ['charsetShift'];
 
   private readonly buf = new Uint8Array(96);
   private readonly font = new Uint8Array(GLYPHS * 6);

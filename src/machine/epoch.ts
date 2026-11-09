@@ -1,6 +1,6 @@
 import type { Bus16 } from '../cpu/bus68k';
 import { countOutClick, outClicksOf } from './payoutcheck';
-import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus, PayoutDeviceRow } from './machine';
+import type { CabinetSwitch, CoinChute, Machine, MachineDisplay, OptionKey, DigitKind, CoinWiringStatus, PayoutDeviceRow, NoteResult } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { TokenPayouts } from './coinbook';
 import type { Reel } from '../hw/reel';
@@ -80,7 +80,7 @@ const DIP_BANK_1 = 0x121a;
 const DIP_BANK_2 = 0x121b;
 
 export class Epoch implements Machine {
-  static readonly snapshotConfig: readonly string[] = ['layoutCoins', 'wiring'];
+  static readonly snapshotConfig: readonly string[] = ['layoutCoins', 'wiring', 'notePence'];
 
   readonly digitKind: DigitKind = 'epoch';
   readonly clockHz = 16_000_000;
@@ -178,6 +178,17 @@ export class Epoch implements Machine {
   private meterWord = 0;
   private meterSlot = 0;
   private meterAcc = 0;
+
+  private static readonly NOTE_HELD = 100 * 16_000;
+  private static readonly NOTE_BUSY = 105 * 16_000;
+  private static readonly NOTE_ESCROW = 30 * 16_000_000;
+  private notePence = new Map<number, number>();
+  private noteRow = 0;
+  private noteLeft = 0;
+  private notePending = 0;
+  private noteChannel = 0;
+  private noteEscrowLeft = 0;
+  readonly parallelNoteReaderFitted = true;
 
   private readonly switches = new Uint8Array(8);
 
@@ -594,6 +605,7 @@ export class Epoch implements Machine {
     }
     this.meterAcc += cycles;
     if (this.meterAcc >= Epoch.METER_TICK_CYCLES) this.tickMeters();
+    if (this.noteLeft > 0 || this.noteEscrowLeft > 0) this.tickNote(cycles);
     this.lampAcc += cycles;
     while (this.lampAcc >= Epoch.LAMP_TICK_CYCLES) {
       this.lampAcc -= Epoch.LAMP_TICK_CYCLES;
@@ -635,6 +647,67 @@ export class Epoch implements Machine {
         }
       }
     }
+  }
+
+  fitNoteChannels(pence: ReadonlyMap<number, number>): void {
+    this.notePence = new Map(pence);
+  }
+
+  insertParallelNote(channel: number): NoteResult {
+    const value = [0x80, 0x40, 0x20][channel - 1];
+    if (value === undefined || !this.notePence.has(channel)) return 'unprogrammed';
+    if (!(this.ram[OUTPUT_BASE + 6] & 0xf0)) return 'inhibited';
+    if (this.notePending || !this.notePulse(value)) return 'busy';
+    this.noteChannel = channel;
+    this.noteEscrowLeft = Epoch.NOTE_ESCROW;
+    return 'escrow';
+  }
+
+  private notePulse(value: number): boolean {
+    if (this.noteLeft > 0) return false;
+    this.notePending = value;
+    this.noteRow = value === 0x80 ? 1 : value === 0x40 ? 2 : 4;
+    this.noteLeft = Epoch.NOTE_BUSY;
+    return true;
+  }
+
+  private noteClaimed = false;
+
+  private noteInhibits(was: number, v: number): void {
+    if (((was ^ v) & 0xf0) && !(v & 0xf0) && !this.noteClaimed) this.returnNote();
+  }
+
+  private noteEscrowLine(was: number, v: number): void {
+    if (!((was ^ v) & 1) || (v & 1) || !this.notePending || this.noteClaimed) return;
+    this.noteClaimed = true;
+    this.noteEscrowLeft = 0;
+    if (this.noteLeft === 0) this.acceptNote();
+  }
+
+  private acceptNote(): void {
+    const pence = this.notePence.get(this.noteChannel);
+    this.notePulse(this.notePending);
+    this.notePending = 0;
+    this.noteClaimed = false;
+    if (pence !== undefined && this.booksMoney) this.cashLedger.inPence += pence;
+    this.noteChannel = 0;
+  }
+
+  private returnNote(): void {
+    this.notePending = 0;
+    this.noteChannel = 0;
+    this.noteEscrowLeft = 0;
+  }
+
+  private tickNote(cycles: number): void {
+    if (this.noteLeft > 0) {
+      if ((this.noteLeft -= cycles) <= Epoch.NOTE_BUSY - Epoch.NOTE_HELD) this.noteRow = 0;
+      if (this.noteLeft <= 0) {
+        this.noteLeft = 0;
+        if (this.noteClaimed) this.acceptNote();
+      }
+    }
+    if (this.noteEscrowLeft > 0 && (this.noteEscrowLeft -= cycles) <= 0) this.returnNote();
   }
 
   run(cycles: number): number {
@@ -720,8 +793,13 @@ export class Epoch implements Machine {
       } else if (off === OUTPUT_BASE + 3) this.diverter = val & 0xff;
       else if (off === OUTPUT_BASE + 4) this.drive.write(0, val);
       else if (off === OUTPUT_BASE + 5) this.drive.write(1, val);
-      else if (off === OUTPUT_BASE + 6) this.writeMeters(val);
-      else if (off === OUTPUT_BASE + 7) this.writeHopperDrive(val);
+      else if (off === OUTPUT_BASE + 6) {
+        this.noteInhibits(was, val & 0xff);
+        this.writeMeters(val);
+      } else if (off === OUTPUT_BASE + 7) {
+        this.noteEscrowLine(was, val & 0xff);
+        this.writeHopperDrive(val);
+      }
       return;
     }
     if (a >= this.romLength) this.strays.hit(a);
@@ -811,6 +889,8 @@ export class Epoch implements Machine {
           | ((jackpot & 1) << 6) | ((jackpot & 2) << 6);
       case 5:
         return this.switches[5] | 0x40 | this.hopperSense();
+      case 6:
+        return this.switches[6] | this.noteRow;
       default:
         return slot < 8 ? this.switches[slot] : 0;
     }

@@ -49,18 +49,14 @@ function readItem(raw: unknown): KeyedItem | null {
   };
 }
 
-export function mergeKeyedList(held: KeyedList | undefined, json: unknown): KeyedList {
+export function nextKeyedList(held: KeyedList | undefined, json: unknown): KeyedList {
   const doc = obj(json);
   if (doc.unchanged === true) {
     if (!held) throw new Error('unchanged, but nothing is held');
     return held;
   }
   if (!Array.isArray(doc.items) || (typeof doc.at !== 'number' && typeof doc.at !== 'string')) throw new Error('not a keyed list');
-  const items = doc.items.map(readItem).filter((x): x is KeyedItem => !!x);
-  if (doc.full !== false || !held) return { at: doc.at, items };
-  const byId = new Map(held.items.map((x) => [x.id, x]));
-  for (const x of items) byId.set(x.id, x);
-  return { at: doc.at, items: [...byId.values()] };
+  return { at: doc.at, items: doc.items.map(readItem).filter((x): x is KeyedItem => !!x) };
 }
 
 export function readHeld(v: unknown): KeyedList | undefined {

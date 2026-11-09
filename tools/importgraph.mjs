@@ -106,25 +106,20 @@ export function stampFiles(graph, system) {
   return [...files].sort();
 }
 
-export function boardStamps(root, { graph = importGraph(root), read = (f) => readFileSync(join(root, f)) } = {}) {
+export function versionStamps(boards) {
   const out = {};
-  for (const system of Object.keys(SYSTEM_BOARD)) {
-    const h = createHash('sha256');
-    for (const f of stampFiles(graph, system)) {
-      h.update(f);
-      h.update('\0');
-      h.update(read(f));
-      h.update('\0');
-    }
-    out[system] = h.digest('hex').slice(0, 12);
-  }
+  for (const [system, b] of Object.entries(boards)) out[system] = b.version === 1 && b.v1 ? b.v1 : `v${b.version}`;
   return out;
+}
+
+export function boardStamps(root) {
+  return versionStamps(JSON.parse(readFileSync(join(root, 'src/machine/boardversions.json'), 'utf8')).boards);
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   const root = join(import.meta.dirname, '..');
   const graph = importGraph(root);
-  const stamps = boardStamps(root, { graph });
+  const stamps = boardStamps(root);
   for (const s of Object.keys(stamps).sort()) {
     console.log(`${s.padEnd(12)} ${stamps[s]}  ${stampFiles(graph, s).length} files`);
   }

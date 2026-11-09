@@ -4,7 +4,7 @@ import {
   type BandStrip, type BonusReel, type FlipStrip, type Cabinet, type CabBitmap, type CabLamp, type DotMatrix, type PrismLamp,
   type ReelBand, type ReelBorder, type Rect,
   type RgbLed, type LightSource, type SegDisplay,
-  SEG_METRICS,
+  SEG_METRICS, preV6LiteralSign, type OffsetSignWitness,
 } from './dat';
 import { lightSourceFace } from './lightsource';
 import { CAPTION_DX } from './checkbox';
@@ -1154,7 +1154,8 @@ export function parseFmlLayout(
   const comps = unshown.size
     ? listed.filter((c) => !unshown.has(c) || hiddenInput(c))
     : listed;
-  const literalOffsetSign = (mfmeMajor(payload) ?? Infinity) < 6;
+  const preV6 = (mfmeMajor(payload) ?? Infinity) < 6;
+  const signWitnesses: OffsetSignWitness[] = [];
 
   let background: ImageData | null = null;
   let backgroundRect: Rect = { left: 0, top: 0, width: 0, height: 0 };
@@ -1258,6 +1259,11 @@ export function parseFmlLayout(
     );
     const opaqueBand = !!c.values.get('OpaqueBand');
     const opaqueKey = opaqueBand ? applyOpaqueBand(band.canvas, lightFloor) : undefined;
+    signWitnesses.push({
+      stops: band.stops, halfSteps: val(c, 'HalfSteps') || 96,
+      bandOffset: (val(c, 'BandOffset') ?? 0) + (winlinesOffsetOf(c, band.stops).winlinesOffset ?? 0),
+      reversed: !!c.values.get('Reversed'),
+    });
     reels.push({
       left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c), canvas: band.canvas,
       stops: band.stops, rheight: reelHeight, reversed: !!c.values.get('Reversed'),
@@ -1273,7 +1279,7 @@ export function parseFmlLayout(
       bandOffset: val(c, 'BandOffset') ?? 0,
       ...winlinesOffsetOf(c, band.stops),
       ...(band.artCells !== undefined ? { artCells: band.artCells } : {}),
-      literalOffsetSign,
+      literalOffsetSign: false,
       widthDiff: Math.max(0, c.values.get('WidthDiff') ?? 0),
       fillColour: cssArgb(c.values.get('BackgroundFillColour') ?? 0xff000000),
       winLines: {
@@ -1344,6 +1350,9 @@ export function parseFmlLayout(
       discPunch: punch,
       discBaseOverlay: image(c, 'Overlay', false, true) ?? undefined,
     });
+  }
+  if (preV6 && preV6LiteralSign(signWitnesses)) {
+    for (const r of reels) if (!r.disc) r.literalOffsetSign = true;
   }
   reels.sort((a, b) => a.left - b.left);
 

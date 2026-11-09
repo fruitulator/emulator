@@ -353,6 +353,7 @@ export class WizardMachine {
   async coin(line: number): Promise<void> {
     await this.until(() => !this.live.emu.latestFrame()?.coinBusy, 3000);
     this.live.emu.coin(line);
+    this.live.coinWentIn(line);
   }
 
   startCaps(): { lp: CabLamp; name: string }[] {

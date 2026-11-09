@@ -51,6 +51,22 @@ class RecordingTagMap extends Map<number, Uint8Array> {
   override has(tag: number): boolean { this.rec(tag); return super.has(tag); }
 }
 
+export const V20_FILE_TAG_NAMES: Readonly<Record<number, string>> = {
+  0x00: 'Serial', 0x01: 'Created By Serial', 0x02: 'Layout Serial',
+  0x03: 'Product Id', 0x04: 'User', 0x05: 'Character',
+  0x0b: 'Meters (8 rows, oldest)', 0x22: 'Meters (10 rows)', 0x3a: 'Meters (10 rows + SEC)',
+  0x25: 'SYS80 Ports (older)', 0x29: 'Notes', 0x2a: 'Notes Window', 0x2d: 'Organisation',
+  0x2f: 'MFME Version Text', 0x41: 'JPReset',
+  0x43: 'DIP Labels 1', 0x44: 'DIP Labels 2', 0x45: 'DIP Labels 3',
+  0x50: 'Reel Jumpers 1 (second word)', 0x51: 'Reel Jumpers 2 (second word)',
+  0x5e: 'Hop1Type (older)', 0x61: 'Hop2Type (older)', 0x69: 'Meters (32 rows, older)',
+  0x6b: 'PAC Assignments (older)', 0x6c: 'PAC Assignments (older, second)',
+  0x6e: 'ccTalkEn', 0x6f: 'MachineID', 0x76: 'Notes (RTF)', 0x78: 'Auto Play (older)',
+  0x82: 'MAXI_ReelType', 0x87: 'Auto Play No Effects', 0x88: 'MFME Version (older)',
+  0x96: 'Published', 0x97: 'Save Log', 0x98: 'Splash Bitmap', 0x9a: 'Auto Play',
+  0xa7: 'MFME Version', 0xa8: 'MFME Version Text (newer)',
+};
+
 export function fileLevelTags(payload: Uint8Array): Map<number, Uint8Array> {
   const out = tagReadRecorder ? new RecordingTagMap(tagReadRecorder) : new Map<number, Uint8Array>();
   let pos = 0;
@@ -315,6 +331,14 @@ export function readOperatorTag(
 export function readLayoutWord(payload: Uint8Array, tag: number): number | null {
   const value = fileLevelTags(payload).get(tag);
   return value && value.length >= 4 ? u32(value, 0) : null;
+}
+
+export function pclMaxiReelType(payload: Uint8Array): number {
+  return readLayoutWord(payload, 0x82) ?? 0;
+}
+
+export function astraDotCharsetShift(payload: Uint8Array): boolean {
+  return readLayoutWord(payload, 0x89) === 1;
 }
 
 export function readNumber(

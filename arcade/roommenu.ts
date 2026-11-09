@@ -222,8 +222,8 @@ export class RoomMenu {
 
   private get ids(): ActionId[] {
     return this.host
-      ? ['coins', 'switches', 'options', 'keyboard', 'download', 'system', 'reboot', 'stepBack']
-      : ['coins', 'options', 'keyboard', 'download', 'stepBack'];
+      ? ['coins', 'switches', 'options', 'keyboard', 'notes', 'download', 'system', 'reboot', 'stepBack']
+      : ['coins', 'options', 'keyboard', 'notes', 'download', 'stepBack'];
   }
 
   private buildRoom(): void {
@@ -256,7 +256,7 @@ export class RoomMenu {
 
     content.append(this.soundCard(), this.realismCard());
 
-    appendItems(content, menuItems(this.actions(g), { info, view, system: game.system }, this.ids),
+    appendItems(content, menuItems(this.actions(g), { info, view, system: game.system, layout: g.cab }, this.ids),
       (label, icon, panel) => this.drawer.navRow(label, icon, panel));
     appendMenuFoot(content);
 

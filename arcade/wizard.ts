@@ -28,12 +28,12 @@ import { decodeTrace, layoutDigest } from './trace';
 import { putArcade } from './docstore';
 import { NO_BOOKKEEPING, unknownMoneyMoved, unpricedMoved } from './moneygate';
 import { freePlayOn, paidOutputs, payoutKindLabel } from './coinfault';
-import type { CoinFault } from './serverwire';
+import type { CoinFault, StopCoin } from './serverwire';
 import type { CabLamp } from '../web/dat';
 import { alarmsUnseen, attractBudgetS, buttonsOnly, hostGate, lookNext, TRACE_S, WizardMachine, type BootFrom } from './wizmachine';
 import { noRamVerdict, tryWithoutRam, type InstallStart } from '../src/machine/ramstart';
 import { TRACE_FPS } from './trace';
-import { COINS_STOPPED_HOST_TEXT, el, exitButton, iconButton } from './host';
+import { COINS_STOPPED_HOST_TEXT, coinsStoppedNote, el, exitButton, iconButton } from './host';
 import { clearServerFault, serverMoney } from './moneyrecord';
 import { DressPreview, type GlassPlay } from './dresspreview';
 import { FlatZoom } from './flatzoom';
@@ -51,8 +51,7 @@ import { coinGrid, coinTicks, payoutDefaultNote, slotCards } from '../web/ui/coi
 import { segSwitch } from '../web/ui/segswitch';
 import { editedSlot, isTokenCoin, markedSlots, readCoinWiring, payoutsAnswered, readPayoutMeters, readPayoutValues, readNotPayoutLines, CASH_COINS, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
 import { acceptorSlots, coinLineSlots, type AcceptorSlot, type DrawnSlot } from '../web/coinslots';
-import { penceOf } from './wallet';
-import { coinsTaken, hostCoinsTaken, lineCoins, markableButtons, markedCounted, sameKindCoin, slotOffer, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
+import { coinsTaken, hostCoinsTaken, lineCoins, stepLineCoins, markableButtons, markedCounted, sameKindCoin, slotOffer, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 import { definitionOf, keepCoinAnswers } from './hostset';
 import { buildsOf, libraryBuild, machineBuildId } from './builds';
 
@@ -73,8 +72,6 @@ const STEP_DESC = [
   str('arcade.wizard.choose_how_the_cabinet_looks'),
   str('arcade.wizard.checks_the_machine_takes_a'),
 ];
-
-const COINS_STOPPED_HOST_NOTE_WIZARD = str('arcade.wizard.two_coins_did_not_match');
 
 const PAID_JUST_NOW_MS = 10_000;
 
@@ -151,6 +148,7 @@ export async function openWizard(
     id: row.id, contentHash: row.contentHash, formerContentHashes: row.formerContentHashes ?? [], name: machineTitle(row.name, held, row.build), board: row.board, cabinetStyle: row.detected?.cabinetStyle ?? null,
     traceUrl: null, held, setup: row.setup, config: row.config,
     ...(build ? { build } : {}),
+    ...(row.coinStep ? { coinStep: row.coinStep } : {}),
     slot: {
       load: async () => (mode === 'edit' && row.state ? fromMachineState(row.state, held.hash) : null),
       save: async (rec) => { row.state = toMachineState(rec); },
@@ -1702,6 +1700,7 @@ class Wizard {
   private wiringRun: 'no' | 'running' | 'done' = 'no';
 
   private serverCoinsStopped: boolean | null = null;
+  private serverStopCoin: StopCoin | null = null;
   private serverFault: CoinFault | null = null;
   private serverUnset = false;
 
@@ -1914,6 +1913,16 @@ class Wizard {
       : null;
   }
 
+  private stopCoin(): StopCoin | null {
+    const live = this.wm.live.coinsStopped || this.wm.coinsStopped() ? this.wm.live.stopCoin : null;
+    return live ?? (this.serverCoinsStopped ? this.serverStopCoin : null);
+  }
+
+  private stopSlot(): number | null {
+    const by = this.stopCoin();
+    return by ? by.slot - 1 : null;
+  }
+
   private slotWarning(s: SlotWiring | undefined): string | null {
     if (!s) return null;
     const lost = unplacedCoins(s);
@@ -1939,13 +1948,14 @@ class Wizard {
       void serverMoney(this.doc.id, this.m.id).then((r) => {
         if (!r?.coinsStopped || this.gone()) return;
         this.serverCoinsStopped = true;
+        this.serverStopCoin = r.coinsStoppedBy ?? null;
         if (this.step === FILL) this.render();
       });
     }
     const body = el('div', null, { class: 'coin-step' });
     if (this.serverCoinsStopped || this.wm.live.coinsStopped || this.wm.coinsStopped()) {
       const stopped = card();
-      stopped.append(oneCheck('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE_WIZARD));
+      stopped.append(oneCheck('warn', COINS_STOPPED_HOST_TEXT, coinsStoppedNote(this.stopCoin(), true)));
       body.append(stopped);
     }
     if (info?.unpricedCoins) {
@@ -1970,15 +1980,7 @@ class Wizard {
   private renderSlots(): HTMLElement | null {
     const info = this.info();
     if (!info) return null;
-    const coinOf = new Map<number, SlotCoin>(lineCoins(info, this.refusing(), this.wiring()).map((c) => [c.line, c.coin]));
-    if (!info.coinTable) {
-      for (const c of info.coins ?? []) {
-        const p = penceOf(c);
-        if (coinOf.has(c.bit)) continue;
-        if (c.token) coinOf.set(c.bit, { token: p > 0 ? p : null });
-        else if (p > 0) coinOf.set(c.bit, p);
-      }
-    }
+    const coinOf = stepLineCoins(info, this.refusing(), this.wiring());
     const offer = slotOffer(coinOf, info.unnamedCoins ?? [], !!info.tokenForCash);
     const { lineFor } = offer;
 
@@ -2073,6 +2075,7 @@ class Wizard {
       token: offer.token,
       lost,
       warning: (i, coins) => {
+        if (i === this.stopSlot()) return str('arcade.wizard.value_looks_wrong');
         const l = lost(i, coins);
         return l.length ? str('arcade.wizard.players_won_t_be_offered', { 0: l.map(slotCoinLabel).join(', '), 1: l.length === 1 ? 'it' : 'them' }) : null;
       },
@@ -2106,7 +2109,7 @@ class Wizard {
         const s = this.wiring()[lineOf(i)];
         return s ? unplacedCoins(s) : [];
       },
-      warning: (i) => this.slotWarning(this.wiring()[lineOf(i)]),
+      warning: (i) => (i === this.stopSlot() ? str('arcade.wizard.value_looks_wrong') : this.slotWarning(this.wiring()[lineOf(i)])),
       onChange: (i, coins) => {
         const next = this.wiring();
         if (coins.length) next[lineOf(i)] = editedSlot(next[lineOf(i)], slots[i].line, coins);
@@ -2730,7 +2733,7 @@ class Wizard {
     if (stop()) return;
     const readable = wm.glassReadable();
     let glassMoved = !readable || newOnGlass();
-    if (!glassMoved && slot && moneyMoved && after) {
+    if ((!glassMoved || !readable) && slot && moneyMoved && after) {
       after = await this.ledgerSettled(after, stop);
       const paid = after ? after.outPence - before.outPence : 0;
       if (paid > 0 && paid === booked(after)) {

@@ -113,11 +113,13 @@ const CC_NOTE = 0x28;
 const CC_HOST = 1;
 
 export const SC5_SWITCH_IDLE = Uint8Array.of(
-  0xff, 0xdf, 0x7f, 0x9f, 0xff, 0xdf, 0xdf, 0xff,
   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-  0xf1, 0x71, 0xd1, 0xf1, 0xf1, 0x71, 0xf1, 0xf1,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 );
+
+export const OPERATOR_DOORS_SHUT = 0x0e;
 
 const DEFAULT_MECH = 'SR5i';
 const DEFAULT_HOPPER = 'SCH 2';
@@ -1102,10 +1104,13 @@ export class Sc5 implements Bus16, Machine {
     if (addr === YMZ_BASE + 2) return this.ymz.read(1);
 
     const off = addr & 0xffff;
-    if (off < 0x0200 && (off & 0x0f) === 0) {
-      const bank = (addr & 0x00ff0000) === 0x00020000 ? 0 : 16;
-      const row = bank + (off >> 4);
-      return this.switches[row] & ~this.#keyClosed[row];
+    const bankOf = addr & 0x00ff0000;
+    if ((off & 0x0f00) === 0 && (bankOf === 0x00010000 || bankOf === 0x00020000)) {
+      const upper = bankOf === 0x00020000;
+      if (off & 0x80) return upper ? 0xff : 0x00;
+      const row = (upper ? 0 : 16) + ((off >> 4) & 7);
+      const v = this.switches[row] & ~this.#keyClosed[row];
+      return upper ? v : v & ~(this.operatorDoors & 0x1f);
     }
 
     if ((addr & 0x00ff0000) === 0x00020000 && (off & 0x0ff0) === 0x0240) {
@@ -1114,6 +1119,8 @@ export class Sc5 implements Bus16, Machine {
 
     return 0xff;
   }
+
+  operatorDoors = OPERATOR_DOORS_SHUT;
 
   aimDial = 0;
 

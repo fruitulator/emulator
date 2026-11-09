@@ -127,6 +127,31 @@ button.menu-stat {
 #menuFly:has(> .menu-keys) {
   width: 440px;
 }
+#menuFly:has(> .menu-notes) {
+  width: 440px;
+}
+.menu-notes__pic {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--nb-r-md);
+}
+.menu-notes__text {
+  margin: 0;
+  padding: 12px 14px;
+  font: 400 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--nb-text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+@media (max-width: 600px) {
+  .menu-notes__text {
+    padding: 10px 10px;
+    font-size: 10px;
+  }
+}
 .menu-options > .menu-card > .menu-row {
   min-height: 52px;
   padding: 14px 16px;

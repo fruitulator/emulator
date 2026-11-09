@@ -18,6 +18,9 @@ export interface CabGeometry {
   backgroundColour?: number | null;
   backgroundKey?: number | null;
   backdrop?: number | null;
+  credit?: string;
+  notes?: string;
+  splash?: number;
   reels: (Omit<ReelBand, 'canvas' | 'overlay' | 'mask' | 'mask2' | 'mask3' | 'gradient'
     | 'discMask' | 'discInnerMask' | 'discPunch' | 'discBaseOverlay'>
     & { canvas: number; overlay?: number; mask?: number; mask2?: number; mask3?: number; gradient?: number;
@@ -155,6 +158,9 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     backgroundColour: cab.backgroundColour ?? null,
     backgroundKey: cab.backgroundKey ?? null,
     backdrop: cab.backdrop ? idFor(cab.backdrop) : null,
+    ...(cab.credit ? { credit: cab.credit } : {}),
+    ...(cab.notes ? { notes: cab.notes } : {}),
+    ...(cab.splash ? { splash: idFor(cab.splash) } : {}),
     reels: cab.reels.map((r) => ({
       ...r, canvas: idFor(r.canvas),
       overlay: r.overlay ? idFor(r.overlay) : undefined,
@@ -281,6 +287,9 @@ export function assembleCabinet<A>(
     backgroundColour: geo.backgroundColour ?? null,
     backgroundKey: geo.backgroundKey ?? null,
     backdrop: geo.backdrop == null ? null : get(geo.backdrop),
+    ...(geo.credit ? { credit: geo.credit } : {}),
+    ...(geo.notes ? { notes: geo.notes } : {}),
+    ...(geo.splash === undefined ? {} : { splash: get(geo.splash) }),
     reels: geo.reels.map((r) => ({
       ...r, canvas: get(r.canvas),
       overlay: r.overlay === undefined ? undefined : get(r.overlay),

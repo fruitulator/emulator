@@ -1,5 +1,3 @@
-import type { Eeprom24c } from './eeprom';
-
 export type SecurityKey = Uint8Array;
 
 export function securityReply(challenge: Uint8Array, key: SecurityKey): Uint8Array {
@@ -181,25 +179,17 @@ export class Sc4Mbus {
   readonly store = new Uint8Array(0x2000);
   private storePtr = 0;
 
-  constructor(private readonly eeprom: Eeprom24c) {}
-
   loadStore(image: Uint8Array): void {
     this.store.fill(0);
     this.store.set(image.subarray(0, this.store.length));
   }
 
-  private ours(): boolean {
-    return this.device === 0x12 || this.device === 0xa2 || this.device === 0xa8;
-  }
-
   start(): void {
     this.awaitingSelect = true;
-    this.eeprom.start();
   }
 
   stop(): void {
     this.awaitingSelect = false;
-    this.eeprom.stop();
   }
 
   write(v: number): void {
@@ -207,13 +197,11 @@ export class Sc4Mbus {
       this.awaitingSelect = false;
       this.device = v & 0xfe;
       this.address = this.device;
-      if (!this.ours()) this.eeprom.write(v);
       return;
     }
     if (this.device === 0x12) this.security.write(this.address, v);
     else if (this.device === 0xa2) this.rtc.write(this.address, v);
     else if (this.device === 0xa8) this.storeWrite(this.address, v);
-    else this.eeprom.write(v);
     this.address = (this.address + 1) & 0xffff;
   }
 
@@ -233,7 +221,7 @@ export class Sc4Mbus {
     else if (this.device === 0xa8) {
       v = this.store[this.storePtr & 0x1fff];
       this.storePtr = (this.storePtr + 1) & 0x1fff;
-    } else v = this.eeprom.read();
+    } else v = 0xff;
     this.address = (this.address + 1) & 0xffff;
     return v;
   }

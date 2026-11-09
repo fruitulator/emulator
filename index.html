@@ -718,6 +718,27 @@
       body:has(#stage:not([hidden])) header #soundGroup {
         pointer-events: auto;
       }
+      #layoutCredit {
+        position: fixed;
+        left: 12px;
+        bottom: max(6px, env(safe-area-inset-bottom));
+        z-index: 4;
+        max-width: min(60vw, 640px);
+        margin: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font: 500 11px/1.3 var(--nb-font-body);
+        letter-spacing: 0.01em;
+        color: rgba(255, 255, 255, 0.5);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 6px rgba(0, 0, 0, 0.6);
+        pointer-events: none;
+        user-select: none;
+      }
+      body:not(:has(#stage:not([hidden]))) #layoutCredit,
+      body:has(.reel-bands:not([hidden])) #layoutCredit {
+        display: none;
+      }
       body:has(#stage:not([hidden])) header::before {
         content: "";
         position: absolute;
@@ -1084,6 +1105,7 @@
       <button id="soundnote-close" class="nb-icon-btn" type="button" aria-label="Dismiss" data-str-aria-label="index.dismiss"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
     <div id="stage" class="nb-play__machine" hidden><canvas id="screen" width="800" height="480"></canvas></div>
+    <p id="layoutCredit" class="nb-play__credit" hidden></p>
     <script type="module" src="/web/boot.ts"></script>
   </body>
 </html>

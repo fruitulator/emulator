@@ -18,6 +18,8 @@ import { boardDefaultsOf, noteBoardDefault } from '../src/machine/boarddefaults'
 import { operatorPresetsOf } from '../src/machine/statedlines';
 import { schematicFor } from '../src/machine/schematics';
 import { Sc4 } from '../src/machine/sc4';
+import { Mpu3 } from '../src/machine/mpu3';
+import { readMpu3Dil, type Mpu3DilEffect } from '../src/machine/mpu3dil';
 import type { MachineInfo } from './emu-protocol';
 import { layoutSwitchIdsFrom, hasControl } from '../src/layout/fmlconfig';
 import { Ay8910 } from '../src/hw/ay8910';
@@ -100,6 +102,11 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       ifWrong: 'Those slots do nothing when clicked; the machine cannot take a note.',
     });
   }
+  const dilReads = new Map<number, Mpu3DilEffect>();
+  if (m instanceof Mpu3) {
+    const dils = (m.switchPanel ?? []).filter((sw) => sw.dil);
+    if (dils.length === 16) for (const r of readMpu3Dil(m.rom)) dilReads.set(dils[r.index].id, r.effect);
+  }
   return {
     system,
     ...(m.quietIsWaiting ? { quietIsWaiting: true } : {}),
@@ -112,6 +119,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
       position: k.position(),
     })),
     switchPanel: (m.switchPanel ?? []).map((sw) => ({
+      ...(sw.dil && dilReads.has(sw.id) ? { programReads: dilReads.get(sw.id)! } : {}),
       id: sw.id,
       label: sw.label,
       on: sw.on,

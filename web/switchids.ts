@@ -2,6 +2,7 @@ import type { NamedInput } from './inputs';
 import type { SwitchControl } from '../src/layout/fmlconfig';
 import type { MachineInfo } from './emu-protocol';
 import { str } from './i18n';
+import type { CabCheckbox, CabLamp } from './dat';
 
 const GENERIC: Record<SwitchControl, { label: string; toggle: boolean }> = {
   Cash: { label: str('switchids.cashbox_door'), toggle: true },
@@ -104,4 +105,11 @@ export function testLines(
     if (n.control && TEST_CONTROLS.includes(n.control)) out.add(namedInputId(n));
   }
   return out;
+}
+
+export function operatorOnly(part: CabLamp | CabCheckbox, lines: ReadonlySet<number>): boolean {
+  if (!('states' in part)) return true;
+  const lp = part;
+  if (lp.button === undefined || lp.button < 0 || lp.acceptor || lp.coinInput !== undefined) return false;
+  return lines.has(lp.button);
 }

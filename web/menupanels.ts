@@ -306,3 +306,28 @@ export function reelPeekRow(): HTMLLabelElement {
   row.title = str('menupanels.drag_a_reel_to_see');
   return row;
 }
+
+export function notesPanel(layout: { notes?: string; splash?: ImageBitmap | null } | null | undefined): HTMLElement | null {
+  const text = layout?.notes ?? '';
+  const splash = layout?.splash ?? null;
+  if (!text && !splash) return null;
+  const panel = document.createElement('div');
+  panel.className = 'menu-stack menu-notes';
+  if (splash) {
+    const pic = document.createElement('canvas');
+    pic.className = 'menu-notes__pic';
+    pic.width = splash.width;
+    pic.height = splash.height;
+    pic.getContext('2d')?.drawImage(splash, 0, 0);
+    panel.append(pic);
+  }
+  if (text) {
+    const c = card();
+    const pre = document.createElement('pre');
+    pre.className = 'menu-notes__text';
+    pre.textContent = text;
+    c.append(pre);
+    panel.append(c);
+  }
+  return panel;
+}

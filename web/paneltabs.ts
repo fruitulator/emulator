@@ -2,7 +2,8 @@ import { toggleInput } from './ui/rows';
 import type { DiagEntry, DiagKind } from './diaglog';
 import type { PanelTab } from './schematic';
 import { str } from './i18n';
-import type { DilPlace } from '../src/machine/machine';
+import { dilSwitchLabel, type DilPlace } from '../src/machine/machine';
+import type { Mpu3DilEffect } from '../src/machine/mpu3dil';
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K, cls?: string, text?: string,
@@ -299,6 +300,19 @@ export interface OptionSwitchRow {
   group?: string;
   bootOnly?: boolean;
   dil?: DilPlace;
+  programReads?: Mpu3DilEffect;
+}
+
+const PROGRAM_READS: Record<Mpu3DilEffect, () => string> = {
+  coin: () => str('paneltabs.dil_reads_coin'),
+  change: () => str('paneltabs.dil_reads_change'),
+  singleCoinLockout: () => str('paneltabs.dil_reads_single_coin_lockout'),
+};
+
+export function programNamed(row: OptionSwitchRow): OptionSwitchRow {
+  if (!row.dil || row.dil.name || !row.programReads) return row;
+  const name = PROGRAM_READS[row.programReads]();
+  return { ...row, label: dilSwitchLabel(row.label, name), dil: { ...row.dil, name } };
 }
 
 export interface OptionsTabDeps {
@@ -385,6 +399,7 @@ export function dipPackage(
   host: HTMLElement, rows: OptionSwitchRow[],
   set: (row: OptionSwitchRow, on: boolean) => void,
 ): void {
+  rows = rows.map(programNamed);
   const first = rows[0].dil!;
   const ways = Math.max(first.ways, ...rows.map((r) => r.dil!.slot + 1));
   const bySlot = new Map(rows.map((r) => [r.dil!.slot, r]));

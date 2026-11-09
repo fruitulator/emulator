@@ -19,7 +19,8 @@ import { openDialog } from '../web/ui/dialog';
 import { dangerRow, closeSheet, confirmInSheet, escapeCloses, optionRow, sheetRow, showSheet } from '../web/ui/sheet';
 import { statusRow } from '../web/ui/status';
 import { COIN_SETUP_FAULT_HOST_TEXT, PAYOUTS_UNSET_HOST_TEXT, hostPayoutsUnset, outputName } from './coinfault';
-import type { CoinFault, MachineMoney } from './serverwire';
+import type { CoinFault, MachineMoney, StopCoin } from './serverwire';
+import { cashLabel } from '../web/coinask';
 import {
   ARCADE_MAX_MACHINES, FLOOR_CENTRE, FLOOR_COLS, FLOOR_GEOM, FLOOR_ROWS, FLOOR_STEP, addMachine, addProp, aligned, arrange, cannotAdd, distributed, duplicateMachine, facedAll, fits, moveMachine, moveProp, turnedAsGroup, turnedEach, type AlignEdge, type Arranged, type ArrangeTarget,
   faceProp, groupMoved, moveGroup, propFits, propSize, propStand, removeMachine, removeProp, switchedOff, snapProp, turnMachine, turnOf, turnProp, type ArcadeDoc, type DocMachine, type FloorGroup, type Place, type Turn,
@@ -1113,6 +1114,13 @@ function openAddPoster(d: ArcadeDoc, returnTo: HTMLElement, at?: { col: number; 
 export const COINS_STOPPED_HOST_TEXT = str('arcade.host.this_machine_has_stopped_recording');
 export const COINS_STOPPED_HOST_NOTE = str('arcade.host.two_coins_did_not_match');
 
+export function coinsStoppedNote(by: StopCoin | null | undefined, wizard = false): string {
+  if (!by || by.pence === null) return wizard ? str('arcade.wizard.two_coins_did_not_match') : COINS_STOPPED_HOST_NOTE;
+  const args = { 0: cashLabel(by.pence), 1: by.slot };
+  if (wizard) return by.token ? str('arcade.wizard.token_in_slot_did_not_match', args) : str('arcade.wizard.coin_in_slot_did_not_match', args);
+  return by.token ? str('arcade.host.token_in_slot_did_not_match', args) : str('arcade.host.coin_in_slot_did_not_match', args);
+}
+
 const LOST_SHOWN = 5;
 
 const pounds = (p: number): string => `${p < 0 ? '-' : ''}£${(Math.abs(p) / 100).toFixed(2)}`;
@@ -1146,7 +1154,7 @@ function openStats(m: DocMachine, d: ArcadeDoc): void {
       void serverMoney(d.id, m.id).then((r) => {
         if (r === undefined) { inRow.textContent = '-'; outRow.textContent = '-'; return; }
         show(statsMoney(m, r));
-        if (r?.coinsStopped !== undefined) box.prepend(statusRow('warn', COINS_STOPPED_HOST_TEXT, COINS_STOPPED_HOST_NOTE));
+        if (r?.coinsStopped !== undefined) box.prepend(statusRow('warn', COINS_STOPPED_HOST_TEXT, coinsStoppedNote(r.coinsStoppedBy)));
 
       });
     } else {

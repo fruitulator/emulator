@@ -51,8 +51,6 @@ export const NMI_TICK_CYCLES = 3000;
 
 const DONGLE_KEY_LENGTH = 22;
 
-export const REEL_TICK_HZ = 1000;
-
 export const IRQ2_HZ = 100;
 
 const TCSR_ETOI = 0x04;
@@ -305,7 +303,6 @@ export class AceSp implements Bus, Machine {
 
   private nmiCycles = 0;
   private nmiTickOn = false;
-  private reelCycles = 0;
   private irq2Cycles = 0;
 
   private ramOn = false;
@@ -343,7 +340,6 @@ export class AceSp implements Bus, Machine {
 
   setFittedReels(channels: readonly number[]): ReelFit {
     this.reelFit = fitReelBank(this.reelUnits, channels);
-    this.reelctrl.fit(this.reelFit.channels);
     return this.reelFit;
   }
 
@@ -923,7 +919,6 @@ export class AceSp implements Bus, Machine {
 
     this.nmiCycles = 0;
     this.nmiTickOn = false;
-    this.reelCycles = 0;
     this.irq2Cycles = 0;
     this.ramOn = false;
     this.dongleState = 0;
@@ -1506,11 +1501,7 @@ export class AceSp implements Bus, Machine {
       return cycles;
     }
     this.tickNmiSource(cycles);
-    this.reelCycles += cycles;
-    const reelPeriod = Math.floor(E_CLOCK / REEL_TICK_HZ);
-    while (this.reelCycles >= reelPeriod) {
-      this.reelCycles -= reelPeriod;
-      this.reelctrl.tick(1);
+    if (this.reelctrl.advance(cycles)) {
       for (let i = 0; i < this.reelUnits.length; i++) {
         const u = this.reelUnits[i];
         const p = this.reelctrl.positions[i];

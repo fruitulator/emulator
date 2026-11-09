@@ -60,7 +60,7 @@ const PORT_PERCENT = 1;
 const PORT_J10_0 = 2;
 const PORT_COINS = 9;
 
-const IDLE_PORTS = [0xff, 0x00, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+const IDLE_PORTS = [0xff, 0xf0, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
 
 const MATRIX_EXTRA = [13, 14, 11, 12] as const;
 
@@ -775,7 +775,7 @@ export class Impact implements Bus16, Machine {
   private static readonly DIL_ID_BASE = 256;
 
   setPercentKey(v: number): void {
-    this.idle[PORT_PERCENT] = v & 0xff;
+    this.idle[PORT_PERCENT] = 0xf0 | (v & 0x0f);
   }
 
   setKeys(v: number): void {

@@ -9,6 +9,7 @@ import type { CreditWatch } from '../src/machine/coinmeasure';
 import type { DiagEntry } from './diaglog';
 import type { Recording } from '../src/machine/replay';
 import type { SwitchControl } from '../src/layout/fmlconfig';
+import type { Mpu3DilEffect } from '../src/machine/mpu3dil';
 
 export type { CashLedger };
 export type { MeterTotals };
@@ -42,6 +43,7 @@ export interface MachineInfo {
     id: number; label: string; on: boolean; group?: string; bootOnly?: boolean;
     option?: boolean;
     dil?: DilPlace;
+    programReads?: Mpu3DilEffect;
   }[];
   capNames?: Record<number, { role: string; label: string }>;
   switchIds?: Partial<Record<SwitchControl, number>>;

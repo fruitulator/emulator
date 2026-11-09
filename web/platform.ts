@@ -279,6 +279,7 @@ const epoch: PlatformView = {
   acceptorByChute: true,
   coinBit: 0,
   tokenBit: 5,
+  serialAcceptor: { parallelNote: true },
 };
 
 const scorpion1: PlatformView = {

@@ -49,11 +49,13 @@ export interface SaveBody {
   coins?: CoinTally;
   sinceGame?: CreditSince;
   coinsStopped?: boolean;
+  coinsStoppedBy?: StopCoin;
   payoutsUnset?: boolean;
   unpricedPaid?: PaidOutput[];
   meterFault?: boolean;
 }
 export interface CoinFault { at: number; outputs: PaidOutput[] }
+export interface StopCoin { pence: number | null; token: boolean; slot: number }
 export interface PaidOutput { line: number; kind: 'tube' | 'token-tube' | 'hopper' | 'token-hopper' | 'output'; n: number }
 export interface CreditSince { inPence: number; tokenInPence: number }
 export interface LostCredit { at: number; savedAt: number; version: number; n: number; sinceGame: CreditSince | null; refunded?: CreditSince }
@@ -69,6 +71,7 @@ export interface MachineMoney {
   v: number; total: Ledger; since: number; at: number; restarts: number;
   lost?: LostCredit[];
   coinsStopped?: number;
+  coinsStoppedBy?: StopCoin;
   payoutsUnset?: number;
   coinFault?: CoinFault;
 }

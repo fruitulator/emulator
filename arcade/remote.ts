@@ -347,6 +347,7 @@ export function remoteSlot(o: RemoteOptions): StateSlot {
         ...(coins && (coins.spent || coins.rejected) ? { coins: { spent: coins.spent, rejected: coins.rejected } } : {}),
         ...(credit ? { sinceGame: { inPence: credit.inPence, tokenInPence: credit.tokenInPence } } : {}),
         ...(coinsStopped !== undefined ? { coinsStopped } : {}),
+        ...(coinsStopped && saveFault?.stoppedBy ? { coinsStoppedBy: { ...saveFault.stoppedBy } } : {}),
         ...(saveFault?.unpricedPaid.length ? { unpricedPaid: saveFault.unpricedPaid.map((x) => ({ ...x })) } : {}),
         ...(saveFault?.meterFault ? { meterFault: true } : {}),
         ...(saveFault && saveFault.payoutsUnset !== undefined ? { payoutsUnset: saveFault.payoutsUnset } : {}),

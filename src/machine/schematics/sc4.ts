@@ -23,7 +23,6 @@ export const SC4_SCHEMATIC: Schematic = plot({
       cells: [
         { id: 'ram', span: 0.95 },
         { id: 'rom', span: 1.3 },
-        { id: 'eeprom', span: 0.8 },
         { id: 'sec', span: 1.25 },
         { id: 'ymz', span: 1.4 },
         { id: 'alpha', span: 0.95 },
@@ -71,7 +70,6 @@ export const SC4_SCHEMATIC: Schematic = plot({
     { from: 'ram', to: 'bus-addr', kind: 'address' },
     { from: 'rom', to: 'bus-data', kind: 'data' },
     { from: 'rom', to: 'bus-addr', kind: 'address' },
-    { from: 'eeprom', to: 'bus-ctrl', kind: 'control' },
     { from: 'sec', to: 'bus-ctrl', kind: 'control' },
     { from: 'ymz', to: 'bus-data', kind: 'data' },
     { from: 'alpha', to: 'bus-ctrl', kind: 'control' },

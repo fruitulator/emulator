@@ -92,8 +92,8 @@ import {
 } from './dat';
 import { StoreConfirm, reelDriftFault } from './reeldrift';
 import { createCabinetPainter, DOT_OFF, DOT_ON } from './cabdraw';
-import { ensureLegendFonts, faceAvailable, facesToAsk, legendStandIn } from './legendfonts';
-import { openFontPicker } from './ui/fontpick';
+import { ensureLegendFonts, faceAvailable, facesToAsk, facesToOffer, legendStandIn } from './legendfonts';
+import { openFontList, openFontPicker } from './ui/fontpick';
 import { ReelPeek, reelAt } from './play/peek';
 import { reelPeekOn } from './peekpref';
 import { fillScreenOn } from './fillpref';
@@ -141,6 +141,7 @@ let screenWhole = true;
 let screenArea: DirtyBox[] = [];
 function screenAll(): void { screenDirty = true; screenWhole = true; }
 const smoothFit = bootValue('smooth');
+const shrinkMode = ((m) => (m === 'over' || m === 'full' ? m : 'today'))(new URLSearchParams(location.search).get('shrink'));
 const stage = document.getElementById('stage') as HTMLElement;
 const ctx = canvas.getContext('2d')!;
 const reelPeek = new ReelPeek();
@@ -160,6 +161,13 @@ const zipPicker = document.getElementById('zipfile') as HTMLInputElement;
 const status = document.getElementById('status') as HTMLElement;
 const librarySection = document.getElementById('library') as HTMLElement;
 const burgerBtn = document.getElementById('burgerBtn') as HTMLButtonElement;
+const layoutCredit = document.getElementById('layoutCredit') as HTMLParagraphElement;
+
+function showCredit(cab: Cabinet | null): void {
+  const text = cab?.credit ?? '';
+  layoutCredit.textContent = text;
+  layoutCredit.hidden = !text;
+}
 const schemBtn = document.getElementById('schemBtn') as HTMLButtonElement;
 const soundGroup = document.getElementById('soundGroup') as HTMLElement;
 const menu = document.getElementById('menu') as HTMLElement;
@@ -285,6 +293,7 @@ window.addEventListener('unhandledrejection', (ev) => {
 });
 window.addEventListener('error', (ev) => {
   trace(`error: ${ev.message}`);
+  if (!ev.error && /^ResizeObserver loop/.test(ev.message)) return;
   if (importing()) {
     clearImporting();
     showError(str('main.the_import_stopped_on_an', { 0: ev.message }));
@@ -498,6 +507,7 @@ function startGame(
   if (bulbLab?.active) bulbLab.disable();
   if (cabinet) closeCabinet(cabinet);
   cabinet = null;
+  showCredit(null);
   layoutBox = null;
   rebuildMenu = null;
   resetReelDrift();
@@ -525,6 +535,7 @@ function startGame(
       if (!cab) {
         if (rawCab) closeCabinet(rawCab);
         cabinet = null;
+        showCredit(null);
         status.textContent = str('main.n_no_artwork_plain_view', { 0: game.name });
         console.log(
           game.layout
@@ -538,6 +549,7 @@ function startGame(
       layoutBox = { ...cab.content };
       cab.content = playView(cab, layoutBox);
       cabinet = cab;
+      showCredit(cab);
       switchLevels.clear();
       void ensureLegendFonts([...cab.lamps, ...(cab.checkboxes ?? [])].map((l) => l.legend?.face)).then(() => { if (cabinet === cab) forceRedraw(); });
       offerFontChoices(cab);
@@ -562,6 +574,7 @@ function startGame(
       cabinetSettled = true;
       settle();
       cabinet = null;
+      showCredit(null);
       status.textContent = str('main.n_cabinet_extract_failed_n', { 0: game.name, 1: (e as Error).message });
     });
 }
@@ -1478,7 +1491,6 @@ async function showGame(): Promise<void> {
   if (swap !== screenSwap) return;
   libScrollY = window.scrollY;
   librarySection.hidden = true;
-  stage.removeAttribute('data-ready');
   stage.hidden = false;
   document.body.classList.remove('nb-page', 'nb-stars');
   document.body.classList.add('nb-play');
@@ -1832,14 +1844,14 @@ function buildMenu(info: MachineInfo): void {
   }
 
   optionSwitchRows = info.switchPanel.filter((sw) => sw.option === true);
-  appendItems(menuContent, menuItems(appActions, { info, view, system: session.game?.system }, APP_MENU), navRow);
+  appendItems(menuContent, menuItems(appActions, { info, view, system: session.game?.system, layout: cabinet }, APP_MENU), navRow);
 
   appendMenuFoot(menuContent);
 
   choreograph(menuContent, 90);
 }
 
-const APP_MENU: readonly ActionId[] = ['coins', 'switches', 'options', 'keyboard', 'system', 'reboot', 'quit'];
+const APP_MENU: readonly ActionId[] = ['coins', 'switches', 'options', 'keyboard', 'notes', 'system', 'reboot', 'quit'];
 
 function appOptionRows(info: MachineInfo): Node[] {
   const rows: Node[] = [];
@@ -2486,16 +2498,37 @@ function shownCaptionFaces(cab: Cabinet): string[] {
   });
 }
 
+function captionsIn(cab: Cabinet, face: string): string[] {
+  const c = cab.content;
+  const want = face.trim().toLowerCase();
+  const out = new Set<string>();
+  for (const l of cab.lamps) {
+    const g = l.legend;
+    if ((g?.face ?? '').trim().toLowerCase() !== want) continue;
+    const inView = l.left < c.left + c.width && c.left < l.left + l.width
+      && l.top < c.top + c.height && c.top < l.top + l.height;
+    if (!inView) continue;
+    for (const t of [g!.off, g!.on]) { const w = (t ?? '').replace(/\s+/g, ' ').trim(); if (w) out.add(w); }
+  }
+  return [...out];
+}
+
 function offerFontChoices(cab: Cabinet): void {
-  pickFonts(cab, facesToAsk(shownCaptionFaces(cab)));
+  const shown = shownCaptionFaces(cab);
+  if (facesToAsk(shown).length) pickFonts(cab, facesToOffer(shown));
 }
 
 function pickFonts(cab: Cabinet, faces: string[], picked?: () => void): void {
+  const onPick = (): void => { picked?.(); if (cabinet === cab) forceRedraw(); };
+  if (faces.length > 1) {
+    openFontList({ faces: faces.map((face) => ({ face, captions: captionsIn(cab, face) })), onPick });
+    return;
+  }
   const ask = [...faces];
   const next = (): void => {
     const face = ask.shift();
     if (!face || cabinet !== cab) return;
-    openFontPicker({ face, onPick: () => { picked?.(); if (cabinet === cab) forceRedraw(); }, onClose: next });
+    openFontPicker({ face, onPick, onClose: next });
   };
   next();
 }
@@ -2782,10 +2815,11 @@ function presentScreen(): void {
   screenDirty = false;
   screenWhole = false;
   screenArea = [];
-  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh, area);
+  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh, shrinkMode === 'full' ? null : area);
 }
 
 const screenPresenter = new Presenter();
+if (shrinkMode === 'over') screenPresenter.patchOp = 'source-over';
 
 function componentBox(): { x: number; y: number; w: number; h: number } | null {
   const cab = cabinet;

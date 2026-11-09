@@ -59,13 +59,17 @@ export function faceAvailable(face: string | undefined): boolean {
   return widthIn(`"${f}", monospace`) !== mono || widthIn(`"${f}", serif`) !== serif;
 }
 
-export function facesToAsk(faces: Iterable<string | undefined>): string[] {
+export function facesToOffer(faces: Iterable<string | undefined>): string[] {
   const out: string[] = [];
   for (const f of new Set([...faces].map((f) => (f ?? '').trim()).filter(Boolean))) {
     if (METRIC_TWIN.has(f.toLowerCase())) continue;
-    if (!faceAvailable(f) && !chosenStandIn(f) && !out.some((o) => o.toLowerCase() === f.toLowerCase())) out.push(f);
+    if (!faceAvailable(f) && !out.some((o) => o.toLowerCase() === f.toLowerCase())) out.push(f);
   }
   return out;
+}
+
+export function facesToAsk(faces: Iterable<string | undefined>): string[] {
+  return facesToOffer(faces).filter((f) => !chosenStandIn(f));
 }
 
 export function hasMetricTwin(face: string | undefined): boolean {
@@ -88,6 +92,10 @@ export function legendCaps(face: string | undefined): boolean {
 
 export function legendStandIn(face: string | undefined): string | undefined {
   return chosenStandIn(face) ?? STAND_IN[(face ?? '').trim().toLowerCase()]?.family;
+}
+
+export function legendShownIn(face: string | undefined): string {
+  return legendStandIn(face) ?? WINE_TAHOMA.family;
 }
 
 const registered = new Map<string, Promise<void>>();

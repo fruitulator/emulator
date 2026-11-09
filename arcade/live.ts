@@ -3,7 +3,8 @@ import { blankMemoryGame } from '../web/emu-core';
 import { getMeta, playCountOf, putMeta } from '../web/store';
 import { readNotPayoutLines, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
-import { coinsForLoad, markedChutes, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
+import { coinsForLoad, markedChutes, slotNumberOf, stepSlots, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
+import { coinLineSlots } from '../web/coinslots';
 import { openCoinMenu } from '../web/ui/coinmenu';
 import { UI_ICONS } from '../web/ui/icons';
 import {
@@ -27,8 +28,8 @@ import { PlayAutosave, type AutosaveSurface, type SaveMoment } from '../web/play
 
 import type { HintPlace } from '../web/keyhints';
 import { acceptorResolve, stampCoinInputs, viewFor } from '../web/platform';
-import { testLines } from '../web/switchids';
-import { hasInput, type CabLamp } from '../web/dat';
+import { operatorOnly, testLines } from '../web/switchids';
+import { hasInput, type CabCheckbox, type CabLamp } from '../web/dat';
 import {
   HALT_NOTE_TEXT, StopWatch, judgeStop, sayCoinLocked, sayCoinRefused, noteReason, noteText, offersState, stopNoteParts, type StopNote, NOTE_ERROR, NOTE_INFO, NOTE_WARN,
 } from '../web/stopnote';
@@ -38,7 +39,7 @@ import { inflateSync, strFromU8 } from 'fflate';
 import type { CheckResult } from '../web/relay';
 import type { Glass } from './glass';
 import type { ClaimEvents, ClaimResult, MoneyHooks, SlotKeyframe, StateSlot, Visit, WatchHandle } from './machines';
-import type { RelayBatch } from './serverwire';
+import type { RelayBatch, StopCoin } from './serverwire';
 import { isToken, payForCoin, penceOf, unpriced, type Wallet } from './wallet';
 import { unknownMoneyMoved } from './moneygate';
 import { COIN_SETUP_FAULT_TEXT, FREE_PLAY_TEXT, freePlayOn, paidOutputs, paidUnpriced, payoutsUnsetFor } from './coinfault';
@@ -235,6 +236,39 @@ export class Live {
   onWalkAway: (() => void) | null = null;
   get coinsStopped(): boolean { return this.coinsStoppedNow; }
 
+  private lastCoinLine: number | null = null;
+  private stopCoinNow: StopCoin | null = null;
+
+  coinWentIn(line: number): void { this.lastCoinLine = line; }
+
+  get stopCoin(): StopCoin | null {
+    if (this.emu.coinWiringStatus?.state !== 'disagrees') {
+      this.stopCoinNow = null;
+      return null;
+    }
+    this.stopCoinNow ??= this.stopCoinFor(this.lastCoinLine);
+    return this.stopCoinNow;
+  }
+
+  private stopCoinFor(line: number | null): StopCoin | null {
+    const g = this.glass;
+    const info = this.emu.info;
+    if (line === null || !g?.cab || !g.game || !info) return null;
+    const w = this.coinWiring();
+    const coin = wiredCoinOn(w, line);
+    if (!coin) return null;
+    const view = viewFor(g.game.system);
+    const k = g.machine.coinStep;
+    const c = k?.info && Array.isArray(k.drawnAsked) && Array.isArray(k.drawnCounted) ? k : null;
+    const f = this.emu.latestFrame();
+    const refusing = typeof c?.refusing === 'number' ? c.refusing : f ? (f.coinRefusing | f.coinLinesShut) >>> 0 : 0;
+    const drawn = c?.drawnAsked
+      ? coinLineSlots(g.cab.lamps, view, c.info, c.drawnAsked).filter((p) => p.acceptor || c.drawnCounted.includes(p.line))
+      : coinLineSlots(g.cab.lamps, view, info, Object.keys(w).map(Number)).filter((p) => p.acceptor || (w[String(p.line)]?.coins.length ?? 0) > 0);
+    const slot = slotNumberOf(line, w, stepSlots({ info, lamps: g.cab.lamps, view, wiring: w, refusing, drawn }));
+    return slot === null ? null : { pence: slotCoinPence(coin), token: isTokenCoin(coin), slot };
+  }
+
   private oldCoinAnswers: unknown = undefined;
   private lastDown: { x: number; y: number; t: number } | null = null;
 
@@ -327,6 +361,7 @@ export class Live {
       unpricedPaid: paidOutputs([...new Set([...this.emu.unpricedPaid, ...meterLines])], this.emu.info),
       ...(meterLines.length ? { meterFault: true } : {}),
       ...(this.emu.info ? { payoutsUnset: this.payoutsUnset } : {}),
+      ...(stopped && this.stopCoin ? { stoppedBy: this.stopCoin } : {}),
     };
     const free = this.freePlay;
     const p = this.saveChain.then(async () => {
@@ -481,15 +516,15 @@ export class Live {
   operatorHands = false;
   private opLines: { info: MachineInfo; system: string; lines: Set<number> } | null = null;
 
-  private playerMay(lp: CabLamp): boolean {
-    if (this.operatorHands || lp.button === undefined || lp.button < 0 || lp.acceptor || lp.coinInput !== undefined) return true;
+  private playerMay(lp: CabLamp | CabCheckbox): boolean {
+    if (this.operatorHands) return true;
     const info = this.emu.info;
     const system = this.glass?.game?.system;
     if (!info || !system) return true;
     if (this.opLines?.info !== info || this.opLines.system !== system) {
       this.opLines = { info, system, lines: testLines(viewFor(system).namedInputs, info.switchIds ?? {}) };
     }
-    return !this.opLines.lines.has(lp.button);
+    return !operatorOnly(lp, this.opLines.lines);
   }
 
   private get standsDown(): boolean { return document.hidden && !this.runHidden; }
@@ -701,6 +736,7 @@ export class Live {
       }
       this.audio.attach(info.audioRate, info.audioLevel);
       this.bridgeAudio();
+      glass.setOmit(this.operatorHands ? null : (part) => !this.playerMay(part));
       this.running = true;
       this.watchBoot(glass, !o.cold && !this.watching && (!this.lastStart?.resumed || !!o.powerCycle));
       if (relay && slot && visit) {
@@ -858,6 +894,7 @@ export class Live {
     if (paid) this.setCoinFault(true);
     const unknown = !paid && !!this.pricing && unknownMoneyMoved(this.ledgerAtStart, r ?? null);
     if (unknown && !this.coinsStoppedNow) console.warn('[arcade] the machine booked money of no known value; it takes no more coins');
+    void this.stopCoin;
     this.setCoinsStopped(s?.state === 'disagrees' || unknown);
   }
 
@@ -960,6 +997,7 @@ export class Live {
       const f = this.emu.latestFrame();
       if (f?.coinBusy) { this.wallet?.rejected(line); return 'refused'; }
       this.emu.coin(line);
+      this.coinWentIn(line);
       this.stopWatch.engage();
       this.settle.played(performance.now());
       return f && coinLineRefused(f, line) ? 'refused' : 'accepted';
@@ -1003,6 +1041,8 @@ export class Live {
 
   stop(): void {
     this.loadSeq++;
+    this.lastCoinLine = null;
+    this.stopCoinNow = null;
     this.revisitWhenShown = null;
     const fv = this.freeVisit;
     if (fv) {
@@ -1610,7 +1650,7 @@ export class Live {
         const info = this.emu.info;
         return {
           machine: {
-            lamps: g.cab.lamps, content: g.cab.content, view: viewFor(g.game.system), vfd: g.cab.vfd,
+            lamps: g.cab.lamps.filter((lp) => this.playerMay(lp)), content: g.cab.content, view: viewFor(g.game.system), vfd: g.cab.vfd,
             opts: { coins: info?.coins, nameCoins: info?.coins, coinPort: info?.coinPort, capNames: info?.capNames },
           },
           place,

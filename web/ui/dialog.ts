@@ -10,6 +10,7 @@ export interface Dialog {
 
 export function openDialog(o: {
   title: string; body: Node[]; onClose?: () => void; frost?: boolean; actions?: HTMLElement[];
+  lead?: HTMLElement; onEscape?: () => boolean;
 }): Dialog {
   const backdrop = document.createElement('div');
   backdrop.className = o.frost ? 'ui-dialog-backdrop nb-backdrop ui-dialog-frost' : 'ui-dialog-backdrop nb-backdrop';
@@ -37,6 +38,7 @@ export function openDialog(o: {
   const acts = document.createElement('div');
   acts.className = 'ui-dialog-actions';
   acts.append(...(o.actions ?? []), x);
+  if (o.lead) bar.append(o.lead);
   bar.append(h, acts);
   const scroll = document.createElement('div');
   scroll.className = 'ui-dialog-scroll';
@@ -58,7 +60,7 @@ export function openDialog(o: {
   x.addEventListener('click', close);
   backdrop.addEventListener('click', close);
   document.body.append(backdrop, panel);
-  const layer = openLayer([backdrop, panel], { kind: 'dialog', close, focus: x });
+  const layer = openLayer([backdrop, panel], { kind: 'dialog', close, focus: x, onEscape: o.onEscape });
   return { panel, body, close };
 }
 

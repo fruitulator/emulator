@@ -76,7 +76,7 @@ import { TAILORED_IDS } from './schematic';
 import {
   fittedPeripheralsFrom, type FittedPeripherals,
   decodedLayout, effectGrid, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
-  dipSwitchLabelsFrom,
+  dipSwitchLabelsFrom, pclMaxiReelType, astraDotCharsetShift,
   triacSlidePence, readSwitchNumber, readWidthHeight, readOperatorTag, readOperatorSwitch, readNumber, mpu4CharacteriserConfigFrom,
   mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, mpu5Ram128kFrom, layoutSwitchIdsFrom, m1abDongleConfig, sc2DongleConfig, spaceDongleConfig, type SlideEffect,
 } from '../layout/fmlconfig';
@@ -2378,6 +2378,7 @@ const epoch: Platform = {
     });
 
     m.setLayoutCoins(declaredCoins(game.layout));
+    m.fitNoteChannels(parallelNoteChannels(game.layout));
     const epochMeters = epochPayload ? meterMoneyMap(epochPayload, 'EPOCH') : null;
     if (epochMeters) {
       m.setMeterMoney(epochMeters.meterOut, epochMeters.meterIn);
@@ -3161,7 +3162,7 @@ const astra: Platform = {
     if (payload) {
       m.fpgaDesign = readSetting(payload, 'ASTRASYSA1', 'FPGA Type') === '2' ? 1 : 0;
       m.dotFitted = parseLayout(payload).some((c) => c.type === 0x1a);
-      m.dot.charsetShift = (fileLevelTags(payload).get(0x8a)?.[0] ?? 0) === 1;
+      m.dot.charsetShift = astraDotCharsetShift(payload);
       m.muxType = readSetting(payload, 'ASTRASYSA1', 'Multiplex Type') === '2' ? 1 : 0;
       const opto = ['Normal', 'Inverted', 'Reversed', 'Rev Inv'].indexOf(
         readSetting(payload, 'ASTRASYSA1', 'Hopper Opto') ?? 'Normal');
@@ -3392,10 +3393,7 @@ const pclmaxi: Platform = {
     m.loadRom(prog.map((f) => f.bytes));
     m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
     const payload = decodedLayout(game.layout);
-    const tag83 = payload ? fileLevelTags(payload).get(0x83) : undefined;
-    m.opticMode = tag83 && tag83.length >= 4
-      ? (tag83[0] | (tag83[1] << 8) | (tag83[2] << 16) | (tag83[3] << 24)) >>> 0
-      : 0;
+    m.opticMode = payload ? pclMaxiReelType(payload) : 0;
     m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));
     applyOperatorPresets(m, game, DEFAULT_PRESETS);
     const money = payload ? meterMoneyMap(payload, 'MACH2000E') : null;

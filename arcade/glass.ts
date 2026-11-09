@@ -5,7 +5,7 @@ import { decodedLayout, readSetting } from '../src/layout/fmlconfig';
 import { openAsHost, openPak, type ImportEvents } from '../web/importer';
 import type { HostFile } from '../web/hostfiles';
 import { currentLayoutProps } from '../web/gamepak';
-import { usableCabinet, type Cabinet, type CabLamp } from '../web/dat';
+import { usableCabinet, type Cabinet, type CabCheckbox, type CabLamp } from '../web/dat';
 import { artImage, componentBounds } from '../web/cabjson';
 import { createCabinetPainter, type CabinetPainter } from '../web/cabdraw';
 import { ensureLegendFonts } from '../web/legendfonts';
@@ -167,6 +167,14 @@ export class Glass {
   private blanking = true;
 
   private whole = false;
+
+  private omit: ((part: CabLamp | CabCheckbox) => boolean) | null = null;
+
+  setOmit(rule: ((part: CabLamp | CabCheckbox) => boolean) | null): void {
+    if (rule === this.omit) return;
+    this.omit = rule;
+    this.painter?.invalidate();
+  }
 
   get wholeGlass(): boolean { return this.whole; }
 
@@ -410,6 +418,7 @@ export class Glass {
       this.painter = createCabinetPainter(pc, {
         inputHeld: (input) => this.heldInputs.has(input),
         checkboxTicked: (cb) => this.switchLevels.ticked(cb, this.panelRows()),
+        omits: (part) => this.omit?.(part) ?? false,
         lampGate: (m, lp) => this.updateGate(m, lp),
         reelPeek: () => this.peek.value(),
       });
@@ -695,6 +704,7 @@ export class Glass {
   }
 
   standDown(): void {
+    this.setOmit(null);
     this.resetGates();
     this.onGateSeen = null;
     this.painter?.invalidate();

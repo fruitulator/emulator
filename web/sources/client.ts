@@ -5,7 +5,7 @@ import { parseCatalogue, type Catalogue, type CatSet } from './catalogue';
 import { ATTACHMENT, invisionCategoryPage, invisionDownloadFile, invisionCategories, parseInvisionFiles, parseInvisionTopics } from './invision';
 import { expand, templateVars } from './template';
 import { dropAnswers, keepAnswer, keptAnswer } from './answers';
-import { mergeKeyedList, readHeld, searchKeyedList, type KeyedList } from './keyedlist';
+import { nextKeyedList, readHeld, searchKeyedList, type KeyedList } from './keyedlist';
 
 export interface TokenBox {
   get(): Tokens | undefined;
@@ -186,7 +186,7 @@ export class SourceClient {
       if (kept && old && Date.now() - kept.at < ANSWER_TTL) { const h = lists.get(key); if (h) h.at = kept.at; return old; }
       const res = await this.fetchFor(expand(ep.url, { since: old?.at ?? 0 }), { headers: { Accept: 'application/json' } });
       let next: KeyedList;
-      try { next = mergeKeyedList(old, await res.json()); } catch { throw new SourceError('bad_answer'); }
+      try { next = nextKeyedList(old, await res.json()); } catch { throw new SourceError('bad_answer'); }
       keepAnswer(key, at, next);
       return next;
     })();
