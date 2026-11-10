@@ -56,7 +56,13 @@ function forgetUrl(hash: string | null): void {
   }
 }
 
-onThumbChange(forgetUrl);
+onThumbChange((hash) => {
+  forgetUrl(hash);
+  if (!hash || typeof document === 'undefined') return;
+  for (const f of document.querySelectorAll<HTMLElement>('.art[data-hash]')) {
+    if (f.dataset.hash === hash && !frameUrls.has(f)) void showTile(f);
+  }
+});
 
 export function fillArtwork(frame: HTMLElement): Promise<void> {
   const pending = inflight.get(frame);

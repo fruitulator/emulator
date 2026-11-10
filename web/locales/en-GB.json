@@ -1032,7 +1032,7 @@
   "help.library_remove": "**Remove from cache** removes the game from this device.",
   "help.machine": "Add a machine to your arcade",
   "help.machine_0": "Ready to add a machine to your arcade?",
-  "help.machine_1": "First, make sure its game is in **My games**.",
+  "help.machine_1": "Choose its game from a source or from **My games**. Machines added from a source can be played by everyone. Machines added from your own files can only be played by visitors who have the same game.",
   "help.machine_2": "On your arcade page, tap **Add a machine**, choose a game and follow the steps below. To change a machine later, choose **Edit** from its menu.",
   "help.machine_boot": "1. Validate and boot",
   "help.machine_boot_text": "The machine switches on and checks that it starts up, reaches its attract display and shows no alarm.",

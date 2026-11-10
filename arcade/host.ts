@@ -311,9 +311,7 @@ export async function render(): Promise<void> {
     if (fillDocSources(d, library)) void saveDoc();
     const dark = darkNote(d, 'host-note');
     if (dark) nodes.push(dark);
-    const byContent = new Map<string, GameMeta>();
-    for (const g of library) for (const k of keysOf(g)) byContent.set(k, g);
-    nodes.push(floorplan(d, byContent));
+    nodes.push(floorplan(d, byContentOf(library)));
     const row = el('div', null, { class: 'host-actions' });
     row.append(el('p', str('arcade.host.n_of_n_machines', { 0: d.machines.length, 1: ARCADE_MAX_MACHINES }), { class: 'host-count readout' }));
     nodes.push(row);
@@ -371,8 +369,16 @@ async function renderDock(r: HTMLElement, d: ArcadeDoc): Promise<void> {
 
 function byContentOf(library: GameMeta[]): Map<string, GameMeta> {
   const m = new Map<string, GameMeta>();
-  for (const g of library) m.set(g.contentHash ?? g.hash, g);
+  for (const g of library) for (const k of keysOf(g)) if (!m.has(k)) m.set(k, g);
   return m;
+}
+
+function heldOf(byContent: Map<string, GameMeta>, m: DocMachine): GameMeta | null {
+  for (const k of [m.contentHash, ...(m.formerContentHashes ?? [])]) {
+    const g = byContent.get(k);
+    if (g) return g;
+  }
+  return null;
 }
 
 function sectionLabel(text: string): HTMLElement {
@@ -523,7 +529,7 @@ function floorplan(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElement 
     mark(str('arcade.host.doors'), 'fp-mark-doors', dw.from, dw.to, FLOOR_ROWS - FLOOR_STEP, FLOOR_ROWS - 1),
     mark(str('arcade.host.window'), 'fp-mark-window', 0, 0, GEOM.window.from, GEOM.window.to),
   );
-  for (const m of d.machines) if (m.place) grid.append(machineCard(d, m, byContent.get(m.contentHash) ?? null));
+  for (const m of d.machines) if (m.place) grid.append(machineCard(d, m, heldOf(byContent, m)));
   for (const p of d.props ?? []) grid.append(propCard(d, p));
   const ghost = el('div', null, { class: 'fp-ghost', 'aria-hidden': 'true' });
   ghost.append(rowIcon(UI_ICONS.plus, 'fp-plus', 18), rowIcon(UI_ICONS.no, 'fp-no', 18));
@@ -618,6 +624,10 @@ function marqueeOn(grid: HTMLElement): void {
   });
 }
 
+function awaitingTile(held: GameMeta | null): string | undefined {
+  return held && !held.hasThumb ? held.hash : undefined;
+}
+
 function machineCard(d: ArcadeDoc, m: DocMachine, held: GameMeta | null): HTMLElement {
   const p = m.place!;
   const c = el('div', null, { class: 'fp-machine', tabindex: '0', 'aria-label': nameOf(m), 'data-id': m.id, role: 'button' });
@@ -630,7 +640,7 @@ function machineCard(d: ArcadeDoc, m: DocMachine, held: GameMeta | null): HTMLEl
     if (dragged) return;
     if (editor) { picked.machines.clear(); picked.props.clear(); picked.machines.add(m.id); showPicked(); return; }
     openMachineMenu(d, m, c, held);
-  });
+  }, awaitingTile(held));
   c.append(art);
   const rotate = iconButton(UI_ICONS.reset, str('arcade.host.rotate'), () => turn(d, m, 1, true));
   rotate.className = 'fp-rotate';
@@ -1217,7 +1227,7 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
   escapeCloses();
   const title = document.getElementById('sheet-title');
   if (title) {
-    const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined);
+    const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined, awaitingTile(held));
     thumb.classList.add('ml-thumb', 'sheet-machine-thumb');
     const words = el('div', null, { class: 'sheet-machine-words' });
     title.before(thumb);
@@ -1272,9 +1282,9 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
   const faults = new Map<string, CoinFault>();
   const records = new Map<string, MachineMoney>();
   const unset = (m: DocMachine): boolean =>
-    hostPayoutsUnset(m, records.get(m.id), byContent.get(m.contentHash)?.system ?? m.gameConfig?.system);
+    hostPayoutsUnset(m, records.get(m.id), heldOf(byContent, m)?.system ?? m.gameConfig?.system);
   const fill = (): void => {
-    list.replaceChildren(...ms.map((m) => machineRow(d, m, byContent.get(m.contentHash) ?? null, faults.get(m.id) ?? null, unset(m))));
+    list.replaceChildren(...ms.map((m) => machineRow(d, m, heldOf(byContent, m), faults.get(m.id) ?? null, unset(m))));
     box.hidden = !ms.length;
     more();
   };
@@ -1294,7 +1304,7 @@ function machineList(d: ArcadeDoc, byContent: Map<string, GameMeta>): HTMLElemen
 
 function machineRow(d: ArcadeDoc, m: DocMachine, held: GameMeta | null, fault: CoinFault | null = null, payoutsUnset = false): HTMLElement {
   const row = el('button', null, { type: 'button', class: `ml-row ml-row--${machineState(m)}`, 'data-id': m.id }) as HTMLButtonElement;
-  const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined);
+  const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined, awaitingTile(held));
   thumb.classList.add('ml-thumb');
   const words = el('span', null, { class: 'ml-words' });
   words.append(el('span', nameOf(m), { class: 'ml-name' }), statusLine(m, fault, payoutsUnset));
@@ -1462,8 +1472,8 @@ function syncSelBar(): void {
   if (pickSize() > 1) { multiBar(e.d, e.bar); return; }
   if (p) { propBar(e.d, p, e.bar); return; }
   if (!m) { e.bar.replaceChildren(); return; }
-  const held = e.byContent.get(m.contentHash) ?? null;
-  const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined);
+  const held = heldOf(e.byContent, m);
+  const thumb = artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined, awaitingTile(held));
   thumb.classList.add('fp-selbar-thumb');
   const words = el('div', null, { class: 'fp-selbar-words' });
   words.append(el('strong', nameOf(m)), el('span', str('arcade.host.facing_hint', { 0: TOWARD[turnOf(m.place)] }), { class: 'nb-meta' }));
@@ -1692,8 +1702,8 @@ function multiBar(d: ArcadeDoc, bar: HTMLElement): void {
   const things: HTMLElement[] = [];
   for (const m of d.machines) {
     if (!picked.machines.has(m.id) || things.length >= 3) continue;
-    const held = editor?.byContent.get(m.contentHash) ?? null;
-    things.push(artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined));
+    const held = (editor ? heldOf(editor.byContent, m) : null);
+    things.push(artwork(held?.hasThumb ? held.hash : null, nameOf(m), () => undefined, awaitingTile(held)));
   }
   for (const p of d.props ?? []) {
     if (!picked.props.has(p.id) || things.length >= 3) continue;
