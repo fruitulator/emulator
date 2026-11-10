@@ -1559,6 +1559,7 @@ export function parseFmlLayout(
     if (strip && strip.width > 0 && strip.height > 0) {
       const num = (k: string): number | undefined => c.values.get(k) ?? c.defaults.get(k);
       const lampNums = (c.subs ?? []).filter((n) => n >= 0);
+      const masks = [image(c, 'LampMasks1'), image(c, 'LampMasks2'), image(c, 'LampMasks3')];
       bandReels.push({
         left: c.x, top: c.y, width: c.width, height: c.height, ...turn(c),
         machineIndex: reelIndex.get(c.number) ?? 0, number: c.number,
@@ -1572,7 +1573,13 @@ export function parseFmlLayout(
         reversed: !!c.values.get('Reversed'),
         horizontal: (num('Orientation') ?? 1) !== 0,
         lampNums,
-        darkness: lampNums.length ? 100 : 0,
+        darkness: 0,
+        lampsEnabled: !!num('LampsEnabled'),
+        slotLamps: [...(c.subs ?? [])],
+        ...(masks[0] ? { mask1: masks[0] } : {}),
+        ...(masks[1] ? { mask2: masks[1] } : {}),
+        ...(masks[2] ? { mask3: masks[2] } : {}),
+        lightFloor: reelLightFloor(num('SelectedOffColourId') ?? 0, num('OffLevel') ?? 0x40, masks),
         ...bandReelBorder(c, num),
       });
       continue;

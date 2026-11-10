@@ -25,8 +25,8 @@ export interface CabGeometry {
     | 'discMask' | 'discInnerMask' | 'discPunch' | 'discBaseOverlay'>
     & { canvas: number; overlay?: number; mask?: number; mask2?: number; mask3?: number; gradient?: number;
       discMask?: number; discInnerMask?: number; discPunch?: number; discBaseOverlay?: number })[];
-  bandReels?: (Omit<BandStrip, 'canvas' | 'overlay' | 'classic'>
-    & { canvas: number; overlay?: number;
+  bandReels?: (Omit<BandStrip, 'canvas' | 'overlay' | 'classic' | 'mask1' | 'mask2' | 'mask3'>
+    & { canvas: number; overlay?: number; mask1?: number; mask2?: number; mask3?: number;
       classic?: Omit<BandClassic, 'mask'> & { mask?: number } })[];
   flipReels?: (Omit<FlipStrip, 'canvas' | 'overlay' | 'mask1' | 'mask2' | 'mask3'>
     & { canvas: number; overlay?: number; mask1?: number; mask2?: number; mask3?: number })[];
@@ -176,6 +176,9 @@ export function dehydrateCabinet<A>(cab: Cabinet<A>): {
     bandReels: (cab.bandReels ?? []).map((b) => ({
       ...b, canvas: idFor(b.canvas),
       overlay: b.overlay ? idFor(b.overlay) : undefined,
+      mask1: b.mask1 ? idFor(b.mask1) : undefined,
+      mask2: b.mask2 ? idFor(b.mask2) : undefined,
+      mask3: b.mask3 ? idFor(b.mask3) : undefined,
       classic: b.classic
         ? { ...b.classic, mask: b.classic.mask ? idFor(b.classic.mask) : undefined }
         : undefined,
@@ -305,6 +308,9 @@ export function assembleCabinet<A>(
     bandReels: (geo.bandReels ?? []).map((b) => ({
       ...b, canvas: get(b.canvas),
       overlay: b.overlay === undefined ? undefined : get(b.overlay),
+      mask1: b.mask1 === undefined ? undefined : get(b.mask1),
+      mask2: b.mask2 === undefined ? undefined : get(b.mask2),
+      mask3: b.mask3 === undefined ? undefined : get(b.mask3),
       classic: b.classic === undefined ? undefined
         : { ...b.classic, mask: b.classic.mask === undefined ? undefined : get(b.classic.mask) },
     })),

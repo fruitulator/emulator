@@ -30,6 +30,12 @@ export interface BandStrip<A = ImageBitmap> extends Rect {
   horizontal: boolean;
   lampNums: number[];
   darkness: number;
+  lampsEnabled?: boolean;
+  slotLamps?: number[];
+  mask1?: A;
+  mask2?: A;
+  mask3?: A;
+  lightFloor?: [number, number, number];
   border?: ReelBorder;
   classic?: BandClassic<A>;
 }
@@ -103,6 +109,63 @@ export function bandStripWindow(
     bandLen,
     winLen: view * along + 2 * strip.spacing,
   };
+}
+
+export function bandLightCell(slot: number): { cell: number; mask: 0 | 1 | 2 } {
+  if (slot < 24) return { cell: slot % 6, mask: slot < 12 ? 0 : 1 };
+  if (slot < 40) return { cell: slot >> 2, mask: (slot & 3) < 2 ? 0 : 1 };
+  return { cell: slot - 40, mask: 2 };
+}
+
+export interface BandLightStamp { cell: number; mask: 0 | 1 | 2; alpha: number }
+
+export function bandLight(
+  strip: Pick<BandStrip<unknown>, 'lampsEnabled' | 'slotLamps' | 'lightFloor' | 'view'>,
+  level: (n: number) => number, full = 255,
+): { floor: [number, number, number]; stamps: BandLightStamp[] } | null {
+  if (!strip.lampsEnabled || !strip.slotLamps) return null;
+  const stamps: BandLightStamp[] = [];
+  const slots = Math.min(60, strip.slotLamps.length);
+  for (let s = 0; s < slots; s++) {
+    const n = strip.slotLamps[s];
+    if (n !== -1 && !(n >= 0)) continue;
+    const at = bandLightCell(s);
+    if (at.cell >= strip.view) continue;
+    const l = n === -1 ? full : Math.max(0, Math.min(full, level(n)));
+    if (l <= 0) continue;
+    stamps.push({ ...at, alpha: l / full });
+  }
+  return { floor: strip.lightFloor ?? [255, 255, 255], stamps };
+}
+
+export function paintBandLight(
+  lx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  w: number, h: number,
+  strip: Pick<BandStrip<unknown>, 'stops' | 'halfSteps' | 'view' | 'spacing'
+    | 'bandOffset' | 'reversed' | 'horizontal'>,
+  bandW: number, bandH: number,
+  plan: { floor: [number, number, number]; stamps: readonly BandLightStamp[] },
+  masks: readonly (CanvasImageSource | undefined)[],
+): void {
+  lx.save();
+  lx.globalCompositeOperation = 'source-over';
+  lx.globalAlpha = 1;
+  lx.fillStyle = `rgb(${plan.floor[0]},${plan.floor[1]},${plan.floor[2]})`;
+  lx.fillRect(0, 0, w, h);
+  const { along, winLen } = bandStripWindow(strip, bandW, bandH, 0);
+  if (winLen > 0) {
+    const len = strip.horizontal ? w : h;
+    for (const s of plan.stamps) {
+      const m = masks[s.mask];
+      if (!m || s.alpha <= 0) continue;
+      const a = ((strip.spacing + s.cell * along) / winLen) * len;
+      const b = (along / winLen) * len;
+      lx.globalAlpha = Math.min(1, s.alpha);
+      if (strip.horizontal) lx.drawImage(m, a, 0, b, h);
+      else lx.drawImage(m, 0, a, w, b);
+    }
+  }
+  lx.restore();
 }
 
 export function bandStripCell(
@@ -1189,6 +1252,7 @@ export function paintBandStrip(
   classic: BandClassic<CanvasImageSource> | undefined,
   position: number, shade: number,
   lampLit: (n: number) => number,
+  light?: CanvasImageSource,
 ): void {
   const { left, top, width, height, stops, halfSteps, view } = strip;
   if (width <= 0 || height <= 0 || !stops || !halfSteps || !view || !bandW || !bandH) return;
@@ -1214,6 +1278,12 @@ export function paintBandStrip(
   }
   fx.restore();
   if (classic) paintBandClassicLamps(fx, strip, classic, lampLit);
+  if (light) {
+    fx.save();
+    fx.globalCompositeOperation = 'multiply';
+    fx.drawImage(light, left, top, width, height);
+    fx.restore();
+  }
   if (shade > 0) {
     fx.save();
     fx.globalAlpha = shade;

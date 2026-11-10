@@ -13,7 +13,7 @@ import {
   bonusReelFrame, flipLight, flipReelFace, mfmeBonusReelPosition, paintBonusLight, paintBonusReel,
   mfmeBoardReelPosition,
   mfmeFlipReelPosition,
-  paintFlip, paintFlipLight, paintReelBorder, paintBandStrip,
+  paintFlip, paintFlipLight, paintReelBorder, paintBandStrip, bandLight, paintBandLight,
   reelEffectivePosition,
   reelVisibleSymbols,
   reelWinLineRow,
@@ -399,9 +399,10 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const level = strip.lampNums.length
         ? Math.max(...strip.lampNums.map((n) => m.layoutLampLevel(n)))
         : LAMP_FULL;
+      const light = bandLayer(strip, (n) => m.layoutLampLevel(n));
       withAngle(ctx, strip, strip.angle,
         () => drawBandStrip(strip, pos, level,
-          (n) => Math.max(0, Math.min(LAMP_FULL, m.layoutLampLevel(n))) / LAMP_FULL));
+          (n) => Math.max(0, Math.min(LAMP_FULL, m.layoutLampLevel(n))) / LAMP_FULL, light));
     }
 
     function drawFlip(f: FlipStrip): void {
@@ -1538,6 +1539,25 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     return bl.canvas;
   }
 
+  const bandLayers = new WeakMap<BandStrip, { canvas: OffscreenCanvas; key: string }>();
+  function bandLayer(b: BandStrip, lampLevel: (n: number) => number): OffscreenCanvas | undefined {
+    const plan = bandLight(b, lampLevel, LAMP_FULL);
+    if (!plan) return undefined;
+    const w = Math.max(1, Math.round(b.width)), h = Math.max(1, Math.round(b.height));
+    const key = plan.stamps.map((t) => `${t.cell}.${t.mask}.${t.alpha}`).join(',');
+    let bl = bandLayers.get(b);
+    if (!bl) {
+      bl = { canvas: new OffscreenCanvas(w, h), key: '\0' };
+      bandLayers.set(b, bl);
+    }
+    if (bl.key !== key) {
+      bl.key = key;
+      paintBandLight(bl.canvas.getContext('2d')!, w, h, b, b.canvas.width, b.canvas.height,
+        plan, [b.mask1, b.mask2, b.mask3]);
+    }
+    return bl.canvas;
+  }
+
   const flipLayers = new WeakMap<FlipStrip, { canvas: OffscreenCanvas; key: string }>();
   function flipLayer(f: FlipStrip, lampLevel: (n: number) => number): OffscreenCanvas | undefined {
     const plan = flipLight(f, lampLevel, LAMP_FULL);
@@ -1728,11 +1748,12 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   function drawBandStrip(
     strip: BandStrip, position: number, level: number,
     lampLit: (n: number) => number,
+    light?: CanvasImageSource,
   ): void {
     const shade = (strip.darkness / 255)
       * (1 - Math.max(0, Math.min(LAMP_FULL, level)) / LAMP_FULL);
     paintBandStrip(ctx, strip, strip.canvas, strip.canvas.width, strip.canvas.height,
-      strip.overlay, strip.classic, position, shade, lampLit);
+      strip.overlay, strip.classic, position, shade, lampLit, light);
   }
 
   function drawReelWindow(
