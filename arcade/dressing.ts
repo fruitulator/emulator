@@ -939,6 +939,7 @@ void main() {`)
   const seenFrom = (eye: THREE.Vector3): void => {
     inRoom = roomBox.containsPoint(eye);
     backdrop.visible = layers.visible = inRoom && !!VIEWS[windowKind];
+    ceiling.group.visible = inRoom;
   };
   const captureWindow = (r: THREE.WebGLRenderer, scene: THREE.Scene): void => {
     if (sw.winEnv === false || !win.visible || !glass.visible) return;
