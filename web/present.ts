@@ -41,8 +41,6 @@ export class Presenter {
   private readonly steps: HTMLCanvasElement[] = [];
   private big: HTMLCanvasElement | null = null;
 
-  patchOp: GlobalCompositeOperation = 'copy';
-
   run(dst: CanvasRenderingContext2D, src: CanvasImageSource, sx: number, sy: number, sw: number, sh: number,
     plan: PresentPlan, tw: number, th: number, dirty?: readonly DirtyBox[] | null): void {
     let box: DirtyBox[] | null = dirty ? [...dirty] : null;
@@ -62,7 +60,7 @@ export class Presenter {
         step.height = nh;
         box = null;
       }
-      box = blitBox(step.getContext('2d')!, from, x, y, w, h, nw, nh, box, this.patchOp);
+      box = blitBox(step.getContext('2d')!, from, x, y, w, h, nw, nh, box);
       from = step;
       x = 0;
       y = 0;
@@ -72,7 +70,7 @@ export class Presenter {
     this.steps.length = Math.max(0, inSteps);
     if (!plan.superSample) {
       this.big = null;
-      blitBox(dst, from, x, y, w, h, tw, th, box, this.patchOp);
+      blitBox(dst, from, x, y, w, h, tw, th, box);
       return;
     }
     let big = this.big;
@@ -82,8 +80,8 @@ export class Presenter {
       big.height = 2 * th;
       box = null;
     }
-    box = blitBox(big.getContext('2d')!, from, x, y, w, h, 2 * tw, 2 * th, box, this.patchOp);
-    blitBox(dst, big, 0, 0, 2 * tw, 2 * th, tw, th, box, this.patchOp);
+    box = blitBox(big.getContext('2d')!, from, x, y, w, h, 2 * tw, 2 * th, box);
+    blitBox(dst, big, 0, 0, 2 * tw, 2 * th, tw, th, box);
   }
 
   free(): void {
@@ -125,7 +123,7 @@ export function mergeBoxes(boxes: DirtyBox[]): DirtyBox[] {
 
 function blitBox(
   dst: CanvasRenderingContext2D, src: CanvasImageSource, sx: number, sy: number, sw: number, sh: number, dw: number, dh: number,
-  boxes: DirtyBox[] | null, op: GlobalCompositeOperation = 'copy',
+  boxes: DirtyBox[] | null,
 ): DirtyBox[] | null {
   if (!boxes) { smoothBlit(dst, src, sx, sy, sw, sh, dw, dh); return null; }
   const reached = mergeBoxes(boxes.map((b) => reachedBox(b, sw, sh, dw, dh)));
@@ -144,7 +142,7 @@ function blitBox(
     dst.beginPath();
     dst.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
     dst.clip();
-    dst.globalCompositeOperation = op;
+    dst.globalCompositeOperation = 'source-over';
     dst.drawImage(src, sx + ex0 * kx, sy + ey0 * ky, (ex1 - ex0) * kx, (ey1 - ey0) * ky, ex0, ey0, ex1 - ex0, ey1 - ey0);
     dst.restore();
   }

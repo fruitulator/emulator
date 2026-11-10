@@ -141,7 +141,6 @@ let screenWhole = true;
 let screenArea: DirtyBox[] = [];
 function screenAll(): void { screenDirty = true; screenWhole = true; }
 const smoothFit = bootValue('smooth');
-const shrinkMode = ((m) => (m === 'over' || m === 'full' ? m : 'today'))(new URLSearchParams(location.search).get('shrink'));
 const stage = document.getElementById('stage') as HTMLElement;
 const ctx = canvas.getContext('2d')!;
 const reelPeek = new ReelPeek();
@@ -161,13 +160,6 @@ const zipPicker = document.getElementById('zipfile') as HTMLInputElement;
 const status = document.getElementById('status') as HTMLElement;
 const librarySection = document.getElementById('library') as HTMLElement;
 const burgerBtn = document.getElementById('burgerBtn') as HTMLButtonElement;
-const layoutCredit = document.getElementById('layoutCredit') as HTMLParagraphElement;
-
-function showCredit(cab: Cabinet | null): void {
-  const text = cab?.credit ?? '';
-  layoutCredit.textContent = text;
-  layoutCredit.hidden = !text;
-}
 const schemBtn = document.getElementById('schemBtn') as HTMLButtonElement;
 const soundGroup = document.getElementById('soundGroup') as HTMLElement;
 const menu = document.getElementById('menu') as HTMLElement;
@@ -507,7 +499,6 @@ function startGame(
   if (bulbLab?.active) bulbLab.disable();
   if (cabinet) closeCabinet(cabinet);
   cabinet = null;
-  showCredit(null);
   layoutBox = null;
   rebuildMenu = null;
   resetReelDrift();
@@ -535,7 +526,6 @@ function startGame(
       if (!cab) {
         if (rawCab) closeCabinet(rawCab);
         cabinet = null;
-        showCredit(null);
         status.textContent = str('main.n_no_artwork_plain_view', { 0: game.name });
         console.log(
           game.layout
@@ -549,7 +539,6 @@ function startGame(
       layoutBox = { ...cab.content };
       cab.content = playView(cab, layoutBox);
       cabinet = cab;
-      showCredit(cab);
       switchLevels.clear();
       void ensureLegendFonts([...cab.lamps, ...(cab.checkboxes ?? [])].map((l) => l.legend?.face)).then(() => { if (cabinet === cab) forceRedraw(); });
       offerFontChoices(cab);
@@ -574,7 +563,6 @@ function startGame(
       cabinetSettled = true;
       settle();
       cabinet = null;
-      showCredit(null);
       status.textContent = str('main.n_cabinet_extract_failed_n', { 0: game.name, 1: (e as Error).message });
     });
 }
@@ -2815,11 +2803,10 @@ function presentScreen(): void {
   screenDirty = false;
   screenWhole = false;
   screenArea = [];
-  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh, shrinkMode === 'full' ? null : area);
+  screenPresenter.run(screenCtx, canvas, 0, 0, lw, lh, plan, bw, bh, area);
 }
 
 const screenPresenter = new Presenter();
-if (shrinkMode === 'over') screenPresenter.patchOp = 'source-over';
 
 function componentBox(): { x: number; y: number; w: number; h: number } | null {
   const cab = cabinet;

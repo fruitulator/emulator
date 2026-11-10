@@ -1577,19 +1577,33 @@ export class Live {
   }
 
   press(pointerId: number, x: number, y: number, scale: number, skip?: ReadonlySet<CabLamp>): CabLamp | null {
-    const g = this.glass;
-    if (!this.running || !g?.cab) return null;
-    const box = checkboxAt(g.cab.checkboxes, x, y);
-    if (box) {
+    const t = this.target(x, y, scale, skip);
+    if (!t) return null;
+    if ('box' in t) {
+      const box = t.box;
       if (!this.hostNow() && this.operatorHands) {
         const row = this.emu.info?.switchPanel.find((sw) => sw.id === box.id);
-        this.throwSwitch(row ?? { id: box.id }, !g.switchLevels.ticked(box, this.emu.info?.switchPanel));
+        this.throwSwitch(row ?? { id: box.id }, !this.glass!.switchLevels.ticked(box, this.emu.info?.switchPanel));
       }
       return null;
     }
+    this.activate(t.lp, pointerId);
+    return t.lp;
+  }
+
+  private target(x: number, y: number, scale: number, skip?: ReadonlySet<CabLamp>): { box: CabCheckbox } | { lp: CabLamp } | null {
+    const g = this.glass;
+    if (!this.running || !g?.cab) return null;
+    const box = checkboxAt(g.cab.checkboxes, x, y);
+    if (box) return { box };
     const lp = pickControl(g.cab.lamps, x, y, scale, (p) => this.clickable(p) && this.hostCan(p) && this.playerMay(p) && !skip?.has(p));
-    if (lp) this.activate(lp, pointerId);
-    return lp;
+    return lp ? { lp } : null;
+  }
+
+  pressesAt(hit: { x: number; y: number; scale: number; coin?: boolean }): boolean {
+    if (!this.running || !this.glass?.cab) return false;
+    if (hit.coin) return !!this.glass.game && !this.hostNow();
+    return this.target(hit.x, hit.y, hit.scale, this.glass.replaced) !== null;
   }
 
   throwSwitch(sw: { id: number; bootOnly?: boolean }, on: boolean): void {

@@ -307,12 +307,21 @@ export function reelPeekRow(): HTMLLabelElement {
   return row;
 }
 
-export function notesPanel(layout: { notes?: string; splash?: ImageBitmap | null } | null | undefined): HTMLElement | null {
+export function notesPanel(layout: { credit?: string; notes?: string; splash?: ImageBitmap | null } | null | undefined): HTMLElement | null {
+  const credit = layout?.credit ?? '';
   const text = layout?.notes ?? '';
   const splash = layout?.splash ?? null;
-  if (!text && !splash) return null;
+  if (!credit && !text && !splash) return null;
   const panel = document.createElement('div');
   panel.className = 'menu-stack menu-notes';
+  if (credit) {
+    const c = card();
+    const line = document.createElement('p');
+    line.className = 'menu-notes__credit';
+    line.textContent = credit;
+    c.append(line);
+    panel.append(c);
+  }
   if (splash) {
     const pic = document.createElement('canvas');
     pic.className = 'menu-notes__pic';

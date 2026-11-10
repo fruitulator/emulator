@@ -130,6 +130,14 @@ button.menu-stat {
 #menuFly:has(> .menu-notes) {
   width: 440px;
 }
+.menu-notes__credit {
+  margin: 0;
+  padding: 12px 14px;
+  font: 500 14px/1.4 var(--nb-font-body);
+  color: var(--nb-text);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
 .menu-notes__pic {
   display: block;
   width: 100%;

@@ -73,7 +73,7 @@ export interface MenuMachine {
   info: MachineInfo;
   view: PlatformView;
   system: string | undefined;
-  layout?: { notes?: string; splash?: ImageBitmap | null } | null;
+  layout?: { credit?: string; notes?: string; splash?: ImageBitmap | null } | null;
 }
 
 export function saveState(s: ActionSurface): Promise<boolean> {

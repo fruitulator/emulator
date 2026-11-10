@@ -9,7 +9,7 @@ import { actionButton, chip, chipButton, emptyState, searchBar, sectionHeading, 
 import { showSheet, sheetRow, closeSheet } from '../web/ui/sheet';
 import { fillProgramHashes, newArcade, standing, type ArcadeDoc } from './doc';
 import { exportArcadeGames } from './punnet';
-import { openMachineList } from './machinelist';
+import { openMachineList, playableCount } from './machinelist';
 import { arcadeLeaders, leaderBoard, openLeaderboards, siteLeaders } from './leaderboard';
 import { deleteArcade, listArcades, putArcade, setCurrentArcade } from './docstore';
 import { deletedCard, startRestore } from './deletedcard';
@@ -134,6 +134,7 @@ export async function openLanding(): Promise<void> {
   const mineById = new Map<string, GameMeta>();
   for (const g of library) for (const k of contentKeys(g)) if (!mineById.has(k.slice(0, MACHINE_ID_LEN))) mineById.set(k.slice(0, MACHINE_ID_LEN), g);
   const ownedIn = (a: ArcadeListing): GameMeta[] => (a.machineIds ?? []).map((id) => mineById.get(id)).filter((g): g is GameMeta => !!g);
+  const playableIn = (a: ArcadeListing): number => playableCount(a, (id) => mineById.has(id));
   const listMachines = (a: ArcadeListing): void => {
     if (!server) return;
     void server.resolve(a.id).catch(() => null).then((r) => {
@@ -246,7 +247,7 @@ export async function openLanding(): Promise<void> {
         if (!items.length) continue;
         const row = el('section', null, 'landing-row');
         if (items.length > 4) row.classList.add('landing-row-more');
-        row.append(rowHead(r.label(), str('arcade.landing.see_all'), () => openAll(r.sort)), tileStrip(items.map((a) => communityTile(a, viewOf(a.id, a.viewAt), ownedIn(a), server ? () => listMachines(a) : null, server?.base ?? null, leadersOf(a.id, a.name, false)))));
+        row.append(rowHead(r.label(), str('arcade.landing.see_all'), () => openAll(r.sort)), tileStrip(items.map((a) => communityTile(a, viewOf(a.id, a.viewAt), ownedIn(a), playableIn(a), server ? () => listMachines(a) : null, server?.base ?? null, leadersOf(a.id, a.name, false)))));
         theirs.append(row);
       }
       return;
@@ -283,7 +284,7 @@ export async function openLanding(): Promise<void> {
     } else if (!shown.length) {
       theirs.append(emptyState({ welcome: false, message: str('arcade.landing.no_arcade_matches_n', { 0: filter }) }));
     } else {
-      theirs.append(tileGrid(shown.map((a) => communityTile(a, viewOf(a.id, a.viewAt), ownedIn(a), server ? () => listMachines(a) : null, server?.base ?? null, leadersOf(a.id, a.name, false)))));
+      theirs.append(tileGrid(shown.map((a) => communityTile(a, viewOf(a.id, a.viewAt), ownedIn(a), playableIn(a), server ? () => listMachines(a) : null, server?.base ?? null, leadersOf(a.id, a.name, false)))));
     }
   };
   if (server) nodes.push(leadersSection(server));
@@ -507,7 +508,7 @@ function ownerLine(a: ArcadeListing, serverBase: string | null): HTMLElement | n
 }
 
 function communityTile(
-  a: ArcadeListing, view: string | null, owned: GameMeta[], listMachines: (() => void) | null, serverBase: string | null,
+  a: ArcadeListing, view: string | null, owned: GameMeta[], playable: number, listMachines: (() => void) | null, serverBase: string | null,
   leaders: ((from: HTMLElement) => void) | null,
 ): HTMLElement {
   const enter = (): void => { void signedInThen(() => { carryArcadeName(a.id, a.name); location.href = shareLink(a.id); }); };
@@ -518,11 +519,11 @@ function communityTile(
     const stack = thumbStack(thumbed, nameOf);
     if (stack) art.append(stack);
   }
-  const count = owned.length
-    ? str('arcade.landing.playable_n_n', { 0: owned.length, 1: a.machines })
+  const count = playable
+    ? str('arcade.landing.playable_n_n', { 0: playable, 1: a.machines })
     : str('arcade.landing.n_machines', { n: a.machines });
   const machines = listMachines ? chipButton(count, str('arcade.machinelist.machines_in_this_arcade'), listMachines) : chip(count);
-  if (owned.length) machines.classList.replace('nb-chip--grey', 'nb-chip--mint');
+  if (playable) machines.classList.replace('nb-chip--grey', 'nb-chip--mint');
   const chips: HTMLElement[] = [machines];
   const stars = ratingChip(a.rating, a.ratings, { count: false });
   if (stars) chips.push(stars);

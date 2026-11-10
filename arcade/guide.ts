@@ -40,8 +40,8 @@ function guideBody(): HTMLElement[] {
   return [
     para(str('arcade.guide.in_beta')),
     section(str('arcade.guide.your_games'), [
-      str('arcade.guide.own_library_only'),
-      str('arcade.guide.export_games'),
+      str('arcade.guide.from_source'),
+      str('arcade.guide.from_own_files'),
     ]),
     section(str('arcade.guide.money'), [
       str('arcade.guide.starting_wallet'),

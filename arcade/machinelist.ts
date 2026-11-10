@@ -37,15 +37,22 @@ export function holding(m: Pick<DocMachine, 'contentHash' | 'formerContentHashes
   return m.programHash && lib.program.has(m.programHash) ? 'other' : 'none';
 }
 
-export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles'>, held: Holding): { mark: Mark; label: string } {
+export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'source'>, held: Holding): { mark: Mark; label: string } {
   if (m.status !== 'installed') return { mark: 'pending', label: str('arcade.machinelist.not_set_up_yet') };
   if (switchedOff(m)) return { mark: 'pending', label: str('arcade.machinelist.out_of_service') };
   if (held === 'held') return { mark: 'pass', label: str('arcade.machinelist.in_your_library') };
   if (held === 'other') return { mark: 'warn', label: str('arcade.machinelist.different_version') };
+  if (m.source) return { mark: 'pending', label: str('arcade.machinelist.available_from_a_source') };
   return { mark: 'warn', label: str('arcade.machinelist.not_in_your_library') };
 }
 
-type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'contentHash' | 'formerContentHashes' | 'programHash' | 'name' | 'build' | 'gameConfig'>;
+export function playableCount(a: { machines: number; machineIds?: string[]; ownFileIds?: string[] }, has: (id: string) => boolean): number {
+  const own = a.ownFileIds ?? a.machineIds ?? [];
+  const closed = own.filter((id) => !has(id)).length;
+  return Math.max(0, (a.ownFileIds ? a.machines : own.length) - closed);
+}
+
+type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'source' | 'contentHash' | 'formerContentHashes' | 'programHash' | 'name' | 'build' | 'gameConfig'>;
 
 export interface ListedGame<M extends Listed = Listed> { machines: M[]; shown: M }
 

@@ -1288,6 +1288,12 @@ export class Room {
         }
         if (this.orbitPinch.size > 2) return;
         if (this.peekBegin(e)) return;
+        const hit = this.live.glass === this.focus.glass ? this.glassPoint(e) : null;
+        if (hit && this.live.pressesAt(hit)) {
+          this.orbitPinch.delete(e.pointerId);
+          this.caps.down(e);
+          return;
+        }
         this.caps.begin(e);
         el.setPointerCapture(e.pointerId);
         return;
