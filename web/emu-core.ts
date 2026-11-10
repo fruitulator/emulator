@@ -141,6 +141,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
     ...(payoutLines.length ? { unpricedPayouts: payoutLines } : {}),
     ...(m.meterNameOffset ? { meterNameOffset: m.meterNameOffset } : {}),
     ...(m.namePayout && m.tokenPayoutLines?.length ? { tokenPayouts: [...m.tokenPayoutLines] } : {}),
+    ...(m.payoutTokenChoice && m.setPayoutMeter ? { payoutTokenChoice: true } : {}),
     ...(m.payoutDevices?.length
       ? { payoutDevices: m.payoutDevices.map((d) => ({ ...d })) }
       : ((m.unpricedPayoutLines?.length || m.tokenPayoutLines?.length || m.hopperPayoutLines?.length)

@@ -237,6 +237,7 @@ export interface Machine {
 
   readonly payoutRows?: readonly PayoutRow[];
   setPayoutMeter?(line: number, token: boolean): void;
+  readonly payoutTokenChoice?: boolean;
   setNotPayouts?(lines: readonly number[]): void;
   readonly payoutCounts?: readonly number[];
   readonly unpricedPaidLines?: readonly number[];

@@ -65,6 +65,7 @@ export interface MachineInfo {
     defaultFrom?: 'layout' | 'machine';
   }[];
 
+  payoutTokenChoice?: boolean;
   meterOnlyPayout?: boolean;
   cashPayouts?: number[];
   payoutRows?: PayoutRow[];

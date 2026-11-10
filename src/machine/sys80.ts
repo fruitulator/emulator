@@ -197,6 +197,7 @@ export class Sys80 implements Machine {
   get payoutCounts(): readonly number[] { return this.coinBook.outputCounts; }
 
   setPayoutMeter(line: number, token: boolean): void { this.coinBook.payouts.setCash(line, !token); }
+  get payoutTokenChoice(): boolean { return true; }
   setNotPayouts(lines: readonly number[]): void { this.coinBook.setNotPayouts(lines); }
 
   private isPayoutTriac(i: number): boolean {

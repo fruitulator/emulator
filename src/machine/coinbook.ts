@@ -35,12 +35,13 @@ export class TokenPayouts {
 
   value(line: number): number | undefined { return this.named.get(line) ?? this.defaults.get(line); }
 
-  private readonly cash = new Set<number>();
-  setCash(line: number, cash: boolean): void {
-    if (cash) this.cash.add(line);
-    else this.cash.delete(line);
+  private readonly cash = new Map<number, boolean>();
+  setCash(line: number, cash: boolean): void { this.cash.set(line, cash); }
+  isCash(line: number): boolean { return this.cash.get(line) === true; }
+  isToken(line: number, stated: boolean): boolean {
+    const cash = this.cash.get(line);
+    return cash === undefined ? stated : !cash;
   }
-  isCash(line: number): boolean { return this.cash.has(line); }
 
   setDefault(line: number, pence: number | null): void {
     if (pence !== null && Number.isInteger(pence) && pence > 0) this.defaults.set(line, pence);
@@ -177,11 +178,13 @@ export class CoinBook {
     this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
     if (s === null) return;
     const named = this.payouts.value(line);
+    const token = this.payouts.isToken(line, s === 'token');
     if (named !== undefined) {
-      if (s === 'token') this.pay({ token: named });
+      if (token) this.pay({ token: named });
       else this.cashOut(named);
       return;
     }
+    if (typeof s === 'number' && token) { this.pay({ token: s }); return; }
     this.pay(s);
     if (s === 'token' || s === 'unpriced') this.payouts.noteUnpriced(line);
   }
@@ -193,9 +196,12 @@ export class CoinBook {
   part(line: number, stated: SlideEffect | { token: number }): void {
     this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
     const named = this.payouts.value(line);
+    const token = this.payouts.isToken(line, stated === 'token' || (stated !== null && typeof stated === 'object'));
     if (named !== undefined) {
-      if (stated === 'token' || (stated !== null && typeof stated === 'object')) this.pay({ token: named });
+      if (token) this.pay({ token: named });
       else this.cashOut(named);
+    } else if (typeof stated === 'number' && token) {
+      this.pay({ token: stated });
     } else {
       this.pay(stated ?? 'unpriced');
       if (stated === null || stated === 'token' || stated === 'unpriced') this.payouts.noteUnpriced(line);

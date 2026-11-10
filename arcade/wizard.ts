@@ -2188,26 +2188,51 @@ class Wizard {
       none.value = '';
       none.textContent = str('coinask.no_value');
       const token = device.kind.includes('token');
-      sel.append(none, ...(token ? TOKEN_VALUES : CASH_COINS).map((p) => {
+      const key = String(device.line);
+      const both = !!this.info()?.payoutTokenChoice && device.kind.endsWith('tube');
+      const option = (value: string, text: string): HTMLOptionElement => {
         const o = document.createElement('option');
-        o.value = String(p);
-        o.textContent = cashLabel(p);
+        o.value = value;
+        o.textContent = text;
         return o;
-      }));
+      };
+      if (both) {
+        sel.append(none,
+          ...CASH_COINS.map((p) => option(`c${p}`, cashLabel(p))),
+          ...TOKEN_VALUES.map((p) => option(`t${p}`, str('coinask.n_token', { 0: cashLabel(p) }))));
+      } else {
+        sel.append(none, ...(token ? TOKEN_VALUES : CASH_COINS).map((p) => option(String(p), cashLabel(p))));
+      }
       const values = readPayoutValues(this.m.config.payouts);
-      sel.value = String(values[String(device.line)] ?? device.defaultPence ?? '');
+      const shown = values[key] ?? device.defaultPence;
+      const isToken = readPayoutMeters(this.m.config.payoutMeters)[key] ?? token;
+      sel.value = shown == null ? '' : both ? `${isToken ? 't' : 'c'}${shown}` : String(shown);
       sel.addEventListener('change', () => {
         const next = readPayoutValues(this.m.config.payouts);
-        if (sel.value) next[String(device.line)] = Number(sel.value);
-        else delete next[String(device.line)];
+        const nextMeters = readPayoutMeters(this.m.config.payoutMeters);
+        const pence = Number(both ? sel.value.slice(1) : sel.value) || 0;
+        const nextToken = sel.value.startsWith('t');
+        if (pence) next[key] = pence;
+        else delete next[key];
+        if (both) {
+          if (pence) nextMeters[key] = nextToken;
+          else delete nextMeters[key];
+        }
         const nextNotPayouts = readNotPayoutLines(this.m.config.notPayouts).filter((line) => line !== device.line);
         for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
           if (Object.keys(next).length) c.payouts = { ...next };
           else delete c.payouts;
+          if (both) {
+            if (Object.keys(nextMeters).length) c.payoutMeters = { ...nextMeters };
+            else delete c.payoutMeters;
+          }
           if (nextNotPayouts.length) c.notPayouts = nextNotPayouts;
           else delete c.notPayouts;
         }
-        if (this.wm.live.running) this.wm.live.emu.namePayout(device.line, Number(sel.value) || 0);
+        if (this.wm.live.running) {
+          this.wm.live.emu.namePayout(device.line, pence);
+          if (both) this.wm.live.emu.setPayoutMeter(device.line, pence ? nextToken : token);
+        }
         setPayoutDefaultNote(row, payoutDefaultNote(device, next[String(device.line)]));
         void this.save();
         this.nav(undefined, this.coinsWired());
