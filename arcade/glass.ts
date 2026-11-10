@@ -15,7 +15,7 @@ import { stampCoinInputs, viewFor } from '../web/platform';
 import { virtualDisplayReversed } from '../src/machine/layoutdisplay';
 import { getThumb } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
-import { decodeTrace, traceMismatch, TracePlayer } from './trace';
+import { decodeTrace, layoutDigest, traceLayout, traceMismatch, TracePlayer } from './trace';
 import { DEFAULT_DECK, deckBand, lowerSplit } from './fold';
 import { cropOf, proposeFit, quadFrac, resolveFit, wholeTextureFit, type FitDetected, type ShellFit } from './fit';
 import { trimFor, type ArcadeMachine } from './machines';
@@ -464,7 +464,8 @@ export class Glass {
       bytes = new Uint8Array(await res.arrayBuffer());
     }
     const trace = decodeTrace(bytes);
-    let fl = kept;
+    let fl = traceLayout(trace.header)
+      ?? (kept && layoutDigest(kept) === trace.header.layoutDigest ? kept : null);
     if (!fl) {
       const tm = performance.now();
       const m = machineFor(game);

@@ -57,7 +57,7 @@ export async function readRec(hash: string, key: string): Promise<ArcadeRec | nu
 }
 
 export function shapeIsCurrent(rec: ArcadeRec | null): rec is ArcadeRec & { shape: FrameLayout } {
-  return !!rec?.shape && rec.build === BUILD && rec.shape.format === FRAME_FORMAT;
+  return !!rec?.shape && rec.shape.format === FRAME_FORMAT;
 }
 
 export function needsWrite(rec: ArcadeRec | null, key: string): boolean {

@@ -1,5 +1,5 @@
 import { FrameView, HEADER_BYTES, REEL_BYTES, type FrameLayout } from '../src/machine/framestate';
-import { configOf, type Game } from '../src/machine/registry';
+import { configOf } from '../src/machine/registry';
 import type { CashLedger } from '../src/machine/machine';
 import {
   cabinetSurfaces, classifyGlassCore, readGlass, type CabinetSurfaces, type CoreReading,
@@ -12,7 +12,7 @@ import { hasOperatedSwitches, layoutNamedInputs, namedInputId } from '../web/swi
 import { CONTENT_RULE } from '../web/store';
 import { Glass } from './glass';
 import { Live } from './live';
-import { digest, layoutDigest, TRACE_FPS } from './trace';
+import { digest, TRACE_FPS } from './trace';
 import { runTraceJob, type TraceJobRequest, type TraceJobResponse } from './tracejob';
 import type { ArcadeMachine } from './machines';
 import type { MachineConfig } from './doc';
@@ -399,31 +399,14 @@ export class WizardMachine {
   startRecording(): void {
     this.rec = [];
     this.recVideo = 0;
-    const game = this.glass.game;
-    if (game) void this.roomShape(game).catch(() => undefined);
   }
 
-  private shape: { game: Game; p: Promise<string> } | null = null;
-  private roomShape(game: Game): Promise<string> {
-    if (this.shape?.game !== game) {
-      const p: Promise<string> = traceJob({ id: 0, kind: 'shape', game }).then((r) => {
-        if (!r.ok) throw new Error(r.message);
-        if (r.kind !== 'shape') throw new Error('the recording worker answered another question');
-        return r.digest;
-      });
-      p.catch(() => { if (this.shape?.p === p) this.shape = null; });
-      this.shape = { game, p };
-    }
-    return this.shape.p;
-  }
-
-  async finishRecording(config: MachineConfig): Promise<{ bytes: Uint8Array; frames: number; sameShape: boolean }> {
+  async finishRecording(config: MachineConfig): Promise<{ bytes: Uint8Array; frames: number }> {
     const frames = this.rec ?? [];
     this.rec = null;
     const fl = this.layout;
     const game = this.glass.game;
     if (!fl || !game || !frames.length) throw new Error('nothing was recorded');
-    const shape = this.roomShape(game);
     const keep = this.prev?.buffer;
     const transfer = [...new Set(frames.map((f) => f.buffer as ArrayBuffer))].filter((b) => b !== keep);
     const r = await traceJob({
@@ -439,7 +422,7 @@ export class WizardMachine {
     }, transfer);
     if (!r.ok) throw new Error(r.message);
     if (r.kind !== 'encode') throw new Error('the recording worker answered another question');
-    return { bytes: r.bytes, frames: r.frames, sameShape: (await shape) === layoutDigest(fl) };
+    return { bytes: r.bytes, frames: r.frames };
   }
 
   get recording(): boolean { return this.rec !== null; }

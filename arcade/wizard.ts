@@ -1406,7 +1406,6 @@ class Wizard {
           if (++moved >= 3) { moved = 0; set('needs'); this.askHost(); } else set('looking');
           continue;
         }
-        if (!out.sameShape) { set('broken', 'This machine cannot be added to the arcade on this version of the app.'); return; }
         this.m.trace = {
           data: toBase64(out.bytes), bytes: out.bytes.length, recordedAt: Date.now(), how: 'found',
           config: configDigest(this.m.config),

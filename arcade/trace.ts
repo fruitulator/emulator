@@ -12,6 +12,7 @@ export interface TraceHeader {
   configKey: string;
   board: string;
   layoutDigest: string;
+  layout?: FrameLayout;
   fps: number;
   frames: number;
   frameBytes: number;
@@ -107,6 +108,7 @@ export function encodeTrace(t: TraceInput): Uint8Array {
     configKey: t.configKey,
     board: fl.system,
     layoutDigest: layoutDigest(fl),
+    layout: fl,
     fps: TRACE_FPS,
     frames: t.frames.length,
     frameBytes,
@@ -139,6 +141,12 @@ export function decodeTrace(bytes: Uint8Array): DecodedTrace {
     ? inflateSync(bytes.subarray(p0 + header.payloadBytes, p0 + header.payloadBytes + header.stillBytes))
     : null;
   return { header, frames: payload, still };
+}
+
+export function traceLayout(h: TraceHeader): FrameLayout | null {
+  const fl = h.layout;
+  if (!fl || typeof fl !== 'object' || fl.format !== FRAME_FORMAT) return null;
+  return layoutDigest(fl) === h.layoutDigest ? fl : null;
 }
 
 export function traceMismatch(h: TraceHeader, contentHash: string | readonly string[], fl: FrameLayout): string | null {
