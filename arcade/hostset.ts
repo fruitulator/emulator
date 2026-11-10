@@ -1,8 +1,9 @@
 import { classifyGame, configOf, type Game, type GameFile } from '../src/machine/registry';
 import { CONFIG_FILE } from '../src/machine/setfiles';
+import { printableLayout } from '../src/layout/layoutprint';
 import { decodePak, decodeSrcs } from '../web/gamepak';
-import { fingerprints } from '../web/hostfiles';
-import { byContentKey, contentIdentityOf, getPak, type GameMeta } from '../web/store';
+import { fingerprints, layoutPrint, wantsPrint } from '../web/hostfiles';
+import { byContentKey, contentIdentityOf, getPak, sha256Hex, type GameMeta } from '../web/store';
 import { readCoinWiring } from '../web/coinask';
 import { wiringFor } from './coinwiring';
 import { labelledBuild } from './builds';
@@ -48,6 +49,23 @@ async function hostsCopy(m: DocMachine, library: GameMeta[]): Promise<{ g: GameM
   return null;
 }
 
+async function printLayouts(m: DocMachine, library: GameMeta[]): Promise<boolean> {
+  const want = (m.hostFiles ?? []).filter(wantsPrint);
+  if (!want.length) return false;
+  const copy = await hostsCopy(m, library);
+  if (!copy) return false;
+  let added = false;
+  for (const h of want) {
+    for (const f of copy.files) {
+      if (!printableLayout(f.name) || await sha256Hex(f.bytes) !== h.sha256) continue;
+      const print = await layoutPrint(f.bytes);
+      if (print) { h.print = print; added = true; }
+      break;
+    }
+  }
+  return added;
+}
+
 export async function defineMachines(doc: ArcadeDoc, library: GameMeta[]): Promise<boolean> {
   let changed = false;
   const by = byContentKey(library);
@@ -58,7 +76,10 @@ export async function defineMachines(doc: ArcadeDoc, library: GameMeta[]): Promi
       const b = own && labelledBuild(m, own);
       if (b) { m.build = { ...b }; changed = true; }
     }
-    if (m.hostFiles?.length) continue;
+    if (m.hostFiles?.length) {
+      if (await printLayouts(m, library)) changed = true;
+      continue;
+    }
     const copy = await hostsCopy(m, library);
     if (!copy) {
       console.info(`[arcade] ${m.name}: not in this library, so it stays switched off`);

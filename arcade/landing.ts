@@ -22,7 +22,7 @@ import { watchRoom } from './playerpills';
 import { ARCADE_CLOSED_FLAG } from './roomlive';
 import { arcadeServer, carryArcadeName, deletedArcades, HAVE_ONE, NAME_TAKEN, nameTakenHere, newHostKey, offerLink, publishRefusal, shareArcade, shareHooks, shareLink, floorLink, syncArcade, type ArcadeServer } from './share';
 import { arcadeFigures, confirmDelete, pounds, publicSwitch, type ArcadeFigures, type ShareHooks } from './hostsettings';
-import { ARCADES_PER_PLAYER, MACHINE_ID_LEN, type ArcadeListing, type ArcadeSort } from './serverwire';
+import { ARCADES_PER_PLAYER, MACHINE_ID_LEN, printKey, type ArcadeListing, type ArcadeSort } from './serverwire';
 import { tabBar } from '../web/ui/tabs';
 import { siteNav } from '../web/ui/sitenav';
 import { settingsButton } from '../web/ui/settings';
@@ -32,7 +32,8 @@ import { ratingChip } from '../web/ui/stars';
 import { str } from '../web/i18n';
 import { textField } from '../web/ui/field';
 import { fillDocSources } from './sourceget';
-import { restampMachines } from './restamp';
+import { restampMachines, withLayoutPrints } from './restamp';
+import { LAYOUT_PRINT_RULE } from '../src/layout/layoutprint';
 import { defineMachines } from './hostset';
 
 const HOST_PAGE = '/arcade/?host';
@@ -133,6 +134,11 @@ export async function openLanding(): Promise<void> {
   for (const g of library) if (g.hasThumb) for (const k of contentKeys(g)) if (!thumbs.has(k)) thumbs.set(k, g.hash);
   const mineById = new Map<string, GameMeta>();
   for (const g of library) for (const k of contentKeys(g)) if (!mineById.has(k.slice(0, MACHINE_ID_LEN))) mineById.set(k.slice(0, MACHINE_ID_LEN), g);
+  const addPrints = (g: GameMeta): void => {
+    if (!g.programHash || g.layoutPrintRule !== LAYOUT_PRINT_RULE) return;
+    for (const p of g.layoutPrints ?? []) { const k = printKey(g.programHash, p); if (!mineById.has(k)) mineById.set(k, g); }
+  };
+  for (const g of library) addPrints(g);
   const ownedIn = (a: ArcadeListing): GameMeta[] => (a.machineIds ?? []).map((id) => mineById.get(id)).filter((g): g is GameMeta => !!g);
   const playableIn = (a: ArcadeListing): number => playableCount(a, (id) => mineById.has(id));
   const listMachines = (a: ArcadeListing): void => {
@@ -292,6 +298,15 @@ export async function openLanding(): Promise<void> {
   draw();
   nodes.push(theirs);
   root.replaceChildren(...nodes);
+  const printPrograms = new Set(rowLists.flatMap((c) => (c.kind === 'ok' ? c.arcades : []))
+    .flatMap((a) => (a.ownFileKeys ?? []).flat()).filter((k) => k.startsWith('p')).map((k) => k.slice(1, 8)));
+  const unprinted = library.filter((g) => g.programHash && printPrograms.has(g.programHash.slice(0, 7)) && g.layoutPrintRule !== LAYOUT_PRINT_RULE);
+  if (unprinted.length) {
+    void (async () => {
+      for (const g of unprinted) addPrints(await withLayoutPrints(g));
+      draw();
+    })().catch((e) => console.warn('[arcade] layout prints not taken', e));
+  }
   document.getElementById('loading')?.classList.add('done');
   const query = new URLSearchParams(location.search);
   if (query.has(ARCADE_CLOSED_FLAG)) {

@@ -42,6 +42,8 @@ export interface GameMeta {
   contentHash?: string;
   contentRule?: number;
   formerContentHashes?: string[];
+  layoutPrints?: string[];
+  layoutPrintRule?: number;
   programHash?: string;
   batteries?: string[];
   maker?: string;

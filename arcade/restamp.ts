@@ -1,5 +1,7 @@
 import { CONTENT_RULE, byContentKey, contentIdentityOf, getMeta, getPak, hasPak, putMeta, type GameMeta } from '../web/store';
 import { decodePak, decodeSrcs } from '../web/gamepak';
+import { layoutPrint } from '../web/hostfiles';
+import { LAYOUT_PRINT_RULE, printableLayout } from '../src/layout/layoutprint';
 import type { ArcadeDoc } from './doc';
 
 export function isCurrent(g: Pick<GameMeta, 'contentRule' | 'formerContentHashes'>): boolean {
@@ -22,7 +24,7 @@ export async function rekeyRecord(g: GameMeta): Promise<GameMeta> {
   }
 }
 
-interface Wanted { contentHash: string; formerContentHashes?: string[]; programHash?: string }
+interface Wanted { contentHash: string; formerContentHashes?: string[]; programHash?: string; hostFiles?: readonly { print?: string }[] }
 
 export async function rekeyHolders<M extends Wanted>(library: GameMeta[], machines: readonly M[]): Promise<GameMeta[]> {
   const by = byContentKey(library);
@@ -38,8 +40,48 @@ export async function rekeyHolders<M extends Wanted>(library: GameMeta[], machin
   return out;
 }
 
+export async function withLayoutPrints(g: GameMeta): Promise<GameMeta> {
+  if (g.layoutPrintRule === LAYOUT_PRINT_RULE && g.layoutPrints) return g;
+  try {
+    const bytes = await getPak(g.hash);
+    if (!bytes) return g;
+    const prints: string[] = [];
+    for (const f of decodeSrcs(decodePak(bytes).chunk('SRCS'))) {
+      if (!printableLayout(f.name)) continue;
+      const p = await layoutPrint(f.bytes);
+      if (p && !prints.includes(p)) prints.push(p);
+    }
+    const now = (await getMeta(g.hash)) ?? g;
+    const out: GameMeta = { ...now, layoutPrints: prints, layoutPrintRule: LAYOUT_PRINT_RULE };
+    await putMeta(out);
+    return out;
+  } catch (e) {
+    console.warn('[arcade] a library record\'s layouts could not be read', e);
+    return g;
+  }
+}
+
+export async function printHolders<M extends Wanted>(library: GameMeta[], machines: readonly M[]): Promise<GameMeta[]> {
+  const by = byContentKey(library);
+  const want = machines.filter((m) => m.programHash && m.hostFiles?.some((h) => h.print)
+    && ![m.contentHash, ...(m.formerContentHashes ?? [])].some((k) => by.has(k)));
+  if (!want.length) return library;
+  const programs = new Set(want.map((m) => m.programHash));
+  const out: GameMeta[] = [];
+  for (const g of library) out.push(g.programHash && programs.has(g.programHash) ? await withLayoutPrints(g) : g);
+  const extra = new Map<string, string[]>();
+  for (const m of want) {
+    const prints = new Set(m.hostFiles!.flatMap((h) => (h.print ? [h.print] : [])));
+    const g = out.find((x) => x.programHash === m.programHash && x.layoutPrints?.some((p) => prints.has(p)));
+    if (g) extra.set(g.hash, [...(extra.get(g.hash) ?? []), m.contentHash, ...(m.formerContentHashes ?? [])]);
+  }
+  return extra.size
+    ? out.map((g) => (extra.has(g.hash) ? { ...g, formerContentHashes: [...new Set([...(g.formerContentHashes ?? []), ...extra.get(g.hash)!])] } : g))
+    : out;
+}
+
 export async function holdingLibrary<M extends Wanted>(library: GameMeta[], machines: readonly M[]): Promise<GameMeta[]> {
-  const rekeyed = await rekeyHolders(library, machines);
+  const rekeyed = await printHolders(await rekeyHolders(library, machines), machines);
   const by = byContentKey(rekeyed);
   const holders = new Set(machines.flatMap((m) => [m.contentHash, ...(m.formerContentHashes ?? [])])
     .flatMap((k) => { const g = by.get(k); return g ? [g] : []; }));

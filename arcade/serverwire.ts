@@ -149,10 +149,14 @@ export interface RestoreBody { key: string; name?: string }
 export type RestoreReply = { ok: true } | { ok: false; why: 'not-owner' | 'gone' | 'bad' | 'limit' | 'taken' };
 export interface ArcadeListing {
   id: string; name: string; machines: number; updatedAt: number; viewAt: number; rating: number; ratings: number; visits: number;
-  machineIds: string[]; ownFileIds?: string[]; owner?: ArcadeOwner | null;
+  machineIds: string[]; ownFileIds?: string[]; ownFileKeys?: string[][]; owner?: ArcadeOwner | null;
 }
 export interface ArcadeOwner { id: string; name: string; avatarAt?: number }
 export const MACHINE_ID_LEN = 16;
+
+export function printKey(program: string, print: string): string {
+  return `p${program.slice(0, 7)}${print.slice(0, 8)}`;
+}
 export const ARCADE_SORTS = ['latest', 'top', 'visits'] as const;
 export type ArcadeSort = typeof ARCADE_SORTS[number];
 export const RATING_PRIOR = 3;

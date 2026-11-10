@@ -41,15 +41,15 @@ export function machineStatus(m: Pick<DocMachine, 'status' | 'outOfService' | 'h
   if (m.status !== 'installed') return { mark: 'pending', label: str('arcade.machinelist.not_set_up_yet') };
   if (switchedOff(m)) return { mark: 'pending', label: str('arcade.machinelist.out_of_service') };
   if (held === 'held') return { mark: 'pass', label: str('arcade.machinelist.in_your_library') };
-  if (held === 'other') return { mark: 'warn', label: str('arcade.machinelist.different_version') };
   if (m.source) return { mark: 'pending', label: str('arcade.machinelist.available_from_a_source') };
+  if (held === 'other') return { mark: 'warn', label: str('arcade.machinelist.different_version') };
   return { mark: 'warn', label: str('arcade.machinelist.not_in_your_library') };
 }
 
-export function playableCount(a: { machines: number; machineIds?: string[]; ownFileIds?: string[] }, has: (id: string) => boolean): number {
-  const own = a.ownFileIds ?? a.machineIds ?? [];
-  const closed = own.filter((id) => !has(id)).length;
-  return Math.max(0, (a.ownFileIds ? a.machines : own.length) - closed);
+export function playableCount(a: { machines: number; machineIds?: string[]; ownFileIds?: string[]; ownFileKeys?: string[][] }, has: (id: string) => boolean): number {
+  const own = a.ownFileKeys ?? (a.ownFileIds ?? a.machineIds ?? []).map((id) => [id]);
+  const closed = own.filter((ids) => !ids.some(has)).length;
+  return Math.max(0, (a.ownFileKeys || a.ownFileIds ? a.machines : own.length) - closed);
 }
 
 type Listed = Pick<DocMachine, 'status' | 'outOfService' | 'hostFiles' | 'source' | 'contentHash' | 'formerContentHashes' | 'programHash' | 'name' | 'build' | 'gameConfig'>;
