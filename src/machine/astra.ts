@@ -153,7 +153,7 @@ export class Astra implements Bus16, Machine {
   readonly io = new Map<string, number>();
   private irqLevel = 0;
 
-  static readonly HOPPER_WAVEFORM = v20Waveform((0x4083 / ASTRA_CLOCK) * 1000, { beam: 0x19 + 1, gap: 200, start: 0x7d, settle: 1 });
+  static readonly HOPPER_WAVEFORM = v20Waveform((0x4083 / ASTRA_CLOCK) * 1000, { beam: 0x19 + 1, gap: 200, start: 0x7d, settle: 1, restart: 'rephase' });
 
   readonly hoppers = [new Hopper(ASTRA_CLOCK, Astra.HOPPER_WAVEFORM), new Hopper(ASTRA_CLOCK, Astra.HOPPER_WAVEFORM)];
 
@@ -220,6 +220,7 @@ export class Astra implements Bus16, Machine {
       serialTx: (ch, v) => this.onSerialTx(ch, v),
       busRead8: (a) => this.read8(a),
       busWrite8: (a, v) => this.write8(a, v),
+      cpuMask: () => (this.cpu.sr >> 8) & 7,
       busRead16: (a) => this.read16(a),
       busWrite16: (a, v) => this.write16(a, v),
       dmaStart: (ch) => this.dmaStart(ch),
@@ -652,6 +653,7 @@ export class Astra implements Bus16, Machine {
   step(): number {
     const cycles = this.cpu.step();
     this.sim.tick(cycles);
+    if (this.sim.dmaHeld !== 0 && ((this.cpu.sr >> 8) & 7) <= this.sim.dmaWakeMask()) this.sim.dmaRetry();
     let level = this.sim.request();
     if (level < SOUND_IRQ_LEVEL && this.ymz.irq()) level = SOUND_IRQ_LEVEL;
     if (level !== this.irqLevel) {

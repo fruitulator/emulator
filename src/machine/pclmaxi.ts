@@ -55,7 +55,7 @@ export const PCLMAXI_DISC: Uint8Array = (() => {
 
 const LAMP_COUNT = 0x70;
 const TRIAC_LINES = 12;
-const COIN_HOLD_LINE = Math.round(0.075 * PCLMAXI_CLOCK);
+const COIN_HOLD_LINE = Math.round(0.07 * PCLMAXI_CLOCK);
 const COIN_GAP = Math.round(0.005 * PCLMAXI_CLOCK);
 
 export class PclMaxi implements Machine {

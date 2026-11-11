@@ -16,8 +16,8 @@ export class Msc1937 implements MachineDisplay {
   duty = 0;
 
   private cursor = 0;
-  private pcursor = 0;
-  private windowSize = 16;
+  private pcursor = 15;
+  windowSize = 16;
 
   private sclkState = false;
   private dataBit = false;
@@ -55,11 +55,14 @@ export class Msc1937 implements MachineDisplay {
 
   reset(): void {
     this.cursor = 0;
-    this.pcursor = 0;
+    this.pcursor = 15;
     this.windowSize = 16;
     this.shiftCount = 0;
     this.shiftData = 0;
     this.duty = 0;
+    this.chars.fill(0x20);
+    this.dots.fill(0);
+    this.cellWords.fill(0x20);
   }
 
   private writeChar(data: number): void {
@@ -90,7 +93,7 @@ export class Msc1937 implements MachineDisplay {
         this.chars[15 - this.cursor] = code < 0x20 ? code + 0x40 : code;
         this.dots[15 - this.cursor] = 0;
         this.cellWords[15 - this.cursor] = this.chars[15 - this.cursor];
-        if (++this.cursor > this.windowSize - 1) this.cursor = 0;
+        if (++this.cursor > 15) this.cursor = 0;
         break;
     }
   }

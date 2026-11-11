@@ -153,11 +153,7 @@ export class Room {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(ROOM_FOV, 1, 0.05, 60);
   private lookFov = ROOM_FOV;
-  readonly live = (() => {
-    const l = new Live();
-    l.onWalkAway = () => this.stepBack();
-    return l;
-  })();
+  readonly live = new Live();
   readonly slots: Slot[] = [];
   plan: RoomPlan & { doorX?: number };
   room: Dressing;

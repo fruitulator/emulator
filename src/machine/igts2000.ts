@@ -40,7 +40,7 @@ const STRIPE = Uint8Array.from(
 const LAMP_COUNT = 0x120;
 const COIN_HOLD_LINE = Math.round(0.07 * IGTS2000_CLOCK);
 const COIN_GAP = Math.round(0.005 * IGTS2000_CLOCK);
-const HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x78, start: 0x50, settle: 1 });
+const HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x78, start: 0x50, settle: 1, restart: 'rephase' });
 
 export class IgtS2000 implements Machine {
   static readonly HOPPER_LINE = 0;

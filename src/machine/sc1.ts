@@ -172,12 +172,8 @@ export class Sc1 implements Bus, Machine {
   }
 
   private mux1Latch = 0x08;
-  private mux1DataLo = 0;
-  private mux1DataHi = 0;
   private mux1Input = 0;
   private mux2Latch = 0x08;
-  private mux2DataLo = 0;
-  private mux2DataHi = 0;
   private mux2Input = 0;
 
   private locked = 0x07;
@@ -807,12 +803,8 @@ export class Sc1 implements Bus, Machine {
     this.lampHistory.reset();
     this.io.fill(0);
     this.mux1Latch = 0x08;
-    this.mux1DataLo = 0;
-    this.mux1DataHi = 0;
     this.mux1Input = 0;
     this.mux2Latch = 0x08;
-    this.mux2DataLo = 0;
-    this.mux2DataHi = 0;
     this.mux2Input = 0;
     this.locked = 0x07;
     this.timerCycles = 0;
@@ -984,19 +976,16 @@ export class Sc1 implements Bus, Machine {
       this.mux1Latch = v;
       if ((changed & 0x08) && !(v & 0x08)) {
         const strobe = v & 0x07;
-        const base = strobe * 16;
-        this.lampHistory.writeByte(base, this.mux1DataLo);
-        this.lampHistory.writeByte(128 + base, this.mux1DataHi);
         this.mux1Input = this.inputRegs[strobe] | (strobe === 5 ? this.percentKey : 0);
       }
       return;
     }
     if (a === 0x2a01) {
-      this.mux1DataLo = v;
+      if (this.mux1Latch & 0x08) this.lampHistory.writeByte((this.mux1Latch & 0x07) * 16, v);
       return;
     }
     if (a === 0x2a02) {
-      this.mux1DataHi = v;
+      if (this.mux1Latch & 0x08) this.lampHistory.writeByte(0x80 + (this.mux2Latch & 0x07) * 16, v);
       return;
     }
     if (a === 0x3001) {
@@ -1023,10 +1012,6 @@ export class Sc1 implements Bus, Machine {
       const changed = this.mux2Latch ^ v;
       this.mux2Latch = v;
       if ((changed & 0x08) && !(v & 0x08)) {
-        const strobe = v & 0x07;
-        const base = strobe * 16 + 8;
-        this.lampHistory.writeByte(base, this.mux2DataLo);
-        this.lampHistory.writeByte(128 + base, this.mux2DataHi);
         let optics = 0;
         for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic()) optics |= 1 << i;
         optics &= this.reelFit.mask;
@@ -1035,11 +1020,11 @@ export class Sc1 implements Bus, Machine {
       return;
     }
     if (a === 0x3409) {
-      this.mux2DataLo = v;
+      if (this.mux2Latch & 0x08) this.lampHistory.writeByte(0x08 + (this.mux1Latch & 0x07) * 16, v);
       return;
     }
     if (a === 0x340a) {
-      this.mux2DataHi = v;
+      if (this.mux2Latch & 0x08) this.lampHistory.writeByte(0x88 + (this.mux2Latch & 0x07) * 16, v);
       return;
     }
     if (a === 0x3600) {

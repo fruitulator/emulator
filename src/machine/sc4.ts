@@ -13,7 +13,7 @@ import { Mc68681, X1_HZ } from '../hw/mc68681';
 import { RngUnit } from '../hw/rngunit';
 import { Sec } from '../hw/sec';
 import { Sc4HopperPair, locateSc4PayoutUnits, readSc4HopperCoins, sc4UnitCoin, sc4UnitEnabled, type Sc4Coin, type Sc4HopperCoins, type Sc4PayoutUnits } from '../hw/sc4hoppers';
-import { JcmEba, Sch2Hopper, deviceFor, switchKeyAckDelay, CC } from '../hw/cctalk';
+import { JcmEba, Sch2Hopper, deviceFor, switchKeyAckDelay, V20_CCTALK_REPLY_DELAY, CC, replyHeader } from '../hw/cctalk';
 import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { DataPak } from '../hw/datapak';
@@ -190,7 +190,7 @@ export class Sc4 implements Bus16, Machine {
       return;
     }
     this.duart.receive(1, v);
-    if (this.totalCycles - this.lastPayTxCycle > 100_000) this.payFrame = [];
+    if (this.totalCycles - this.lastPayTxCycle > Sc4.CC_FRAME_GAP) this.payFrame = [];
     this.lastPayTxCycle = this.totalCycles;
     const f = this.payFrame;
     f.push(v & 0xff);
@@ -226,9 +226,10 @@ export class Sc4 implements Bus16, Machine {
 
   private ccReply: { at: number; b: number }[] = [];
 
-  private static readonly CC_REPLY_DELAY = 48_000;
+  private static readonly CC_REPLY_DELAY = V20_CCTALK_REPLY_DELAY;
   private static readonly CC_BYTE_GAP = 16_000;
   private static readonly CC_KEY_ACK_DELAY = switchKeyAckDelay(MASTER_CLOCK / 20);
+  private static readonly CC_FRAME_GAP = MASTER_CLOCK / 20;
   private static replyDelay(header: number | undefined): number {
     return header === CC.SWITCH_ENCRYPTION_KEY ? Sc4.CC_KEY_ACK_DELAY : Sc4.CC_REPLY_DELAY;
   }
@@ -307,7 +308,7 @@ export class Sc4 implements Bus16, Machine {
     if (!h) return;
     const rd = h.reply(header, f.slice(4, 4 + (len ?? 0)));
     if (rd === null) return;
-    const b = [src ?? 1, rd.length, dest, 0, ...rd];
+    const b = [src ?? 1, rd.length, dest, replyHeader(rd), ...rd];
     let s = 0;
     for (const x of b) s = (s + x) & 0xff;
     let at = this.totalCycles + Sc4.replyDelay(header);
@@ -581,7 +582,6 @@ export class Sc4 implements Bus16, Machine {
     }
   }
   private ac2 = 0xff;
-  private portB = 0;
   readonly reels = [0, 1, 2, 3, 4, 5].map(
     (i) => i === 4
       ? new Reel({ stepsPerRevolution: 192, symbols: 12, opticStart: 80, opticWidth: 16, drive: 'starpoint' })
@@ -1490,8 +1490,6 @@ export class Sc4 implements Bus16, Machine {
         const select = (v & 0x4000) !== 0;
         if (this.dm01 && this.dmSelect && !select) this.dm01.reset();
         this.dmSelect = select;
-        this.portB = v;
-        this.updateAc2();
         this.updateOptics();
       },
       mbusByte: (v) => this.mbus.write(v),
@@ -1503,9 +1501,9 @@ export class Sc4 implements Bus16, Machine {
 
   private updateAc2(): void {
     this.vfd2.setSerial(
-      (this.portB & 0x4000) !== 0,
+      (this.ac2 & 0x04) === 0,
       (this.ac2 & 0x01) === 0,
-      (this.portB & 0x2000) === 0,
+      (this.ac2 & 0x02) !== 0,
     );
   }
 
@@ -1634,7 +1632,6 @@ export class Sc4 implements Bus16, Machine {
     this.vfd2.reset();
     this.colourLed.reset();
     this.ac2 = 0xff;
-    this.portB = 0;
     this.coinModeHold = 0;
     this.reg1301 = 0;
     this.noteVendLeft = 0;

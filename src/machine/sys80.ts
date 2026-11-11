@@ -3,7 +3,7 @@ import type { Machine, MachineDisplay, CabinetSwitch, CashLedger, CoinChute, Coi
 import type { SlideEffect } from '../layout/fmlconfig';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import { linesOf, wiringKey, wiringStateFor, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
-import type { DeclaredCoin } from './layoutcoins';
+import { codedCoinInputs, type DeclaredCoin } from './layoutcoins';
 import { CoinBook, SlotCoins, type BookedCoin } from './coinbook';
 import { locateSys80Coins, sys80CoinTable, sys80ProgramCoins, sys80PlayMeterPrice, type Sys80CoinCode } from './sys80coins';
 import { triacSenseRelease } from '../hw/triacsense';
@@ -99,6 +99,7 @@ export class Sys80 implements Machine {
     'switches',
     'coinCodeCache', 'coinPriceCache', 'pricedByPlays', 'coinSlots', 'slotCoins', 'wiring', 'meterInRaw', 'meterOutRaw',
     'layoutSlotLines', 'plainSlots',
+    'codedLines',
     'rom', 'romBytes',
     'hopperSwitch',
     'slideNames', 'triacOutRaw',
@@ -782,7 +783,7 @@ export class Sys80 implements Machine {
     if (slots && !slots.includes(bit)) { this.coinsRefused++; return; }
     this.coinInput = bit;
     this.layoutInput(bit, true);
-    this.coinTimer = COIN_HOLD + COIN_GAP;
+    this.coinTimer = this.coinHold(bit) + COIN_GAP;
     if (!this.readsProgramCoins) return;
     if (!code) { this.bookDropped(bit); return; }
     this.judgeCount[bit] = this.judgeCount[bit]! + 1;
@@ -791,6 +792,14 @@ export class Sys80 implements Machine {
   }
   protected coinTimer = 0;
   protected coinInput = -1;
+
+  private codedLines = new Set<number>();
+  setCodedCoinLines(declared: readonly DeclaredCoin[]): void {
+    this.codedLines = codedCoinInputs(declared, 2);
+  }
+  protected coinHold(bit: number): number {
+    return Math.round((this.codedLines.has(bit) ? 0.1 : 0.07) * this.clockHz);
+  }
   get coinBusy(): boolean { return this.coinTimer > 0; }
 
   protected readsProgramCoins = true;
@@ -965,9 +974,9 @@ export class Sys80 implements Machine {
     if (w) {
       if (!this.booksMoney || w.conflicts.includes(line)) return;
       const c = w.coins.get(line);
-      if (c !== undefined) { this.coinBook.coin(typeof c === 'number' ? c : c.token === null ? 'token' : { token: c.token }, COIN_HOLD); return; }
+      if (c !== undefined) { this.coinBook.coin(typeof c === 'number' ? c : c.token === null ? 'token' : { token: c.token }, this.coinHold(line)); return; }
     }
-    this.coinBook.coin(this.slotCoins.coinOn(line), COIN_HOLD);
+    this.coinBook.coin(this.slotCoins.coinOn(line), this.coinHold(line));
   }
 
   private bookCoin(c: SlotCoin): void {
@@ -1021,6 +1030,7 @@ export class Sys80 implements Machine {
     plain: readonly number[] = [],
     lettering: ReadonlyMap<number, 'coin' | 'control'> = new Map(),
   ): void {
+    this.setCodedCoinLines(list);
     const drawn = new Set<number>();
     for (const b of plain) if (b >= 0 && b <= 31 && lettering.get(b) === 'coin') drawn.add(b);
     const slots = new Set<number>();
@@ -1076,5 +1086,4 @@ export function sys80SlotLine(c: Pick<DeclaredCoin, 'line' | 'button' | 'token'>
   return c.token ? -1 : 22;
 }
 
-const COIN_HOLD = Math.round(0.15 * CLOCK);
-const COIN_GAP = Math.round(0.15 * CLOCK);
+const COIN_GAP = Math.round(0.1 * CLOCK);

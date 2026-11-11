@@ -70,6 +70,7 @@ export interface Sim40Hooks {
   busWrite16?(addr: number, val: number): void;
   dmaStart?(ch: number): void;
   dmaStop?(ch: number): void;
+  cpuMask?(): number;
   serialTx?(channel: 0 | 1, v: number): void;
   serialOutputPort?(opr: number, was: number): void;
   portAIn?(): number;
@@ -183,6 +184,7 @@ export class M68340Sim {
     this.pitIrq = false;
     this.dmaIrq[0] = false;
     this.dmaIrq[1] = false;
+    this.dmaHeld = 0;
     this.serial.reset();
     this.reads.clear();
     this.writes.clear();
@@ -215,6 +217,7 @@ export class M68340Sim {
     for (let i = 0; i < this.timers.length; i++) this.resetTimer(i);
     this.dmaIrq[0] = false;
     this.dmaIrq[1] = false;
+    this.dmaHeld = 0;
     this.regs[OFF_PICR] = 0x00;
     this.regs[OFF_PICR + 1] = 0x0f;
     this.regs[OFF_PITR] = 0x00;
@@ -598,7 +601,9 @@ export class M68340Sim {
   private dmaRun(ch: number): void {
     const base = DMA_BASE[ch];
     const started = () => (this.regs[base + DMA_CCR + 1] & DMA_CCR_STR) !== 0;
+    this.dmaHeld &= ~(1 << ch);
     if (!started() || (this.r16(base) & 0x8000)) return;
+    if (!this.dmaAdmits(ch)) { this.dmaHeld |= 1 << ch; return; }
     const requestMode = this.r16(base + DMA_CCR) & 0x0030;
     if (requestMode === 0) {
       while (this.r32(base + DMA_BTC) > 0 && started()) {
@@ -634,6 +639,28 @@ export class M68340Sim {
       this.inDreq = false;
       this.dreqPending = false;
     }
+  }
+
+  dmaHeld = 0;
+
+  private dmaAdmits(ch: number): boolean {
+    const mask = this.hooks.cpuMask ? this.hooks.cpuMask() : 0;
+    return mask <= ((this.r16(DMA_BASE[ch]) >> 8) & 7);
+  }
+
+  dmaWakeMask(): number {
+    let w = -1;
+    for (let ch = 0; ch < 2; ch++) {
+      if (!(this.dmaHeld & (1 << ch))) continue;
+      const ism = (this.r16(DMA_BASE[ch]) >> 8) & 7;
+      if (ism > w) w = ism;
+    }
+    return w;
+  }
+
+  dmaRetry(): void {
+    const held = this.dmaHeld;
+    for (let ch = 0; ch < 2; ch++) if (held & (1 << ch)) this.dmaRun(ch);
   }
 
   dmaRequest(ch: number, cpuMask: number): boolean {

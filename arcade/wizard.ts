@@ -201,6 +201,13 @@ function setPayoutDefaultNote(row: HTMLElement, text: string | null): void {
   p.textContent = text;
 }
 
+function setPayoutFaultNote(row: HTMLElement, on: boolean): void {
+  const label = row.querySelector('.coin-payout-name')!;
+  let p = label.querySelector<HTMLElement>('.coin-payout-wrong');
+  if (!on) { p?.remove(); return; }
+  if (!p) { p = el('p', str('arcade.wizard.value_looks_wrong'), { class: 'coin-slot-note coin-payout-wrong' }); label.querySelector('.coin-payout-label')!.after(p); }
+}
+
 function wizSection(name: string, body: HTMLElement): HTMLElement {
   const w = el('div', null, { class: 'wz-group nb-wizard__section' });
   w.append(el('span', name, { class: 'nb-field__label' }), body);
@@ -2233,13 +2240,16 @@ class Wizard {
           if (both) this.wm.live.emu.setPayoutMeter(device.line, pence ? nextToken : token);
         }
         setPayoutDefaultNote(row, payoutDefaultNote(device, next[String(device.line)]));
+        setPayoutFaultNote(row, faulty && sel.value !== '');
         void this.save();
         this.nav(undefined, this.coinsWired());
         this.renderStrip();
       });
       const faulty = this.serverFault?.outputs.some((o) => o.line === device.line) ?? false;
-      const wrong = faulty && sel.value !== '' ? str('arcade.wizard.value_looks_wrong') : null;
-      const row = payoutRow(name, null, sel, faulty ? statusIcon('warn') : null, wrong);
+      const mark = faulty ? statusIcon('warn', str('arcade.wizard.payout_coin_not_counted')) : null;
+      mark?.setAttribute('title', str('arcade.wizard.payout_coin_not_counted'));
+      const row = payoutRow(name, null, sel, mark);
+      setPayoutFaultNote(row, faulty && sel.value !== '');
       setPayoutDefaultNote(row, payoutDefaultNote(device, values[String(device.line)]));
       box.append(row);
       enhanceSelect(sel, { small: true });

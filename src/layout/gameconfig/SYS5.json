@@ -367,9 +367,9 @@
     },
     "Rotary Switch": {
       "kind": "number",
-      "storage": "gam",
-      "encoding": "integer",
-      "gamLine": "DX <value>"
+      "storage": "fml",
+      "tag": "0x24",
+      "encoding": "u32-le"
     },
     "Service": {
       "kind": "switch-number",

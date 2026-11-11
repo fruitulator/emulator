@@ -236,7 +236,7 @@ export class Electrocoin implements Machine {
   private dataPakOut: number[] = [];
   private dataPakWait = 0;
   private protocol = 0;
-  static readonly HOPPER_WAVEFORM = v20Waveform((0x9c4 / CLOCK) * 1000, { beam: 100, gap: 0x96 });
+  static readonly HOPPER_WAVEFORM = v20Waveform((0x9c4 / CLOCK) * 1000, { beam: 100, gap: 0x96, restart: 'rearm' });
 
   readonly hoppers = [new Hopper(CLOCK, Electrocoin.HOPPER_WAVEFORM), new Hopper(CLOCK, Electrocoin.HOPPER_WAVEFORM)];
 

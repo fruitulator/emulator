@@ -333,6 +333,10 @@ export function readLayoutWord(payload: Uint8Array, tag: number): number | null 
   return value && value.length >= 4 ? u32(value, 0) : null;
 }
 
+export function mpu4PcKeyOffMainBoard(payload: Uint8Array): boolean {
+  return (readLayoutWord(payload, 0x52) ?? 0) !== 0;
+}
+
 export function pclMaxiReelType(payload: Uint8Array): number {
   return readLayoutWord(payload, 0x82) ?? 0;
 }

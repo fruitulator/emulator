@@ -501,7 +501,7 @@ export class Mps2 implements Machine {
   private tokenLockOutputWritten = false;
   private ppi22b = 0; private ppi22cPrev = 0;
   private ppi25a = 0; private ppi25b = 0; private ppi25c = 0;
-  static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 100, gap: 0x96 });
+  static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 100, gap: 0x96, restart: 'rearm' });
   private readonly hopper = new Hopper(CLOCK, Mps2.HOPPER_WAVEFORM);
   private readonly ppi26 = new I8255({
     outA: (v) => {

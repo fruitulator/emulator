@@ -77,7 +77,7 @@ export function connectionLostText(holdMs: number): string {
 
 export const WATCH_BUTTON = str('arcade.live.watch');
 export const WATCHING_TEXT = str('arcade.live.watching');
-export const WALK_AWAY_BUTTON = str('arcade.live.walk_away');
+export const WATCHING_NOTE_MS = 3000;
 export const MACHINE_FREE_TEXT = str('arcade.live.the_machine_is_free');
 export const PLAY_BUTTON = str('arcade.live.play');
 export const PLAYER_PAUSED_TEXT = str('arcade.live.the_player_has_paused');
@@ -233,7 +233,6 @@ export class Live {
   private ledgerAtStart: CashLedger | null = null;
   private coinsNoteAway = false;
   onCoinsStopped: ((stopped: boolean) => void) | null = null;
-  onWalkAway: (() => void) | null = null;
   get coinsStopped(): boolean { return this.coinsStoppedNow; }
 
   private lastCoinLine: number | null = null;
@@ -1216,7 +1215,7 @@ export class Live {
   }
 
   private watchNotice(line: string): void {
-    this.stopNote?.notice(line, { label: WALK_AWAY_BUTTON, run: () => this.onWalkAway?.() }, undefined, undefined, NOTE_INFO);
+    this.stopNote?.notice(line, undefined, undefined, line === WATCHING_TEXT ? WATCHING_NOTE_MS : undefined, NOTE_INFO);
   }
 
   private watchPaused(w: NonNullable<Live['watching']>, on: boolean): void {
@@ -1598,19 +1597,20 @@ export class Live {
   }
 
   pressesAt(hit: { x: number; y: number; scale: number; coin?: boolean }): boolean {
-    if (!this.running || !this.glass?.cab) return false;
+    if (!this.running || this.watching || !this.glass?.cab) return false;
     if (hit.coin) return !!this.glass.game && !this.hostNow();
     return this.target(hit.x, hit.y, hit.scale, this.glass.replaced) !== null;
   }
 
   throwSwitch(sw: { id: number; bootOnly?: boolean }, on: boolean): void {
+    if (this.watching) return;
     this.emu.input(sw.id, on);
     this.glass?.switchLevels.set(sw.id, on);
     if (sw.bootOnly) this.powerCycle();
   }
 
   pressHit(pointerId: number, hit: { x: number; y: number; scale: number; coin?: boolean }): CabLamp | null {
-    if (!this.running || !this.glass?.cab) return null;
+    if (!this.running || this.watching || !this.glass?.cab) return null;
     if (hit.coin) return this.coinEntry(pointerId);
     return this.press(pointerId, hit.x, hit.y, hit.scale, this.glass.replaced);
   }
@@ -1649,8 +1649,8 @@ export class Live {
     return {
       lamps: () => this.glass?.cab?.lamps ?? null,
       running: () => this.running,
-      onScreen: () => this.running,
-      hasKeyboard: () => this.running,
+      onScreen: () => this.running && !this.watching,
+      hasKeyboard: () => this.running && !this.watching,
       pressable: (lp) => this.clickable(lp) && this.hostCan(lp) && this.playerMay(lp),
       press: (lp, id) => this.activate(lp, id),
       release: (id) => this.release(id),

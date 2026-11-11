@@ -11,7 +11,7 @@ export class Sc4HopperPair {
   onCoin?: (hopper: 1 | 2) => void;
 
   static waveform(clockHz: number) {
-    return v20Waveform((0x411e / clockHz) * 1000, { beam: 0x14, gap: 0x96, start: 0x1e });
+    return v20Waveform((0x411e / clockHz) * 1000, { beam: 0x14, gap: 0x96, start: 0x1e, restart: 'clear' });
   }
 
   constructor(clockHz: number) {

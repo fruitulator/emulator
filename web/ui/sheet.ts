@@ -292,6 +292,7 @@ export function showSheet(titleText: string, rowEls: HTMLElement[], returnTo: HT
   foot.hidden = !o.foot?.length;
   returnFocus = returnTo;
   title.textContent = titleText;
+  title.removeAttribute('title');
   title.parentElement?.querySelectorAll(':scope > .nb-avatar, :scope > .sheet-head-icon').forEach((e) => e.remove());
   rows.replaceChildren(...grouped(rowEls));
   sheet.hidden = false;

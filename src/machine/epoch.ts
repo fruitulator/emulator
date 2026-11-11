@@ -102,7 +102,7 @@ export class Epoch implements Machine {
   static readonly MFME_COIN_IDS: readonly number[] = [28, 68, 27, 25, 24, 23, 29, 26];
   private static readonly MFME_ROW2_LINES: readonly number[] = [18, 19, 20, 21, 22];
 
-  static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x28, gap: 0x96 });
+  static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x28, gap: 0x96, restart: 'rearm' });
 
   private readonly hoppers = [new Hopper(this.clockHz, Epoch.HOPPER_WAVEFORM), new Hopper(this.clockHz, Epoch.HOPPER_WAVEFORM)];
 

@@ -509,6 +509,27 @@ export class Bda {
           }
           break;
         }
+        if (this.modeCmdUserDef) {
+          const [s, e] = this.window();
+          const wm = this.windowMask();
+          switch (data & 0x03) {
+            case 0x00:
+            case 0x03:
+              this.clearCells(0, 16);
+              this.flash = 0;
+              break;
+            case 0x01:
+              this.clearCells(s, e + 1, true);
+              this.flash &= ~wm & 0xffff;
+              break;
+            case 0x02:
+              this.clearCells(0, s, true);
+              this.clearCells(e + 1, 16, true);
+              this.flash &= wm;
+              break;
+          }
+          break;
+        }
         switch (data & 0x03) {
           case 0x01:
             if (this.windowSize > 0) this.clearCells(this.windowStart, this.windowEnd + 1);

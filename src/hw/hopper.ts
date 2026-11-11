@@ -3,17 +3,21 @@ export interface HopperWaveform {
   clearMs: number;
   startMs?: number;
   settleMs?: number;
+  restart?: HopperRestart;
 }
+
+export type HopperRestart = 'resume' | 'rearm' | 'rephase' | 'clear';
 
 export function v20Waveform(
   tickMs: number,
-  ticks: { beam: number; gap: number; start?: number; settle?: number },
+  ticks: { beam: number; gap: number; start?: number; settle?: number; restart?: HopperRestart },
 ): HopperWaveform {
   return {
     obscuredMs: ticks.beam * tickMs,
     clearMs: ticks.gap * tickMs,
     startMs: (ticks.start ?? ticks.gap) * tickMs,
     settleMs: (ticks.settle ?? 0) * tickMs,
+    restart: ticks.restart ?? 'resume',
   };
 }
 
@@ -43,8 +47,10 @@ export class Hopper {
   private readonly startCycles: number;
   private readonly settleCycles: number;
   readonly jitter = new HopperJitter();
+  private readonly restart: HopperRestart;
+  private raiseNext = false;
 
-  static readonly snapshotConfig = ['obscuredCycles', 'clearCycles', 'startCycles', 'settleCycles'];
+  static readonly snapshotConfig = ['obscuredCycles', 'clearCycles', 'startCycles', 'settleCycles', 'restart'];
 
   constructor(clockHz: number, timing: number | HopperWaveform = Hopper.COINS_PER_SECOND) {
     if (typeof timing === 'number') {
@@ -53,18 +59,41 @@ export class Hopper {
       this.clearCycles = Math.round(period) - this.obscuredCycles;
       this.startCycles = this.clearCycles;
       this.settleCycles = 0;
+      this.restart = 'resume';
     } else {
       const cyc = (ms: number) => Math.round((clockHz * ms) / 1000);
       this.obscuredCycles = cyc(timing.obscuredMs);
       this.clearCycles = cyc(timing.clearMs);
       this.startCycles = cyc(timing.startMs ?? timing.clearMs);
       this.settleCycles = cyc(timing.settleMs ?? 0);
+      this.restart = timing.restart ?? 'resume';
     }
   }
 
   motorDrive(on: boolean): void {
     if (on === this.motor) return;
     this.motor = on;
+    if (this.restart === 'rephase') {
+      if (on) {
+        this.timer = this.startCycles * this.jitter.next();
+        this.raiseNext = true;
+      }
+      return;
+    }
+    if (this.restart === 'clear') {
+      this.beam = false;
+      this.raiseNext = false;
+      this.timer = on ? this.startCycles * this.jitter.next() : 0;
+      return;
+    }
+    if (this.restart === 'rearm') {
+      if (!on) {
+        if (!this.beam) this.timer = 0;
+      } else {
+        this.timer = this.startCycles * this.jitter.next();
+      }
+      return;
+    }
     if (on && this.timer === 0) this.timer = this.startCycles * this.jitter.next();
   }
 
@@ -76,7 +105,7 @@ export class Hopper {
     if (this.timer <= 0) return;
     this.timer -= cycles;
     while (this.timer <= 0) {
-      if (this.beam) {
+      if (this.beam && !this.raiseNext) {
         this.beam = false;
         this.timer = this.motor ? this.timer + this.settleCycles + this.clearCycles * this.jitter.next() : 0;
         if (this.timer === 0) return;
@@ -84,9 +113,12 @@ export class Hopper {
         this.timer = 0;
         return;
       } else {
-        this.beam = true;
-        this.paid++;
-        this.onCoin?.();
+        if (!this.beam) {
+          this.beam = true;
+          this.paid++;
+          this.onCoin?.();
+        }
+        this.raiseNext = false;
         this.timer += this.obscuredCycles;
       }
     }
@@ -121,6 +153,7 @@ export class Hopper {
     this.motor = false;
     this.optoDrive = false;
     this.timer = 0;
+    this.raiseNext = false;
     this.paid = 0;
   }
 }

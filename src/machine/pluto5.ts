@@ -72,7 +72,7 @@ export class Pluto5 implements Bus16, Machine {
 
   private reelDrive = new EpochReels([], { opticInverted: false });
 
-  static readonly HOPPER_WAVEFORM = v20Waveform((HOPPER_TICK_CYCLES / PLUTO5_CLOCK) * 1000, { beam: 0x19 + 1, gap: 0x96, start: 0x96, settle: 1 });
+  static readonly HOPPER_WAVEFORM = v20Waveform((HOPPER_TICK_CYCLES / PLUTO5_CLOCK) * 1000, { beam: 0x19 + 1, gap: 0x96, start: 0x96, settle: 1, restart: 'rephase' });
   readonly hopper = new Hopper(PLUTO5_CLOCK, Pluto5.HOPPER_WAVEFORM);
   hopperEjects = 0;
   private hopperBooked = 0;
@@ -125,6 +125,7 @@ export class Pluto5 implements Bus16, Machine {
       serialOutputPort: (opr) => this.serialPins(~opr & 0xff),
       busRead8: (a) => this.read8(a),
       busWrite8: (a, v) => this.write8(a, v),
+      cpuMask: () => (this.cpu.sr >> 8) & 7,
       busRead16: (a) => this.read16(a),
       busWrite16: (a, v) => this.write16(a, v),
       dmaStart: (ch) => this.dmaStart(ch),
@@ -356,6 +357,7 @@ export class Pluto5 implements Bus16, Machine {
   step(): number {
     const cycles = this.cpu.step();
     this.sim.tick(cycles);
+    if (this.sim.dmaHeld !== 0 && ((this.cpu.sr >> 8) & 7) <= this.sim.dmaWakeMask()) this.sim.dmaRetry();
     this.coinBook.elapse(cycles);
     this.duartAcc += cycles * DUART_X1;
     if (this.duartAcc >= PLUTO5_CLOCK) {

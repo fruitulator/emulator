@@ -31,8 +31,8 @@ const OPTO_MASK = [
   0x00, 0x03, 0x0c, 0x0f, 0x30, 0x33, 0x3c, 0x3f, 0xc0, 0xc3, 0xcc, 0xcf, 0xf0, 0xf3, 0xfc, 0xff,
 ];
 const PORT_C_VALUE = 2;
-const COIN_HOLD = Math.round(0.105 * MMM_CLOCK);
-const COIN_GAP = Math.round(0.1 * MMM_CLOCK);
+const COIN_HOLD_LINE = Math.round(0.07 * MMM_CLOCK);
+const COIN_GAP = Math.round(0.005 * MMM_CLOCK);
 const TRIAC_LINES = 13;
 
 export class Mmm implements Machine {
@@ -381,9 +381,9 @@ export class Mmm implements Machine {
     if (row >= this.matrix.length) { this.coinsRefused++; return; }
     this.coinRow = row;
     this.coinMask = 1 << (raw & 7);
-    this.coinTimer = COIN_HOLD + COIN_GAP;
+    this.coinTimer = COIN_HOLD_LINE + COIN_GAP;
     this.matrix[this.coinRow] |= this.coinMask;
-    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD);
+    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD_LINE);
   }
 
   get coinBusy(): boolean { return this.coinTimer > 0; }

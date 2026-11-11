@@ -35,6 +35,7 @@ export interface ViewOptions {
   scroller?: HTMLElement;
   remember?: string;
   canAdd?: boolean;
+  verb?: 'play' | 'add';
 }
 
 export const LOCAL = 'local';
@@ -509,6 +510,7 @@ export class SourceView {
         if (h) this.host.play(h);
         else if (v.set.canDownload !== false) void this.get(c, v.set, v.m, status);
       },
+      verb: this.opts.verb,
     });
   }
 
@@ -530,7 +532,7 @@ export class SourceView {
   private async get(c: SourceClient, x: CatSet, m: Machine, status: () => void): Promise<void> {
     const { idx, s } = this.chosen!;
     const origin = originOf(idx.host, s.id, x.id);
-    if (this.busy.has(origin)) return;
+    if (this.busy.size) return;
     this.busy.add(origin);
     status();
     try {

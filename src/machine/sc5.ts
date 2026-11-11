@@ -19,7 +19,7 @@ import { Bd1 } from '../hw/bd1';
 import { BfmLed } from '../hw/bfmled';
 import { BfmLampDim } from '../hw/bfmlampdim';
 import { Reel } from '../hw/reel';
-import { JcmEba, deviceFor, Sr5iMech, Sch2Hopper, switchKeyAckDelay, CC, type CcTalkDevice } from '../hw/cctalk';
+import { JcmEba, deviceFor, Sr5iMech, Sch2Hopper, switchKeyAckDelay, V20_CCTALK_REPLY_DELAY, CC, replyHeader, type CcTalkDevice } from '../hw/cctalk';
 import { DataPak } from '../hw/datapak';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { percentageCode, prizeCode, stakeCode } from '../hw/bfmkeys';
@@ -232,6 +232,7 @@ export class Sc5 implements Bus16, Machine {
   private rxQueue: { at: number; port: Mc68681; ch: 0 | 1; b: number }[] = [];
 
   private static readonly REPLY_DELAY = 120_000;
+  private static readonly CC_REPLY_DELAY = V20_CCTALK_REPLY_DELAY;
   private static readonly BYTE_GAP = 40_000;
 
   private sendReply(
@@ -275,14 +276,14 @@ export class Sc5 implements Bus16, Machine {
 
     const rd = dev.reply(msg.header, msg.data);
     if (!rd) return;
-    const delay = msg.header === CC.SWITCH_ENCRYPTION_KEY ? Sc5.CC_KEY_ACK_DELAY : Sc5.REPLY_DELAY;
+    const delay = msg.header === CC.SWITCH_ENCRYPTION_KEY ? Sc5.CC_KEY_ACK_DELAY : Sc5.CC_REPLY_DELAY;
 
     const host = dev.decodeFrame ? CC_HOST : (src ?? CC_HOST);
     if (dev.encodeFrame) {
       this.sendReply(0, dev.encodeFrame(host, rd), delay);
       return;
     }
-    const b = [host, rd.length, dest, 0, ...rd];
+    const b = [host, rd.length, dest, replyHeader(rd), ...rd];
     let s = 0;
     for (const x of b) s = (s + x) & 0xff;
     this.sendReply(0, [...b, (0x100 - s) & 0xff], delay);

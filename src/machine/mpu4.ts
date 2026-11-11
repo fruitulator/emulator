@@ -1837,8 +1837,8 @@ export class Mpu4 implements Bus, Machine {
   private hopper1: Hopper | null = null;
   private hopper2: Hopper | null = null;
 
-  static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x96, start: 0x96, settle: 1 });
-  static readonly HOPPER_WAVEFORM_VIDEO = v20Waveform(1, { beam: 0x14 + 5, gap: 0x78, start: 0x78, settle: 5 });
+  static readonly HOPPER_WAVEFORM = v20Waveform(1, { beam: 0x14 + 1, gap: 0x96, start: 0x96, settle: 1, restart: 'rephase' });
+  static readonly HOPPER_WAVEFORM_VIDEO = v20Waveform(1, { beam: 0x14 + 5, gap: 0x78, start: 0x78, settle: 5, restart: 'rephase' });
   private hopperWaveform() {
     return this.video || this.plasma ? Mpu4.HOPPER_WAVEFORM_VIDEO : Mpu4.HOPPER_WAVEFORM;
   }

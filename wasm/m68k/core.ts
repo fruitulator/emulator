@@ -93,6 +93,7 @@ const REASON_BUDGET = 1;
 const REASON_FALLBACK = 2;
 const REASON_IRQ = 3;
 const REASON_DIRTY = 4;
+const REASON_DMA = 5;
 
 const IRQ6_VECTOR: u32 = 30;
 const IRQ6_CYCLES: i32 = 30;
@@ -130,6 +131,7 @@ const S_PEN_IN: u32 = DATA_BASE + 164;
 const S_RING_POS: u32 = DATA_BASE + 168;
 const S_RUN_START: u32 = DATA_BASE + 172;
 const S_LAST_PC: u32 = DATA_BASE + 176;
+const S_DMA_WAKE: u32 = DATA_BASE + 180;
 const S_RING: u32 = DATA_BASE + 1024;
 const RING_ENTRIES: u32 = 4096;
 const STATE_END: u32 = DATA_BASE + 0x21000;
@@ -1231,6 +1233,8 @@ export function run(budget: i32): i32 {
   }
   while (used < load<i32>(S_BUDGET)) {
     if (P_CPU32) {
+      const wake = load<u32>(S_DMA_WAKE);
+      if (wake != 0 && ((SR & SR_INT) >> 8) < wake) { reason = REASON_DMA; break; }
       let level = load<u32>(S_IRQ_OTHER);
       const pending6 = load<u32>(S_DAC_PENDING) != 0;
       if (pending6 && level < 6) level = 6;
@@ -1251,6 +1255,7 @@ export function run(budget: i32): i32 {
       }
     }
     store<i32>(S_USED, used);
+    if (P_CPU32) store<u32>(S_SR, SR);
     store<u32>(S_PC0, PC);
     const idx = codeIndex(PC);
     if (idx == 0xffffffff) { reason = REASON_FALLBACK; break; }

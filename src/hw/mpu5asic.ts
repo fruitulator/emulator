@@ -1,5 +1,23 @@
 
-import { readSamp, UNITY_RATE } from './mpu5dsp';
+import { readSamp } from './mpu5dsp';
+
+const V20_PITCH_KEYS = [
+  0x0f, 0x0e, 0x0d, 0x0c, 0x0c, 0x0b, 0x0a, 0x0a, 0x09, 0x09, 0x08, 0x08, 0x07, 0x1e, 0x06, 0x1c,
+  0x1c, 0x05, 0x1a, 0x2f, 0x04, 0x2d, 0x18, 0x2c, 0x03, 0x3e, 0x16, 0x29, 0x4f, 0x02, 0x4d, 0x27,
+  0x14, 0x4b, 0x38, 0x6e, 0x01, 0x7e, 0x8f, 0x24, 0x47, 0x12, 0x69, 0x23, 0x34, 0xac, 0x78, 0xef,
+  0x00,
+];
+const V20_PITCH_RATES = [
+  2000, 2118, 2244, 2378, 2519, 2669, 2828, 2996, 3174, 3363, 3563, 3775, 4000, 4237, 4489, 4756,
+  5039, 5339, 5656, 5993, 6349, 6727, 7127, 7550, 8000, 8475, 8979, 9513, 10079, 10678, 11313, 11986,
+  12699, 13454, 14254, 15101, 16000, 16951, 17959, 19027, 20158, 21357, 22627, 23972, 25398, 26908, 28508, 30203,
+  32000,
+];
+export const VOICE_RATE: Readonly<Uint16Array> = (() => {
+  const t = new Uint16Array(256);
+  V20_PITCH_KEYS.forEach((k, i) => (t[k] = V20_PITCH_RATES[i]));
+  return t;
+})();
 
 const DEFAULT_CMD_ADDR = 0xfffff448;
 
@@ -89,10 +107,12 @@ export class Mpu5Asic {
       const h = this.matrixHist[n] & 0xf;
       const alternating = h === 5 || h === 10;
       if (alternating) level = 0x80;
-      this.matrixLevel[n] = level;
       if (dur === 0) {
+        if (!alternating) this.matrixLevel[n] = 0;
         if (this.matrixLit[n] && !alternating) { this.matrixLit[n] = 0; this.matrixJustLit[n] = 0; }
       } else {
+        if (this.matrixLit[n] && Math.abs(this.matrixLevel[n] - level) < 7) continue;
+        this.matrixLevel[n] = level;
         if (!this.matrixLit[n]) this.matrixJustLit[n] = 1;
         this.matrixLit[n] = 1;
       }
@@ -191,9 +211,7 @@ export class Mpu5Asic {
     const param = this.hooks.peekRam?.(this.commandAddr + 1) ?? -1;
     switch (cmd) {
       case 7: {
-        const d7 = (param >> 4) & 0xf;
-        const d5 = param & 0xf;
-        if (param >= 0 && d7 <= d5) this.pitch[unit] = param;
+        if (param >= 0) this.pitch[unit] = param;
         break;
       }
       case 1:
@@ -224,9 +242,7 @@ export class Mpu5Asic {
   }
 
   private outputRate(unit: number): number {
-    const d7 = ((this.pitch[unit] >> 4) & 0xf) + 1;
-    const d5 = (this.pitch[unit] & 0xf) + 1;
-    return UNITY_RATE * (d7 / d5);
+    return VOICE_RATE[this.pitch[unit]];
   }
 
   private sampleCycles(unit: number): number {
@@ -235,7 +251,9 @@ export class Mpu5Asic {
     if (!rom || !base) return 0;
     const samp = readSamp(rom, base);
     if (!samp) return 0;
-    return Math.round((samp.samples / this.outputRate(unit)) * this.clockHz);
+    const rate = this.outputRate(unit);
+    if (rate <= 0) return 0;
+    return Math.round((samp.samples / rate) * this.clockHz);
   }
 
   read(off: number, cycles = 0): number {
@@ -292,10 +310,8 @@ export class Mpu5Asic {
     switch (o) {
       case 0x1:
         this.lamps[this.strobe] = v;
-        if (v !== this.highside) {
-          this.highside = v;
-          if (this.strobePending) this.strobeRecord(this.row, v, cycles);
-        }
+        this.highside = v;
+        if (this.strobePending) this.strobeRecord(this.row, v, cycles);
         break;
       case 0x3:
         this.strobe = v === 0 ? 0 : (31 - Math.clz32(v) + 1) & 0xf;
@@ -306,7 +322,7 @@ export class Mpu5Asic {
         this.row = sel ? (31 - Math.clz32(low)) & 0x7 : 0;
         if (v !== this.lowsidePrev) {
           this.lowsidePrev = v;
-          if (!sel) { if (this.strobePending) { this.strobeRecord(-1, this.highside, cycles); this.strobePending = false; } }
+          if (!sel) { if (this.strobePending) { this.strobeRecord(-1, 0, cycles); this.strobePending = false; } }
           else { this.strobeRecord(this.row, this.highside, cycles); this.strobePending = true; }
           if (sel) this.ledDigits[this.row] = this.regs[0x3];
         }

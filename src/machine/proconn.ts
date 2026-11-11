@@ -176,7 +176,7 @@ export class Proconn implements Machine {
   private protocol = 0;
   private readonly ay = new Ay8910(AY_CLOCK, 'ay8910', UPD7759_RATE);
   readonly upd = new Upd7759();
-  static readonly HOPPER_WAVEFORM = v20Waveform((0xe60 / CLOCK) * 1000, { beam: 0x1e + 1, gap: 0xaa, start: 200, settle: 1 });
+  static readonly HOPPER_WAVEFORM = v20Waveform((0xe60 / CLOCK) * 1000, { beam: 0x1e + 1, gap: 0xaa, start: 200, settle: 1, restart: 'rephase' });
 
   readonly hoppers = [new Hopper(CLOCK, Proconn.HOPPER_WAVEFORM), new Hopper(CLOCK, Proconn.HOPPER_WAVEFORM)];
 

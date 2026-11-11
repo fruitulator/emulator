@@ -6,6 +6,7 @@ export const REASON_BUDGET = 1;
 export const REASON_FALLBACK = 2;
 export const REASON_IRQ = 3;
 export const REASON_DIRTY = 4;
+export const REASON_DMA = 5;
 
 const PAGE_WORDS = 2048;
 
@@ -69,6 +70,7 @@ const C_IRQ6_TAKEN = 39;
 const C_INSTR_START = 40;
 const C_PEN_IN = 41;
 const C_LAST_PC = 44;
+const C_DMA_WAKE = 45;
 
 export interface Cpu32Regions {
   romTop: number;
@@ -337,6 +339,7 @@ export class M68kWasm {
   set otherSp(v: number) { this.s[C_OTHER_SP] = v >>> 0; }
   set vbr(v: number) { this.s[C_VBR] = v >>> 0; }
   set irqOther(v: number) { this.s[C_IRQ_OTHER] = v >>> 0; }
+  set dmaWake(v: number) { this.s[C_DMA_WAKE] = v >>> 0; }
   get dacIn(): number { return this.si[C_DAC_IN]; }
   set dacIn(v: number) { this.si[C_DAC_IN] = v | 0; }
   get dacPending(): boolean { return this.s[C_DAC_PENDING] !== 0; }

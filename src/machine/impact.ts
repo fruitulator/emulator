@@ -91,8 +91,8 @@ export class Impact implements Bus16, Machine {
     return this.slideState & 0x0f;
   }
   private slidePence: SlideEffect[] = [null, null, null, null];
-  static readonly HOPPER1_WAVEFORM = v20Waveform(1, { beam: 0x28, gap: 0x50 });
-  static readonly HOPPER2_WAVEFORM = v20Waveform(1, { beam: 0x19, gap: 0x50 });
+  static readonly HOPPER1_WAVEFORM = v20Waveform(1, { beam: 0x28, gap: 0x50, restart: 'rearm' });
+  static readonly HOPPER2_WAVEFORM = v20Waveform(1, { beam: 0x19, gap: 0x50, restart: 'rearm' });
 
   private readonly hopper1 = new Hopper(CPU_CLOCK, Impact.HOPPER1_WAVEFORM);
   private readonly hopper2 = new Hopper(CPU_CLOCK, Impact.HOPPER2_WAVEFORM);

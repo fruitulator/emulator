@@ -70,16 +70,9 @@ export interface ReelConfig {
   v20Gate?: boolean;
 }
 
-const NEWJPM: readonly (readonly number[])[] = [
-  [0, 0, 4, 0, 2, 1, 3, 0, -2, -1, -3, 0, 0, 0, 0, 0],
-  [0, -1, 3, 0, 1, 0, 2, 0, -3, -2, 4, 0, 0, 0, 0, 0],
-  [0, -2, 2, 0, 0, -1, 1, 0, 4, -3, 3, 0, 0, 0, 0, 0],
-  [0, -3, 1, 0, -1, -2, 0, 0, 3, 4, 2, 0, 0, 0, 0, 0],
-  [0, 4, 0, 0, -2, -3, -1, 0, 2, 3, 1, 0, 0, 0, 0, 0],
-  [0, 3, -1, 0, -3, -4, -2, 0, 1, 2, 0, 0, 0, 0, 0, 0],
-  [0, 2, -2, 0, 4, 3, -3, 0, 0, 1, -1, 0, 0, 0, 0, 0],
-  [0, 1, -3, 0, 3, 2, -4, 0, -1, 0, -2, 0, 0, 0, 0, 0],
-];
+import { V20_STEP_TABLE } from './v20steptable';
+
+const V20_REMAP = [0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15];
 
 export class Reel {
   readonly stepsPerRevolution: number;
@@ -221,7 +214,10 @@ export class Reel {
       return 1;
     }
     if (this.mfmeJpm) {
-      const d = NEWJPM[this.position % 8][nibble & 0x0f];
+      const c = V20_REMAP[nibble & 0x0f];
+      if (c === 0 || (((this.gateLast ^ c) + 1) & 0x0f) <= 1) return 0;
+      this.gateLast = c;
+      const d = V20_STEP_TABLE[this.position & 7][c];
       if (d !== 0) {
         this.position = (this.position + d + this.stepsPerRevolution) % this.stepsPerRevolution;
         this.travel += d;

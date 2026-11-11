@@ -53,6 +53,7 @@ let dockBody: HTMLElement | null = null;
 let onPlaced: ((places: Map<string, Place>) => void) | null = null;
 let onProps: ((props: Prop[]) => void) | null = null;
 let onChanged: (() => Promise<boolean>) | null = null;
+let onRenamed: (() => void) | null = null;
 let onDialog: ((open: boolean) => void) | null = null;
 let dockRoot: HTMLElement | null = null;
 let tappedCell: Place | null = null;
@@ -177,6 +178,7 @@ export async function openHost(): Promise<void> {
 export async function openFloorDock(o: {
   doc: ArcadeDoc; placed?: (places: Map<string, Place>) => void; props?: (props: Prop[]) => void;
   changed?: () => Promise<boolean>; dialog?: (open: boolean) => void; onClose?: () => void;
+  renamed?: () => void;
   decorate?: typeof decorateMaker;
   setup?: string;
 }): Promise<void> {
@@ -185,6 +187,7 @@ export async function openFloorDock(o: {
   onPlaced = o.placed ?? null;
   onProps = o.props ?? null;
   onChanged = o.changed ?? null;
+  onRenamed = o.renamed ?? null;
   onDialog = o.dialog ?? null;
   decorateMaker = o.decorate ?? null;
   decorating = null;
@@ -214,7 +217,7 @@ export async function openFloorDock(o: {
       void dockSettings?.keepName().then((why) => { if (why) showToast(why, { kind: 'warn', sticky: true }); });
       if (frame) closeDialog();
       closeEditor();
-      if (dockBody === body) { dockRoot = null; dockBody = null; onPlaced = null; onProps = null; onChanged = null; dockSettings = null; }
+      if (dockBody === body) { dockRoot = null; dockBody = null; onPlaced = null; onProps = null; onChanged = null; onRenamed = null; dockSettings = null; }
       o.onClose?.();
     },
   });
@@ -418,6 +421,7 @@ function settingsHooks(d: ArcadeDoc, server: ArcadeServer | null): SettingsHooks
       share: server ? shareHooks(server, d) : null,
       renamed: () => {
         root().querySelector('.host-name')?.replaceWith(nameHeading(d));
+        onRenamed?.();
         say(str('arcade.host.saved'), 'ok');
       },
       claimName: async (n) => {
@@ -1232,6 +1236,7 @@ function openMachineMenu(d: ArcadeDoc, m: DocMachine, returnTo: HTMLElement, hel
     const words = el('div', null, { class: 'sheet-machine-words' });
     title.before(thumb);
     title.replaceWith(words);
+    title.title = nameOf(m);
     words.append(title, statusLine(m));
   }
 }
@@ -1957,7 +1962,8 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
   page.setAttribute('role', 'dialog');
   page.setAttribute('aria-modal', 'true');
   page.setAttribute('aria-labelledby', 'hostPickTitle');
-  openLayer([page], { kind: 'dialog', close: () => go('') });
+  const held = { on: false };
+  openLayer([page], { kind: 'dialog', close: () => go(''), onEscape: () => held.on });
   const head = el('div', null, { class: 'host-head nb-sheet-head' });
   head.append(el('h2', str('arcade.host.add_a_machine'), { id: 'hostPickTitle' }));
   const acts = el('div', null, { class: 'host-actions' });
@@ -2020,10 +2026,12 @@ async function renderPicker(d: ArcadeDoc): Promise<void> {
   controls.append(newControl, sourcedControl);
   page.append(head, controls, ownFilesNote, scroll);
   list.load(games);
-  mountPickerSources(d, { controls, scroll, grid, acts, mine: [grid, none, newControl, sourcedControl], ownFilesNote, searchButton: list.searchButton, onlySourced: () => onlySourced, copiesOf });
+  mountPickerSources(d, { page, held, controls, scroll, grid, acts, mine: [grid, none, newControl, sourcedControl], ownFilesNote, searchButton: list.searchButton, onlySourced: () => onlySourced, copiesOf });
 }
 
 interface PickerParts {
+  page: HTMLElement;
+  held: { on: boolean };
   controls: HTMLElement; scroll: HTMLElement; grid: HTMLElement; acts: HTMLElement;
   mine: HTMLElement[];
   ownFilesNote: HTMLElement;
@@ -2035,14 +2043,32 @@ interface PickerParts {
 function mountPickerSources(d: ArcadeDoc, p: PickerParts): void {
   const store = new SourceStore();
   let card: DownloadCard | null = null;
+  let picking = false;
+  const hold = (on: boolean): void => {
+    p.held.on = on;
+    p.page.inert = on;
+    p.page.setAttribute('aria-busy', String(on));
+  };
   const busy = (text: string | null, share?: number): void => {
-    if (text === null) { card?.remove(); card = null; return; }
+    if (text === null) {
+      card?.remove(); card = null;
+      setTimeout(() => { if (!picking && !card) hold(false); }, 0);
+      return;
+    }
+    hold(true);
     card ??= downloadCard();
     card.update(text, share);
   };
   const pick = async (hash: string): Promise<void> => {
-    const g = (await listGames().catch(() => [] as GameMeta[])).find((x) => x.hash === hash);
-    if (g) await install(d, g, p.copiesOf(g));
+    picking = true;
+    hold(true);
+    try {
+      const g = (await listGames().catch(() => [] as GameMeta[])).find((x) => x.hash === hash);
+      if (g) await install(d, g, p.copiesOf(g));
+    } finally {
+      picking = false;
+      if (!card) hold(false);
+    }
   };
   const view = new SourceView(store, {
     importQuietly: async (file, origin, title) => {
@@ -2066,7 +2092,7 @@ function mountPickerSources(d: ArcadeDoc, p: PickerParts): void {
       p.ownFilesNote.hidden = on || p.onlySourced();
       if (p.searchButton) p.searchButton.hidden = on;
     },
-  }, { page: false, scroller: p.scroll, remember: 'fruitulator.arcade.pickSource', canAdd: false });
+  }, { page: false, scroller: p.scroll, remember: 'fruitulator.arcade.pickSource', canAdd: false, verb: 'add' });
   view.mount(p.controls, p.grid, p.acts);
   settleSignIn();
   view.showRemembered();

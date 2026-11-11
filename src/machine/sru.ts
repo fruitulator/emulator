@@ -16,8 +16,7 @@ const SRU_CLOCK = 1_500_000;
 const INT1_PERIOD = 0x2004;
 const INT2_PERIOD = 15000;
 const REFRESH_TICK = 800;
-const COIN_HOLD = Math.round(0.15 * SRU_CLOCK);
-const COIN_GAP = Math.round(0.15 * SRU_CLOCK);
+const COIN_GAP = Math.round(0.1 * SRU_CLOCK);
 const CHANGE_GAP = SRU_CLOCK;
 
 const inRam = (a: number) => (a >= 0x0c00 && a < 0x1000) || (a >= 0x1400 && a < 0x1800);
@@ -393,8 +392,9 @@ export class Sru extends Sys80 {
     if (bit >= 20 && bit <= 23 && !this.fitted[bit - 20]) { this.coinsRefused++; return; }
     this.coinInput = bit;
     this.layoutInput(bit, true);
-    this.coinTimer = COIN_HOLD + COIN_GAP;
-    if (bit >= 20 && bit <= 23) this.book.coin(this.slotCoin(bit - 20), COIN_HOLD);
+    const hold = this.coinHold(bit);
+    this.coinTimer = hold + COIN_GAP;
+    if (bit >= 20 && bit <= 23) this.book.coin(this.slotCoin(bit - 20), hold);
   }
 
   override get parts(): BoardPart[] {

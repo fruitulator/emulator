@@ -20,6 +20,7 @@ export function coinLineSlots(
 ): DrawnSlot[] {
   const by = new Map<number, DrawnSlot>();
   for (const lp of lamps) {
+    if (lp.hidden) continue;
     let line = -1;
     const acceptor = !!lp.acceptor;
     if (lp.acceptor) {

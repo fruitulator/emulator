@@ -255,6 +255,21 @@ export function coinRowPattern(c: DeclaredCoin, row: number): number | undefined
   return raw & 0x100 ? direct(raw) : raw & 0xff;
 }
 
+export function codedCoinInputs(declared: readonly DeclaredCoin[], row: number): Set<number> {
+  const out = new Set<number>();
+  for (const c of declared) {
+    if (c.note === COIN_NOTE_BLANK) continue;
+    if (c.note !== null) {
+      const raw = COIN_RAW[c.note];
+      if (raw === undefined || raw & 0x100) continue;
+    }
+    const mask = coinRowPattern(c, row);
+    if (!mask || mask & (mask - 1)) continue;
+    out.add(row * 8 + 31 - Math.clz32(mask));
+  }
+  return out;
+}
+
 export function cabinetCoinSlots(
   layout: Uint8Array | undefined,
   row: number,

@@ -18,6 +18,7 @@ export function openVersionPicker(o: {
   rows: VersionRow[];
   onPlay(i: number): void;
   onUngroup?(): void;
+  verb?: 'play' | 'add';
 }): void {
   const urls: string[] = [];
   const list = document.createElement('div');
@@ -60,7 +61,8 @@ export function openVersionPicker(o: {
     meta.textContent = r.status;
     mid.append(name, ...(tags.childElementCount ? [tags] : []), meta);
 
-    const go = actionButton(r.resume ? str('orbit.resume') : str('orbit.play'),
+    const label = o.verb === 'add' ? str('sources.add') : r.resume ? str('orbit.resume') : str('orbit.play');
+    const go = actionButton(label,
       r.preferred ? 'primary' : 'secondary', () => { closeSheet(); o.onPlay(i); });
     go.classList.add('nb-btn--sm');
     const acts = document.createElement('div');

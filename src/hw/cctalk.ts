@@ -5,6 +5,7 @@ import { HopperJitter } from './hopper';
 
 export const CC = {
   ACK: 0x00,
+  NAK: 0x05,
   RESET: 0x01,
   REQUEST_COMMS_REVISION: 0x04,
   STORE_ENCRYPTION_CODE: 0x88,
@@ -66,6 +67,16 @@ export const CC = {
 
 const CC_ACK = CC.ACK;
 
+const NAK_TAG = Symbol('ccTalk NAK');
+
+export function ccNak(): number[] {
+  return Object.assign([] as number[], { [NAK_TAG]: true });
+}
+
+export function replyHeader(rd: readonly number[]): number {
+  return (rd as { [NAK_TAG]?: boolean })[NAK_TAG] ? CC.NAK : CC_ACK;
+}
+
 export interface CcTalkDevice {
   readonly model: string;
   reply(header: number, data: readonly number[]): number[] | null;
@@ -96,6 +107,8 @@ function sealEvents(
 }
 
 export const V20_CCTALK_UNIT_DEFAULT = 200_000;
+
+export const V20_CCTALK_REPLY_DELAY = 40_000;
 
 export function switchKeyAckDelay(unit: number): number {
   return 2 * unit;
@@ -277,9 +290,9 @@ export class Sr5iMech implements CcTalkDevice {
 
   encodeFrame(dest: number, data: readonly number[]): number[] {
     let frame: number[];
-    if (this.enciphered) frame = bnvEncodeFrame(this.bnvKey, dest, 0, data);
+    if (this.enciphered) frame = bnvEncodeFrame(this.bnvKey, dest, replyHeader(data), data);
     else {
-      const b = [dest, data.length, this.address, 0, ...data];
+      const b = [dest, data.length, this.address, replyHeader(data), ...data];
       let s = 0;
       for (const x of b) s = (s + x) & 0xff;
       frame = [...b, (0x100 - s) & 0xff];
@@ -493,6 +506,8 @@ export function v20Scramble2(key: readonly number[], count: number): number[] {
   return k;
 }
 
+const SCH_VARIABLE_SET: readonly number[] = [0x22, 0x00, 0x1e, 0x00, 0xbc, 0x00];
+
 export class Sch2Hopper implements CcTalkDevice {
   static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'bnvKey'];
 
@@ -510,6 +525,7 @@ export class Sch2Hopper implements CcTalkDevice {
   }
   protected status = 0x80;
   protected status2 = 0;
+  protected variableSet: number[] = [...SCH_VARIABLE_SET];
   protected lifetime = 0;
   protected blocks = new Uint8Array(256 * 8);
   desFitted = true;
@@ -574,7 +590,7 @@ export class Sch2Hopper implements CcTalkDevice {
   protected dispense(data: readonly number[]): number[] | null {
     const n = data.length;
     if (n === 0) return null;
-    if (this.trusted) return null;
+    if (this.trusted) return ccNak();
     const count = data[n - 1];
     let proof = data.slice(0, n - 1);
     let key = this.cipherKey;
@@ -591,10 +607,10 @@ export class Sch2Hopper implements CcTalkDevice {
     }
     const ok = proof.every((b, i) => b === key[i]);
     if (n === 9) this.rollCipherKey();
-    if (!ok) return null;
+    if (!ok) return ccNak();
     this.events = this.events === 0xff ? 1 : this.events + 1;
     this.remaining = count;
-    if (count >= 2 && this.status2 & 0x02) return null;
+    if (count >= 2 && this.status2 & 0x02) return ccNak();
     this.paid = 0;
     if (count !== 0) this.timer = this.gap(this.period);
     return [this.events];
@@ -622,6 +638,7 @@ export class Sch2Hopper implements CcTalkDevice {
     this.coinOut = false;
     this.trusted = this.trustedBox;
     this.rollCipherKey();
+    if (this.v20Type === 2) this.variableSet = [...SCH_VARIABLE_SET];
   }
 
   reply(header: number, data: readonly number[]): number[] | null {
@@ -638,12 +655,13 @@ export class Sch2Hopper implements CcTalkDevice {
         this.status = (this.status & 0x7f) | (data[0] === 0xa5 ? 0 : 0x80);
         return [];
       case CC.MODIFY_VARIABLE_SET:
+        for (let i = 0; i < 3 && i < data.length; i++) this.variableSet[i] = data[i] & 0xff;
         if (data.length >= 4 && this.status2 === 0) this.status2 = data[3] ? 0x02 : 0;
         return [];
       case CC.REQUEST_MANUFACTURER:
         return ascii('Money Controls');
       case CC.REQUEST_VARIABLE_SET:
-        return [0x22, 0x00, 0x10, 0x00, 0xbc, 0x00];
+        return [...this.variableSet];
       case CC.TEST_HOPPER:
         return [this.status, this.status2];
       case CC.EMERGENCY_STOP:
@@ -723,9 +741,9 @@ export class Sch5Hopper extends Sch2Hopper {
 
   encodeFrame(dest: number, data: readonly number[]): number[] {
     let frame: number[];
-    if (this.enciphered) frame = bnvEncodeFrame(this.bnvKey, dest, 0, data);
+    if (this.enciphered) frame = bnvEncodeFrame(this.bnvKey, dest, replyHeader(data), data);
     else {
-      const b = [dest, data.length, this.address, 0, ...data];
+      const b = [dest, data.length, this.address, replyHeader(data), ...data];
       let s = 0;
       for (const x of b) s = (s + x) & 0xff;
       frame = [...b, (0x100 - s) & 0xff];
@@ -935,12 +953,12 @@ export class JcmEba implements CcTalkDevice {
   encodeFrame(dest: number, data: readonly number[]): number[] {
     if (this.plain) {
       this.plain = false;
-      const b = [dest, data.length, this.address, CC_ACK, ...data];
+      const b = [dest, data.length, this.address, replyHeader(data), ...data];
       let s = 0;
       for (const x of b) s = (s + x) & 0xff;
       return [...b, (0x100 - s) & 0xff];
     }
-    const frame = bnvEncodeFrame(this.key, dest, CC_ACK, data);
+    const frame = bnvEncodeFrame(this.key, dest, replyHeader(data), data);
     if (this.pending) { this.key = this.pending; this.pending = null; }
     return frame;
   }

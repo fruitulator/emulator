@@ -75,7 +75,7 @@ import { noteBoardDefault } from './boarddefaults';
 import { TAILORED_IDS } from './schematic';
 import {
   fittedPeripheralsFrom, type FittedPeripherals,
-  decodedLayout, effectGrid, fileLevelTags, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
+  decodedLayout, effectGrid, fileLevelTags, mpu4PcKeyOffMainBoard, readLayoutWord, readSetting, readCheckboxSetting, readCheckboxByte, meterMoneyMap,
   dipSwitchLabelsFrom, pclMaxiReelType, astraDotCharsetShift,
   triacSlidePence, readSwitchNumber, readWidthHeight, readOperatorTag, readOperatorSwitch, readNumber, mpu4CharacteriserConfigFrom,
   mpu5ReelJumpersFrom, mpu5Mux5ExtendedFrom, mpu5Ram128kFrom, layoutSwitchIdsFrom, m1abDongleConfig, sc2DongleConfig, spaceDongleConfig, type SlideEffect,
@@ -896,6 +896,18 @@ const sys5: Platform = {
     const sys5Layout = decodedLayout(game.layout);
     if (sys5Layout) m.setCoinInterface(readSetting(sys5Layout, 'SYS5', 'Coin Interface') === 'Parallel');
     if (sys5Layout) m.setSlides(triacSlidePence(sys5Layout, 'SYS5'));
+    {
+      const rotary = sys5Layout ? readNumber(sys5Layout, 'SYS5', 'Rotary Switch') : null;
+      if (rotary !== null) {
+        m.setRotary(rotary);
+      } else {
+        noteBoardDefault(m, {
+          axis: 'key',
+          text: 'rotary switch: the layout states no position - 0 assumed',
+          ifWrong: 'A game that reads the switch runs on the wrong option.',
+        });
+      }
+    }
     const sys5Sound = sys5Layout ? readSetting(sys5Layout, 'SYS5', 'Sound Type') : undefined;
     m.setSoundType(sys5Sound === 'Yamaha' || sys5Sound === 'Std' ? sys5Sound : null);
     if (sys5Sound !== 'Yamaha' && sys5Sound !== 'Std') {
@@ -1242,11 +1254,9 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
     m.inputs.orange1 |= ((stakeKeyCode(index('Stake')) & 7) << (sys === 'MPU4VIDEO' ? 6 : 5)) & 0xff;
     const pctIndex = index('Percentage');
     const pct = pctIndex !== undefined ? percentKeyCode(pctIndex) : KEY_NOT_FITTED;
-    const videoKey = m.video && game.layout
-      ? (() => { const p = decodedLayout(game.layout); return p ? readSetting(p, 'MPU4VIDEO', 'PC Key Location') === 'Video Board' : false; })()
-      : false;
-    if (videoKey) m.video!.percentKey = pct & 0x0f;
-    else m.inputs.orange2 |= (pct & 0x0f) << 4;
+    const keyOffMain = mpu4Layout ? mpu4PcKeyOffMainBoard(mpu4Layout) : false;
+    if (!keyOffMain) m.inputs.orange2 |= (pct & 0x0f) << 4;
+    else if (m.video) m.video.percentKey = pct & 0x0f;
     m.inputs.orange2 |= jackpotKeyCode(index('Jackpot')) & 0x0f;
     noteKeysNotNamed(m, game, ['Stake', 'Jackpot', 'Percentage']);
   }
@@ -2793,6 +2803,7 @@ const sru: Platform = {
     const sruLettering = layoutInputLettering(game.layout) ?? new Map<number, 'coin' | 'control'>();
     const fitted = sruFittedCoinLines(sruDeclared, layoutInputButtons(game.layout) ?? [], sruLettering);
     m.setFittedCoinLines(fitted);
+    m.setCodedCoinLines(sruDeclared);
     if (sruUnmarkedCoinLines(sruDeclared, sruLettering, fitted).length) {
       noteBoardDefault(m, {
         axis: 'coin',

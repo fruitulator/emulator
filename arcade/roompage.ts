@@ -80,8 +80,9 @@ const openFloor = isHost && doc
     props?: (list: Prop[]) => void,
     changed?: () => Promise<boolean>,
     dialog?: (open: boolean) => void,
-    setup?: string): void => {
-    void import('./host').then((h) => h.openFloorDock({ doc, placed, decorate, props, changed, dialog, setup }));
+    setup?: string,
+    renamed?: () => void): void => {
+    void import('./host').then((h) => h.openFloorDock({ doc, placed, decorate, props, changed, dialog, setup, renamed }));
   } : null;
 const floorAsked = new URLSearchParams(location.search).has('floor');
 const testPlayer = serverFlag() ? await devPlayerForPage() : '';
@@ -178,7 +179,8 @@ if (!doc) {
       },
     }) : undefined;
   const floor = openFloor ? (setup?: string): void => openFloor((p) => { room.rearrange(p); retake(); }, decorate, (list) => { room.setProps(list); retake(); }, async () => { const ok = room.sync(await loadMachines(doc, { visiting: false })); retake(); return ok; },
-    (open) => { room.paused = open; if (!open) live?.look(); }, setup) : undefined;
+    (open) => { room.paused = open; if (!open) live?.look(); }, setup,
+    () => { room.rename(arcadeName(doc)); retake(); }) : undefined;
   if (floor) room.live.onFixSetup = (id) => floor(id);
   if (floor) hostSpanner(() => floor());
   const arcadeId = opened.visiting ? new URLSearchParams(location.search).get('arcade') : null;

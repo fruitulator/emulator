@@ -193,11 +193,17 @@
   height: 50px;
 }
 .sheet-machine-words {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.sheet-machine-words > h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 label.sheet-row > .nb-toggle {
   margin-left: auto;

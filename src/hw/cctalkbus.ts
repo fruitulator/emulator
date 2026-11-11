@@ -1,4 +1,4 @@
-import { CC, type CcTalkDevice } from './cctalk';
+import { CC, replyHeader, type CcTalkDevice } from './cctalk';
 
 export const CCTALK_HOST = 1;
 
@@ -152,7 +152,7 @@ export class CcTalkBus {
     if (dev.encodeFrame) {
       bytes = dev.encodeFrame(host, rd);
     } else {
-      const b = [host, rd.length, dest, CC.ACK, ...rd];
+      const b = [host, rd.length, dest, replyHeader(rd), ...rd];
       let s = 0;
       for (const x of b) s = (s + x) & 0xff;
       bytes = [...b, (0x100 - s) & 0xff];

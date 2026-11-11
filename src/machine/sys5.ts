@@ -370,6 +370,8 @@ export class Sys5 implements Bus16, Machine {
     this.dsw2 = pack(bank2);
   }
 
+  setRotary(n: number): void { this.rotary = (~n & 0xff) | 0xff00; }
+
   get switchPanel(): CabinetSwitch[] {
     const state = (n: number): boolean =>
       n >= 48

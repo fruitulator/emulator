@@ -216,7 +216,7 @@ export class M1ab implements Bus, Machine {
     return (this.hoppersWord & 0x50) !== 0x50;
   }
 
-  static readonly HOPPER_WAVEFORM = { obscuredMs: 40, clearMs: 150 } as const;
+  static readonly HOPPER_WAVEFORM = { obscuredMs: 40, clearMs: 150, restart: 'rearm' } as const;
 
   readonly hopper = new Hopper(CPU_CLOCK, M1ab.HOPPER_WAVEFORM);
 

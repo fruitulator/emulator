@@ -39,8 +39,8 @@ const STEP_RELOAD = [
   0x1f, 0xff, 0x00, 0x00, 0xff, 0x0d, 0x0e, 0x0f, 0x0c, 0x43, 0x72, 0x6d, 0x00, 0x10, 0x00, 0x64,
 ];
 
-const COIN_HOLD = Math.round(0.105 * ACEVIDEO_CLOCK);
-const COIN_GAP = Math.round(0.1 * ACEVIDEO_CLOCK);
+const COIN_HOLD_LINE = Math.round(0.07 * ACEVIDEO_CLOCK);
+const COIN_GAP = Math.round(0.005 * ACEVIDEO_CLOCK);
 
 export function aceVideoDipSwap(d: number): number {
   return ((d & 1) << 3) | ((d & 2) << 1) | ((d & 4) << 2) | ((d & 8) >> 2) | ((d & 0x10) >> 4) | (d & 0xe0);
@@ -448,9 +448,9 @@ export class AceVideo implements Machine {
     if (row >= this.matrix.length) { this.coinsRefused++; return; }
     this.coinRow = row;
     this.coinMask = 1 << (raw & 7);
-    this.coinTimer = COIN_HOLD + COIN_GAP;
+    this.coinTimer = COIN_HOLD_LINE + COIN_GAP;
     this.matrix[this.coinRow] |= this.coinMask;
-    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD);
+    this.book.coin(id >= 0x100 ? this.slots.coinOn(id) : coinOfNote(id), COIN_HOLD_LINE);
   }
 
   setSlides(slides: readonly SlideEffect[] | null): void { this.book.setSlides(slides); }

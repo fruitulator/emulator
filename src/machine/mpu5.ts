@@ -10,7 +10,7 @@ import { Mc68681 } from '../hw/mc68681';
 import { Barbus, MUX_UNITS as BARBUS_MUX_UNITS, MUX_UNIT_BYTES as BARBUS_MUX_UNIT_BYTES } from '../hw/barbus';
 import { MpuPic, PIC_ACCESS_CYCLES } from '../hw/pic';
 import { Sec } from '../hw/sec';
-import { Sr5iMech, Sch2Hopper, JcmEba, deviceFor, switchKeyAckDelay, V20_CCTALK_UNIT_DEFAULT, type CcTalkDevice } from '../hw/cctalk';
+import { Sr5iMech, Sch2Hopper, JcmEba, deviceFor, switchKeyAckDelay, V20_CCTALK_UNIT_DEFAULT, V20_CCTALK_REPLY_DELAY, type CcTalkDevice } from '../hw/cctalk';
 import { HopperJitter } from '../hw/hopper';
 import { CcTalkBus, type CcTalkWire } from '../hw/cctalkbus';
 import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
@@ -142,6 +142,7 @@ export class Mpu5 implements Bus16, Machine {
       watchdogReset: () => this.onWatchdog(),
       busRead8: (addr) => this.read8(addr, 5),
       busWrite8: (addr, val) => this.write8(addr, val, 5),
+      cpuMask: () => ((this.inCore ? this.wasm!.sr : this.cpu.sr) >> 8) & 7,
       serialTx: (channel, v) => this.barbus.feedTx(channel, v),
       portAIn: () => this.portAPins(),
       portBIn: () => Mpu5.PORT_B_PINS,
@@ -921,7 +922,9 @@ export class Mpu5 implements Bus16, Machine {
     this.wasmRunStart = cpu.cycles;
     this.wasmTicked = 0;
     w.runStart = cpu.cycles;
-    const reason = w.run(Math.max(1, Math.ceil(budget)));
+    this.inCore = true;
+    let reason: number;
+    try { reason = w.run(Math.max(1, Math.ceil(budget))); } finally { this.inCore = false; }
     const used = w.used;
     if (reason === REASON_FALLBACK && w.instrs === 0 && w.irq6Taken === 0) this.wasmReplay = true;
     const pre = used - this.wasmTicked;
@@ -964,7 +967,10 @@ export class Mpu5 implements Bus16, Machine {
         if (cpu.cycles === before) {
           if (++stalled >= 64) throw new Error(`[mpu5] core loop stalled: ${this.wasmStallState(interp)}`);
         } else stalled = 0;
-        if (this.deviceTouched) {
+        if (this.sim.dmaHeld !== 0 && this.dmaWakeDue()) {
+          this.dmaWake();
+          this.sliceEnd = Math.min(end, cpu.cycles + this.horizon(false));
+        } else if (this.deviceTouched) {
           this.catchUp();
           this.sliceEnd = Math.min(end, cpu.cycles + this.horizon(false));
         } else if (interp && wasHalted && cpu.halted && cpu.cycles < this.sliceEnd) {
@@ -1075,6 +1081,7 @@ export class Mpu5 implements Bus16, Machine {
     }
     const cycles = this.execOne();
     this.catchUp();
+    if (this.sim.dmaHeld !== 0 && this.dmaWakeDue()) this.dmaWake();
     return cycles;
   }
 
@@ -1091,6 +1098,17 @@ export class Mpu5 implements Bus16, Machine {
   private pendingDevice = 0;
   private deviceTouched = false;
   private sliceEnd = 0;
+  private inCore = false;
+
+  private dmaWakeDue(): boolean {
+    return this.sim.dmaHeld !== 0 && ((this.cpu.sr >> 8) & 7) <= this.sim.dmaWakeMask();
+  }
+
+  private dmaWake(): void {
+    this.catchUp();
+    this.sim.dmaRetry();
+    this.catchUp();
+  }
 
   private execOne(): number {
     if (++this.pcSampleCount >= 0x10000) {
@@ -1191,7 +1209,10 @@ export class Mpu5 implements Bus16, Machine {
       do {
         const wasHalted = cpu.halted;
         this.execOne();
-        if (this.deviceTouched) {
+        if (this.sim.dmaHeld !== 0 && this.dmaWakeDue()) {
+          this.dmaWake();
+          this.sliceEnd = Math.min(end, cpu.cycles + this.horizon());
+        } else if (this.deviceTouched) {
           this.catchUp();
           this.sliceEnd = Math.min(end, cpu.cycles + this.horizon());
         } else if (wasHalted && cpu.halted && cpu.cycles < this.sliceEnd && !cpu.interruptPending()) {
@@ -1264,7 +1285,10 @@ export class Mpu5 implements Bus16, Machine {
     let other = this.sim.request();
     if (other < Mpu5.DUART_IRQ_LEVEL && this.duart.irq()) other = Mpu5.DUART_IRQ_LEVEL;
     this.irqOther = other;
-    if (this.wasm !== null) this.wasm.irqOther = other;
+    if (this.wasm !== null) {
+      this.wasm.irqOther = other;
+      this.wasm.dmaWake = this.sim.dmaWakeMask() + 1;
+    }
     const level = this.dacPending && other < Mpu5.DAC_IRQ_LEVEL ? Mpu5.DAC_IRQ_LEVEL : other;
     this.cpu.setIRQ(level);
   }
@@ -1893,9 +1917,9 @@ export class Mpu5 implements Bus16, Machine {
   fitVendBus(hoppers: readonly (string | null)[] = ['SCH 2', 'SCH 2']): void {
     if (this.vendBus) return;
     const bus = new CcTalkBus({
-      replyDelay: 2 * Mpu5.MS,
+      replyDelay: V20_CCTALK_REPLY_DELAY,
       byteGap: Math.round(Mpu5.MS * 10 / 9.6),
-      frameGap: 50 * Mpu5.MS,
+      frameGap: V20_CCTALK_UNIT_DEFAULT,
       keyAckDelay: switchKeyAckDelay(V20_CCTALK_UNIT_DEFAULT),
     });
     const mech = new Sr5iMech();
