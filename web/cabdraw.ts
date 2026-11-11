@@ -47,7 +47,7 @@ import { mfmeBandIndex, classicBfmLedDots } from './dat';
 import {
   drumBandSlices, drumRowMap, drumScreenRadius, drumVisibleSymbols, wrapPieces,
 } from '../src/layout/reeldrum';
-import { argbToCss, drawSegmentText, type SegmentColours } from './vfd';
+import { argbToCss, type SegmentColours } from './vfd';
 import {
   ALPHA_DEFAULT_INK, ALPHA_DEFAULT_OFF_BRIGHTNESS, alphaGenerateOff, alphaMaskAndColour,
   atlasGlyph, alphaAtlasIntensity,
@@ -58,12 +58,12 @@ import {
   BFM_ALPHA_DEFAULT_INK, BFM_ALPHA_DEFAULT_OFF_LEVEL, bfmAlphaCell, bfmAlphaLayers, bfmAlphaOrder,
 } from './bfmalpha';
 import { dotGlyph } from './dotfont';
-import { DOT_ALPHA_INTENSITY, dotAlphaCanvas, dotAlphaDot } from './dotalpha';
+import { DOT_ALPHA_INTENSITY, dotAlphaCanvas, dotAlphaDot, matrixAlphaCanvas, matrixAlphaDot } from './dotalpha';
 import { drawnBounce } from './bouncepref';
 import {
   advanceSettleCounters, featureReelContinuous, buildRenderIndex, cabLampLevel, cabLampLit, drawnBandIndex, rgbLampFace,
   newSettleMemory, parkedForDraw, platformReelOffsetSteps, platformRequiresReversal,
-  reelCentreRow, rgbLedFrameColour, type IndexedElement, type IntRect, reelIndex,
+  reelCentreRow, rgbLedFrameColour, rgbLedFrameLit, type IndexedElement, type IntRect, reelIndex,
   extentMisses, ownerExtents,
 } from './render-index';
 import { fancyReelPool, keepOnlyColour, type FancyPool } from './reellight';
@@ -73,12 +73,21 @@ import { EPOCH_DOT_FONT } from './epochdotfont';
 import { dotLcdPaint, dotLcdSize } from './dotlcd';
 import { drawLightSource } from './lightsource';
 import { paintCheckBox } from './checkbox';
+import { paintRgbLed } from './rgbled';
 import { prismBothLitPlan } from './prismplan';
 import { peekable } from './play/peek';
 import { multiplyImage, rectClipOnly } from './multiply';
 
 const EPOCH_ALPHA_PANEL_BYTES = 32;
 const BFM_COLOUR_LED_COLOURS = ['', '#ff0000', '#00ff00', '#ffff00'];
+const FALLBACK_ALPHA: AlphaNewStyle = {
+  on: argbToCss(0xff00ff00), off: argbToCss(0xff002300), bg: argbToCss(0xff000000),
+  thickness: 2, spacing: 0, hSpacing: 5, vSpacing: 4, slant: 5, centre: 48, chop: 90,
+};
+
+const ACCEL = '\u0001';
+const ACCEL_ALL = /\u0001/g;
+const unmark = (s: string): string => (s.includes(ACCEL) ? s.replace(ACCEL_ALL, '') : s);
 
 export const DOT_ON = '#5bf3ff';
 export const DOT_OFF = 'rgba(90,140,150,0.10)';
@@ -179,6 +188,7 @@ export interface CabinetPainterOptions {
   reelPeek?: () => number;
   onReelRow?: (reel: object, row: number) => void;
   checkboxTicked?: (cb: CabCheckbox) => boolean;
+  checkboxPressed?: (cb: CabCheckbox) => boolean;
   omits?: (part: CabLamp | CabCheckbox) => boolean;
 }
 
@@ -191,6 +201,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
   const reelPeek = opts.reelPeek ?? ((): number => 0);
   const onReelRow = opts.onReelRow ?? ((): void => undefined);
   const checkboxTicked = opts.checkboxTicked ?? ((cb: CabCheckbox): boolean => cb.checked);
+  const checkboxPressed = opts.checkboxPressed ?? ((): boolean => false);
   const omits = opts.omits ?? ((): boolean => false);
 
   let vfdAtlas: HTMLCanvasElement | null = null;
@@ -247,6 +258,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         (input) => inputHeld(input),
         () => reelPeek(),
         (cb) => checkboxTicked(cb),
+        (cb) => checkboxPressed(cb),
       );
       renderIndex = {
         cab,
@@ -599,7 +611,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       ctx.beginPath();
       ctx.rect(cb.left, cb.top, cb.width, cb.height);
       ctx.clip();
-      paintCheckBox(ctx, cb.left, cb.top, cb.height, checkboxTicked(cb));
+      paintCheckBox(ctx, cb.left, cb.top, cb.height, checkboxTicked(cb), checkboxPressed(cb));
       ctx.restore();
       const text = cb.legend.off ?? '';
       if (text) drawLegend(ctx, text, cb.left, cb.top, cb.width, cb.height, cb.legend);
@@ -762,6 +774,10 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       dot(x5 + 1, yP + p.dotH, p.dotW - 1, 1, tail);
       dot(x5, yP + p.dotH + 1, 1, p.dotH - 1, tail);
     };
+    const alpha = cells.length > 32 ? cells[cells.length - 1] : 255;
+    for (let i = 0; i < 16; i++) glyph(0x20, 3 + i * cellPitch, 3);
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * (alpha / 255);
     for (let i = 0; i < 16; i++) {
       const x0 = 3 + i * cellPitch;
       const attr = cells.length > 16 + i ? cells[16 + i] : 0;
@@ -771,6 +787,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       if (punct === 0x2c) glyph(0x100, x0, 3);
       else if (punct === 0x2e) glyph(0x101, x0, 3);
     }
+    ctx.globalAlpha = prevAlpha;
   }
 
   const MAYGAY_MATRIX_BANDS = [175, 210, 0, 35, 70, 105, 140];
@@ -1083,8 +1100,14 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     legend: NonNullable<CabLamp['legend']>,
     nudge = 0,
   ): void {
-    const paras = (legendCaps(legend.face) ? text.toUpperCase() : text).split(/\r?\n/);
-    if (!paras.some((s) => s.length)) return;
+    let marked = legendCaps(legend.face) ? text.toUpperCase() : text;
+    if (legend.accel?.length && text === legend.off) {
+      for (const i of [...legend.accel].sort((p, q) => q - p)) {
+        if (i >= 0 && i < marked.length) marked = marked.slice(0, i) + ACCEL + marked.slice(i);
+      }
+    }
+    const paras = marked.split(/\r?\n/);
+    if (!paras.some((s) => unmark(s).length)) return;
     const clip = { x, y, w, h };
     x += (legend.dx ?? 0) + nudge;
     y += (legend.dy ?? 0) + nudge;
@@ -1107,7 +1130,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
           let cur = words[0];
           for (const word of words.slice(1)) {
             const cand = `${cur} ${word}`;
-            if (ctx.measureText(cand).width <= w) cur = cand;
+            if (ctx.measureText(unmark(cand)).width <= w) cur = cand;
             else { out.push(cur); cur = word; }
           }
           out.push(cur);
@@ -1117,19 +1140,19 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       size = (legend.points * 96) / 72;
       lines = wrap(size);
       const overflows = (px: number, ls: string[]): boolean =>
-        ls.length * px * 1.1 > h || ls.some((l) => ctx.measureText(l).width > w);
+        ls.length * px * 1.1 > h || ls.some((l) => ctx.measureText(unmark(l)).width > w);
       while (size > 5 && overflows(size, lines)) {
         size = Math.max(5, size * 0.94);
         lines = wrap(size);
       }
       ctx.font = font(size);
     } else {
-      lines = paras.filter((s) => s.length);
+      lines = paras.filter((s) => unmark(s).length);
       size = Math.max(6, Math.min(h / lines.length, h));
       for (; size > 5; size -= 0.5) {
         ctx.font = `bold ${size}px ${family}`;
         if (lines.length * size * 1.1 > h) continue;
-        if (lines.every((l) => ctx.measureText(l).width <= w - 2)) break;
+        if (lines.every((l) => ctx.measureText(unmark(l)).width <= w - 2)) break;
       }
       ctx.font = `bold ${size}px ${family}`;
     }
@@ -1147,44 +1170,29 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       : y + h / 2 - (lines.length - 1) * lineH / 2;
     const tx = legend.align === 'left' ? x : legend.align === 'right' ? x + w : x + w / 2;
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i]) ctx.fillText(lines[i], tx, top + i * lineH);
+      const line = unmark(lines[i]);
+      if (!line) continue;
+      const ly = top + i * lineH;
+      ctx.fillText(line, tx, ly);
+      const at = lines[i].lastIndexOf(ACCEL);
+      if (at < 0) continue;
+      const before = unmark(lines[i].slice(0, at));
+      const ch = lines[i].slice(at + 1).replace(ACCEL_ALL, '')[0];
+      if (!ch) continue;
+      const full = ctx.measureText(line).width;
+      const left = ctx.textAlign === 'left' ? tx : ctx.textAlign === 'right' ? tx - full : tx - full / 2;
+      const x0 = left + ctx.measureText(before).width;
+      const cw = ctx.measureText(before + ch).width - ctx.measureText(before).width;
+      const base = ly + ctx.measureText('x').actualBoundingBoxDescent;
+      const px = legend.points ? Math.max(1, size / ((legend.points * 96) / 72)) : 1;
+      const ux = Math.round(x0);
+      ctx.fillRect(ux, Math.round(base + px), Math.max(0, Math.round(x0 + cw - px) - ux), Math.max(1, Math.round(px)));
     }
     ctx.restore();
   }
 
   function drawRgbLed(m: FrameView, led: RgbLed): void {
-    {
-      const colour = argbToCss(rgbLedFrameColour(m, led));
-      const unit = Math.min(6, Math.max(1, Math.floor(led.width / 17)));
-      const pen = Math.max(1, unit >> 1);
-      ctx.fillStyle = colour;
-      if (led.style === 2) {
-        if (!led.noOutline) {
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(led.left, led.top, led.width, led.height);
-          ctx.fillStyle = colour;
-        }
-        ctx.fillRect(led.left + unit, led.top + unit,
-          Math.max(0, led.width - 2 * unit), Math.max(0, led.height - 2 * unit));
-        return;
-      }
-      if (led.style === 1) {
-        const x = led.left + unit - 1;
-        const y = led.top + unit - 1;
-        ctx.fillRect(x, y, Math.max(0, led.width - unit), Math.max(0, led.height - unit));
-        return;
-      }
-      const cx = led.left + led.width / 2;
-      const cy = led.top + led.height / 2;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, Math.max(0, led.width / 2), Math.max(0, led.height / 2), 0, 0, Math.PI * 2);
-      ctx.fill();
-      if (!led.noOutline) {
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = pen;
-        ctx.stroke();
-      }
-    }
+    paintRgbLed(ctx, led, rgbLedFrameColour(m, led), rgbLedFrameLit(m, led));
   }
 
   interface PrismFrames { off: HTMLCanvasElement; lamp1: HTMLCanvasElement; lamp2: HTMLCanvasElement }
@@ -1356,7 +1364,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const dp = s.seg[7];
       if (metrics.seg16) {
         if (!metrics.alpha) {
-          ctx.fillStyle = seg16PointLit(s, mask) ? on : off;
+          ctx.fillStyle = seg16PointLit(s, zero || mask) ? on : off;
           ctx.beginPath();
           ctx.arc(dpX, dpY, dpR, 0, Math.PI * 2);
           ctx.fill();
@@ -2026,21 +2034,9 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       const cellWords = disp.cellWords ? new Uint32Array(disp.cellWords).reverse() : undefined;
       disp = { chars, cellWords, duty: disp.duty, text: disp.text };
     }
-    const level = Math.min(31, disp.duty ?? 31) / 31;
     ctx.fillStyle = vfdSegColours?.bg ?? vfdBd1Style?.bg ?? '#050505';
     ctx.fillRect(r.left, r.top, r.width, r.height);
-    if (vfdBd1Style || (vfdAtlas && glyphW > 0)) {
-      drawVfdCells(disp, r, glyphW);
-      return;
-    }
-    if (level <= 0) return;
-    ctx.save();
-    ctx.globalAlpha = level;
-    try {
-      drawVfdCells(disp, r, glyphW);
-    } finally {
-      ctx.restore();
-    }
+    if (vfdBd1Style || (vfdAtlas && glyphW > 0)) drawVfdCells(disp, r, glyphW);
   }
 
   function drawVfdCells(disp: NonNullable<FrameView['display']>, r: Rect, glyphW: number): void {
@@ -2048,17 +2044,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     const words = disp.cellWords
       ? [...disp.cellWords]
       : [...disp.chars].map((c) => (c & 0x7f) | (c & 0x80 ? 0x2e00 : 0));
-    const cellText = codes.map((c) => (c >= 0x20 && c <= 0x7e ? String.fromCharCode(c) : ' ')).join('');
     const cw = r.width / 16;
-    const drawDots = () => {
-      ctx.fillStyle = vfdSegColours?.on ?? '#7ef';
-      for (let i = 0; i < 16; i++) {
-        if ((words[i] & CELL_CUSTOM) === 0 && (words[i] >> 8) & 0xff) {
-          const d = Math.max(2, r.height * 0.12);
-          ctx.fillRect(r.left + (i + 1) * cw - d * 1.4, r.top + r.height - d * 1.4, d, d);
-        }
-      }
-    };
     if (vfdBd1Style) {
       const masks = alphaColumnWords(words, vfdColumns, vfdReversed)
         .map((w) => alphaCellRoles(w, vfdCharset, vfdSeg16));
@@ -2066,11 +2052,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
         vfdBd1Style, r.left, r.top, disp.duty ?? 31);
       return;
     }
-    if (!vfdAtlas || glyphW <= 0) {
-      drawSegmentText(ctx, cellText, 16, r.left, r.top, r.width, r.height, vfdSegColours);
-      drawDots();
-      return;
-    }
+    if (!vfdAtlas || glyphW <= 0) return;
     ctx.fillStyle = '#050505';
     ctx.fillRect(r.left, r.top, r.width, r.height);
     const gh = vfdAtlas.height;
@@ -2084,11 +2066,7 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     ctx.globalAlpha = alphaAtlasIntensity(disp.duty ?? 31);
     for (let i = 0; i < 16; i++) {
       const g = atlasGlyph(codes[i]);
-      if (g >= 0) {
-        ctx.drawImage(vfdAtlas, g * glyphW, 0, glyphW, gh, r.left + i * cw, r.top, cw, r.height);
-      } else if (cellText[i] !== ' ') {
-        drawSegmentText(ctx, cellText[i], 1, r.left + i * cw, r.top, cw, r.height, vfdSegColours);
-      }
+      ctx.drawImage(vfdAtlas, g * glyphW, 0, glyphW, gh, r.left + i * cw, r.top, cw, r.height);
       const punct = words[i] & CELL_CUSTOM ? 0 : (words[i] >> 8) & 0xff;
       const pg = punct === 0x2e || punct === 0x2c ? atlasGlyph(punct) : -1;
       if (pg >= 0) {
@@ -2116,21 +2094,19 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       drawDotAlpha(m, r, style, { ...metrics, digitGap: metrics.digitGap });
       return;
     }
+    if (metrics) {
+      drawMatrixAlpha(m, r, style, metrics);
+      return;
+    }
     ctx.fillStyle = style?.bg ?? '#050505';
     ctx.fillRect(r.left, r.top, r.width, r.height);
 
     const cellW = r.width / 16;
-    const pitchX = metrics ? metrics.x + metrics.spacing : cellW / 7;
-    const pitchY = metrics ? metrics.y + metrics.spacing : cellW / 7;
-    const dotW = metrics ? metrics.x : Math.max(1, (cellW / 7) * 0.72);
-    const dotH = metrics ? metrics.y : dotW;
-    const gridW = metrics ? 16 * 6 * pitchX : r.width;
-    const gridH = pitchY * 6 + dotH;
+    const pitch = cellW / 7;
+    const dotW = Math.max(1, pitch * 0.72);
+    const gridH = pitch * 6 + dotW;
     const y0 = r.top + (r.height - gridH) / 2;
-    const left = metrics ? r.left + (r.width - gridW) / 2 : r.left;
-    const x0 = (cell: number) => (metrics
-      ? left + cell * 6 * pitchX
-      : r.left + cell * cellW + (cellW - pitchX * 4) / 2);
+    const x0 = (cell: number) => r.left + cell * cellW + (cellW - pitch * 4) / 2;
 
     const on = style?.on ?? DOT_ON;
     const off = style?.off ?? DOT_OFF;
@@ -2140,11 +2116,33 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
       for (let c = 0; c < 5; c++) {
         for (let row = 0; row < 7; row++) {
           ctx.fillStyle = (cols[c] >> row) & 1 ? on : off;
-          ctx.fillRect(
-            x0(cell) + c * pitchX - (metrics ? 0 : dotW / 2),
-            y0 + row * pitchY - (metrics ? 0 : dotH / 2),
-            dotW, dotH,
-          );
+          ctx.fillRect(x0(cell) + c * pitch - dotW / 2, y0 + row * pitch - dotW / 2, dotW, dotW);
+        }
+      }
+    }
+  }
+
+  function drawMatrixAlpha(
+    m: FrameView, r: Rect,
+    style: { on: string; off: string; bg: string } | null,
+    g: { x: number; y: number; spacing: number },
+  ): void {
+    const canvas = matrixAlphaCanvas(g);
+    const kx = r.width / canvas.width;
+    const ky = r.height / canvas.height;
+    const on = style?.on ?? DOT_ON;
+    const off = style?.off ?? DOT_OFF;
+    ctx.fillStyle = style?.bg ?? '#050505';
+    ctx.fillRect(r.left, r.top, r.width, r.height);
+    const text = displayText(m);
+    for (let cell = 0; cell < 16; cell++) {
+      const cols = [...cellColumns(m, text, cell),
+        m.display?.cellPunct?.(vfdReversed ? 15 - cell : cell) ?? 0];
+      for (let c = 0; c < 6; c++) {
+        for (let row = 0; row < 8; row++) {
+          const p = matrixAlphaDot(g, cell, c, row);
+          ctx.fillStyle = (cols[c] >> row) & 1 ? on : off;
+          ctx.fillRect(r.left + p.x * kx, r.top + p.y * ky, g.x * kx, g.y * ky);
         }
       }
     }
@@ -2190,12 +2188,18 @@ export function createCabinetPainter(canvas: HTMLCanvasElement, opts: CabinetPai
     ctx.restore();
   }
 
-  function drawVfdRect(text: string, r: Rect): void {
-    drawSegmentText(ctx, text, 16, r.left, r.top, r.width, r.height);
+  function drawVfdRect(m: FrameView, r: Rect): void {
+    const disp = m.display;
+    const words = disp?.cellWords
+      ? [...disp.cellWords]
+      : [...(disp?.chars ?? new Uint8Array(16))].map((c) => (c & 0x7f) | (c & 0x80 ? 0x2e00 : 0));
+    const masks = alphaColumnWords(words, 16, vfdReversed).map((w) => alphaCellRoles(w, 1, true));
+    drawAlphaNew(ctx, masks, alphaNewGeom(FALLBACK_ALPHA, 16, r.width, r.height, true),
+      FALLBACK_ALPHA, r.left, r.top, disp?.duty ?? 31);
   }
 
   function drawFallback(m: FrameView): void {
-    drawVfdRect(displayText(m), { left: 40, top: 20, width: canvas.width - 80, height: 44 });
+    drawVfdRect(m, { left: 40, top: 20, width: canvas.width - 80, height: 44 });
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const reels = m.reels.filter((r) => r.travel !== 0);

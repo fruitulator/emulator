@@ -727,7 +727,7 @@ export class Astra implements Bus16, Machine {
       this.lampAcc -= LAMP_DREQ_CYCLES;
     }
     for (let ch = 0; ch < 2; ch++) {
-      if (this.dmaFlag[ch] && this.sim.dmaRequest(ch)) this.dmaFlag[ch] = false;
+      if (this.dmaFlag[ch] && this.sim.dmaRequest(ch, (this.cpu.sr >> 8) & 7)) this.dmaFlag[ch] = false;
     }
   }
 

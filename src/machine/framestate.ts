@@ -330,6 +330,7 @@ export function frameLayoutFor(
   }
   const device = m.display as (typeof m.display & {
     cellWords?: Uint32Array; udfDots?: Uint8Array; cellDots?: Uint8Array; gfxDots?: Uint8Array;
+    punctDots?: Uint8Array;
   }) | null;
   const displayKind: DisplayKind = device?.kind ?? 'none';
   const hasSegs = !!device?.cellWords;
@@ -349,7 +350,7 @@ export function frameLayoutFor(
     ? rawDots(m)?.length ?? 0 : 0;
   const lcdBytes = system === 'PROCONN'
     ? (m as unknown as { panelBytes?: () => Uint8Array }).panelBytes?.().length ?? 80
-    : system === 'EPOCH' ? 32 + 0x400
+    : system === 'EPOCH' ? 32 + 0x400 + 1
       : system === 'M1AB' && (m as unknown as { dot?: unknown }).dot ? 248 : 0;
   const ledBoard = (m as unknown as { ledBoard?: { colours: Uint32Array } }).ledBoard;
   const muxLedBytes = ledBoard ? ledBoard.colours.length * 4 : 0;
@@ -360,7 +361,9 @@ export function frameLayoutFor(
   const levelBytes = (m as unknown as { levelOutputs?: Uint8Array }).levelOutputs?.length ?? 0;
   const dutyBytes = displayKind === 'none' ? 0 : 4;
   const cellDots = !device?.udfDots && !!device?.cellDots;
-  const udfBytes = device?.udfDots ? 16 * 5 + (device.gfxDots?.length ?? 0) : cellDots ? 16 * 6 : 0;
+  const udfBytes = device?.udfDots
+    ? 16 * 5 + (device.gfxDots?.length ?? 0) + (device.gfxDots ? device.punctDots?.length ?? 0 : 0)
+    : cellDots ? 16 * 6 : 0;
   const screen = videoScreenOf(m);
   const videoWidth = screen?.width ?? 0;
   const videoHeight = screen?.height ?? 0;
@@ -527,12 +530,19 @@ export function captureFrame(
     off += layout.partSoundBytes;
   }
   if (layout.udfBytes) {
-    const d = m.display as unknown as { udfDots?: Uint8Array; cellDots?: Uint8Array; gfxDots?: Uint8Array } | null;
+    const d = m.display as unknown as {
+      udfDots?: Uint8Array; cellDots?: Uint8Array; gfxDots?: Uint8Array; punctDots?: Uint8Array;
+    } | null;
     const udf = layout.cellDots ? d?.cellDots : d?.udfDots;
     if (udf) bytes.set(udf.subarray(0, layout.udfBytes), off);
     if (!layout.cellDots && d?.gfxDots && layout.udfBytes > 16 * 5) {
       bytes.set(d.gfxDots, off + 16 * 5);
       if (hidden) for (let i = 0; i < 16; i++) if (hidden & (1 << i)) bytes[off + 16 * 5 + i * 6 + 5] = 0;
+      const pAt = off + 16 * 5 + d.gfxDots.length;
+      if (d.punctDots && layout.udfBytes >= pAt - off + 16) {
+        bytes.set(d.punctDots, pAt);
+        if (hidden) for (let i = 0; i < 16; i++) if (hidden & (1 << i)) bytes[pAt + i] = 0;
+      }
     }
     off += layout.udfBytes;
   }
@@ -772,7 +782,9 @@ export class FrameView {
         },
         cellPunct: layout.cellDots && udf
           ? (cell: number) => udf[(cell & 15) * 6 + 5]
-          : undefined,
+          : udf && udf.length === 16 * 5 + 16 * 6 + 16
+            ? (cell: number) => udf[16 * 5 + 16 * 6 + (cell & 15)]
+            : undefined,
         cellGfx: !layout.cellDots && udf && udf.length > 16 * 5
           ? (cell: number) => {
             const i = 16 * 5 + (cell & 15) * 6;

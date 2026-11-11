@@ -4,7 +4,7 @@ import { listGames, type GameMeta } from '../web/store';
 import { contentKeys } from '../web/contentkeys';
 import { openDialog } from '../web/ui/dialog';
 import { MENU_ICONS, UI_ICONS, rowIcon } from '../web/ui/icons';
-import { artwork, thumbMosaic, thumbStack } from '../web/ui/art';
+import { artwork, thumbMosaic } from '../web/ui/art';
 import { actionButton, chip, chipButton, emptyState, searchBar, sectionHeading, tileCard, tileGrid, tileStrip } from '../web/ui/list';
 import { showSheet, sheetRow, closeSheet } from '../web/ui/sheet';
 import { fillProgramHashes, newArcade, standing, type ArcadeDoc } from './doc';
@@ -528,12 +528,7 @@ function communityTile(
 ): HTMLElement {
   const enter = (): void => { void signedInThen(() => { carryArcadeName(a.id, a.name); location.href = shareLink(a.id); }); };
   const thumbed = owned.filter((g) => g.hasThumb).map((g) => g.hash);
-  const nameOf = (h: string): string => owned.find((g) => g.hash === h)?.name ?? '';
   const art = viewArt(view, a.name, enter, () => thumbMosaic(thumbed, a.name, enter));
-  if (view) {
-    const stack = thumbStack(thumbed, nameOf);
-    if (stack) art.append(stack);
-  }
   const count = playable
     ? str('arcade.landing.playable_n_n', { 0: playable, 1: a.machines })
     : str('arcade.landing.n_machines', { n: a.machines });

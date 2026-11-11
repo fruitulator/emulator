@@ -1581,10 +1581,7 @@ export class Live {
     if (!t) return null;
     if ('box' in t) {
       const box = t.box;
-      if (!this.hostNow() && this.operatorHands) {
-        const row = this.emu.info?.switchPanel.find((sw) => sw.id === box.id);
-        this.throwSwitch(row ?? { id: box.id }, !this.glass!.switchLevels.ticked(box, this.emu.info?.switchPanel));
-      }
+      if (!this.hostNow() && this.operatorHands) this.glass!.switchLevels.press(box, pointerId);
       return null;
     }
     this.activate(t.lp, pointerId);
@@ -1744,6 +1741,11 @@ export class Live {
   release(pointerId: number): void {
     this.own.delete(pointerId);
     this.buttons.release(pointerId);
+    const box = this.glass?.switchLevels?.release(pointerId);
+    if (box && this.running && !this.hostNow() && this.operatorHands) {
+      const row = this.emu.info?.switchPanel.find((sw) => sw.id === box.id);
+      this.throwSwitch(row ?? { id: box.id }, !this.glass!.switchLevels.ticked(box, this.emu.info?.switchPanel));
+    }
   }
 
   private focusLost(): void {

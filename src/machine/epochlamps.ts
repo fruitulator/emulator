@@ -116,3 +116,43 @@ export class EpochLampGlass {
     this.queued = 0;
   }
 }
+
+export const LED_SETTLE_DIM = 2;
+
+export class EpochLedDimSettle {
+  readonly count = new Uint8Array(N);
+  readonly held = new Uint8Array(N);
+  readonly heldDim = new Uint8Array(N);
+  queued = 0;
+
+  reset(): void {
+    this.count.fill(0); this.held.fill(0); this.heldDim.fill(0); this.queued = 0;
+  }
+
+  write(n: number, was: number, now: number, litChanged: boolean): void {
+    if ((was ^ now) & 0x40) {
+      if (!this.held[n]) { this.held[n] = 1; this.heldDim[n] = (was >> 6) & 1; }
+      if (this.count[n] === 0) this.queued++;
+      this.count[n] = LED_SETTLE_DIM;
+    }
+    if (litChanged) this.held[n] = 0;
+  }
+
+  dimOf(n: number, b: number): number {
+    return this.held[n] ? this.heldDim[n] : (b >> 6) & 1;
+  }
+
+  setLevel(litDim: (n: number) => boolean): void {
+    for (let n = 0; n < N; n++) if (this.held[n] && litDim(n)) this.held[n] = 0;
+  }
+
+  tick(lit: (n: number) => boolean): void {
+    if (this.queued === 0) return;
+    for (let n = 0; n < N; n++) {
+      if (this.count[n] > 0 && --this.count[n] === 0) {
+        this.queued--;
+        if (lit(n)) this.held[n] = 0;
+      }
+    }
+  }
+}

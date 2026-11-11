@@ -19,7 +19,7 @@ import { Bd1 } from '../hw/bd1';
 import { BfmLed } from '../hw/bfmled';
 import { BfmLampDim } from '../hw/bfmlampdim';
 import { Reel } from '../hw/reel';
-import { JcmEba, deviceFor, Sr5iMech, Sch2Hopper, type CcTalkDevice } from '../hw/cctalk';
+import { JcmEba, deviceFor, Sr5iMech, Sch2Hopper, switchKeyAckDelay, CC, type CcTalkDevice } from '../hw/cctalk';
 import { DataPak } from '../hw/datapak';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { percentageCode, prizeCode, stakeCode } from '../hw/bfmkeys';
@@ -132,14 +132,17 @@ function deviceAt(addr: number, model: string): CcTalkDevice {
 }
 
 export class Sc5 implements Bus16, Machine {
-  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency', 'noteCurrency', 'wiredCoins'];
+  static readonly snapshotConfig: readonly string[] = ['nvram', 'mechCurrency', 'noteCurrency', 'wiredCoins', 'fittedReels'];
   readonly digitKind: DigitKind = 'sc4';
   readonly cpu: M68000;
   readonly sim: Mcf5206e;
   readonly duart = new Mc68681({
     irqChanged: () => this.ipl4(),
     txByte: (ch, v) => this.payTx(ch, v),
-    outputPort: (v) => {
+    outputPort: (v, was) => {
+      if (((v ^ was) & 0x10) !== 0 && this.fittedReels < 5) {
+        this.setSpecialBit(4, (v & 0x10) === 0);
+      }
       this.drive(4, v & 0x0f);
       this.drive(5, (v >> 4) & 0x0f);
       this.updateOptics();
@@ -242,6 +245,7 @@ export class Sc5 implements Bus16, Machine {
   }
 
   private static readonly CC_BYTE_TIMEOUT = MASTER_CLOCK / 20;
+  private static readonly CC_KEY_ACK_DELAY = switchKeyAckDelay(MASTER_CLOCK / 20);
   private payLastAt = 0;
 
   private payTx(ch: 0 | 1, v: number): void {
@@ -271,16 +275,17 @@ export class Sc5 implements Bus16, Machine {
 
     const rd = dev.reply(msg.header, msg.data);
     if (!rd) return;
+    const delay = msg.header === CC.SWITCH_ENCRYPTION_KEY ? Sc5.CC_KEY_ACK_DELAY : Sc5.REPLY_DELAY;
 
     const host = dev.decodeFrame ? CC_HOST : (src ?? CC_HOST);
     if (dev.encodeFrame) {
-      this.sendReply(0, dev.encodeFrame(host, rd));
+      this.sendReply(0, dev.encodeFrame(host, rd), delay);
       return;
     }
     const b = [host, rd.length, dest, 0, ...rd];
     let s = 0;
     for (const x of b) s = (s + x) & 0xff;
-    this.sendReply(0, [...b, (0x100 - s) & 0xff]);
+    this.sendReply(0, [...b, (0x100 - s) & 0xff], delay);
   }
 
   private bus = new Map<number, CcTalkDevice>([
@@ -1673,6 +1678,7 @@ export class Sc5 implements Bus16, Machine {
 
   setReelGeometry(geometry: readonly ReelGeometry[]): void {
     if (!geometry.length) return;
+    this.fittedReels = new Set(geometry.map((g) => g.number).filter((n) => n >= 0 && n < 10)).size;
     for (const g of geometry) {
       if (g.number < 0 || g.number >= this.reels.length) continue;
       const reel = new Reel(Sc5.reelConfig(g.halfSteps, g.stops));
@@ -1760,7 +1766,9 @@ export class Sc5 implements Bus16, Machine {
 
   private readonly ledTable = new Uint8Array(33);
 
-  readonly ledCount = 260;
+  readonly ledCount = 261;
+
+  private fittedReels = 0;
 
   private specialLeds = 0;
   private specialPending = 0;
@@ -1787,7 +1795,7 @@ export class Sc5 implements Bus16, Machine {
     if (this.specialHold <= 0) return;
     this.specialHold -= span;
     if (this.specialHold < 1 && this.specialPending !== this.specialCommitted) {
-      this.specialLeds = this.specialPending & 0x0f;
+      this.specialLeds = this.specialPending & 0x1f;
       this.specialCommitted = this.specialPending;
     }
   }

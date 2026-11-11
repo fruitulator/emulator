@@ -18,7 +18,7 @@ import { EpochMatrix } from '../hw/epochmatrix';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import type { ReelGeometry } from './layoutreels';
 import { EPOCH_LAMP_LEVELS, EPOCH_LED_LEVELS, EPOCH_DIGITS, LAMP_FULL } from './framestate';
-import { EpochLampGlass } from './epochlamps';
+import { EpochLampGlass, EpochLedDimSettle } from './epochlamps';
 import type { BoardPart } from './parts';
 import { noteRomCut } from './boarddefaults';
 import { StrayCounter } from './strayaccess';
@@ -264,6 +264,7 @@ export class Epoch implements Machine {
   private readonly mechLamps = new SwitchedLamps(3);
   private readonly inhibitLamps = new SwitchedLamps(8);
   readonly lampGlass = new EpochLampGlass();
+  readonly ledSettle = new EpochLedDimSettle();
   private lampAcc = 0;
   private static readonly LAMP_TICK_CYCLES = 16000;
   private inhibitShown = 0xff;
@@ -317,13 +318,15 @@ export class Epoch implements Machine {
   }
 
   panelBytes(): Uint8Array {
-    const out = new Uint8Array(32 + this.matrix.frame.length);
-    const cells = (this.display as EpochAlpha).dot.cells;
+    const out = new Uint8Array(32 + this.matrix.frame.length + 1);
+    const dot = (this.display as EpochAlpha).dot;
+    const cells = dot.cells;
     for (let i = 0; i < 16; i++) {
       out[i] = cells[i] & 0xff;
       out[16 + i] = ((cells[i] >> 8) & 0x7f) | (cells[i] & 0x20000 ? 0x80 : 0);
     }
     out.set(this.matrix.frame, 32);
+    out[out.length - 1] = dot.shownAlpha;
     return out;
   }
 
@@ -562,6 +565,7 @@ export class Epoch implements Machine {
     this.inhibitLamps.reset();
     this.inhibitShown = 0xff;
     this.lampGlass.reset();
+    this.ledSettle.reset();
     this.lampAcc = 0;
     (this.display as EpochAlpha).clear();
     this.secLines = 0xff;
@@ -610,6 +614,10 @@ export class Epoch implements Machine {
     while (this.lampAcc >= Epoch.LAMP_TICK_CYCLES) {
       this.lampAcc -= Epoch.LAMP_TICK_CYCLES;
       this.lampGlass.tick(this.lampPhase());
+      if (this.ledSettle.queued) {
+        const ph = this.ledPhase();
+        this.ledSettle.tick((n) => this.ledLit(n, ph));
+      }
     }
     this.ymz.tick(cycles, this.clockHz);
     return cycles;
@@ -735,6 +743,10 @@ export class Epoch implements Machine {
     if ((a & 1) === 0 && a >= 0xfe0000 && a < 0xff0000) {
       const off = a - 0xfe0000;
       if (off + 1 < OUTPUT_BASE || off >= OUTPUT_BASE + 8) {
+        if ((off >= LED_BASE && off < LED_BASE + 0x200) || off === LAMP_DIM) {
+          this.ledWrite(off, (val >> 8) & 0xff);
+          this.ledWrite(off + 1, val & 0xff);
+        }
         this.ram[off] = (val >> 8) & 0xff;
         this.ram[off + 1] = val & 0xff;
         if (off >= LAMP_BASE && off < LAMP_BASE + 0x200) {
@@ -777,6 +789,7 @@ export class Epoch implements Machine {
       const off = a - 0xfe0000;
       if (off < 0x800 && this.ram[off] !== (val & 0xff)) this.asic.markMatrixDirty(off >> 10);
       const was = this.ram[off];
+      if ((off >= LED_BASE && off < LED_BASE + 0x200) || off === LED_DIM) this.ledWrite(off, val & 0xff);
       this.ram[off] = val & 0xff;
       if (off >= LAMP_BASE && off < LAMP_BASE + 0x200) this.lampGlass.write(off - LAMP_BASE, val & 0xff);
       else if (off === LAMP_DIM) this.lampGlass.setLevel(val);
@@ -966,11 +979,32 @@ export class Epoch implements Machine {
   }
 
   ledLevel(n: number, phase = this.ledPhase()): number {
-    const b = this.ram[LED_BASE + n];
+    if (!this.ledLit(n, phase)) return 0;
+    return this.ledSettle.dimOf(n, this.ram[LED_BASE + n])
+      ? EPOCH_LED_LEVELS[this.ram[LED_DIM] & 7] : LAMP_FULL;
+  }
+
+  private static ledByteLit(b: number, phase: number): boolean {
     const rate = Math.min((b >> 1) & 7, 6);
-    const lit = rate === 0 ? (b & 1) !== 0 : ((phase >> (rate - 1)) & 1) !== (b >> 7);
-    if (!lit) return 0;
-    return b & 0x40 ? EPOCH_LED_LEVELS[this.ram[LED_DIM] & 7] : LAMP_FULL;
+    return rate === 0 ? (b & 1) !== 0 : ((phase >> (rate - 1)) & 1) !== (b >> 7);
+  }
+
+  private ledLit(n: number, phase: number): boolean {
+    return Epoch.ledByteLit(this.ram[LED_BASE + n], phase);
+  }
+
+  private ledWrite(off: number, v: number): void {
+    const was = this.ram[off];
+    if (was === v) return;
+    if (off !== LED_DIM && (off < LED_BASE || off >= LED_BASE + 0x200)) return;
+    if (off === LED_DIM) {
+      if (((was ^ v) & 7) === 0) return;
+      const ph = this.ledPhase();
+      this.ledSettle.setLevel((n) => (this.ram[LED_BASE + n] & 0x40) !== 0 && this.ledLit(n, ph));
+      return;
+    }
+    const ph = this.ledPhase();
+    this.ledSettle.write(off - LED_BASE, was, v, Epoch.ledByteLit(was, ph) !== Epoch.ledByteLit(v, ph));
   }
 
   get segDigits(): Uint8Array {

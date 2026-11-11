@@ -1271,6 +1271,9 @@ export function parseFmlLayout(
       stripHorizontal: band.stripHorizontal,
       darkness: 0, lampNums, machineIndex: reelIndex.get(c.number) ?? 0, number: c.number,
       lampTray: Array.from({ length: 15 }, (_, i) => tray[i] ?? -2),
+      ...(!!(c.values.get('Reversed') ?? c.defaults.get('Reversed'))
+        && !(c.values.get('CustomEnabled') ?? c.defaults.get('CustomEnabled'))
+        ? { lampsMirrored: true } : {}),
       lampsEnabled: !!(c.values.get('LampsEnabled') ?? c.defaults.get('LampsEnabled')),
       lightFloor,
       ...(opaqueKey ? { opaqueKey } : {}),
@@ -1740,6 +1743,7 @@ export function parseFmlLayout(
         dpOn: (val(c, 'DPOn') ?? 0) !== 0,
         ...((val(c, 'AutoDP') ?? 0) !== 0 ? { autoDp: true } : {}),
         ...((val(c, 'DPOff') ?? 0) !== 0 ? { dpOff: true } : {}),
+        ...((val(c, 'ZeroOn') ?? 0) !== 0 ? { zeroOn: true } : {}),
         metrics: {
           thickness: val(c, 'Thickness') ?? SEG_METRICS.thickness,
           space: val(c, 'Spacing') ?? SEG_METRICS.space,

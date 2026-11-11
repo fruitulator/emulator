@@ -5,12 +5,13 @@ const WHITE = '#ffffff';
 const DK_SHADOW = '#696969';
 const LIGHT_3D = '#e3e3e3';
 const BLACK = '#000000';
+const BTN_FACE = '#f0f0f0';
 
 export function boxTop(height: number): number {
   return Math.trunc((height - 12) / 2);
 }
 
-export function paintCheckBox(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, left: number, top: number, height: number, ticked: boolean): void {
+export function paintCheckBox(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, left: number, top: number, height: number, ticked: boolean, pressed = false): void {
   const t = top + boxTop(height);
   const px = (colour: string, x: number, y: number, w: number, h: number): void => {
     ctx.fillStyle = colour;
@@ -24,7 +25,7 @@ export function paintCheckBox(ctx: CanvasRenderingContext2D | OffscreenCanvasRen
   px(DK_SHADOW, 1, 1, 11, 1);
   px(LIGHT_3D, 12, 1, 1, 11);
   px(LIGHT_3D, 1, 12, 12, 1);
-  px(WHITE, 2, 2, 10, 10);
+  px(pressed ? BTN_FACE : WHITE, 2, 2, 10, 10);
   if (!ticked) return;
   const starts = [5, 6, 7, 6, 5, 4, 3];
   starts.forEach((y, i) => px(BLACK, 3 + i, y, 1, 3));
@@ -43,6 +44,7 @@ export function checkboxAt(list: readonly CabCheckbox[] | undefined, x: number, 
 
 export class SwitchLevels {
   private readonly levels = new Map<number, boolean>();
+  private held: { pointer: number; cb: CabCheckbox } | null = null;
 
   set(id: number, on: boolean): void {
     this.levels.set(id, on);
@@ -52,7 +54,23 @@ export class SwitchLevels {
     return this.levels.get(cb.id) ?? rows?.find((r) => r.id === cb.id)?.on ?? cb.checked;
   }
 
+  press(cb: CabCheckbox, pointerId: number): void {
+    this.held = { pointer: pointerId, cb };
+  }
+
+  pressed(cb: CabCheckbox): boolean {
+    return this.held?.cb === cb;
+  }
+
+  release(pointerId: number): CabCheckbox | null {
+    const h = this.held;
+    if (!h || h.pointer !== pointerId) return null;
+    this.held = null;
+    return h.cb;
+  }
+
   clear(): void {
     this.levels.clear();
+    this.held = null;
   }
 }

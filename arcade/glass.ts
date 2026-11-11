@@ -418,6 +418,7 @@ export class Glass {
       this.painter = createCabinetPainter(pc, {
         inputHeld: (input) => this.heldInputs.has(input),
         checkboxTicked: (cb) => this.switchLevels.ticked(cb, this.panelRows()),
+        checkboxPressed: (cb) => this.switchLevels.pressed(cb),
         omits: (part) => this.omit?.(part) ?? false,
         lampGate: (m, lp) => this.updateGate(m, lp),
         reelPeek: () => this.peek.value(),

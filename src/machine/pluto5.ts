@@ -403,7 +403,7 @@ export class Pluto5 implements Bus16, Machine {
         }
         c.acc -= c.period;
       }
-      if (c.request && this.sim.dmaRequest(i)) c.request = false;
+      if (c.request && this.sim.dmaRequest(i, (this.cpu.sr >> 8) & 7)) c.request = false;
     }
   }
 

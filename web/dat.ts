@@ -420,6 +420,7 @@ export interface ReelBand<A = ImageBitmap> extends Rect {
   mask2?: A;
   mask3?: A;
   lampTray?: number[];
+  lampsMirrored?: boolean;
   lampsEnabled?: boolean;
   lightFloor?: [number, number, number];
   opaqueKey?: [number, number, number];
@@ -486,6 +487,7 @@ export interface CabLamp<A = ImageBitmap> {
     align?: 'left' | 'right';
     valign?: 'top' | 'bottom';
     nowrap?: true;
+    accel?: number[];
     input?: number;
   };
   offState?: { nums: number[]; canvas: A; down?: A };
@@ -665,8 +667,13 @@ export function seg16PointLit(s: SegDisplay, mask: number): boolean {
 }
 
 export function segPointLit(
-  s: { autoDp?: boolean; dpOff?: boolean; dpOn: boolean }, bits7: number, bit7: boolean,
+  s: { autoDp?: boolean; dpOff?: boolean; dpOn: boolean; zeroOn?: boolean; block?: unknown },
+  bits7: number, bit7: boolean,
 ): boolean {
+  if (s.zeroOn === true && s.block === undefined) {
+    bits7 = 0x3f;
+    bit7 = false;
+  }
   let lit = bit7;
   if (s.autoDp && (bits7 & 0x22) !== 0) lit = true;
   if (s.dpOff) lit = false;
@@ -827,6 +834,17 @@ export function rgbLedColour(
   return ((led.colours[Math.min(mask, 7)] ?? 0) | 0xff000000) >>> 0;
 }
 
+export function rgbLedLit(
+  led: RgbLed, lit: (n: number) => boolean, muxColour: (n: number) => number = () => 0,
+): boolean {
+  if (led.mux !== undefined && led.mux >= 0) return (muxColour(led.mux) & 0xffffff) !== 0;
+  for (let k = 0; k < led.lamps.length && k < 4; k++) {
+    const n = led.lamps[k];
+    if (n !== undefined && n >= 0 && lit(n)) return true;
+  }
+  return false;
+}
+
 export interface SegDigitGeometry {
   bx: number; by: number; bw: number; bh: number;
   thick: number;
@@ -911,6 +929,19 @@ export function segDigitGeometry(s: SegDisplay): SegDigitGeometry {
     ];
     const p16 = spin([s.dpRight ? R + h + q : L - h - q, B - h]);
     return { bx: L, by: T, bw: R - L, bh: B - T, thick: th, segs: segs16, dpX: p16[0], dpY: p16[1], dpR: h, bg };
+  }
+  if (m.style === 2) {
+    const segs2 = [
+      poly(L + th + sp, T, L + th + sp, T + th, R - th - sp, T + th, R - th - sp, T),
+      poly(R, midY - sp, R - th, midY - sp, R - th, T + c2, R, T + c2),
+      poly(R, B - c2, R - th, B - c2, R - th, midY + sp, R, midY + sp),
+      poly(L + th + sp, B, L + th + sp, B - th, R - th - sp, B - th, R - th - sp, B),
+      poly(L, midY + sp, L + th, midY + sp, L + th, B - c2, L, B - c2),
+      poly(L, T + c2, L + th, T + c2, L + th, midY - sp, L, midY - sp),
+      poly(L + sp + th, midY - h, R - sp - th, midY - h, R - sp - th, midY + h, L + sp + th, midY + h),
+    ];
+    const dp2 = spin([s.dpRight ? R + h + q : L - h - q, B - h]);
+    return { bx: L, by: T, bw: R - L, bh: B - T, thick: th, segs: segs2, dpX: dp2[0], dpY: dp2[1], dpR: h, bg };
   }
   const segs = [
     poly(L + sp + chop, T, L + sp + c2, T + c2, L + sp + th, T + th,
@@ -1523,6 +1554,7 @@ interface Component {
   shape?: string;
   style?: string;
   stretch: boolean;
+  center: boolean;
   transparent: boolean;
   caption: string;
   font: DfmFont;
@@ -1531,6 +1563,7 @@ interface Component {
   alignment?: string;
   textLayout?: string;
   wordWrap?: boolean;
+  showAccelChar?: boolean;
   visible?: boolean;
   bins: Record<string, { off: number; len: number }>;
 }
@@ -1630,6 +1663,7 @@ export function parseDfm(b: Uint8Array): Component[] {
     let lamps = false;
     let size: number | undefined;
     let stretch = false;
+    let center = false;
     let transparent = false;
     let trans = false;
     let button = 0;
@@ -1669,6 +1703,7 @@ export function parseDfm(b: Uint8Array): Component[] {
     let alignment: string | undefined;
     let textLayout: string | undefined;
     let wordWrap: boolean | undefined;
+    let showAccelChar: boolean | undefined;
     let visible: boolean | undefined;
     while (b[p] !== 0) {
       const pn = sstr();
@@ -1725,10 +1760,12 @@ export function parseDfm(b: Uint8Array): Component[] {
       else if (typeof v === 'number' && pn === 'Size') size = v;
       else if (typeof v === 'string' && pn === 'Style') style = v;
       else if (typeof v === 'boolean' && pn === 'Stretch') stretch = v;
+      else if (typeof v === 'boolean' && pn === 'Center') center = v;
       else if (typeof v === 'boolean' && pn === 'Transparent') transparent = v;
       else if (typeof v === 'string' && pn === 'Alignment') alignment = v;
       else if (typeof v === 'string' && pn === 'Layout') textLayout = v;
       else if (typeof v === 'boolean' && pn === 'WordWrap') wordWrap = v;
+      else if (typeof v === 'boolean' && pn === 'ShowAccelChar') showAccelChar = v;
       else if (typeof v === 'boolean' && pn === 'Visible') visible = v;
     }
     p++;
@@ -1742,8 +1779,9 @@ export function parseDfm(b: Uint8Array): Component[] {
       colour, colour1, colour2, offBrightness, ledColor, ledStyle, sizeX, sizeY, spacing, dpRight, dpOn, bins, offset, horizontal,
       thickness, space, horzSpace, vertSpace, programmable, seg14, masks,
       winLine, winLines: geom.WinLines, winLineWidth: geom.WinLineWidth, borderColor,
-      borderColour, borderWidth, totalSteps, vertical, lamps, shape, style, stretch, transparent,
+      borderColour, borderWidth, totalSteps, vertical, lamps, shape, style, stretch, center, transparent,
       caption, font, discProps, btnProps, alignment, textLayout, wordWrap, visible,
+      ...(showAccelChar === undefined ? {} : { showAccelChar }),
       ...(size === undefined ? {} : { size }),
     });
     while (b[p] !== 0) obj(font);
@@ -2513,13 +2551,38 @@ function datPictures(dfm: Uint8Array, comps: Component[]): CabBitmap<ImageData>[
     if (cls !== 'TBitmap') continue;
     const image = bmpToImageData(dfm, bin.off + 1 + n, bin.len - 1 - n, c.transparent);
     if (!image) continue;
-    out.push({
-      left: c.left, top: c.top, width: c.width, height: c.height,
-      image, overlay: null, stretch: 0,
-      ...(c.stretch ? {} : { natural: true }),
-    });
+    if (c.stretch || !c.center) {
+      out.push({
+        left: c.left, top: c.top, width: c.width, height: c.height,
+        image, overlay: null, stretch: 0,
+        ...(c.stretch ? {} : { natural: true }),
+      });
+      continue;
+    }
+    const placed = centredPicture(image, c.width, c.height);
+    if (placed) out.push({ ...placed, left: c.left + placed.left, top: c.top + placed.top, overlay: null, stretch: 0, natural: true });
   }
   return out;
+}
+
+export function centredPicture(
+  image: ImageData, w: number, h: number,
+): { left: number; top: number; width: number; height: number; image: ImageData } | null {
+  const dx = Math.trunc((w - image.width) / 2);
+  const dy = Math.trunc((h - image.height) / 2);
+  const x0 = Math.max(0, dx), y0 = Math.max(0, dy);
+  const x1 = Math.min(w, dx + image.width), y1 = Math.min(h, dy + image.height);
+  if (x1 <= x0 || y1 <= y0) return null;
+  if (dx >= 0 && dy >= 0 && x1 - x0 === image.width && y1 - y0 === image.height) {
+    return { left: dx, top: dy, width: image.width, height: image.height, image };
+  }
+  const cw = x1 - x0, ch = y1 - y0;
+  const out = newImageData(cw, ch);
+  for (let y = 0; y < ch; y++) {
+    const src = ((y0 - dy + y) * image.width + (x0 - dx)) * 4;
+    out.data.set(image.data.subarray(src, src + cw * 4), y * cw * 4);
+  }
+  return { left: x0, top: y0, width: cw, height: ch, image: out };
 }
 
 export function datLabel(
@@ -2530,7 +2593,7 @@ export function datLabel(
   const lamp = c.tag & 0x20000 ? ((c.tag & 0xff) | ((c.tag & 0x10000000) >>> 20)) : -1;
   const visible = c.visible ?? true;
   if (!visible && lamp < 0) return null;
-  const text = stripAccel(c.caption);
+  const { text, accel } = c.showAccelChar === false ? { text: c.caption, accel: [] } : accelText(c.caption);
   const fill = c.transparent ? undefined : sysColour(c.color ?? panel?.color, SYSTEM_COLOURS.clbtnface);
   if (!text.trim() && fill === undefined) return null;
   const align = c.alignment === 'taRightJustify' ? 'right' : c.alignment === 'taCenter' ? undefined : 'left';
@@ -2540,6 +2603,7 @@ export function datLabel(
     states: [],
     legend: {
       ...(text.trim() ? { off: text } : {}),
+      ...(text.trim() && accel.length ? { accel } : {}),
       colour: sysColour(c.font.color, SYSTEM_COLOURS.clwindowtext),
       ...(fill !== undefined ? { fill } : {}),
       face: c.font.name,
@@ -2555,7 +2619,20 @@ export function datLabel(
 }
 
 export function stripAccel(s: string): string {
-  return s.replace(/&(.)/gs, '$1').replace(/&$/, '');
+  return accelText(s).text;
+}
+
+export function accelText(s: string): { text: string; accel: number[] } {
+  let text = '';
+  const accel: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '&') { text += s[i]; continue; }
+    i++;
+    if (i >= s.length) break;
+    if (s[i] !== '&') accel.push(text.length);
+    text += s[i];
+  }
+  return { text, accel };
 }
 
 const SYSTEM_COLOURS: Record<string, number> = {
@@ -2623,8 +2700,14 @@ function shapeBtnCaption(c: Component, button: number | undefined): CabLamp<Imag
   if (w <= 0 || h <= 0) return null;
   const p = c.btnProps ?? {};
   const multi = p.MultipleLines === true;
-  let text = stripAccel(c.caption);
-  if (!multi) text = text.replace(/[\r\n]/g, '');
+  const acc = accelText(c.caption);
+  let text = acc.text;
+  let accel = acc.accel;
+  if (!multi) {
+    accel = accel.filter((i) => !/[\r\n]/.test(text[i]))
+      .map((i) => i - (text.slice(0, i).match(/[\r\n]/g)?.length ?? 0));
+    text = text.replace(/[\r\n]/g, '');
+  }
   if (!text.trim()) return null;
   const align = c.alignment === 'taLeftJustify' ? 'left' : c.alignment === 'taRightJustify' ? 'right' : undefined;
   const valign = multi ? 'top' : p.HorzAlign === 'zbha_Top' ? 'top' : p.HorzAlign === 'zbha_Bottom' ? 'bottom' : undefined;
@@ -2633,6 +2716,7 @@ function shapeBtnCaption(c: Component, button: number | undefined): CabLamp<Imag
     states: [],
     legend: {
       off: text,
+      ...(accel.length ? { accel } : {}),
       colour: sysColour(c.font.color, SYSTEM_COLOURS.clwindowtext),
       face: c.font.name,
       points: (Math.abs(c.font.height) * 72) / 96,

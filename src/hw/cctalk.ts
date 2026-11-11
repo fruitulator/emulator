@@ -95,6 +95,12 @@ function sealEvents(
   return desEcb(key, [crc & 0xff, ...body, (crc >> 8) & 0xff], false);
 }
 
+export const V20_CCTALK_UNIT_DEFAULT = 200_000;
+
+export function switchKeyAckDelay(unit: number): number {
+  return 2 * unit;
+}
+
 export class DesKey {
   key: number[] | null = [...V20_DEFAULT_DES_KEY];
 
@@ -784,7 +790,13 @@ export class Sch3Hopper extends Sch5Hopper {
 export class JcmEba implements CcTalkDevice {
   static readonly snapshotConfig: readonly string[] = ['address', 'model', 'v20Type', 'currency'];
 
-  readonly model = 'JCM EBA';
+  readonly v20Type: 1 | 2 | 3;
+  readonly model: string;
+
+  constructor(v20Type: 1 | 2 | 3 = 1) {
+    this.v20Type = v20Type;
+    this.model = NOTE_IDENTITY[v20Type].model;
+  }
 
   currency = 0;
 
@@ -862,6 +874,20 @@ export class JcmEba implements CcTalkDevice {
   };
   private seed = 0x51d3;
 
+  private recyclerReply(header: number, data: readonly number[]): number[] {
+    switch (header) {
+      case 0x18: return [...this.recyclerRoute];
+      case 0x19:
+      case 0x1a:
+        this.recyclerRoute = [data[0] ?? 0, data[1] ?? 0];
+        return [];
+      case 0x1d: return [0x80, 0, 0, 0, 0, 0, 0];
+      case 0x24: return [0x00, 0x1e, 0x00];
+      default: return [];
+    }
+  }
+  private recyclerRoute: number[] = [0, 0];
+
   reset(): void {
     this.key = [...this.stored];
     this.pending = null;
@@ -937,7 +963,7 @@ export class JcmEba implements CcTalkDevice {
       case CC.REQUEST_EQUIPMENT_CATEGORY:
         return ascii('Bill Validator');
       case CC.REQUEST_PRODUCT_CODE:
-        return ascii('EBA-22-PB2');
+        return ascii(NOTE_IDENTITY[this.v20Type].product);
       case CC.REQUEST_ENCRYPTION_SUPPORT:
         return encryptionSupport(1, this.desFitted);
       case CC.REQUEST_SOFTWARE_REVISION:
@@ -949,7 +975,7 @@ export class JcmEba implements CcTalkDevice {
       case CC.REQUEST_BUILD_CODE:
         return ascii('Standard');
       case CC.REQUEST_MANUFACTURER:
-        return ascii('JCM');
+        return ascii(NOTE_IDENTITY[this.v20Type].maker);
       case CC.REQUEST_COMMS_REVISION:
         return [0x01, 0x04, 0x06];
       case CC.REQUEST_BILL_POSITION:
@@ -1005,10 +1031,17 @@ export class JcmEba implements CcTalkDevice {
       case CC.SIMPLE_POLL:
         return [];
       default:
+        if (this.v20Type === 3 && header >= 0x13 && header <= 0x24) return this.recyclerReply(header, data);
         return null;
     }
   }
 }
+
+const NOTE_IDENTITY: Record<1 | 2 | 3, { model: string; product: string; maker: string }> = {
+  1: { model: 'JCM EBA', product: 'EBA-22-PB2', maker: 'JCM' },
+  2: { model: 'VEGA', product: 'VEGA', maker: 'JCM' },
+  3: { model: 'NV11', product: 'NV11', maker: 'ITL' },
+};
 
 interface BillRecord { country: string; bills: readonly string[] }
 
@@ -1025,7 +1058,9 @@ const MODELS: Record<string, () => CcTalkDevice> = {
   SCH2: () => new Sch2Hopper(),
   SCH3: () => new Sch3Hopper(),
   SCH5: () => new Sch5Hopper(),
-  JCMEBA: () => new JcmEba(),
+  JCMEBA: () => new JcmEba(1),
+  VEGA: () => new JcmEba(2),
+  NV11: () => new JcmEba(3),
 };
 
 export function deviceFor(model: string): CcTalkDevice | null {

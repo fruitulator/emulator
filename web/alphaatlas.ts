@@ -44,8 +44,8 @@ export const ALPHA_DEFAULT_INK = 0xff00ff00;
 export const ALPHA_DEFAULT_OFF_BRIGHTNESS = 80;
 
 export function atlasGlyph(code: number): number {
-  if (code < 0x20 || code > 0x5f) return -1;
-  return (code - 0x41 + 64) % 64;
+  if (code === 0) return 0x1f;
+  return (code - 1) & 0x3f;
 }
 
 const ALPHA_INTENSITY = [

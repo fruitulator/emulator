@@ -220,7 +220,7 @@ interface ReelState {
 }
 
 export class Reel5 {
-  static readonly snapshotConfig: readonly string[] = ['revolution'];
+  static readonly snapshotConfig: readonly string[] = ['revolution', 'fitted'];
 
   readonly lampDuty = new ReelLampDuty();
 
@@ -260,6 +260,13 @@ export class Reel5 {
     this.sync();
     this.revolution[reelNum] = steps;
     r.position = wrap(r.position, steps);
+  }
+
+  private fitted = (1 << N_REELS) - 1;
+
+  setFitted(mask: number): void {
+    this.sync();
+    this.fitted = mask & ((1 << N_REELS) - 1);
   }
 
   revolutionOf(reelNum: number): number {
@@ -503,7 +510,7 @@ export class Reel5 {
       const steps = this.revolution[i];
       const d = wrap(r.position - 1, steps);
       const bit = 1 << i;
-      if (d < 3 || d > steps - 2) {
+      if ((d < 3 || d > steps - 2) && (this.fitted & bit) !== 0) {
         r.optic = true;
         this.flagOff &= ~bit;
         this.seen |= bit;

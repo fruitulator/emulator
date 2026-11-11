@@ -42,6 +42,32 @@ export interface BarbusFrame {
   reply?: number[];
 }
 
+interface MuxAlphaState {
+  readonly alphaCells: Uint8Array;
+  readonly alphaPunct: Uint8Array;
+  alphaDuty: number;
+  alphaCursor: number;
+  alphaWindow: number;
+  alphaOn: boolean;
+}
+
+export class MuxAlpha implements MuxAlphaState {
+  readonly alphaCells = new Uint8Array(16).fill(0x20);
+  readonly alphaPunct = new Uint8Array(16);
+  alphaDuty = 0;
+  alphaCursor = 0;
+  alphaWindow = 16;
+  alphaOn = true;
+}
+
+function clearAlpha(a: MuxAlphaState): void {
+  a.alphaCells.fill(0x20);
+  a.alphaPunct.fill(0);
+  a.alphaDuty = 0;
+  a.alphaCursor = 0;
+  a.alphaWindow = 16;
+}
+
 function alphaToAscii(code: number): number {
   const six = code & 0x3f;
   return six < 0x20 ? 0x40 + six : six;
@@ -111,7 +137,7 @@ export class Barbus {
   framesSeen = 0;
   repliesSent = 0;
   repeatsSeen = 0;
-  onAlpha?: (cells: Uint8Array, punct: Uint8Array) => void;
+  onAlpha?: (cells: Uint8Array, punct: Uint8Array, unit: number) => void;
   readonly reel5 = new Reel5();
   readonly reel5b = new Reel5();
 
@@ -154,49 +180,58 @@ export class Barbus {
   private readonly reelJustLit = new Uint8Array(2 * 15);
   private readonly reelSenseHold = new Uint16Array(2);
 
-  private readonly alphaCells = new Uint8Array(16).fill(0x20);
-  private readonly alphaPunct = new Uint8Array(16);
+  readonly alphaCells = new Uint8Array(16).fill(0x20);
+  readonly alphaPunct = new Uint8Array(16);
   alphaDuty = 0;
-  private alphaCursor = 0;
+  alphaCursor = 0;
   alphaWindow = 16;
 
   alphaOn = true;
 
-  private alphaControl(len: number, data: number): void {
-    if (len === 1 && (data & 4) !== 0) { this.alphaOn = true; return; }
-    if (len === 1) this.alphaOn = false;
-    this.alphaReset();
+  readonly muxAlphas: MuxAlpha[] = [new MuxAlpha(), new MuxAlpha()];
+
+  private alphaOf(unit: number): MuxAlphaState | null {
+    return unit === 0 ? this : unit <= 2 ? this.muxAlphas[unit - 1] : null;
   }
 
-  private alphaReset(): void {
-    this.alphaCells.fill(0x20);
-    this.alphaPunct.fill(0);
-    this.alphaDuty = 0;
-    this.alphaCursor = 0;
-    this.alphaWindow = 16;
-    this.onAlpha?.(this.alphaCells, this.alphaPunct);
+  alphaDutyOf(unit: number): number {
+    return this.alphaOf(unit)?.alphaDuty ?? 0;
   }
 
-  private alphaWrite(payload: number[]): void {
-    if (!this.alphaOn) return;
+  private alphaControl(unit: number, len: number, data: number): void {
+    const a = this.alphaOf(unit);
+    if (!a) return;
+    if (len === 1 && (data & 4) !== 0) { a.alphaOn = true; return; }
+    if (len === 1) a.alphaOn = false;
+    this.alphaReset(unit, a);
+  }
+
+  private alphaReset(unit: number, a: MuxAlphaState): void {
+    clearAlpha(a);
+    this.onAlpha?.(a.alphaCells, a.alphaPunct, unit);
+  }
+
+  private alphaWrite(unit: number, payload: number[]): void {
+    const a = this.alphaOf(unit);
+    if (!a || !a.alphaOn) return;
     for (const b of payload) {
-      if ((b & 0xe0) === 0xe0) { this.alphaDuty = b & 0x1f; continue; }
-      if ((b & 0xf0) === 0xc0) { const n = b & 0x0f; this.alphaWindow = n === 0 ? 16 : n; continue; }
-      if (b >= 0xa0 && b <= 0xaf) { this.alphaCursor = (b - 0xa0 + 1) & 0x0f; continue; }
+      if ((b & 0xe0) === 0xe0) { a.alphaDuty = b & 0x1f; continue; }
+      if ((b & 0xf0) === 0xc0) { const n = b & 0x0f; a.alphaWindow = n === 0 ? 16 : n; continue; }
+      if (b >= 0xa0 && b <= 0xaf) { a.alphaCursor = (b - 0xa0 + 1) & 0x0f; continue; }
       if (b === 0x2e || b === 0x2c) {
-        const at = (16 - this.alphaCursor) & 0x0f;
-        this.alphaCells[at] |= 0x80;
-        this.alphaPunct[at] |= b;
+        const at = (16 - a.alphaCursor) & 0x0f;
+        a.alphaCells[at] |= 0x80;
+        a.alphaPunct[at] |= b;
         continue;
       }
       if (b >= 0x80) continue;
-      if (this.alphaCursor < 16) {
-        this.alphaCells[15 - this.alphaCursor] = alphaToAscii(b);
-        this.alphaPunct[15 - this.alphaCursor] = 0;
+      if (a.alphaCursor < 16) {
+        a.alphaCells[15 - a.alphaCursor] = alphaToAscii(b);
+        a.alphaPunct[15 - a.alphaCursor] = 0;
       }
-      this.alphaCursor++;
+      a.alphaCursor++;
     }
-    this.onAlpha?.(this.alphaCells, this.alphaPunct);
+    this.onAlpha?.(a.alphaCells, a.alphaPunct, unit);
   }
   readonly log: BarbusFrame[] = [];
   readonly reelLog: BarbusFrame[] = [];
@@ -217,10 +252,7 @@ export class Barbus {
     this.repeatsSeen = 0;
     this.log.length = 0;
     this.reelLog.length = 0;
-    this.alphaCells.fill(0x20);
-    this.alphaPunct.fill(0);
-    this.alphaDuty = 0;
-    this.alphaCursor = 0;
+    for (const a of [this, ...this.muxAlphas]) { clearAlpha(a); a.alphaOn = true; }
     this.lampsLive = false;
     this.muxLamps.fill(0);
     this.muxBase.fill(-1);
@@ -454,14 +486,14 @@ export class Barbus {
       }
     }
 
-    if ((addr & 0xfe) === 0x00 && (cmd & 0xf0) === 0x90) {
+    if ((addr & 0xf0) === 0x00 && (cmd & 0xf0) === 0x90) {
       const long = (cmd & 0x0f) === 0x0f;
       const len = long ? (body[2] ?? 0) : cmd & 0x0f;
-      this.alphaControl(len, body[long ? 3 : 2] ?? 0);
+      this.alphaControl((addr >> 1) & 7, len, body[long ? 3 : 2] ?? 0);
     }
-    if ((addr & 0xfe) === 0x00 && cmd >= 0xa1 && cmd <= 0xaf) {
+    if ((addr & 0xf0) === 0x00 && cmd >= 0xa1 && cmd <= 0xaf) {
       const payload = cmd === 0xaf ? body.slice(3, 3 + body[2]) : body.slice(2, 2 + (cmd - 0xa0));
-      this.alphaWrite(payload);
+      this.alphaWrite((addr >> 1) & 7, payload);
     }
     if ((addr & 0xf0) === 0x00 && ((cmd & 0xf0) === 0xb0 || (cmd & 0xf0) === 0x80)) {
       this.muxLedLampWrite(addr, cmd, body);

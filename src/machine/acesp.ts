@@ -51,7 +51,11 @@ export const NMI_TICK_CYCLES = 3000;
 
 const DONGLE_KEY_LENGTH = 22;
 
-export const IRQ2_HZ = 100;
+export const IRQ2_CYCLES = 20000;
+
+export const WATCHDOG_CYCLES = 100000;
+
+const POWER_SENSE_SWITCH = 40;
 
 const TCSR_ETOI = 0x04;
 const TCSR_EOCI = 0x08;
@@ -83,7 +87,6 @@ export interface AceSpOutputs {
 
 export interface AceSpInputs {
   readonly switches: Uint8Array;
-  power: number;
   health: number;
 }
 
@@ -124,7 +127,7 @@ export class AceSp implements Bus, Machine {
       { id: 'ram', label: 'RAM', part: '$0140-$1FFF', device: this.ram },
       { id: 'rom', label: 'PROGRAM ROM', part: '64K - 2 images', device: this.rom },
       { id: 'watchdog', label: 'WATCHDOG', part: '$0037', modelled: true,
-        note: 'Modelled as a kick counter on this board, not as a device.' },
+        note: 'Modelled on this board as a window each access re-opens, not as a device.' },
       { id: 'sndport', label: 'SOUND PORT', part: '$0036 - cmd/data latch',
         device: this.sndport },
       { id: 'oki', label: 'SAMPLES', part: 'MSM6376 - plug-in board',
@@ -167,7 +170,6 @@ export class AceSp implements Bus, Machine {
 
   readonly inputs: AceSpInputs = {
     switches: new Uint8Array(5),
-    power: 0xc0,
     health: 0xc0,
   };
 
@@ -303,7 +305,6 @@ export class AceSp implements Bus, Machine {
 
   private nmiCycles = 0;
   private nmiTickOn = false;
-  private irq2Cycles = 0;
 
   private ramOn = false;
 
@@ -318,12 +319,14 @@ export class AceSp implements Bus, Machine {
   private dongleCycles = 0;
   private irq2Pending = false;
   watchdogKicks = 0;
+  private watchdogCycles = 0;
+  private powerSense = 0x40;
 
   constructor() {
     this.cpu = new HD6303Y(this);
 
     this.pia = new Pia6821({
-      readA: () => this.inputs.power & 0xc0,
+      readA: () => (this.watchdogCycles !== 0 ? 0x80 : 0) | this.powerSense,
       readB: () => this.portB(),
     });
   }
@@ -496,6 +499,15 @@ export class AceSp implements Bus, Machine {
   }
 
   layoutInput(id: number, on: boolean): void {
+    if (id === POWER_SENSE_SWITCH) {
+      if (!on) this.powerSense = 0x40;
+      else if (this.powerSense !== 0) {
+        this.powerSense = 0;
+        this.cpu.setNMI(true);
+        this.cpu.setNMI(false);
+      }
+      return;
+    }
     if (id >= AceSp.DIL_ID_BASE && id < AceSp.DIL_ID_BASE + 16) {
       const n = id - AceSp.DIL_ID_BASE;
       const mask = 1 << (n & 7);
@@ -919,7 +931,6 @@ export class AceSp implements Bus, Machine {
 
     this.nmiCycles = 0;
     this.nmiTickOn = false;
-    this.irq2Cycles = 0;
     this.ramOn = false;
     this.dongleState = 0;
     this.dongleOut = 0x80;
@@ -930,6 +941,8 @@ export class AceSp implements Bus, Machine {
     this.dongleCycles = 0;
     this.irq2Pending = false;
     this.watchdogKicks = 0;
+    this.watchdogCycles = 0;
+    this.powerSense = 0x40;
 
     if (this.coinMask) this.inputs.switches[COIN_BYTE] &= ~this.coinMask & 0xff;
     this.coinCycles = 0;
@@ -995,6 +1008,7 @@ export class AceSp implements Bus, Machine {
     if (addr === 0x30) return this.reelpcb ? this.reelpcb.read() : this.reelctrl.read();
     if (addr === 0x36) return this.sndport.read();
     if (addr >= 0x38 && addr <= 0x3b) return this.pia.read(addr & 3);
+    if (addr === 0x37) this.kickWatchdog();
     if (addr < 0x30 || addr >= 0x3c) this.strays.hit(addr);
     return 0;
   }
@@ -1052,7 +1066,7 @@ export class AceSp implements Bus, Machine {
         this.sndport.write(val);
         return;
       case 0x37:
-        this.watchdogKicks++;
+        this.kickWatchdog();
         return;
       default:
         if (addr >= 0x38 && addr <= 0x3b) {
@@ -1060,6 +1074,10 @@ export class AceSp implements Bus, Machine {
           this.pia.write(addr & 3, val);
           if ((addr & 3) === 1) this.lampCra(val);
           else if ((addr & 3) === 3) this.syncNmiGate(val, cb2);
+          if (!(this.pia.outB() & 0x40) && this.irq2Pending) {
+            this.irq2Pending = false;
+            this.cpu.setIRQ2(false);
+          }
         } else this.strays.hit(addr);
     }
   }
@@ -1322,10 +1340,23 @@ export class AceSp implements Bus, Machine {
     this.dongleShift >>= 1;
   }
 
+  private kickWatchdog(): void {
+    this.watchdogKicks++;
+    this.watchdogCycles = WATCHDOG_CYCLES;
+  }
+
   private advanceDongle(cycles: number): void {
     this.dongleCycles += cycles;
-    if (this.dongleCycles <= 20000) return;
-    this.dongleCycles -= 20000;
+    if (this.dongleCycles <= IRQ2_CYCLES) return;
+    this.dongleCycles -= IRQ2_CYCLES;
+    this.dongleStep();
+    if (this.pia.outB() & 0x40) {
+      this.irq2Pending = true;
+      this.cpu.setIRQ2(true);
+    }
+  }
+
+  private dongleStep(): void {
     const st = this.dongleState;
     if (st === 2) this.dongleOut &= 0x7f;
     else if (st === 3) this.dongleOut |= 0x80;
@@ -1388,10 +1419,6 @@ export class AceSp implements Bus, Machine {
   private syncIrqEnables(): void {
     this.cpu.irq1Enabled = (this.rp5cr & 0x01) !== 0;
     this.cpu.irq2Enabled = (this.rp5cr & 0x02) !== 0;
-    if (!(this.rp5cr & 0x02) && this.irq2Pending) {
-      this.irq2Pending = false;
-      this.cpu.setIRQ2(false);
-    }
   }
 
   private characterCycles(): number {
@@ -1487,12 +1514,9 @@ export class AceSp implements Bus, Machine {
 
     this.advanceDongle(cycles);
 
-    this.irq2Cycles += cycles;
-    const irq2Period = Math.floor(E_CLOCK / IRQ2_HZ);
-    if (this.irq2Cycles >= irq2Period) {
-      this.irq2Cycles -= irq2Period;
-      this.irq2Pending = true;
-      this.cpu.setIRQ2(true);
+    if (this.watchdogCycles > 0) {
+      this.watchdogCycles -= cycles;
+      if (this.watchdogCycles < 1) this.watchdogCycles = 0;
     }
 
     if (this.reelpcb) {

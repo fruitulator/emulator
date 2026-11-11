@@ -390,22 +390,6 @@ body.cards-scrolling .card {
   display: inline-flex;
 }
 
-.ui-thumbstack {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-  display: flex;
-  pointer-events: none;
-}
-.ui-thumbstack > .art {
-  width: 34px;
-  aspect-ratio: 4 / 5;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 0 1.5px rgba(0, 0, 0, 0.9);
-}
-.ui-thumbstack > .art + .art { margin-left: -14px; }
-.ui-thumbstack .art-placeholder { font-size: 16px; }
 .art.ui-thumbmosaic {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -59,6 +59,8 @@ export class EpochAlpha implements MachineDisplay {
   }
 }
 
+export const DOT_ALPHA_LEVELS: readonly number[] = [128, 143, 158, 176, 191, 207, 222, 255];
+
 const REV8 = Uint8Array.from({ length: 256 }, (_, b) => {
   let r = 0;
   for (let i = 0; i < 8; i++) if (b & (1 << i)) r |= 0x80 >> i;
@@ -72,6 +74,8 @@ export class EpochDotAlpha {
   cursor = 0;
   brightness = 0;
   enabled = false;
+  shownLevel = 0;
+  shownAlpha = 255;
   command = false;
   private mode = 0;
   private count = 0;
@@ -132,7 +136,18 @@ export class EpochDotAlpha {
       case 2: this.mode = 0x20; this.count = 5; this.command = false; this.glyph = b & 7; this.glyphCol = 0; break;
       case 3: this.mode = 0x30; this.cursor = n; this.command = false; break;
       case 4: if (n === 3) this.clearCells(); break;
-      case 5: this.mode = 0x50; this.count = 0; this.brightness = (b - 1) & 7; break;
+      case 5: {
+        this.mode = 0x50;
+        this.count = 0;
+        const level = (b - 1) & 7;
+        if (level === this.brightness) break;
+        this.brightness = level;
+        if (level !== this.shownLevel) {
+          this.shownLevel = level;
+          this.shownAlpha = DOT_ALPHA_LEVELS[level];
+        }
+        break;
+      }
       case 6: this.mode = 0x60; this.count = 0; this.size = n === 0 ? 16 : n + 8; break;
       case 7:
         this.mode = 0x70;

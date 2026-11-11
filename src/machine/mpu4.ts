@@ -392,7 +392,9 @@ export class Mpu4 implements Bus, Machine {
   private meterPortB = 0;
   private meterSettle = 0;
 
-  readonly lamps = new Uint8Array(8 * 16 + 128);
+  readonly lamps = new Uint8Array(0x120);
+  private ic8OutSeen = 0;
+  private ic8DdrSeen = 0;
   private readonly lampMux = [0, 64, 128, 192].map((base) => new MuxLamps(this.lamps, base));
   private lampEnable = false;
   private lampEnableCount = 0;
@@ -536,6 +538,7 @@ export class Mpu4 implements Bus, Machine {
         { const d = this.ic5.ddrB() & 0x0f; if (d !== 0 && (v & d) !== d) this.coinLocksOpened = true; }
         const changed = (this.aux2Out ^ v) & 0xff;
         this.aux2Out = v;
+        this.ic5BankWrite();
         if (this.payoutType === 0x0b) this.crystalSrlWrite(changed, v);
         if (this.ledType === 1) this.ledLatchWrite(v & 0x07, ~this.ic4PortA & 0xff);
         else if (this.ledType === 4) this.ledLatchWrite(v & 0x07, this.ic4PortA);
@@ -614,7 +617,7 @@ export class Mpu4 implements Bus, Machine {
         const fixed = bank === 0 ? this.inputs.orange1 : bank === 1 ? this.inputs.orange2 : 0;
         return (this.inputs.switches[bank] | fixed) & 0xff;
       },
-      writeB: (v) => this.latchTriacs(v),
+      writeB: (v) => { this.ic8BankWrite(); this.latchTriacs(v); },
       writeCA2: (v) => this.setStrobeBit(2, v),
       writeCB2: (v) => {
         if (this.plasma) {
@@ -1965,12 +1968,34 @@ export class Mpu4 implements Bus, Machine {
     }
     if ((changed & 0x20) === 0) return;
     if ((orb & 0x40) === 0) {
-      if (((this.srlCmd ^ this.srlLastCmd) & 0x7f) !== 0) this.srlLastCmd = this.srlCmd;
+      if (((this.srlCmd ^ this.srlLastCmd) & 0x7f) !== 0) {
+        this.srlLastCmd = this.srlCmd;
+        Mpu4.setClearBank(this.lamps, 0x118, this.srlCmd);
+      }
       this.hopper1?.motorDrive((this.srlCmd & 0x80) !== 0 && (orb & 0x01) !== 0);
     } else {
       this.srlReply = (this.hopperSense(this.hopper1, 0x80, this.hopper1Opto)
         | Mpu4.srlSwitchBits(this.inputs.aux2)) & 0xff;
     }
+  }
+
+  private static setClearBank(lamps: Uint8Array, base: number, data: number): void {
+    for (let i = 0; i < 8; i++) lamps[base + i] = (data >> i) & 1 ? 0xff : 0;
+  }
+
+  private ic5BankWrite(): void {
+    if (!this.ic5) return;
+    Mpu4.setClearBank(this.lamps, 0x108, ~this.ic5.outB() & this.ic5.ddrB());
+  }
+
+  private ic8BankWrite(): void {
+    if (!this.ic8) return;
+    const out = this.ic8.outB();
+    const ddr = this.ic8.ddrB();
+    const changed = ((this.ic8OutSeen ^ out) & ddr) | ((this.ic8DdrSeen ^ ddr) & ~out);
+    this.ic8OutSeen = out;
+    this.ic8DdrSeen = ddr;
+    if (changed & 0xff) Mpu4.setClearBank(this.lamps, 0x100, out);
   }
 
   private static srlSwitchBits(aux2: number): number {
@@ -2081,16 +2106,18 @@ export class Mpu4 implements Bus, Machine {
     }
   }
 
-  setSamplePack(image: Uint8Array, baseRate = MPU4_SAMPLE_PACK_RATE): void {
+  setSamplePack(image: Uint8Array, baseRate = MPU4_SAMPLE_PACK_RATE, files = 1, sampled?: number): void {
     const banks = decodeMfmeSamplePack(image, baseRate);
     this.sampleBankBases = [];
     this.oki.setSecondBank(undefined);
     this.sampleTable.fill(0);
     this.packSamples = [undefined as unknown as MfmeSample];
     let id = 1;
-    for (let b = 0; b < banks.length && b * 0x100 < this.sampleTable.length; b++) {
+    const blocks = (image.length + 0x1ffff) >>> 17;
+    const step = sampled !== 2 && blocks === 2 && files === 2 ? 4 : 1;
+    for (let b = 0; b < banks.length && b * step * 0x100 < this.sampleTable.length; b++) {
       for (let i = 0; i < banks[b].length; i++) {
-        this.sampleTable[b * 0x100 + i] = id & 0xff;
+        this.sampleTable[b * step * 0x100 + i] = id & 0xff;
         this.packSamples[id] = banks[b][i];
         id += 1;
       }

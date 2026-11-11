@@ -153,6 +153,7 @@ const painter = createCabinetPainter(canvas, {
   reelPeek: () => reelPeek.value(),
   onReelRow: (reel, row) => reelBands.row(reel, row),
   checkboxTicked: (cb) => switchLevels.ticked(cb, emu.info?.switchPanel),
+  checkboxPressed: (cb) => switchLevels.pressed(cb),
 });
 const reelBands = createReelBands(stage);
 const picker = document.getElementById('folder') as HTMLInputElement;
@@ -2921,8 +2922,8 @@ pointerHost.addEventListener('pointerdown', (ev) => {
   const box = checkboxHit(ev.clientX, ev.clientY);
   if (box) {
     ev.preventDefault();
-    const row = emu.info?.switchPanel.find((sw) => sw.id === box.id);
-    throwSwitchFromPage(row ?? { id: box.id, label: box.legend.off ?? '' }, !switchLevels.ticked(box, emu.info?.switchPanel));
+    switchLevels.press(box, ev.pointerId);
+    pointerHost.setPointerCapture(ev.pointerId);
     return;
   }
   touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
@@ -2978,7 +2979,15 @@ function endPeek(ev: PointerEvent): void {
   reelPeek.release();
 }
 
+function releaseBox(ev: PointerEvent): void {
+  const box = switchLevels.release(ev.pointerId);
+  if (!box || !running) return;
+  const row = emu.info?.switchPanel.find((sw) => sw.id === box.id);
+  throwSwitchFromPage(row ?? { id: box.id, label: box.legend.off ?? '' }, !switchLevels.ticked(box, emu.info?.switchPanel));
+}
+
 function endTouch(ev: PointerEvent): void {
+  releaseBox(ev);
   endPeek(ev);
   capPointer.up(ev);
   touches.delete(ev.pointerId);
@@ -2991,7 +3000,7 @@ pointerHost.addEventListener('pointercancel', (ev) => {
   touchStolenAt = performance.now();
   endTouch(ev);
 });
-pointerHost.addEventListener('lostpointercapture', (ev) => { endPeek(ev); capPointer.up(ev); });
+pointerHost.addEventListener('lostpointercapture', (ev) => { releaseBox(ev); endPeek(ev); capPointer.up(ev); });
 let wheelTravel = 0;
 pointerHost.addEventListener('wheel', (ev) => {
   if (!magnifier.active && !hasHoverPointer()) return;

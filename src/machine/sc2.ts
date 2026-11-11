@@ -143,7 +143,7 @@ export class Sc2 implements Bus, Machine {
 
   reelStripOffsets: number[] = [0, 0, 0, 0, 0, 0];
 
-  readonly lampStore = new LampSetClear(256);
+  readonly lampStore = new LampSetClear(0x108);
   get lamps(): Uint8Array {
     return this.lampStore.level;
   }
@@ -885,6 +885,7 @@ export class Sc2 implements Bus, Machine {
 
   private writeIo(a: number, v: number): void {
     this.noteIo(a, true);
+    if (a === 0x232f && v !== this.io[0x232f & 0x1fff]) this.lampStore.writeByte(0x100, v);
     this.io[a & 0x1fff] = v;
 
     if (a === 0x2500 && this.dataPakType) {

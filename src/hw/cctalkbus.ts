@@ -6,6 +6,7 @@ export interface CcTalkBusTiming {
   replyDelay: number;
   byteGap: number;
   frameGap: number;
+  keyAckDelay?: number;
 }
 
 export interface CcTalkFrame {
@@ -156,7 +157,8 @@ export class CcTalkBus {
       for (const x of b) s = (s + x) & 0xff;
       bytes = [...b, (0x100 - s) & 0xff];
     }
-    this.send(bytes);
+    this.send(bytes, msg.header === CC.SWITCH_ENCRYPTION_KEY
+      ? this.timing.keyAckDelay ?? this.timing.replyDelay : this.timing.replyDelay);
     this.trace?.(req, bytes);
 
     if (msg.header === CC.ADDRESS_CHANGE && msg.data.length >= 1 && msg.data[0] !== 0) {
@@ -166,8 +168,8 @@ export class CcTalkBus {
     }
   }
 
-  private send(bytes: number[]): void {
-    let at = this.wire.now + this.timing.replyDelay;
+  private send(bytes: number[], delay: number): void {
+    let at = this.wire.now + delay;
     for (const b of bytes) {
       this.wire.queue.push({ at, b: b & 0xff });
       at += this.timing.byteGap;

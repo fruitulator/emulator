@@ -611,13 +611,6 @@ const scorpion4: Platform = {
         ifWrong: 'Firmware written for another note acceptor may report it missing or faulty.',
         node: TAILORED_IDS.notes,
       });
-    } else if (sc4NoteType > 1) {
-      noteBoardDefault(m, {
-        axis: 'peripheral',
-        text: `note acceptor: ${sc4NoteName} is not modelled - none is fitted`,
-        ifWrong: 'Firmware that opens its note reader raises a note reader alarm.',
-        node: TAILORED_IDS.notes,
-      });
     }
 
     const sc4Serial = [1, 2].map((n) => (sc4Layout ? readSetting(sc4Layout, 'SCORPION5', `Hopper ${n}`) : null));
@@ -1198,7 +1191,12 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
       so += f.bytes.length;
     }
     if (isMfmeSamplePack(samples)) {
-      m.setSamplePack(samples);
+      const lay54 = decodedLayout(game.layout);
+      const tag54 = lay54 ? fileLevelTags(lay54).get(0x54) : undefined;
+      const sampled = tag54 && tag54.length >= 4
+        ? (tag54[0] | (tag54[1] << 8) | (tag54[2] << 16) | (tag54[3] << 24)) >>> 0
+        : undefined;
+      m.setSamplePack(samples, undefined, sndFiles.length, sampled);
       if (m.video) {
         noteBoardDefault(m, {
           axis: 'peripheral',
@@ -1206,14 +1204,6 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
           ifWrong: 'The cabinet plays no sampled sound, or waits on a sound that never ends.',
           node: 'video',
           unbuilt: 'sound board',
-        });
-      }
-      if (samples.length > 0x20000 && samples.length <= 0x40000 && sndFiles.length === 2) {
-        noteBoardDefault(m, {
-          axis: 'peripheral',
-          text: 'this cabinet\'s packed sounds may be mapped to the wrong bank - a setting we do not read decides it',
-          ifWrong: 'Some sounds play in the wrong place or not at all; nothing else changes.',
-          node: 'oki',
         });
       }
     } else {
@@ -1843,7 +1833,9 @@ const mpu5: Platform = {
     const mpu5Alpha = v20AlphaServe(game.layout, { m10937: [0, 1, 2, 3] });
     m.alphaRoute = !mpu5Alpha || mpu5Alpha.classic ? 'barbus'
       : mpu5Alpha.decoder === '10937' && mpu5Alpha.index === 0 ? 'board'
-        : mpu5Alpha.decoder === '10937' && mpu5Alpha.index === 1 ? 'barbus' : null;
+        : mpu5Alpha.decoder === '10937' && mpu5Alpha.index === 1 ? 'barbus'
+          : mpu5Alpha.decoder === '10937' && mpu5Alpha.index === 2 ? 'barbus1'
+            : mpu5Alpha.decoder === '10937' && mpu5Alpha.index === 3 ? 'barbus2' : null;
     let progImage: Uint8Array;
     const named = manifestRoms(game);
     const placed = named.length > 1 ? manifestImage(game, 0x80000, 0) : null;
@@ -2018,13 +2010,6 @@ const mpu5: Platform = {
         axis: 'peripheral',
         text: 'note acceptor: JCM EBA - the layout names none',
         ifWrong: 'Firmware written for another note acceptor may report it missing or faulty.',
-        node: TAILORED_IDS.notes,
-      });
-    } else if (noteType > 1 && m.vend) {
-      noteBoardDefault(m, {
-        axis: 'peripheral',
-        text: `note acceptor: ${noteName} is not modelled - none is fitted`,
-        ifWrong: 'Firmware that opens its note reader raises a note reader alarm.',
         node: TAILORED_IDS.notes,
       });
     }

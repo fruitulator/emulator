@@ -565,9 +565,9 @@ export class Mps2 implements Machine {
     this.meterBank.write((this.meterLevel << 1) | (level ? 1 : 0));
   }
 
-  private readonly matrix = new Uint8Array(4);
+  private readonly matrix = new Uint8Array(16);
   #panel: LayoutSwitch[] = [];
-  readonly #stated = new StatedLines(4);
+  readonly #stated = new StatedLines(16);
   #declaredRow3 = 0;
 
   get tubeSensesStoodIn(): number[] {
@@ -575,11 +575,11 @@ export class Mps2 implements Machine {
   }
 
   setLayoutSwitches(list: readonly LayoutSwitch[]): void {
-    const wanted = list.filter((s) => s.number >= 0 && s.number < 64);
+    const wanted = list.filter((s) => s.number >= 0 && s.number < 128 &&
+      !(s.number >= Mps2.DIL_ID_BASE && s.number < Mps2.DIL_ID_BASE + 16));
     if (!wanted.length) return;
     this.#panel = wanted.map((s) => ({ ...s }));
     for (const s of wanted) {
-      if (s.number >= 32) continue;
       this.layoutInput(s.number, s.closed);
       this.#stated.stateLine(s.number, s.closed);
       if (s.number >> 3 === 3) this.#declaredRow3 |= 1 << (s.number & 7);
@@ -715,7 +715,7 @@ export class Mps2 implements Machine {
 
   get switchPanel(): CabinetSwitch[] {
     const rows: CabinetSwitch[] = layoutPanelRows(this.#panel, (id) =>
-      id < 32 && (this.matrix[id >> 3] & (1 << (id & 7))) !== 0);
+      id >= 0 && id < 128 && (this.matrix[id >> 3] & (1 << (id & 7))) !== 0);
     rows.push({
       id: Mps2.DIL_ID_BASE + Mps2.TEST_SWITCH_ROW,
       label: 'Test switch',
@@ -740,6 +740,7 @@ export class Mps2 implements Machine {
   setDilLabels(labels: readonly string[] | null): void { this.dilLabels = labels; }
 
   private static readonly DIL_ID_BASE = 64;
+  private static readonly CLEAR_DOWN_KEY = 80;
   private static readonly TEST_SWITCH_ROW = 7;
   setHoppers(v: number): void { this.hoppersFlag = v & 0xff; }
   setProtocol(p: number): void { this.protocol = p; }
@@ -1048,6 +1049,7 @@ export class Mps2 implements Machine {
       this.invalidAccess = 0;
       this.clearDown = 0;
     }
+    if (this.matrix[Mps2.CLEAR_DOWN_KEY >> 3] & (1 << (Mps2.CLEAR_DOWN_KEY & 7))) this.clearDown = 0;
     if (!this.nmiEnable || (this.powerFail & this.watchdogTimeout & this.invalidAccess & this.clearDown)) {
       this.nmiRaised = 0;
     } else if (!this.nmiRaised) {
@@ -1116,8 +1118,10 @@ export class Mps2 implements Machine {
         note: 'Its watchdog, alarm, reel enable and NMI enable are followed; NMI enable also enables the DIL switches.' },
 
       { id: 'reels', label: '6 REELS', part: 'JPM serial MCU', device: this.jpmReels },
-      { id: 'hopper', label: 'HOPPER', part: 'not modelled' },
-      { id: 'coinmech', label: 'COIN MECH', part: 'acceptor - not modelled' },
+      this.hopperFitted
+        ? { id: 'hopper', label: 'HOPPER', part: 'motor hd10 bit 2', device: this.hopper }
+        : { id: 'hopper', label: 'HOPPER', part: 'not fitted' },
+      { id: 'coinmech', label: 'COIN MECH', part: 'inhibits - port A 4-7', signal: 'coin' },
     ];
   }
 
@@ -1143,7 +1147,7 @@ export class Mps2 implements Machine {
       else this.dip2 = on ? this.dip2 | mask : this.dip2 & ~mask & 0xff;
       return;
     }
-    const row = (id >> 3) & 3;
+    const row = (id & 0x78) >> 3;
     const b = id & 7;
     if (on) this.matrix[row] |= 1 << b;
     else this.matrix[row] &= ~(1 << b);

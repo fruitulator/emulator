@@ -52,6 +52,10 @@ export interface FancyPool<A> {
   clip: Rect;
 }
 
+export function mirrorSlot(slot: number): number {
+  return slot < 5 ? 4 - slot : slot < 10 ? 14 - slot : 24 - slot;
+}
+
 export function fancyReelPool<A extends { width: number; height: number }>(
   reel: ReelBand<A>,
 ): FancyPool<A> | null {
@@ -82,7 +86,7 @@ export function fancyReelPool<A extends { width: number; height: number }>(
   for (let i = 0; i < 15; i++) {
     const lamp = tray[i] ?? -2;
     if (lamp === -2) continue;
-    const k = i % 5;
+    const k = (lamp >= 0 && reel.lampsMirrored ? mirrorSlot(i) : i) % 5;
     const a0 = Math.round(at(k - 2.5 - shift));
     const a1 = Math.round(at(k - 1.5 - shift));
     if (a1 <= a0) continue;

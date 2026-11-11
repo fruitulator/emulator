@@ -15,6 +15,13 @@ const COLON_SEGMENTS = Uint8Array.from([
   0x00, 0x00, 0x08, 0x08, 0x08, 0x00, 0x08, 0x08, 0x08, 0x00, 0x00, 0x00,
 ]);
 
+function romPunct(code: number, ascii: boolean): number {
+  if (code === 0x2e) return 0x80;
+  if (code === 0x2c) return 0x40;
+  if (!ascii && (code === 0x6c || code === 0x6e)) return 0x80;
+  return 0;
+}
+
 const BIT_REVERSE = Uint8Array.from({ length: 256 }, (_, b) => {
   let r = 0;
   for (let i = 0; i < 8; i++) if (b & (1 << i)) r |= 0x80 >> i;
@@ -46,6 +53,9 @@ export class Bda {
   private asciiCharset = false;
   private readonly udfDefined = new Uint8Array(128);
   private readonly udfGlyphs = new Uint8Array(128 * 5);
+  private readonly udfPt = new Uint8Array(128);
+  private readonly cellPt = new Uint8Array(16);
+  private lastCell = 0;
   private readonly cellUdf = new Uint8Array(16 * 5);
   readonly udfDots = new Uint8Array(16 * 5);
   private readonly udfData = new Uint8Array(7);
@@ -62,6 +72,7 @@ export class Bda {
 
   private readonly scrollQueue = new Uint8Array(48);
   private readonly scrollUdf = new Uint8Array(48 * 5);
+  private readonly scrollPt = new Uint8Array(48);
   private scrollCount = 0;
   private scrollRead = 0;
   private scrollCollect = false;
@@ -77,6 +88,7 @@ export class Bda {
   private v20Start = 0;
   private v20End = 15;
   readonly gfxDots = new Uint8Array(16 * 6);
+  readonly punctDots = new Uint8Array(16);
 
   constructor(userDefBytes = 7, modeCmdUserDef = true, mirrored = false) {
     this.mirrored = mirrored;
@@ -124,11 +136,14 @@ export class Bda {
         if (this.gfxOn[col]) mask |= 1 << c;
       }
       g[i * 6 + 5] = mask;
+      const pt = cell * 6 + 5;
+      this.punctDots[i] = this.gfxOn[pt] ? BIT_REVERSE[this.gfxCol[pt]] : this.cellPt[cell];
     }
   }
 
-  private setCell(cell: number, v: number, glyph?: Uint8Array): void {
+  private setCell(cell: number, v: number, glyph?: Uint8Array, pt = 0): void {
     this.cells[cell] = v;
+    this.cellPt[cell] = pt;
     if (v & UDF_CELL) {
       const code = v & 0x7f;
       this.cellUdf.set(glyph ?? this.udfGlyphs.subarray(code * 5, code * 5 + 5), cell * 5);
@@ -139,6 +154,7 @@ export class Bda {
 
   private moveCell(to: number, from: number): void {
     this.cells[to] = this.cells[from];
+    this.cellPt[to] = this.cellPt[from];
     this.cellUdf.copyWithin(to * 5, from * 5, from * 5 + 5);
     this.gfxCol.copyWithin(to * 6, from * 6, from * 6 + 6);
     this.gfxOn.copyWithin(to * 6, from * 6, from * 6 + 6);
@@ -149,6 +165,7 @@ export class Bda {
     if (to <= from) return;
     if (!keepFlash) for (let i = from; i < to; i++) this.flash &= ~(1 << i);
     this.cells.fill(0, from, to);
+    this.cellPt.fill(0, from, to);
     this.gfxOn.fill(0, from * 6, to * 6);
     this.gfxCol.fill(0, from * 6, to * 6);
   }
@@ -175,9 +192,14 @@ export class Bda {
     return this.romCell(code);
   }
 
+  private punctOf(code: number): number {
+    return this.udfDefined[code] ? this.udfPt[code] : romPunct(code, this.asciiCharset);
+  }
+
   private romCell(code: number): number {
     if (code === 0x26) return 0x20;
     if (!this.asciiCharset && (code === 0x3a || code === 0x3b)) return 0x20;
+    if (!this.asciiCharset && (code === 0x6c || code === 0x6e)) return 0x20;
     return this.asciiCharset ? code : fold6(code);
   }
 
@@ -202,7 +224,7 @@ export class Bda {
       const [start, end] = this.window();
       if (start <= end) for (let i = start; i < end; i++) this.moveCell(i, i + 1);
       const q = this.scrollRead++;
-      this.setCell(end & 15, this.scrollQueue[q], this.scrollUdf.subarray(q * 5, q * 5 + 5));
+      this.setCell(end & 15, this.scrollQueue[q], this.scrollUdf.subarray(q * 5, q * 5 + 5), this.scrollPt[q]);
       moved = true;
       if (this.scrollRead < this.scrollCount && this.scrollPeriod > 0) this.scrollLeft += this.scrollPeriod;
       else {
@@ -239,6 +261,9 @@ export class Bda {
 
   reset(): void {
     this.cells.fill(0);
+    this.cellPt.fill(0);
+    this.punctDots.fill(0);
+    this.lastCell = 0;
     this.chars.fill(0);
     this.cursor = 0;
     this.mode = 0;
@@ -251,6 +276,7 @@ export class Bda {
     this.asciiCharset = false;
     this.udfDefined.fill(0);
     this.udfGlyphs.fill(0);
+    this.udfPt.fill(0);
     this.cellUdf.fill(0);
     this.scrollUdf.fill(0);
     this.udfDots.fill(0);
@@ -269,6 +295,7 @@ export class Bda {
     this.gfxLeft = 0;
     this.fillOutside = false;
     this.scrollQueue.fill(0);
+    this.scrollPt.fill(0);
     this.scrollCount = 0;
     this.scrollRead = 0;
     this.scrollCollect = false;
@@ -290,6 +317,7 @@ export class Bda {
     const d = this.udfData;
     const code = d[5] & 0x7f;
     this.udfDefined[code] = 1;
+    this.udfPt[code] = 0;
     const col = this.udfGlyphs.subarray(code * 5, code * 5 + 5);
     col.fill(0);
     for (let row = 0; row < 7; row++) {
@@ -377,6 +405,7 @@ export class Bda {
           const code = v & 0x7f;
           this.scrollUdf.set(this.udfGlyphs.subarray(code * 5, code * 5 + 5), this.scrollCount * 5);
         }
+        this.scrollPt[this.scrollCount] = this.punctOf(data & 0x7f);
         this.scrollQueue[this.scrollCount++] = v;
       }
       return;
@@ -386,7 +415,8 @@ export class Bda {
       this.fillOutside = false;
       const v = this.asciiCharset ? data & 0x7f : fold6(data);
       const [ws, we] = this.window();
-      for (let i = 0; i < 16; i++) if (i < ws || i > we) this.setCell(i, v);
+      const pt = this.punctOf(data & 0x7f);
+      for (let i = 0; i < 16; i++) if (i < ws || i > we) this.setCell(i, v, undefined, pt);
       return;
     }
 
@@ -404,10 +434,11 @@ export class Bda {
       const glyph = this.udfGlyphs.subarray(0x3a * 5, 0x3a * 5 + 5);
       for (let k = 0; k < 8; k++) {
         if (!((data >> k) & 1)) continue;
-        for (let c = 0; c < 5; c++) glyph[c] |= COLON_SEGMENTS[(base + k) * 6 + c] & 0x7f;
+        for (let c = 0; c < 5; c++) glyph[c] |= COLON_SEGMENTS[(base + k) * 6 + c];
+        this.udfPt[0x3a] |= COLON_SEGMENTS[(base + k) * 6 + 5];
       }
       if (--this.customSkip > 0) return;
-      this.place(UDF_CELL | 0x3a, true);
+      this.place(UDF_CELL | 0x3a, true, true, this.udfPt[0x3a]);
       return;
     }
 
@@ -432,6 +463,7 @@ export class Bda {
         break;
       case 0x90:
         this.cursor = data & 0x0f;
+        this.lastCell = this.cursor;
         this.scrollActive = false;
         if (this.mode === 2 && this.cursor >= this.windowEnd) this.scrollActive = true;
         else if (this.mode === 3 && this.cursor === this.windowStart) this.scrollActive = true;
@@ -533,22 +565,27 @@ export class Bda {
   private character(code: number): void {
     if (code === 0x3a && this.modeCmdUserDef) {
       this.udfGlyphs.fill(0, 0x3a * 5, 0x3a * 5 + 5);
+      this.udfPt[0x3a] = 0;
       this.udfDefined[0x3a] = 1;
       this.customSkip = 2;
       return;
     }
+    if (this.modeCmdUserDef && (code === 0x2e || code === 0x2c)) {
+      const at = this.lastCell & 15;
+      this.cellPt[at] = this.punctOf(code);
+      this.gfxOn[at * 6 + 5] = 0;
+      return;
+    }
+    if (this.modeCmdUserDef && code === 0x25) {
+      this.flash |= 1 << (this.cursor & 15);
+      return;
+    }
     if (this.udfDefined[code]) {
-      this.place(UDF_CELL | code, true);
+      this.place(UDF_CELL | code, true, true, this.udfPt[code]);
       return;
     }
     switch (code) {
       case 0x25:
-        if (this.modeCmdUserDef) {
-          this.flash |= 1 << (this.cursor & 15);
-          return;
-        }
-        this.place(code, false);
-        return;
       case 0x2c:
       case 0x2e:
         this.place(code, false);
@@ -557,11 +594,12 @@ export class Bda {
         this.userDef = this.userDefBytes;
         return;
     }
-    this.place(this.romCell(code), true);
+    this.place(this.romCell(code), true, true, romPunct(code, this.asciiCharset));
   }
 
-  private place(ascii: number, move = true, change = true): void {
+  private place(ascii: number, move = true, change = true, pt = 0): void {
     if (!move) return;
+    this.lastCell = this.cursor & 0x0f;
     let mode = this.mode;
     if (this.windowSize <= 0 || this.windowSize > 16) {
       if (mode === 2) mode = 0;
@@ -571,18 +609,18 @@ export class Bda {
     switch (mode) {
       case 0:
         this.cursor &= 0x0f;
-        if (change) this.setCell(this.cursor, ascii);
+        if (change) this.setCell(this.cursor, ascii, undefined, pt);
         this.cursor = (this.cursor + 1) & 0x0f;
         break;
       case 1:
         this.cursor &= 0x0f;
-        if (change) this.setCell(this.cursor, ascii);
+        if (change) this.setCell(this.cursor, ascii, undefined, pt);
         this.cursor = (this.cursor + 15) & 0x0f;
         break;
       case 2:
         if (this.cursor < this.windowEnd) {
           this.scrollActive = false;
-          if (change) this.setCell(this.cursor, ascii);
+          if (change) this.setCell(this.cursor, ascii, undefined, pt);
           this.cursor++;
         } else {
           if (this.scrollActive) {
@@ -592,12 +630,12 @@ export class Bda {
           } else {
             this.scrollActive = true;
           }
-          this.setCell(this.windowEnd, change ? ascii : 0);
+          this.setCell(this.windowEnd, change ? ascii : 0, undefined, change ? pt : 0);
         }
         break;
       case 3:
         if (this.cursor > this.windowStart) {
-          if (change) this.setCell(this.cursor, ascii);
+          if (change) this.setCell(this.cursor, ascii, undefined, pt);
           this.cursor--;
         } else {
           if (this.scrollActive) {
@@ -607,7 +645,7 @@ export class Bda {
           } else {
             this.scrollActive = true;
           }
-          this.setCell(this.windowStart, change ? ascii : 0);
+          this.setCell(this.windowStart, change ? ascii : 0, undefined, change ? pt : 0);
         }
         break;
     }

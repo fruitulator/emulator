@@ -10,7 +10,7 @@ import { Mc68681 } from '../hw/mc68681';
 import { Barbus, MUX_UNITS as BARBUS_MUX_UNITS, MUX_UNIT_BYTES as BARBUS_MUX_UNIT_BYTES } from '../hw/barbus';
 import { MpuPic, PIC_ACCESS_CYCLES } from '../hw/pic';
 import { Sec } from '../hw/sec';
-import { Sr5iMech, Sch2Hopper, JcmEba, deviceFor, type CcTalkDevice } from '../hw/cctalk';
+import { Sr5iMech, Sch2Hopper, JcmEba, deviceFor, switchKeyAckDelay, V20_CCTALK_UNIT_DEFAULT, type CcTalkDevice } from '../hw/cctalk';
 import { HopperJitter } from '../hw/hopper';
 import { CcTalkBus, type CcTalkWire } from '../hw/cctalkbus';
 import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
@@ -92,7 +92,12 @@ export class Mpu5 implements Bus16, Machine {
   });
 
   readonly boardAlpha = new Msc1937();
-  alphaRoute: 'barbus' | 'board' | null = 'barbus';
+  alphaRoute: 'barbus' | 'barbus1' | 'barbus2' | 'board' | null = 'barbus';
+
+  private get alphaUnit(): number {
+    const r = this.alphaRoute;
+    return r === 'barbus' ? 0 : r === 'barbus1' ? 1 : r === 'barbus2' ? 2 : -1;
+  }
 
   private boardAlphaLines(opr: number, was: number): void {
     const pins = ~opr & 0xff;
@@ -169,7 +174,8 @@ export class Mpu5 implements Bus16, Machine {
       this.port9Last = 0;
       this.vendBus?.reset();
     };
-    this.barbus.onAlpha = (cells, punct) => {
+    this.barbus.onAlpha = (cells, punct, unit) => {
+      if (unit !== this.alphaUnit) return;
       this.displayChars.set(cells);
       for (let i = 0; i < 16; i++) this.displayCells[i] = (cells[i] & 0x7f) | (punct[i] << 8);
       this.alphaSeen = true;
@@ -1364,9 +1370,15 @@ export class Mpu5 implements Bus16, Machine {
       this.reels[i] = new Reel({ stepsPerRevolution: g.halfSteps, symbols: g.stops });
     });
     this.reelWires = geometry.slice(0, 10).map((g) => (g.number >= 0 && g.number < 10 ? g.number : -1));
+    let fitted = 0;
     for (const g of geometry) {
       if (g.number < 0 || g.number >= 10) continue;
+      fitted |= 1 << g.number;
       (g.number < 5 ? this.barbus.reel5 : this.barbus.reel5b).setRevolution(g.number % 5, g.halfSteps);
+    }
+    if (fitted) {
+      this.barbus.reel5.setFitted(fitted & 0x1f);
+      this.barbus.reel5b.setFitted(fitted >> 5);
     }
   }
 
@@ -1388,7 +1400,7 @@ export class Mpu5 implements Bus16, Machine {
   }
 
   get display(): MachineDisplay | null {
-    return this.alphaRoute === 'barbus' ? this.barbusDisplay
+    return this.alphaUnit >= 0 ? this.barbusDisplay
       : this.alphaRoute === 'board' ? this.boardAlpha : null;
   }
 
@@ -1396,7 +1408,7 @@ export class Mpu5 implements Bus16, Machine {
     kind: 'mpu5alpha' as const,
     chars: self.displayChars,
     cellWords: self.displayCells,
-    get duty() { return self.alphaSeen ? self.barbus.alphaDuty : 31; },
+    get duty() { return self.alphaSeen ? self.barbus.alphaDutyOf(self.alphaUnit) : 31; },
     text: () => [...this.displayChars]
       .map((raw) => {
         const c = raw & 0x7f;
@@ -1884,6 +1896,7 @@ export class Mpu5 implements Bus16, Machine {
       replyDelay: 2 * Mpu5.MS,
       byteGap: Math.round(Mpu5.MS * 10 / 9.6),
       frameGap: 50 * Mpu5.MS,
+      keyAckDelay: switchKeyAckDelay(V20_CCTALK_UNIT_DEFAULT),
     });
     const mech = new Sr5iMech();
     mech.desFitted = false;
@@ -1953,8 +1966,8 @@ export class Mpu5 implements Bus16, Machine {
   static readonly MECH_LAMPS = 0x240;
 
   fitNoteValidator(type: number): boolean {
-    if (!this.vendBus || type !== 1) return false;
-    const v = new JcmEba();
+    if (!this.vendBus || (type !== 1 && type !== 2 && type !== 3)) return false;
+    const v = new JcmEba(type);
     v.address = Mpu5.VEND_NOTE;
     v.desFitted = false;
     this.keyPart(Mpu5.VEND_NOTE, v);

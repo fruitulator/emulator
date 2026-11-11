@@ -636,10 +636,12 @@ export class M68340Sim {
     }
   }
 
-  dmaRequest(ch: number): boolean {
+  dmaRequest(ch: number, cpuMask: number): boolean {
     const base = DMA_BASE[ch];
     if (!(this.regs[base + DMA_CCR + 1] & DMA_CCR_STR)) return false;
-    if (this.r16(base) & 0x8000) return false;
+    const mcr = this.r16(base);
+    if (mcr & 0x8000) return false;
+    if (cpuMask > ((mcr >> 8) & 7)) return false;
     if ((this.r16(base + DMA_CCR) & 0x0030) !== 0x0030) return false;
     if (this.r32(base + DMA_BTC) === 0 || (this.regs[base + DMA_CSR] & DMA_CSR_EVENTS)) return false;
     this.dmaOperand(ch);

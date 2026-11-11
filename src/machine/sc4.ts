@@ -13,7 +13,7 @@ import { Mc68681, X1_HZ } from '../hw/mc68681';
 import { RngUnit } from '../hw/rngunit';
 import { Sec } from '../hw/sec';
 import { Sc4HopperPair, locateSc4PayoutUnits, readSc4HopperCoins, sc4UnitCoin, sc4UnitEnabled, type Sc4Coin, type Sc4HopperCoins, type Sc4PayoutUnits } from '../hw/sc4hoppers';
-import { JcmEba, Sch2Hopper, deviceFor } from '../hw/cctalk';
+import { JcmEba, Sch2Hopper, deviceFor, switchKeyAckDelay, CC } from '../hw/cctalk';
 import { applyPartKeys, DEFAULT_CCTALK_KEYS, type CcTalkKeys } from './cctalkkeys';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { DataPak } from '../hw/datapak';
@@ -228,13 +228,17 @@ export class Sc4 implements Bus16, Machine {
 
   private static readonly CC_REPLY_DELAY = 48_000;
   private static readonly CC_BYTE_GAP = 16_000;
+  private static readonly CC_KEY_ACK_DELAY = switchKeyAckDelay(MASTER_CLOCK / 20);
+  private static replyDelay(header: number | undefined): number {
+    return header === CC.SWITCH_ENCRYPTION_KEY ? Sc4.CC_KEY_ACK_DELAY : Sc4.CC_REPLY_DELAY;
+  }
 
   private ccNoteReply(v: JcmEba, f: number[]): void {
     const msg = v.decodeFrame(f);
     if (!msg) return;
     const rd = v.reply(msg.header, msg.data);
     if (rd === null) return;
-    let at = this.totalCycles + Sc4.CC_REPLY_DELAY;
+    let at = this.totalCycles + Sc4.replyDelay(msg.header);
     for (const x of v.encodeFrame(1, rd)) {
       this.ccReply.push({ at, b: x & 0xff });
       at += Sc4.CC_BYTE_GAP;
@@ -261,12 +265,12 @@ export class Sc4 implements Bus16, Machine {
   }
 
   fitNoteValidator(type: number, desFitted = false): boolean {
-    if (type !== 1) {
+    if (type !== 1 && type !== 2 && type !== 3) {
       this.ccNote = null;
       this.resetNoteLamps();
       return false;
     }
-    const v = new JcmEba();
+    const v = new JcmEba(type);
     v.address = 0x28;
     v.desFitted = desFitted;
     applyPartKeys(v, this.ccTalkKeys.note);
@@ -306,7 +310,7 @@ export class Sc4 implements Bus16, Machine {
     const b = [src ?? 1, rd.length, dest, 0, ...rd];
     let s = 0;
     for (const x of b) s = (s + x) & 0xff;
-    let at = this.totalCycles + Sc4.CC_REPLY_DELAY;
+    let at = this.totalCycles + Sc4.replyDelay(header);
     for (const x of [...b, (0x100 - s) & 0xff]) {
       this.ccReply.push({ at, b: x & 0xff });
       at += Sc4.CC_BYTE_GAP;

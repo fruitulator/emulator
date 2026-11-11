@@ -2,7 +2,7 @@ import { LAMP_FULL, type FrameView } from '../src/machine/framestate';
 import { drawnBounce } from './bouncepref';
 import {
   bandStripWindow, flipReelFace, mfmeBandIndex, mfmeBoardReelPosition,
-  mfmeFlipReelPosition, reelEffectivePosition, rgbLedColour,
+  mfmeFlipReelPosition, reelEffectivePosition, rgbLedColour, rgbLedLit,
   type BandStrip, type Cabinet, type CabCheckbox, type CabLamp, type FlipStrip, type RgbLed,
 } from './dat';
 import { discAngleDeg } from './discreel';
@@ -106,6 +106,10 @@ const RGB_DIES = { led: true } as const;
 
 export function rgbLedFrameColour(m: FrameView, led: RgbLed): number {
   return rgbLedColour(led, (n) => cabLampLit(m, RGB_DIES, n), (n) => m.muxLedColour(n));
+}
+
+export function rgbLedFrameLit(m: FrameView, led: RgbLed): boolean {
+  return rgbLedLit(led, (n) => cabLampLit(m, RGB_DIES, n), (n) => m.muxLedColour(n));
 }
 
 function turned(
@@ -227,6 +231,7 @@ export function buildRenderIndex(
   heldInput: (input: number) => boolean = () => false,
   reelPeek: () => number = () => 0,
   checkboxTicked: (cb: CabCheckbox) => boolean = (cb) => cb.checked,
+  checkboxPressed: (cb: CabCheckbox) => boolean = () => false,
 ): IndexedElement[] {
   const els: IndexedElement[] = [];
 
@@ -367,7 +372,7 @@ export function buildRenderIndex(
   for (const led of cab.rgbLeds ?? []) {
     els.push({ owner: led,
       extent: turned(rect(led.left, led.top, led.width, led.height), led),
-      key: (m) => mix(0, rgbLedFrameColour(m, led) | 0),
+      key: (m) => mix(mix(0, rgbLedFrameColour(m, led) | 0), rgbLedFrameLit(m, led) ? 1 : 0),
     });
   }
 
@@ -452,7 +457,7 @@ export function buildRenderIndex(
   for (const cb of cab.checkboxes ?? []) {
     els.push({ owner: cb,
       extent: turned(rect(cb.left, cb.top, cb.width, cb.height), cb),
-      key: () => (checkboxTicked(cb) ? 1 : 0),
+      key: () => (checkboxTicked(cb) ? 1 : 0) | (checkboxPressed(cb) ? 2 : 0),
     });
   }
 

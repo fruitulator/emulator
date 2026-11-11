@@ -4,6 +4,7 @@ import { Mcs51 } from '../cpu/mcs51';
 import { Quart } from '../hw/quart';
 import { Ay8910 } from '../hw/ay8910';
 import { Ymz280b } from '../hw/ymz280b';
+import { SteppedVolume, setBoardLevel } from '../hw/steppedvolume';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { Hopper, v20Waveform } from '../hw/hopper';
@@ -105,6 +106,8 @@ export class IgtS2000 implements Machine {
   private coinOut = 0;
   private coinTimer = 0;
   private quart2Bit1 = 0;
+  readonly volume = new SteppedVolume(100);
+  private volumePrev = 7;
 
   private calls = 0;
   private totalCycles = 0;
@@ -286,6 +289,7 @@ export class IgtS2000 implements Machine {
     this.quart1.reset();
     this.quart2.reset();
     this.quart2Bit1 = 0;
+    this.volumePrev = 7;
     this.eepTimer = 0; this.eepCtl = 0; this.eepAddr = 0; this.eepState = 0; this.eepRead = 0;
     this.eepRestart = 0; this.eepStop = 0; this.eepOut = 0;
     this.coinOut = 0; this.coinTimer = 0; this.coinStep = 0;
@@ -520,9 +524,20 @@ export class IgtS2000 implements Machine {
         if (a & 2) this.ay.write(v);
         else this.ay.selectAddress(v);
         return;
-      case 7: return;
+      case 7: this.volumeWrite(v); return;
       default: this.strays.hit(a); return;
     }
+  }
+
+  private volumeWrite(raw: number): void {
+    const v = ~raw & 0xff;
+    const changed = this.volumePrev ^ v;
+    if ((changed & 7) === 0) return;
+    if ((v & 4) === 0) {
+      const level = (changed & 1) && (v & 1) === 0 ? this.volume.step((v & 2) !== 0) : this.volume.set(this.volume.counted());
+      setBoardLevel(level, [this.ay, this.ymz]);
+    }
+    this.volumePrev = v;
   }
 
   private ioBlockWrite(x: number, v: number): void {
