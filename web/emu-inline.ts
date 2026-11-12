@@ -12,7 +12,7 @@ import {
 import { applyState, captureState, captureStateRaw } from './snapshot';
 import { gatesOf, stampGates } from './play/gates';
 import {
-  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyPayoutMeters, applyNotPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
+  CoinPacer, coinLogLine, coinRejected, InputDwell, MAX_CATCHUP_SECONDS, ReelDiagnostics, applyOptionKeyState, applyPanelSwitchState, applyNamedCoins, applyNamedPayouts, applyPayoutMeters, applyPayoutCoins, applyNotPayouts, applyCoinWiring, buildMachineInfo, powerCycleOrThrow,
   rebuildWithBlankMemory, sameFrameLayout, measureRunningCoins, measureLogLine, type MeasureSettings,
   calibrateHost, offerNote, readIoCounts, regionStats,
   disableAudioTicks, pumpAudioToPort, runBudget,
@@ -107,6 +107,7 @@ export class InlineEmu implements Emu {
       applyNamedCoins(m, opts.namedCoins);
       applyNamedPayouts(m, opts.namedPayouts);
       applyPayoutMeters(m, opts.payoutMeters);
+      applyPayoutCoins(m, opts.payoutCoins);
       applyNotPayouts(m, opts.notPayouts);
       applyCoinWiring(m, opts.coinWiring);
       if (opts.powerCycle) powerCycleOrThrow(m);
@@ -256,6 +257,10 @@ export class InlineEmu implements Emu {
 
   setPayoutMeter(line: number, token: boolean): void {
     this.machine?.setPayoutMeter?.(line, token);
+  }
+
+  setPayoutCoins(line: number, coins: number): void {
+    this.machine?.setPayoutCoins?.(line, coins);
   }
 
   setNotPayouts(lines: readonly number[]): void {

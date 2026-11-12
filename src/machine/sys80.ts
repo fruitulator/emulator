@@ -247,6 +247,7 @@ export class Sys80 implements Machine {
   }
 
   namePayout(line: number, pence: number): void { this.coinBook.payouts.name(line, pence); }
+  setPayoutCoins(line: number, coins: number): void { this.coinBook.payouts.setCoins(line, coins); }
 
   get meterCounts(): Uint32Array { return this.meters; }
 

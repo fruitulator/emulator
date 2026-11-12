@@ -66,6 +66,7 @@ export interface MachineInfo {
   }[];
 
   payoutTokenChoice?: boolean;
+  payoutMultiples?: boolean;
   meterOnlyPayout?: boolean;
   cashPayouts?: number[];
   payoutRows?: PayoutRow[];
@@ -91,6 +92,7 @@ export type EmuRequest =
       namedCoins?: Record<string, NamedCoin>;
       namedPayouts?: Record<string, number>;
       payoutMeters?: Record<string, boolean>;
+      payoutCoins?: Record<string, number>;
       notPayouts?: number[];
       coinWiring?: CoinWiring;
       powerCycle?: boolean;
@@ -107,6 +109,7 @@ export type EmuRequest =
   | { type: 'name-coin'; epoch: number; line: number; coin: NamedCoin }
   | { type: 'name-payout'; epoch: number; line: number; pence: number }
   | { type: 'payout-meter'; epoch: number; line: number; token: boolean }
+  | { type: 'payout-coins'; epoch: number; line: number; coins: number }
   | { type: 'not-payouts'; epoch: number; lines: number[] }
   | { type: 'gate-seen'; epoch: number; lamps: number[] }
   | { type: 'coin-wiring'; epoch: number; wiring: CoinWiring }

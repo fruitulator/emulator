@@ -64,6 +64,14 @@ export function readPayoutMeters(raw: unknown): Record<string, boolean> {
     .filter((e): e is [string, boolean] => /^\d+$/.test(e[0]) && typeof e[1] === 'boolean'));
 }
 
+export function readPayoutCoins(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object') return {};
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>)
+    .filter((e): e is [string, number] => /^\d+$/.test(e[0]) && (e[1] === 2 || e[1] === 3)));
+}
+
+export const MULTIPLE_COINS: readonly number[] = [10, 20];
+
 export const CASH_COINS: readonly number[] = [200, 100, 50, 20, 10, 5, 2];
 
 export const TOKEN_VALUES: readonly number[] = [5, 10, 20, 25, 50, 100];

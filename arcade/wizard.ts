@@ -49,7 +49,7 @@ import { str } from '../web/i18n';
 import { coinGrid, coinTicks, payoutDefaultNote, slotCards } from '../web/ui/coinsetup';
 
 import { segSwitch } from '../web/ui/segswitch';
-import { editedSlot, isTokenCoin, markedSlots, readCoinWiring, payoutsAnswered, readPayoutMeters, readPayoutValues, readNotPayoutLines, CASH_COINS, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
+import { editedSlot, isTokenCoin, markedSlots, readCoinWiring, payoutsAnswered, readPayoutCoins, readPayoutMeters, readPayoutValues, readNotPayoutLines, CASH_COINS, MULTIPLE_COINS, TOKEN_VALUES, cashLabel, slotCoinLabel, unplacedCoins, type CoinWiring, type SlotCoin, type SlotWiring } from '../web/coinask';
 import { acceptorSlots, coinLineSlots, type AcceptorSlot, type DrawnSlot } from '../web/coinslots';
 import { coinsTaken, hostCoinsTaken, lineCoins, stepLineCoins, markableButtons, markedCounted, sameKindCoin, slotOffer, slotlessToWire, slotsToWire, takesNoCoinAtAll, wiringFinder, wiringFor, type MarkableButton, type WireSlot } from './coinwiring';
 import { definitionOf, keepCoinAnswers } from './hostset';
@@ -2202,21 +2202,33 @@ class Wizard {
         o.textContent = text;
         return o;
       };
+      const multiples = !!this.info()?.payoutMultiples && device.kind.endsWith('tube');
+      const coinOptions = (prefix: string, pence: number, label: string): HTMLOptionElement[] => [
+        option(`${prefix}${pence}`, label),
+        ...(multiples && MULTIPLE_COINS.includes(pence)
+          ? [2, 3].map((n) => option(`${prefix}${pence}x${n}`, str('coinask.coin_times_n', { 0: label, 1: n })))
+          : []),
+      ];
       if (both) {
         sel.append(none,
-          ...CASH_COINS.map((p) => option(`c${p}`, cashLabel(p))),
-          ...TOKEN_VALUES.map((p) => option(`t${p}`, str('coinask.n_token', { 0: cashLabel(p) }))));
+          ...CASH_COINS.flatMap((p) => coinOptions('c', p, cashLabel(p))),
+          ...TOKEN_VALUES.flatMap((p) => coinOptions('t', p, str('coinask.n_token', { 0: cashLabel(p) }))));
       } else {
-        sel.append(none, ...(token ? TOKEN_VALUES : CASH_COINS).map((p) => option(String(p), cashLabel(p))));
+        sel.append(none, ...(token ? TOKEN_VALUES : CASH_COINS).flatMap((p) => coinOptions('', p, cashLabel(p))));
       }
       const values = readPayoutValues(this.m.config.payouts);
       const shown = values[key] ?? device.defaultPence;
       const isToken = readPayoutMeters(this.m.config.payoutMeters)[key] ?? token;
-      sel.value = shown == null ? '' : both ? `${isToken ? 't' : 'c'}${shown}` : String(shown);
+      const shownCoins = multiples ? readPayoutCoins(this.m.config.payoutCoins)[key] : undefined;
+      const times = shownCoins ? `x${shownCoins}` : '';
+      sel.value = shown == null ? '' : both ? `${isToken ? 't' : 'c'}${shown}${times}` : `${shown}${times}`;
       sel.addEventListener('change', () => {
         const next = readPayoutValues(this.m.config.payouts);
         const nextMeters = readPayoutMeters(this.m.config.payoutMeters);
-        const pence = Number(both ? sel.value.slice(1) : sel.value) || 0;
+        const nextCoins = readPayoutCoins(this.m.config.payoutCoins);
+        const [penceText, coinsText] = (both ? sel.value.slice(1) : sel.value).split('x');
+        const pence = Number(penceText) || 0;
+        const coins = pence ? Number(coinsText) || 1 : 1;
         const nextToken = sel.value.startsWith('t');
         if (pence) next[key] = pence;
         else delete next[key];
@@ -2224,6 +2236,8 @@ class Wizard {
           if (pence) nextMeters[key] = nextToken;
           else delete nextMeters[key];
         }
+        if (coins > 1) nextCoins[key] = coins;
+        else delete nextCoins[key];
         const nextNotPayouts = readNotPayoutLines(this.m.config.notPayouts).filter((line) => line !== device.line);
         for (const c of [this.m.config, this.draft, this.wm.machine.config]) {
           if (Object.keys(next).length) c.payouts = { ...next };
@@ -2232,12 +2246,17 @@ class Wizard {
             if (Object.keys(nextMeters).length) c.payoutMeters = { ...nextMeters };
             else delete c.payoutMeters;
           }
+          if (multiples) {
+            if (Object.keys(nextCoins).length) c.payoutCoins = { ...nextCoins };
+            else delete c.payoutCoins;
+          }
           if (nextNotPayouts.length) c.notPayouts = nextNotPayouts;
           else delete c.notPayouts;
         }
         if (this.wm.live.running) {
           this.wm.live.emu.namePayout(device.line, pence);
           if (both) this.wm.live.emu.setPayoutMeter(device.line, pence ? nextToken : token);
+          if (multiples) this.wm.live.emu.setPayoutCoins(device.line, coins);
         }
         setPayoutDefaultNote(row, payoutDefaultNote(device, next[String(device.line)]));
         setPayoutFaultNote(row, faulty && sel.value !== '');
@@ -2936,6 +2955,7 @@ function cloneConfig(c: MachineConfig): MachineConfig {
     ...(c.payouts ? { payouts: { ...c.payouts } } : {}),
     ...(c.notPayouts ? { notPayouts: [...c.notPayouts] } : {}),
     ...(c.payoutMeters ? { payoutMeters: { ...c.payoutMeters } } : {}),
+    ...(c.payoutCoins ? { payoutCoins: { ...c.payoutCoins } } : {}),
     ...(c.freePlay !== undefined ? { freePlay: c.freePlay } : {}),
   };
 }
@@ -2948,6 +2968,7 @@ function normConfig(c: MachineConfig): MachineConfig {
     ...(c.payouts && Object.keys(c.payouts).length ? { payouts: { ...c.payouts } } : {}),
     ...(c.notPayouts?.length ? { notPayouts: [...c.notPayouts] } : {}),
     ...(c.payoutMeters && Object.keys(c.payoutMeters).length ? { payoutMeters: { ...c.payoutMeters } } : {}),
+    ...(c.payoutCoins && Object.keys(c.payoutCoins).length ? { payoutCoins: { ...c.payoutCoins } } : {}),
     ...(c.freePlay !== undefined ? { freePlay: c.freePlay } : {}),
   };
 }

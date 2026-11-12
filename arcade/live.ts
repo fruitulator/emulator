@@ -1,7 +1,7 @@
 import { WorkerEmu, type AutosaveBlob } from '../web/emu-client';
 import { blankMemoryGame } from '../web/emu-core';
 import { getMeta, playCountOf, putMeta } from '../web/store';
-import { readNotPayoutLines, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
+import { readNotPayoutLines, readPayoutCoins, readPayoutMeters, readPayoutValues, coinChoices, slotCoinLabel, slotCoinPence, slotlessChoices, isTokenCoin, wiredCoinOn, type CoinChoice, type CoinWiring } from '../web/coinask';
 import type { OwnCoins } from '../web/menupanels';
 import { coinsForLoad, markedChutes, slotNumberOf, stepSlots, takesACoin, unsetCoinLine, wiringFor } from './coinwiring';
 import { coinLineSlots } from '../web/coinslots';
@@ -38,7 +38,7 @@ import { logInputLabels } from '../web/downloads';
 import { inflateSync, strFromU8 } from 'fflate';
 import type { CheckResult } from '../web/relay';
 import type { Glass } from './glass';
-import type { ClaimEvents, ClaimResult, MoneyHooks, SlotKeyframe, StateSlot, Visit, WatchHandle } from './machines';
+import type { ArcadeMachine, ClaimEvents, ClaimResult, MoneyHooks, SlotKeyframe, StateSlot, Visit, WatchHandle } from './machines';
 import type { RelayBatch, StopCoin } from './serverwire';
 import { isToken, payForCoin, penceOf, unpriced, type Wallet } from './wallet';
 import { unknownMoneyMoved } from './moneygate';
@@ -155,7 +155,7 @@ export class Live {
   private keysMade?: PlayKeys;
   hintPlace: (() => HintPlace | null) | null = null;
   error = '';
-  private loaded: { hash: string; slot: StateSlot | null; save: boolean } | null = null;
+  private loaded: { hash: string; slot: StateSlot | null; save: boolean; machine: ArcadeMachine } | null = null;
   private halted = false;
   private saving: Promise<void> = Promise.resolve();
   private claimed: StateSlot | null = null;
@@ -222,10 +222,13 @@ export class Live {
   private coinFaultNow = false;
   private payoutFaultsAtStart = 0;
   private get freePlay(): boolean {
-    return freePlayOn(this.emu.info, this.glass?.machine?.config) || this.payoutsUnset;
+    return freePlayOn(this.emu.info, this.setupOf) || this.payoutsUnset;
+  }
+  private get setupOf(): ArcadeMachine['config'] | undefined {
+    return (this.glass?.machine ?? this.loaded?.machine)?.config;
   }
   private get payoutsUnset(): boolean {
-    return payoutsUnsetFor(this.emu.info, this.glass?.machine?.config);
+    return payoutsUnsetFor(this.emu.info, this.setupOf);
   }
   private get pricing(): Live['wallet'] { return this.freePlay ? null : this.wallet; }
   private freePlayTold = false;
@@ -682,6 +685,7 @@ export class Live {
         ...coinsForLoad(cfg.coins, ownAnswers, null),
         namedPayouts: readPayoutValues(cfg.payouts),
         payoutMeters: readPayoutMeters(cfg.payoutMeters),
+        payoutCoins: readPayoutCoins(cfg.payoutCoins),
         notPayouts: readNotPayoutLines(cfg.notPayouts),
       };
       this.oldCoinAnswers = ownAnswers;
@@ -726,7 +730,7 @@ export class Live {
         if (liveValue('diag')) this.emu.setDiagLog(true);
       }
       this.effects.load(game);
-      this.loaded = { hash, slot, save: o.saveOnLeave !== false && !!slot && !visit };
+      this.loaded = { hash, slot, save: o.saveOnLeave !== false && !!slot && !visit, machine: glass.machine };
       if (o.stampPlay !== false) slot?.visited?.();
       if (meta && o.stampPlay !== false) {
         const now = Date.now();
@@ -1270,6 +1274,7 @@ export class Live {
         ...coinsForLoad(cfg.coins, g.machine.hostFiles ? undefined : meta?.coinAnswers, null),
         namedPayouts: readPayoutValues(cfg.payouts),
         payoutMeters: readPayoutMeters(cfg.payoutMeters),
+        payoutCoins: readPayoutCoins(cfg.payoutCoins),
         notPayouts: readNotPayoutLines(cfg.notPayouts),
         snapshot,
         follow: { cycle: k.cycle, seq: k.seq, bufferMs: WATCH_BUFFER_MS },
@@ -1284,7 +1289,7 @@ export class Live {
         const { labels, coinNames } = logInputLabels(viewFor(game.system), info, g.cab!.lamps);
         this.emu.setInputLabels(labels, coinNames);
         this.effects.load(game);
-        this.loaded = { hash: w.hash, slot: w.slot, save: false };
+        this.loaded = { hash: w.hash, slot: w.slot, save: false, machine: g.machine };
         this.halted = false;
         this.audio.attach(info.audioRate, info.audioLevel);
         this.bridgeAudio();

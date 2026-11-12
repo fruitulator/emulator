@@ -330,6 +330,7 @@ export class Sru extends Sys80 {
   override get meterOnlyPayout(): boolean { return this.book.namesNoPayout; }
   override get tokenPayoutLines(): readonly number[] { return this.book.tokenSlides; }
   override namePayout(line: number, pence: number): void { this.book.payouts.name(line, pence); }
+  override setPayoutCoins(line: number, coins: number): void { this.book.payouts.setCoins(line, coins); }
   override setPayoutMeter(line: number, token: boolean): void { this.book.payouts.setCash(line, !token); }
   override setNotPayouts(lines: readonly number[]): void { this.book.setNotPayouts(lines); }
 

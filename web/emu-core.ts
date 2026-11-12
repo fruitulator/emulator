@@ -142,6 +142,7 @@ export function buildMachineInfo(game: Game, m: Machine, layout: FrameLayout): M
     ...(m.meterNameOffset ? { meterNameOffset: m.meterNameOffset } : {}),
     ...(m.namePayout && m.tokenPayoutLines?.length ? { tokenPayouts: [...m.tokenPayoutLines] } : {}),
     ...(m.payoutTokenChoice && m.setPayoutMeter ? { payoutTokenChoice: true } : {}),
+    ...(m.setPayoutCoins ? { payoutMultiples: true } : {}),
     ...(m.payoutDevices?.length
       ? { payoutDevices: m.payoutDevices.map((d) => ({ ...d })) }
       : ((m.unpricedPayoutLines?.length || m.tokenPayoutLines?.length || m.hopperPayoutLines?.length)
@@ -368,6 +369,11 @@ export function applyNamedPayouts(m: Pick<Machine, 'namePayout'>, named: Record<
 export function applyPayoutMeters(m: Machine, answers: Record<string, boolean> | undefined): void {
   if (!answers || !m.setPayoutMeter) return;
   for (const [line, token] of Object.entries(answers)) m.setPayoutMeter(Number(line), token);
+}
+
+export function applyPayoutCoins(m: Machine, coins: Record<string, number> | undefined): void {
+  if (!coins || !m.setPayoutCoins) return;
+  for (const [line, n] of Object.entries(coins)) m.setPayoutCoins(Number(line), n);
 }
 
 export function applyNotPayouts(m: Pick<Machine, 'setNotPayouts'>, lines: readonly number[] | undefined): void {

@@ -52,6 +52,7 @@ export interface MachineConfig {
   payouts?: Record<string, number>;
   notPayouts?: number[];
   payoutMeters?: Record<string, boolean>;
+  payoutCoins?: Record<string, number>;
   freePlay?: boolean;
   meterValues?: Record<string, unknown>;
   tokenMeters?: (number | string)[];

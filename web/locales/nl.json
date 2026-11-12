@@ -940,6 +940,7 @@
   "clearram.clear_ram_and_restart_this": "RAM wissen en dit spel opnieuw starten?",
   "clearram.it_starts_again_as_a": "De automaat start opnieuw alsof hij nieuw is, zonder opgeslagen instellingen of stand.",
   "clearram.your_saved_game_becomes_this": "Je opgeslagen spel wordt deze nieuwe start.",
+  "coinask.coin_times_n": "{0} × {1}",
   "coinask.n_token": "Token van {0}",
   "coinask.no_value": "Kies de waarde",
   "coinask.token": "Token",

@@ -35,6 +35,13 @@ export class TokenPayouts {
 
   value(line: number): number | undefined { return this.named.get(line) ?? this.defaults.get(line); }
 
+  private readonly coins = new Map<number, number>();
+  setCoins(line: number, n: number): void {
+    if (n === 2 || n === 3) this.coins.set(line, n);
+    else this.coins.delete(line);
+  }
+  coinsOf(line: number): number { return this.coins.get(line) ?? 1; }
+
   private readonly cash = new Map<number, boolean>();
   setCash(line: number, cash: boolean): void { this.cash.set(line, cash); }
   isCash(line: number): boolean { return this.cash.get(line) === true; }
@@ -173,6 +180,10 @@ export class CoinBook {
   }
 
   slide(line: number): void {
+    for (let n = this.payouts.coinsOf(line); n > 0; n--) this.slideCoin(line);
+  }
+
+  private slideCoin(line: number): void {
     const s = this.slides[line] ?? null;
     if (s === null && this.outputs.includes(line)) { this.output(line, 'token'); return; }
     this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
@@ -194,6 +205,10 @@ export class CoinBook {
   }
 
   part(line: number, stated: SlideEffect | { token: number }): void {
+    for (let n = this.payouts.coinsOf(line); n > 0; n--) this.partCoin(line, stated);
+  }
+
+  private partCoin(line: number, stated: SlideEffect | { token: number }): void {
     this.lineCoins[line] = (this.lineCoins[line] ?? 0) + 1;
     const named = this.payouts.value(line);
     const token = this.payouts.isToken(line, stated === 'token' || (stated !== null && typeof stated === 'object'));
