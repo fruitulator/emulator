@@ -1533,14 +1533,7 @@ export class Mpu5 implements Bus16, Machine {
     }
     if (!this.banks) {
       for (let n = 0; n < 64; n++) out[n] = this.asic.matrixLevel[n];
-      const lit = this.barbus.reelLamps;
-      for (let row = 0; row < 3; row++) {
-        for (let col = 0; col < 5; col++) {
-          const bit = col + 3;
-          const state = ((lit[row] >> bit) & 1) | (((lit[row + 3] >> bit) & 1) << 1);
-          out[480 + row * 8 + col] = this.barbus.reelLampLevel(row, state);
-        }
-      }
+      this.wireReelLamps(out);
       return out;
     }
     const b = this.banks;
@@ -1553,6 +1546,10 @@ export class Mpu5 implements Bus16, Machine {
     }
     if (b.cabinet) for (let i = 0; i < 8; i++) this.spreadMux(out, 64, 0, i, this.planePair(b.cabinet & 0xffff, 9, i));
     if (b.zone) for (let i = 0; i < 8; i++) this.spreadMux(out, 128, 0, i, this.planePair(b.zone & 0xffff, 9, i));
+    if (!b.reelLights) {
+      this.wireReelLamps(out);
+      return out;
+    }
     for (let i = 0; i < 3; i++) {
       const pair = this.planePair(b.reelLights & 0xffff, 4, i);
       const row = i;
@@ -1563,6 +1560,17 @@ export class Mpu5 implements Bus16, Machine {
       }
     }
     return out;
+  }
+
+  private wireReelLamps(out: Uint8Array): void {
+    const lit = this.barbus.reelLamps;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 5; col++) {
+        const bit = col + 3;
+        const state = ((lit[row] >> bit) & 1) | (((lit[row + 3] >> bit) & 1) << 1);
+        out[480 + row * 8 + col] = this.barbus.reelLampLevel(row, state);
+      }
+    }
   }
 
   get segDigits(): Uint8Array {
