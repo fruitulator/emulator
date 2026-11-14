@@ -260,9 +260,27 @@ body.cards-scrolling .card {
 }
 .card .card-more {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 10px;
+  right: 10px;
   z-index: 4;
+  width: 36px;
+  height: 36px;
+  color: #fff;
+  background: rgba(10, 7, 22, 0.62);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.card .card-more svg {
+  width: 16px;
+  height: 16px;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .card .card-more {
+    background: #0a0716;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 @media (hover: hover) {
   .card .card-more {
@@ -271,6 +289,65 @@ body.cards-scrolling .card {
   .card:hover .card-more,
   .card:focus-within .card-more {
     opacity: 1;
+  }
+}
+.card-panel > .chips > .card-heart {
+  flex: none;
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nb-text-3, #958db4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.card-heart svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.card-panel > .chips > .card-heart.is-fav {
+  color: #ff5c8a;
+}
+.card-heart.is-fav svg {
+  fill: currentColor;
+}
+.card-panel > .chips > .card-heart:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.card-panel > .chips > .card-heart:not(.is-fav):hover {
+  color: #fff;
+}
+.card-panel > .chips > .card-heart:active {
+  transform: scale(0.94);
+}
+.card-panel > .chips > .card-heart:focus-visible {
+  outline: none;
+  box-shadow: var(--nb-focus);
+}
+.card-heart.pop svg {
+  animation: card-heart-pop 180ms ease-out;
+}
+@keyframes card-heart-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-heart.pop svg {
+    animation: none;
+  }
+  .card-panel > .chips > .card-heart {
+    transition: none;
   }
 }
 .card.cannot-run .art-img,
@@ -506,6 +583,13 @@ body.cards-scrolling .card {
   stroke: currentColor;
   stroke-width: 2;
   stroke-linejoin: round;
+}
+.nb-chip--versions .v-short,
+.chips.compact .nb-chip--versions .v-full {
+  display: none;
+}
+.chips.compact .nb-chip--versions .v-short {
+  display: inline;
 }
 .nb-chip--versions:focus-visible {
   outline: none;

@@ -29,24 +29,31 @@ export function filesUnder(dir) {
 
 export const precached = (path) => path !== '/sw.js' && path !== '/_redirects' && !path.endsWith('.html');
 
+export const hashedName = (path) => path.startsWith('/assets/');
+
 export function manifestFor(dir) {
   const all = filesUnder(dir).filter((p) => p !== '/sw.js');
   const h = createHash('sha256');
+  const sums = {};
   let bytes = 0;
   for (const p of all) {
     const buf = readFileSync(join(dir, p));
-    if (precached(p)) bytes += buf.length;
-    h.update(p).update('\0').update(createHash('sha256').update(buf).digest()).update('\0');
+    const sum = createHash('sha256').update(buf).digest();
+    if (precached(p)) {
+      bytes += buf.length;
+      if (!hashedName(p)) sums[p] = sum.toString('hex').slice(0, 16);
+    }
+    h.update(p).update('\0').update(sum).update('\0');
   }
-  return { build: h.digest('hex').slice(0, 12), files: all.filter(precached), bytes };
+  return { build: h.digest('hex').slice(0, 12), files: all.filter(precached), sums, bytes };
 }
 
 export function injectInto(swSource, manifest) {
   if (!swSource.includes(MARKER)) {
     throw new Error(`vite-precache: sw.js no longer carries ${MARKER} -- the offline list cannot be written`);
   }
-  const { build, files } = manifest;
-  return swSource.replace(MARKER, JSON.stringify({ build, files }));
+  const { build, files, sums = {} } = manifest;
+  return swSource.replace(MARKER, JSON.stringify({ build, files, sums }));
 }
 
 export function precachePlugin() {

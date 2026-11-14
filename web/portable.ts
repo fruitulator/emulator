@@ -174,6 +174,7 @@ export async function importPunnet(
     variant: game.variant,
     sourceName: prev?.sourceName ?? record?.sourceName,
     title: prev?.title ?? record?.title,
+    ...(prev?.favourite ? { favourite: true as const } : {}),
     ...((prev?.coinAnswers ?? record?.coinAnswers) ? { coinAnswers: prev?.coinAnswers ?? readCoinAnswers(record?.coinAnswers) } : {}),
     hasThumb,
     thumbFromPlay,

@@ -1,8 +1,10 @@
 const PRECACHE = /*PRECACHE*/ { build: 'dev', files: [] };
+const SUMS = PRECACHE.sums || {};
 const CACHE = `fruitulator-${PRECACHE.build}`;
 const SHELL = '/index.html';
 const ARCADE_SHELL = '/arcade/index.html';
 const SHELL_PAGES = [[SHELL, '/'], [ARCADE_SHELL, '/arcade/']];
+const SUMS_KEY = '/__sw/sums.json';
 
 function shellFor(url) {
   return url.pathname === '/arcade' || url.pathname.startsWith('/arcade/') ? ARCADE_SHELL : SHELL;
@@ -23,28 +25,55 @@ function isPage(res) {
   return (res.headers.get('content-type') ?? '').includes('text/html');
 }
 
+async function previousBuilds() {
+  const others = [];
+  for (const name of await caches.keys()) {
+    if (name === CACHE) continue;
+    const c = await caches.open(name);
+    const rec = await c.match(SUMS_KEY);
+    let sums = {};
+    try { if (rec) sums = await rec.json(); } catch {  }
+    others.push({ c, sums });
+  }
+  return async (key) => {
+    let old;
+    if (key.startsWith('/assets/')) old = await caches.match(key);
+    else if (SUMS[key]) {
+      for (const o of others) {
+        if (o.sums[key] !== SUMS[key]) continue;
+        old = await o.c.match(key);
+        if (old) break;
+      }
+    }
+    return old && !isPage(old) ? old : undefined;
+  };
+}
+
 async function precache() {
   const cache = await caches.open(CACHE);
+  await cache.put(SUMS_KEY, new Response(JSON.stringify(SUMS), { headers: { 'content-type': 'application/json' } }));
   const jobs = [
     ...SHELL_PAGES.map(([key, page]) => ({ key, from: page, page: true })),
     ...PRECACHE.files.map((f) => ({ key: f, from: f })),
   ];
-  const total = jobs.length;
+  const kept = await previousBuilds();
+  const downloads = [];
+  for (const job of jobs) {
+    if (await cache.match(job.key)) continue;
+    const old = job.page ? undefined : await kept(job.key);
+    if (old) await cache.put(job.key, old);
+    else downloads.push(job);
+  }
+  const total = downloads.length;
   let done = 0;
   let failed = 0;
   await tell({ done, total });
   const one = async ({ key, from, page }) => {
     try {
-      if (!(await cache.match(key))) {
-        const old = key.startsWith('/assets/') ? await caches.match(key) : undefined;
-        if (old && !isPage(old)) await cache.put(key, old);
-        else {
-          const res = await fetch(from, { cache: 'no-cache' });
-          if (!res.ok) throw new Error(`${from}: ${res.status}`);
-          if (!page && isPage(res)) throw new Error(`${from}: a page, not the file`);
-          await cache.put(key, await storable(res));
-        }
-      }
+      const res = await fetch(from, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`${from}: ${res.status}`);
+      if (!page && isPage(res)) throw new Error(`${from}: a page, not the file`);
+      await cache.put(key, await storable(res));
       done++;
     } catch (e) {
       failed++;
@@ -52,10 +81,10 @@ async function precache() {
     }
     await tell({ done, total, failed });
   };
-  const queue = jobs.slice();
+  const queue = downloads.slice();
   const lane = async () => { for (let j = queue.shift(); j; j = queue.shift()) await one(j); };
   await Promise.all([lane(), lane(), lane(), lane()]);
-  if (failed) throw new Error(`${failed} of ${total} files not saved for offline`);
+  if (failed) throw new Error(`${failed} of ${jobs.length} files not saved for offline`);
 }
 
 self.addEventListener('install', (event) => {

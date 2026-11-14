@@ -32,7 +32,7 @@ export function systemLabel(system: string): string {
   return SYSTEM_LABELS[system] ?? system;
 }
 
-export type SortKey = 'played' | 'newest' | 'oldest' | 'name' | 'platform' | 'maker';
+export type SortKey = 'played' | 'favourites' | 'newest' | 'oldest' | 'name' | 'platform' | 'maker';
 
 export function viewDropdown(sel: HTMLSelectElement, extra?: HTMLElement[]): Dropdown {
   return enhanceSelect(sel, { icon: 'M4 6h16M4 12h11M4 18h6', name: (c) => str('library.view_n', { 0: c }), extra });
@@ -54,6 +54,7 @@ export function groupVersionsRow(on: boolean, onChange: (on: boolean) => void): 
 
 export const SORT_CHOICES: readonly { key: SortKey; label: string }[] = [
   { key: 'played', label: str('gamelist.played') },
+  { key: 'favourites', label: str('gamelist.favourites') },
   { key: 'newest', label: str('gamelist.newest') },
   { key: 'oldest', label: str('gamelist.oldest') },
   { key: 'name', label: str('gamelist.name') },
@@ -69,7 +70,7 @@ const SORT_STORE = 'fruitulator.libSort';
 function storedSort(): SortKey {
   try {
     const s = localStorage.getItem(SORT_STORE);
-    return s === 'newest' || s === 'oldest' || s === 'name' || s === 'platform' || s === 'maker'
+    return s === 'favourites' || s === 'newest' || s === 'oldest' || s === 'name' || s === 'platform' || s === 'maker'
       ? s : DEFAULT_SORT;
   } catch {
     return DEFAULT_SORT;
@@ -107,6 +108,7 @@ function byPlayed(a: GameMeta, b: GameMeta): number {
 export function sortGames(games: GameMeta[], sortBy: SortKey): GameMeta[] {
   const by = {
     played: byPlayed,
+    favourites: byTitle,
     newest: (a: GameMeta, b: GameMeta) => b.addedAt - a.addedAt,
     oldest: (a: GameMeta, b: GameMeta) => a.addedAt - b.addedAt,
     name: byTitle,
@@ -148,6 +150,7 @@ export function playedBucket(g: GameMeta, now = Date.now()): string {
 export function groupGames(games: GameMeta[], sortBy: SortKey): { label: string; games: GameMeta[] }[] {
   const keyOf = {
     played: (g: GameMeta) => playedBucket(g),
+    favourites: () => str('gamelist.favourites'),
     platform: (g: GameMeta) => systemLabel(g.system),
     maker: (g: GameMeta) => libraryMaker(g),
     name: (g: GameMeta) => {
@@ -187,6 +190,8 @@ let drawing = false;
 
 function forgetCard(el: HTMLElement): void {
   reveal?.unobserve(el);
+  const row = el.querySelector<HTMLElement>('.card-panel > .chips');
+  if (row) rowFit?.unobserve(row);
   drawnAtY.delete(el);
   for (const f of el.querySelectorAll<HTMLElement>('.art')) releaseArtwork(f);
 }
@@ -223,6 +228,7 @@ interface CardOptions {
   unplayable: Unplayable;
   activate(blocked: { label: string; detail: string } | null): void;
   more?: HTMLElement | null;
+  heart?: HTMLElement | null;
   lead?: HTMLElement[];
   versions?: { count: number; open(): void };
 }
@@ -234,10 +240,30 @@ export function versionsChip(count: number, open: () => void): HTMLButtonElement
   const label = str('gamelist.n_versions', { n: count });
   b.setAttribute('aria-label', label);
   b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${UI_ICONS.stack}</svg>`;
-  b.append(label);
+  const full = document.createElement('span');
+  full.className = 'v-full';
+  full.textContent = label;
+  const short = document.createElement('span');
+  short.className = 'v-short';
+  short.textContent = String(count);
+  b.append(full, short);
   b.addEventListener('click', (ev) => { ev.stopPropagation(); open(); });
   b.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.stopPropagation(); });
   return b;
+}
+
+let rowFit: ResizeObserver | null = null;
+function fitChipRow(row: HTMLElement | null): void {
+  if (!row || typeof ResizeObserver === 'undefined') return;
+  rowFit ??= new ResizeObserver((entries) => {
+    for (const { target } of entries) {
+      const r = target as HTMLElement;
+      const plat = r.querySelector<HTMLElement>('.nb-chip:not(.nb-chip--versions)');
+      r.classList.remove('compact');
+      if (plat && plat.scrollWidth > plat.clientWidth) r.classList.add('compact');
+    }
+  });
+  rowFit.observe(row);
 }
 
 function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
@@ -303,8 +329,10 @@ function gameCard(g: GameMeta, o: CardOptions): HTMLElement {
 
   const el = tileCard({
     label: blocked ? `${shown} - ${blocked.detail}` : shown,
-    art, flag, title: shown, titleTip: parsed.raw, chips: plat, body: inner, more: o.more ?? null,
+    art, flag, title: shown, titleTip: parsed.raw, chips: o.heart ? [...plat, o.heart] : plat,
+    body: inner, more: o.more ?? null,
   });
+  if (o.versions) fitChipRow(el.querySelector<HTMLElement>('.card-panel > .chips'));
   if (blocked) el.classList.add('cannot-run');
   if (o.versions) el.classList.add('nb-card--stack');
 
@@ -424,6 +452,7 @@ export interface BrowseOptions extends CommonOptions {
   mode: 'browse';
   onOpen(g: GameMeta, hasState: boolean, blocked: { label: string; detail: string } | null): void;
   more(g: GameMeta, hasState: boolean, members?: GameMeta[]): HTMLElement;
+  heart?(g: GameMeta): HTMLElement;
   versions?(members: GameMeta[], preferred: GameMeta): void;
 }
 
@@ -471,7 +500,8 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
 
   const flat = o.mode === 'pick' && !!o.flat;
   const visible = (games: GameMeta[]): GameMeta[] => {
-    const kept = games.filter((g) => matches(g, search) && !(o.mode === 'pick' && o.exclude?.(g)));
+    const kept = games.filter((g) => matches(g, search) && !(o.mode === 'pick' && o.exclude?.(g))
+      && (sort !== 'favourites' || !!g.favourite));
     return flat ? kept : sortGames(kept, sort);
   };
 
@@ -486,6 +516,7 @@ export function mountGameList(root: HTMLElement, o: GameListOptions): GameList {
         hasState, unplayable: o.unplayable,
         activate: (blocked) => (members && pick ? pick(members, g) : o.onOpen(g, hasState, blocked)),
         more: o.more(g, hasState, members),
+        heart: o.heart?.(g) ?? null,
         ...(members && pick ? { versions: { count: members.length, open: () => pick(members, g) } } : {}),
       });
     }

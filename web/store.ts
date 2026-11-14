@@ -51,6 +51,7 @@ export interface GameMeta {
   artHash?: string;
   groupWith?: string;
   ungrouped?: true;
+  favourite?: true;
   missingRule?: number;
 }
 

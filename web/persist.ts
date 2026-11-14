@@ -194,6 +194,7 @@ async function writeGame(
     ...(artHash ?? prev?.artHash ? { artHash: artHash ?? prev?.artHash } : {}),
     ...(prev?.groupWith ? { groupWith: prev.groupWith } : {}),
     ...(prev?.ungrouped ? { ungrouped: true as const } : {}),
+    ...(prev?.favourite ? { favourite: true as const } : {}),
     ...(prev?.coinAnswers ? { coinAnswers: prev.coinAnswers } : {}),
     ...(prev?.origin ? { origin: prev.origin } : {}),
     hasThumb: prev?.hasThumb || !!thumb,

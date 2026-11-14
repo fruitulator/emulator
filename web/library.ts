@@ -80,9 +80,45 @@ function grid(h: LibraryHandlers): GameList {
       more.className = 'nb-icon-btn card-more';
       return more;
     },
+    heart: heartButton,
     versions: (members) => openLibraryVersions(members, versionHost(listH!)),
   });
   return list;
+}
+
+function heartButton(g: GameMeta): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'nb-heart card-heart';
+  b.append(icon('heart'));
+  b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    void toggleFavourite(g, b);
+  });
+  b.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.stopPropagation(); });
+  markHeart(b, !!g.favourite);
+  return b;
+}
+
+function markHeart(b: HTMLButtonElement, on: boolean): void {
+  b.classList.toggle('is-fav', on);
+  b.setAttribute('aria-pressed', String(on));
+  const label = on ? str('library.remove_from_favourites') : str('library.add_to_favourites');
+  b.setAttribute('aria-label', label);
+  b.title = label;
+}
+
+async function toggleFavourite(g: GameMeta, b: HTMLButtonElement): Promise<void> {
+  const on = !g.favourite;
+  if (on) g.favourite = true; else delete g.favourite;
+  markHeart(b, on);
+  b.classList.remove('pop');
+  void b.offsetWidth;
+  b.classList.add('pop');
+  const m = await getMeta(g.hash);
+  if (!m) return;
+  const { favourite: _was, ...rest } = m;
+  await putMeta(on ? { ...rest, favourite: true } : rest);
 }
 
 let drawn: { all: GameMeta[]; saved: ReadonlySet<string>; grouping: Grouping | null } = {
@@ -143,14 +179,22 @@ export function commitPendingDeletes(h: LibraryHandlers): void {
 }
 
 function showcase(games: GameMeta[], h: LibraryHandlers): GameMeta[] {
-  const playable = games.filter((g) => !h.unplayable(g));
-  const now = Date.now();
-  return playable
+  return showcaseOrder(games.filter((g) => !h.unplayable(g)), Date.now());
+}
+
+export const RING_MIN = 3;
+
+export function showcaseOrder(playable: GameMeta[], now: number): GameMeta[] {
+  const ranked = playable
     .map((g) => ({ g, score: showcaseScore(g, now) }))
     .sort((a, b) => b.score - a.score
       || (b.g.playedAt ?? 0) - (a.g.playedAt ?? 0)
       || b.g.addedAt - a.g.addedAt)
     .map(({ g }) => g);
+  const hearted = ranked.filter((g) => g.favourite);
+  if (!hearted.length) return ranked;
+  if (hearted.length >= RING_MIN) return hearted;
+  return [...hearted, ...ranked.filter((g) => !g.favourite).slice(0, RING_MIN - hearted.length)];
 }
 
 export function showcaseScore(g: GameMeta, now: number): number {
@@ -181,6 +225,7 @@ async function render(h: LibraryHandlers): Promise<void> {
   const emptyMsg = document.getElementById('lib-empty-msg')!;
   const emptyActions = document.getElementById('lib-empty-actions')!;
   const emptyHint = document.getElementById('lib-empty-hint')!;
+  const emptyFavHint = document.getElementById('lib-empty-fav-hint')!;
   const saving = document.getElementById('lib-saving')!;
   const quota = document.getElementById('lib-quota')!;
 
@@ -202,21 +247,27 @@ async function render(h: LibraryHandlers): Promise<void> {
   const writing = h.isSaving();
   saving.hidden = !writing;
   empty.hidden = games.length > 0 || writing;
+  const noFavourites = !unreadable && !search && lst.sort === 'favourites'
+    && all.some((g) => !pendingDelete.has(g.hash));
   emptyMsg.textContent = unreadable
     ? str('library.the_game_library_could_not', { 0: unreadable })
     : search
       ? str('library.no_game_matches_n', { 0: search })
-      : str('library.no_games_yet');
-  const welcome = !unreadable && !search;
+      : noFavourites
+        ? str('library.no_favourites_yet')
+        : str('library.no_games_yet');
+  emptyFavHint.hidden = !noFavourites;
+  const welcome = !unreadable && !search && !noFavourites;
   empty.classList.toggle('welcome', welcome);
   emptyActions.hidden = !welcome;
   emptyHint.hidden = !welcome;
 
-  const ringGames = showcase(games, h);
-  const useOrbit = isLocked() || (view === 'orbit' && ringGames.length >= 3);
+  const ringGames = showcase(lst.sort === 'favourites'
+    ? all.filter((g) => !pendingDelete.has(g.hash)) : games, h);
+  const useOrbit = isLocked() || (view === 'orbit' && ringGames.length >= RING_MIN);
   orbitWrap.hidden = !useOrbit;
   tiles.hidden = useOrbit;
-  ringReady = ringGames.length >= 3;
+  ringReady = ringGames.length >= RING_MIN;
   document.getElementById('to-orbit')!.hidden = !ringReady;
   document.body.classList.toggle('orbit-mode', useOrbit);
   if (firstRender && useOrbit) orbitLogoOnce();
@@ -669,6 +720,7 @@ function typeToSearch(ev: KeyboardEvent): boolean {
 }
 
 const ICONS: Record<string, string> = {
+  heart: '<path d="M12 20.3s-7.6-4.6-9-9.4C2 7.5 4.1 4.5 7.3 4.5c2 0 3.6 1.1 4.7 2.8 1.1-1.7 2.7-2.8 4.7-2.8 3.2 0 5.3 3 4.3 6.4-1.4 4.8-9 9.4-9 9.4z"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
 };
 
