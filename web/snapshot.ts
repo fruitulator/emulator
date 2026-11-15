@@ -245,6 +245,7 @@ function restore(target: any, data: any, parent = ''): void {
     if (isReadOnlyAccessor(target, k)) continue;
     target[k] = dv;
   }
+  if (typeof target.afterRestore === 'function') target.afterRestore();
   const steps = target.steps;
   if (typeof steps === 'number' && steps > 0) {
     for (const p of ['pos', 'reelpos']) {

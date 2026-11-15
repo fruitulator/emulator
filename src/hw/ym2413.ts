@@ -192,6 +192,7 @@ const UPDATE_WS = 1, UPDATE_TLL = 2, UPDATE_RKS = 4, UPDATE_EG = 8, UPDATE_ALL =
 const SLOT_BD1 = 12, SLOT_HH = 14, SLOT_SD = 15, SLOT_TOM = 16, SLOT_CYM = 17;
 
 class Slot {
+  static readonly snapshotConfig = ['patch', 'waveTable'];
   number = 0;
   type = 0;
   pgKeep = 0;
@@ -415,6 +416,15 @@ export class Ym2413 implements AudioSource {
     this.car(ch).patch = this.patches[num * 2 + 1];
     this.request(this.mod(ch), UPDATE_ALL);
     this.request(this.car(ch), UPDATE_ALL);
+  }
+
+  afterRestore(): void {
+    for (let ch = 0; ch < 9; ch++) {
+      const num = this.patchNumber[ch];
+      this.mod(ch).patch = this.patches[num * 2];
+      this.car(ch).patch = this.patches[num * 2 + 1];
+    }
+    for (const s of this.slots) s.waveTable = WAVE[s.patch.WS];
   }
 
   private setSusFlag(ch: number, flag: number): void {
