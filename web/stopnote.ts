@@ -1,7 +1,7 @@
 import { unbuiltParts } from '../src/machine/boarddefaults';
 import { isNoteId } from '../src/machine/effects';
 import type { UnbuiltPart } from '../src/machine/boarddefaults';
-import { decodeLamp, type FrameLayout } from '../src/machine/framestate';
+import { decodeLamp, type FrameEffects, type FrameLayout } from '../src/machine/framestate';
 import { str } from './i18n';
 import { BAR_PLACED_FROM_PX, barClearance, placeBar, type CabinetBox } from './ui/barplace';
 import { holdClock } from './ui/holdclock';
@@ -12,6 +12,7 @@ export interface StopSample {
   reels: readonly { travel: number }[];
   lampPhase?: number;
   layout?: Pick<FrameLayout, 'lampKind'>;
+  effects?: Pick<FrameEffects, 'triacs' | 'meters' | 'hopperCoins'>;
 }
 
 export const QUIET_MS = 25_000;
@@ -19,6 +20,7 @@ export const QUIET_MS = 25_000;
 export class StopWatch {
   private lamps: Uint8Array | null = null;
   private travel = '';
+  private money = '';
   private phase = 0;
   private lastMotion = 0;
   private engaged = false;
@@ -29,6 +31,7 @@ export class StopWatch {
   reset(now: number): void {
     this.lamps = null;
     this.travel = '';
+    this.money = '';
     this.phase = 0;
     this.lastMotion = now;
     this.engaged = false;
@@ -44,6 +47,7 @@ export class StopWatch {
       this.lamps = new Uint8Array(v.lampsRaw.length);
       this.lamps.set(v.lampsRaw);
       this.travel = v.reels.map((r) => r.travel).join(',');
+      this.money = moneyKey(v);
       this.phase = v.lampPhase ?? 0;
       this.lastMotion = now;
       return false;
@@ -70,6 +74,9 @@ export class StopWatch {
     } else {
       this.travel = v.reels.map((r) => r.travel).join(',');
     }
+    const money = moneyKey(v);
+    if (money !== this.money) moved = true;
+    this.money = money;
     this.lamps.set(v.lampsRaw);
     if (moved) {
       this.lastMotion = now;
@@ -91,6 +98,11 @@ export class StopWatch {
   get proven(): boolean { return this.everMoved; }
 
   get touched(): boolean { return this.engaged; }
+}
+
+function moneyKey(v: StopSample): string {
+  const e = v.effects;
+  return e ? `${e.hopperCoins.join(',')}|${e.meters.join(',')}|${e.triacs.join(',')}` : '';
 }
 
 export function judgeStop(

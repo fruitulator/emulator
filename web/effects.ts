@@ -404,6 +404,10 @@ export class CabinetEffects {
     for (const src of [...this.voices]) this.stop(src);
   }
 
+  hush(): void {
+    this.stopAll();
+  }
+
   private stopAll(): void {
     this.reelVoice.forEach((v) => this.stop(v));
     this.hopperVoice.forEach((v) => this.stop(v));

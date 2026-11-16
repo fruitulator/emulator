@@ -29,8 +29,6 @@ import { locateSys85CoinTables, type Sys85CoinTables } from './sys85coins';
 export const MASTER_CLOCK = 4_000_000;
 export const CPU_CLOCK = MASTER_CLOCK / 4;
 
-const SYS85_INDEX_TRAIL = 2;
-
 const RAM_SIZE = 0x2000;
 const METER_TICK_INSTRUCTIONS = 1000;
 const ROM_SIZE = 0x10000;
@@ -61,7 +59,6 @@ export class Sys85 implements Bus, Machine {
     () => new Reel({
       stepsPerRevolution: 96, symbols: 16, mame: true,
       indexStart: 1, indexEnd: 3, indexPattern: 0, initPhase: 4,
-      indexTrail: SYS85_INDEX_TRAIL,
       v20Gate: true,
     }),
   ), MODEL_RELATIONS.SYS85);

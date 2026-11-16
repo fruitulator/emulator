@@ -3028,6 +3028,7 @@ function standDown(
   if (save) autosave.moment('hidden');
   if (running) emu.pause();
   audio.machinePaused();
+  effects.hush();
 }
 
 function machineRunning(): void {

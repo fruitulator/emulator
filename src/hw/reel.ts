@@ -63,7 +63,6 @@ export interface ReelConfig {
   indexEnd?: number;
   indexPattern?: number;
   initPhase?: number;
-  indexTrail?: number;
   mfmeJpm?: boolean;
   flip?: boolean;
   mameDrive?: 'starpoint' | 'barcrest';
@@ -130,9 +129,6 @@ export class Reel {
   private indexEnd: number;
   private readonly indexPattern: number;
   private readonly initPhase: number;
-  private readonly indexTrail: number;
-  private sinceIndex = -1;
-  private indexDir = 1;
   private mPhase = 0;
   private mOldPhase = 0;
   private mOldPattern = 0;
@@ -157,7 +153,6 @@ export class Reel {
     this.indexEnd = cfg.indexEnd ?? 3;
     this.indexPattern = cfg.indexPattern ?? 0;
     this.initPhase = cfg.initPhase ?? 0;
-    this.indexTrail = cfg.indexTrail ?? 0;
     this.v20Gate = cfg.v20Gate ?? false;
     this.mPhase = this.initPhase;
     this.mOldPhase = this.initPhase;
@@ -182,7 +177,6 @@ export class Reel {
     this.mOldPhase = this.initPhase;
     this.mOldPattern = 0;
     this.gateLast = 0;
-    this.sinceIndex = -1;
   }
 
   park(pos: number): void {
@@ -192,7 +186,6 @@ export class Reel {
     const ph = (((this.initPhase - p) % 8) + 8) % 8;
     this.mPhase = ph;
     this.mOldPhase = ph;
-    this.sinceIndex = -1;
   }
 
   update(nibble: number): number {
@@ -285,14 +278,6 @@ export class Reel {
     this.position = (this.position + steps + max) % max;
     this.travel += steps;
     if (steps !== 0) this.lastDir = steps > 0 ? 1 : -1;
-    if (this.indexTrail > 0) {
-      if (this.mameIndex()) {
-        this.sinceIndex = 0;
-        if (steps !== 0) this.indexDir = this.lastDir;
-      } else if (steps !== 0 && this.sinceIndex >= 0) {
-        this.sinceIndex = this.lastDir === this.indexDir ? this.sinceIndex + Math.abs(steps) : -1;
-      }
-    }
     return steps;
   }
 
@@ -310,10 +295,7 @@ export class Reel {
 
   optic(): boolean {
     if (this.flip) return this.position === 0;
-    if (this.mame) {
-      if (this.mameIndex()) return true;
-      return this.sinceIndex > 0 && this.sinceIndex <= this.indexTrail;
-    }
+    if (this.mame) return this.mameIndex();
     if (this.opticPattern >= 0 && this.lastNibble !== this.opticPattern) return false;
     const rel = (this.position - this.opticStart + this.stepsPerRevolution) %
       this.stepsPerRevolution;
