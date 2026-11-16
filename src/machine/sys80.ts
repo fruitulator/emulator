@@ -324,8 +324,8 @@ export class Sys80 implements Machine {
       r.present = true;
       if (g.halfSteps > 0) r.steps = g.halfSteps;
       else this.noteReelStandIn(g.number);
-      r.inverted = g.invertedOpto;
-      const w = opticWindowForFlag(g.optoTab);
+      r.inverted = !g.flip && g.invertedOpto;
+      const w = opticWindowForFlag(g.flip ? 0 : g.optoTab);
       r.optoStart = w.start;
       r.optoWidth = w.width;
       if (!(g.stops > 0)) this.noteReelStandIn(g.number);

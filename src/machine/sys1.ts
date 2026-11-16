@@ -189,8 +189,8 @@ export class Sys1 implements Machine {
       if (g.halfSteps > 0) r.steps = g.halfSteps;
       else this.noteReelStandIn(g.number);
       r.flip = !!g.flip;
-      r.inverted = !!g.invertedOpto;
-      [r.winStart, r.winEnd] = v20OpticWindow(g.optoTab);
+      r.inverted = !r.flip && !!g.invertedOpto;
+      [r.winStart, r.winEnd] = v20OpticWindow(r.flip ? 0 : g.optoTab);
       if (!(g.stops > 0)) this.noteReelStandIn(g.number);
       this.reels[g.number] = new Reel({
         stepsPerRevolution: r.steps,

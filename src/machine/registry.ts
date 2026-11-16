@@ -19,6 +19,7 @@ import {
   Mpu4, MPU4_ENCRYPTION, mpu4Descramble, mpu4RomImage, mpu4SampleBanks, type Mpu4ReelMux,
 } from './mpu4';
 import { isMfmeSamplePack } from '../hw/mfmesamples';
+import type { Ymz280b } from '../hw/ymz280b';
 import { mpu4CharacteriserFor } from './mpu4chr';
 import { BwbCharacteriser, bwbCharacterFor } from '../hw/bwbchr';
 import { Impact } from './impact';
@@ -180,6 +181,14 @@ export function fitReelGeometry(
     });
   }
   fitReelOpticTab(m, game.system, geometry);
+}
+
+function fitReelOpticInverted(
+  m: { setReelOpticInverted(reel: number, inverted: boolean): void },
+  game: Game,
+): void {
+  const geometry = storedLayoutProps(game)?.reels ?? reelGeometry(game.layout);
+  for (const g of geometry) m.setReelOpticInverted(g.number, !g.flip && !!g.invertedOpto);
 }
 
 function powerUpReels(m: { reels: readonly Reel[] }, relation: ModelRelation): void {
@@ -445,6 +454,7 @@ const scorpion4: Platform = {
     }
 
     const m = new Sc4();
+    fitYmzAudioMode(m.ymz, game);
     if (!hasGameFile(game.files)) {
       noteBoardDefault(m, {
         axis: 'manifest',
@@ -735,6 +745,7 @@ const scorpion2: Platform = {
 
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
+    fitReelOpticInverted(m, game);
     powerUpReels(m, MODEL_RELATIONS.SCORPION2);
     m.reset();
     restoreGamReels(m, game, MODEL_RELATIONS.SCORPION2);
@@ -807,6 +818,7 @@ const scorpion1: Platform = {
 
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
+    fitReelOpticInverted(m, game);
     powerUpReels(m, MODEL_RELATIONS.SCORPION1);
     m.reset();
     restoreGamReels(m, game, MODEL_RELATIONS.SCORPION1);
@@ -850,6 +862,7 @@ const sys85: Platform = {
 
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
+    fitReelOpticInverted(m, game);
     powerUpReels(m, MODEL_RELATIONS.SYS85);
     m.reset();
     restoreGamReels(m, game, MODEL_RELATIONS.SYS85);
@@ -924,6 +937,7 @@ const sys5: Platform = {
 
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
+    fitReelOpticInverted(m, game);
     powerUpReels(m, MODEL_RELATIONS.SYS5);
     m.reset();
     restoreGamReels(m, game, MODEL_RELATIONS.SYS5);
@@ -1296,6 +1310,7 @@ function buildMpu4Board(game: Game, board: 'MPU4' | 'MPU4VIDEO' | 'MPU4PLASMA'):
   }
   if (game.nvram) m.loadNvram(game.nvram);
   fitReelGeometry(m, game);
+  fitReelOpticInverted(m, game);
   powerUpReels(m, MODEL_RELATIONS.MPU4);
   m.reset();
   game.gam?.reels.forEach((r, i) => {
@@ -1659,6 +1674,7 @@ const acesp: Platform = {
     if (game.nvram) m.loadNvram(game.nvram);
     fitReelGeometry(m, game);
     fitReels(m, game);
+    fitReelOpticInverted(m, game);
     m.reset();
     return m;
   },
@@ -2251,10 +2267,16 @@ export function sc5VideoScreens(
   return screens;
 }
 
+function fitYmzAudioMode(ymz: Ymz280b, game: Game): void {
+  const p = decodedLayout(game.layout);
+  ymz.setStereoMode((p ? readLayoutWord(p, 0xa2) : null) ?? 0);
+}
+
 const scorpion5: Platform = {
   system: 'SCORPION5',
   build(game) {
     const m = new Sc5();
+    fitYmzAudioMode(m.ymz, game);
     const named = manifestRoms(game);
     const pool = named.length ? named : game.files;
     if (named.length === 1 && !/\.(hi|lo)(gh|w)?$/i.test(named[0].name)) {
@@ -2295,6 +2317,7 @@ const epoch: Platform = {
     if (parts.length < 2 && !whole) throw noRoms(game, 'no Maygay Epoch program ROM pair (.g0/.g1)');
 
     const m = new Epoch();
+    fitYmzAudioMode(m.ymz, game);
     m.loadRom(placeRomPairs(parts.map((f) => f.bytes), 0, 0));
 
     if (!m.coinTables) {
@@ -3142,6 +3165,7 @@ const astra: Platform = {
     const prog = astraProgram(game);
     if (!prog.length) throw noRoms(game, 'no Astra System A1 program ROM (.u1)');
     const m = new Astra();
+    fitYmzAudioMode(m.ymz, game);
     m.loadRom(prog.map((f) => f.bytes));
     const astraSnd = (game.gam?.sound ?? [])
       .map((n) => file(game, n))
@@ -3440,6 +3464,7 @@ const igts2000: Platform = {
     const slaves = (game.gam?.slaveRoms ?? []).map((n) => file(game, n)).filter((f): f is GameFile => !!f);
     if (!slaves.length) throw noRoms(game, 'no IGT S2000 game ROM (SLAVEROM)');
     const m = new IgtS2000();
+    fitYmzAudioMode(m.ymz, game);
     m.loadRoms(roms.map((f) => f.bytes), slaves.map((f) => f.bytes));
     m.setReelGeometry(storedLayoutProps(game)?.reels ?? reelGeometry(game.layout));
     m.setSwitches(storedLayoutProps(game)?.switches ?? layoutSwitches(game.layout));

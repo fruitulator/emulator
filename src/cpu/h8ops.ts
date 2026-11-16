@@ -1695,7 +1695,11 @@ function op_daa_b_r8l(cpu: H8): void {
         cpu.tmp2 = ((cpu.tmp1 & 0xf0) <= 0x80 ? 0x06 : 0x66) >>> 0;
     }
   }
+  let c = Math.trunc(cpu.ccr & F_C);
   cpu.r8w(cpu.ir[0], doAdd8(cpu, cpu.tmp1, cpu.tmp2));
+  cpu.ccr = (cpu.ccr & (~F_C)) & 0xff;
+  if(c || (cpu.tmp2 & 0x60))
+    cpu.ccr = (cpu.ccr | (F_C)) & 0xff;
   cpu.npc = (cpu.pc & 0xffffff) >>> 0;
   cpu.pir = (cpu.read16i(cpu.pc)) & 0xffff;
   cpu.pc = (cpu.pc + (2)) >>> 0;
@@ -2157,7 +2161,9 @@ function op_das_b_r8l(cpu: H8): void {
         cpu.tmp2 = (0xfa) >>> 0;
     }
   }
+  let c = Math.trunc(cpu.ccr & F_C);
   cpu.r8w(cpu.ir[0], doAdd8(cpu, cpu.tmp1, cpu.tmp2));
+  cpu.ccr = ((cpu.ccr & ~F_C) | c) & 0xff;
   cpu.npc = (cpu.pc & 0xffffff) >>> 0;
   cpu.pir = (cpu.read16i(cpu.pc)) & 0xffff;
   cpu.pc = (cpu.pc + (2)) >>> 0;
@@ -2410,7 +2416,7 @@ function op_divxu_w_r16h_r32l(cpu: H8): void {
   cpu.npc = (cpu.pc & 0xffffff) >>> 0;
   cpu.pir = (cpu.read16i(cpu.pc)) & 0xffff;
   cpu.pc = (cpu.pc + (2)) >>> 0;
-  cpu.internal(11);
+  cpu.internal(19);
   cpu.tmp1 = (cpu.r32r(cpu.ir[0])) >>> 0;
   cpu.tmp2 = (cpu.r16r(cpu.ir[0] >> 4)) >>> 0;
   cpu.ccr = (cpu.ccr & (~(F_Z|F_N))) & 0xff;
@@ -2496,10 +2502,10 @@ function op_trapa_imm2(cpu: H8): void {
   cpu.internal(1);
   cpu.tmp1 = (cpu.r32r(7) - 2) >>> 0;
   cpu.r32w(7, cpu.tmp1);
-  cpu.write16(cpu.tmp1, cpu.npc);
+  cpu.write16(cpu.tmp1, cpu.pc);
   cpu.tmp1 = (cpu.r32r(7) - 2) >>> 0;
   cpu.r32w(7, cpu.tmp1);
-  cpu.write16(cpu.tmp1, (cpu.ccr << 8) | ((cpu.npc >> 16) & 0xff));
+  cpu.write16(cpu.tmp1, (cpu.ccr << 8) | ((cpu.pc >> 16) & 0xff));
   if(false) {
     cpu.tmp1 = (cpu.r32r(7) - 2) >>> 0;
     cpu.r32w(7, cpu.tmp1);

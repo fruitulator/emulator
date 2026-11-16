@@ -16,6 +16,7 @@ import { Reel } from '../hw/reel';
 import { MODEL_RELATIONS, parkAtV20PowerUp, resetReelsInPlace } from './v20optic';
 import { Upd7759, UPD7759_RATE } from '../hw/upd7759';
 import { DataPak } from '../hw/datapak';
+import { Acia6850 } from '../hw/acia6850';
 import { MeterConfirm } from '../hw/meterconfirm';
 import { Ay8910 } from '../hw/ay8910';
 import { Mixer } from '../hw/mixer';
@@ -38,7 +39,8 @@ const RAM_SIZE = 0x2000;
 const DIRECT_COIN_ROW = 8;
 const ROM_SIZE = 0x10000;
 
-const TIMER_HZ = 1000;
+const TIMER_ROLL = 0x400;
+const TIMER_HOLD = 10;
 const METER_TICK_INSTRUCTIONS = 1000;
 
 const ADDRESS_DECODE = [
@@ -154,6 +156,12 @@ export class Sc1 implements Bus, Machine {
     return this.reelFit;
   }
 
+  setReelOpticInverted(reel: number, inverted: boolean): void {
+    if (reel >= 0 && reel < this.reelOpticInverted.length) this.reelOpticInverted[reel] = inverted;
+  }
+
+  private readonly reelOpticInverted = [false, false, false, false, false, false];
+
   reelStripOffsets: number[] = [0, 0, 0, 0, 0, 0];
 
   readonly lampHistory = new LampHistory(256);
@@ -178,9 +186,11 @@ export class Sc1 implements Bus, Machine {
 
   private locked = 0x07;
 
-  private timerCycles = 0;
-  private irqArmed = false;
-  private firqArmed = false;
+  private timerAcc = 0;
+  private timerHold = 0;
+  private timerLine = false;
+  private firqLatch = false;
+  private firqPulse = false;
   private irqStatus = 0;
 
   private static readonly WATCHDOG_RELOAD = 500;
@@ -319,6 +329,7 @@ export class Sc1 implements Bus, Machine {
   private readonly unpricedPaid = new Set<number>();
   get unpricedPaidLines(): readonly number[] { return [...this.unpricedPaid]; }
 
+  readonly acia = new Acia6850((b) => this.aciaTransmitted(b));
   private dataportFitted = false;
   private readonly dataPak = new DataPak(CPU_CLOCK);
   private ackQueue: number[] = [];
@@ -479,8 +490,20 @@ export class Sc1 implements Bus, Machine {
     this.dataportFitted = true;
   }
 
-  private ackReady(): boolean {
-    return this.ackQueue.length > 0 && this.ackDue <= 0;
+  private aciaTransmitted(b: number): void {
+    if (!this.dataportFitted) return;
+    const reply = this.dataPak.receive(b, this.cpu.cycles);
+    if (!reply) return;
+    if (!this.ackQueue.length) this.ackDue = Sc1.ACK_DELAY;
+    for (const x of reply) if (this.ackQueue.length < 16) this.ackQueue.push(x);
+  }
+
+  private paceReply(cycles: number): void {
+    if (!this.ackQueue.length) return;
+    this.ackDue -= cycles;
+    if (this.ackDue > 0) return;
+    this.acia.receive(this.ackQueue.shift()!);
+    this.ackDue = Sc1.ACK_DELAY;
   }
 
   get parts(): BoardPart[] {
@@ -497,7 +520,7 @@ export class Sc1 implements Bus, Machine {
       { id: 'rom', label: 'PROGRAM ROM', part: '64K - banked window', device: this.rom },
       { id: 'watchdog', label: 'WATCHDOG', part: '555', modelled: true,
         note: 'Modelled as a cycle counter and its kick, not as a device.' },
-      { id: 'timer', label: 'TIMER IRQ', part: '1 kHz tick', modelled: true,
+      { id: 'timer', label: 'TIMER IRQ', part: '976 Hz tick', modelled: true,
         note: 'Modelled as a cycle accumulator on this board, not as a timer chip.' },
       { id: 'bank', label: 'ROM BANK', part: '$3600 - 4 pages', modelled: true,
         note: 'Modelled as a page register indexing the ROM image, not as a device.' },
@@ -511,7 +534,7 @@ export class Sc1 implements Bus, Machine {
       { id: 'ay', label: 'SOUND', part: 'AY8912', device: this.ay },
       { id: 'upd', label: 'SPEECH', part: 'uPD7759 (Viper)',
         ...(this.updFitted ? { device: this.upd } : {}) },
-      { id: 'acia', label: 'DATAPORT', part: 'MC6850' },
+      { id: 'acia', label: 'DATAPORT', part: 'MC6850', device: this.acia },
 
       { id: 'cpu', label: 'CPU', part: 'MC6809 - 1 MHz E', device: this.cpu, cpu: true },
       { id: 'reels', label: 'REEL MECH', part: 'Starpoint', device: this.reels, signal: 'reels' },
@@ -788,6 +811,9 @@ export class Sc1 implements Bus, Machine {
       this.dmLines = 0;
     }
     this.watchdogCount = 0;
+    this.timerAcc = 0;
+    this.timerHold = 0;
+    this.irqStatus = 0;
     this.warmReset();
   }
 
@@ -807,10 +833,8 @@ export class Sc1 implements Bus, Machine {
     this.mux2Latch = 0x08;
     this.mux2Input = 0;
     this.locked = 0x07;
-    this.timerCycles = 0;
-    this.irqArmed = false;
-    this.firqArmed = false;
-    this.irqStatus = 0;
+    this.timerLine = false;
+    this.firqPulse = false;
     this.stepCount = 0;
     this.meterLatch = 0;
     this.meterBank.reset();
@@ -823,6 +847,8 @@ export class Sc1 implements Bus, Machine {
     this.ackQueue = [];
     this.ackDue = 0;
     this.dataPak.reset();
+    this.acia.reset();
+    this.acia.setCts(false);
     this.cpu.reset();
   }
 
@@ -860,6 +886,7 @@ export class Sc1 implements Bus, Machine {
     if (a >= 0x8000) {
       this.watchdogCount = Sc1.WATCHDOG_RELOAD;
       this.irqStatus &= 0xfe;
+      this.timerLine = false;
     }
   }
 
@@ -873,20 +900,14 @@ export class Sc1 implements Bus, Machine {
     }
     if (a === 0x3001) return 0;
     if (a === 0x3404) return this.inputRegs[DIRECT_COIN_ROW];
-    if (a === 0x3406) return 0x02 | (this.ackReady() ? 0x01 : 0x00);
-    if (a === 0x3407) {
-      if (!this.ackReady()) return 0;
-      const v = this.ackQueue.shift() ?? 0;
-      this.ackDue = Sc1.ACK_DELAY;
-      return v;
-    }
+    if (a === 0x3406 || a === 0x3407) return this.acia.read(a & 1);
     if (a >= 0x3408 && a <= 0x340a) return a === 0x3408 ? this.mux2Input : 0;
     if (a === 0x3801) {
       const ready = this.updFitted && this.updAsked && this.upd.active() ? 0 : 1;
       return ready | (this.updFitted ? 2 : 0);
     }
     this.strays.hit(a);
-    return this.io[a & 0x3fff];
+    return 0;
   }
 
   readonly strays = new StrayCounter();
@@ -940,16 +961,12 @@ export class Sc1 implements Bus, Machine {
     }
     if (a >= 0x2600 && a < 0x2800) {
       if (this.locked & 0x04) {
-        this.locked &= ~0x04;
+        if (v === 0x4d) this.locked &= ~0x04;
         return;
       }
-      const changed = this.meterLatch ^ v;
       this.meterLatch = v;
       this.meterBank.write(v & 0xff);
-      if (changed) {
-        this.cpu.setFIRQ(true);
-        this.firqArmed = true;
-      }
+      if (v !== 0) this.firqLatch = true;
       return;
     }
     if (a === 0x2800) {
@@ -997,15 +1014,8 @@ export class Sc1 implements Bus, Machine {
       this.ay.selectAddress(v);
       return;
     }
-    if (a === 0x3406) return;
-    if (a === 0x3407) {
-      if (this.dataportFitted) {
-        const reply = this.dataPak.receive(v, this.cpu.cycles);
-        if (reply) {
-          if (!this.ackQueue.length) this.ackDue = Sc1.ACK_DELAY;
-          for (const b of reply) if (this.ackQueue.length < 16) this.ackQueue.push(b);
-        }
-      }
+    if (a === 0x3406 || a === 0x3407) {
+      this.acia.write(a & 1, v);
       return;
     }
     if (a === 0x3408) {
@@ -1013,7 +1023,7 @@ export class Sc1 implements Bus, Machine {
       this.mux2Latch = v;
       if ((changed & 0x08) && !(v & 0x08)) {
         let optics = 0;
-        for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic()) optics |= 1 << i;
+        for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic() !== this.reelOpticInverted[i]) optics |= 1 << i;
         optics &= this.reelFit.mask;
         this.mux2Input = 0x3f ^ optics;
       }
@@ -1062,8 +1072,7 @@ export class Sc1 implements Bus, Machine {
   }
 
   step(): number {
-    const dropIrq = this.irqArmed;
-    const dropFirq = this.firqArmed;
+    const dropFirq = this.firqPulse;
 
     const cycles = this.cpu.step();
 
@@ -1078,24 +1087,36 @@ export class Sc1 implements Bus, Machine {
       }
     }
 
-    if (this.ackDue > 0) this.ackDue -= cycles;
+    this.paceReply(cycles);
+    this.acia.tick(cycles);
 
-    if (dropIrq) {
-      this.cpu.setIRQ(false);
-      this.irqArmed = false;
-    }
     if (dropFirq) {
       this.cpu.setFIRQ(false);
-      this.firqArmed = false;
+      this.firqPulse = false;
     }
 
-    this.timerCycles += cycles;
-    const period = Math.floor(CPU_CLOCK / TIMER_HZ);
-    if (this.timerCycles >= period) {
-      this.timerCycles -= period;
-      this.irqStatus = 0x03;
+    this.timerAcc += cycles;
+    if (this.timerAcc >= TIMER_ROLL) {
+      this.timerAcc -= TIMER_ROLL;
+      this.timerHold = 0;
+      this.irqStatus |= 0x01;
+      this.timerLine = true;
+    }
+    if (this.firqLatch && !(this.cpu.cc & 0x40)) {
+      this.firqLatch = false;
+      this.firqPulse = true;
+      this.cpu.setFIRQ(true);
+    } else if (this.timerLine || this.acia.irq()) {
       this.cpu.setIRQ(true);
-      this.irqArmed = true;
+      if (this.irqStatus & 0x01) {
+        this.timerHold += cycles;
+        if (this.timerHold >= TIMER_HOLD) {
+          this.timerHold = 0;
+          this.timerLine = false;
+        }
+      }
+    } else {
+      this.cpu.setIRQ(false);
     }
 
     if (++this.stepCount % Sc1.WATCHDOG_DIVIDE === 0 && this.watchdogCount > 0

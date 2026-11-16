@@ -68,6 +68,18 @@ export function mfmeBoardReelPosition(
     const MPS2_ADJUST = 3;
     return (((steps + MPS2_ADJUST - position) % steps) + steps) % steps;
   }
+  if (system === 'EPOCH') {
+    const EPOCH_ADJUST = 5;
+    return (((steps + EPOCH_ADJUST - position) % steps) + steps) % steps;
+  }
+  if (system === 'ASTRASYSA1') {
+    const ASTRA_ADJUST = -1;
+    return (((steps + ASTRA_ADJUST - position) % steps) + steps) % steps;
+  }
+  if (system === 'SCORPION2') {
+    const SC2_DISPLAY_SHIFT = 5 - 9;
+    return (((position + SC2_DISPLAY_SHIFT) % steps) + steps) % steps;
+  }
   return position;
 }
 

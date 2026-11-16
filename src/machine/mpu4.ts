@@ -413,6 +413,12 @@ export class Mpu4 implements Bus, Machine {
     this.reelUnits[i]?.park(pos);
   }
 
+  setReelOpticInverted(reel: number, inverted: boolean): void {
+    if (reel >= 0 && reel < this.reelOpticInverted.length) this.reelOpticInverted[reel] = inverted;
+  }
+
+  private readonly reelOpticInverted = new Array<boolean>(8).fill(false);
+
   readonly inputs: Mpu4Inputs = {
     switches: new Uint8Array(8),
     aux1: 0,
@@ -2656,10 +2662,12 @@ export class Mpu4 implements Bus, Machine {
     let v = 0;
     if (this.reelMux === 'standard') {
       for (let i = 0; i < 4; i++) {
-        if (this.reelUnits[i].optic()) v |= 1 << (6 - i);
+        if (this.reelUnits[i].optic() !== this.reelOpticInverted[i]) v |= 1 << (6 - i);
       }
-    } else if (this.reelUnits[(this.reelMux === 'seven' ? REEL_MUX_TABLE7 : REEL_MUX_TABLE)[this.reelSelect]]?.optic()) {
-      v |= 0x08;
+    } else {
+      const sel = (this.reelMux === 'seven' ? REEL_MUX_TABLE7 : REEL_MUX_TABLE)[this.reelSelect];
+      const unit = this.reelUnits[sel];
+      if (unit && unit.optic() !== this.reelOpticInverted[sel]) v |= 0x08;
     }
     if (this.mainsState) v |= 0x04;
     if (this.dataPakType === 2) v |= this.ic5.ca2() ? 0x80 : 0;

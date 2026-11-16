@@ -1,5 +1,6 @@
 
 import type { AudioSource } from '../machine/machine';
+import { V20_SYNTH_VOLUME } from './blipleak';
 
 const CLOCK_DIVIDER = 256;
 
@@ -268,7 +269,7 @@ export class Saa1099 implements AudioSource {
       this.phase += step;
       while (this.phase >= 1) {
         this.renderNative(this.lr);
-        this.held = ((this.lr[0] + this.lr[1]) / 2 / full) * this.gain;
+        this.held = ((this.lr[0] + this.lr[1]) / 2 / full) * V20_SYNTH_VOLUME * this.gain;
         this.phase -= 1;
       }
       this.ring[this.ringWrite] = this.held;

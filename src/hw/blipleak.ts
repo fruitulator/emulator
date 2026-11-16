@@ -3,6 +3,8 @@ export const V20_BUFFER_RATE = 48_000;
 export const BASE_BOARD_BASS_FREQ = 1;
 export const SRU_BASS_FREQ = 300;
 
+export const V20_SYNTH_VOLUME = 0.5;
+
 export function blipBassShift(bassFreq: number, rate: number): number {
   if (bassFreq <= 0) return 31;
   let shift = 13;

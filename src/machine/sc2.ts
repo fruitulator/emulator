@@ -141,6 +141,12 @@ export class Sc2 implements Bus, Machine {
     return this.reelFit;
   }
 
+  setReelOpticInverted(reel: number, inverted: boolean): void {
+    if (reel >= 0 && reel < this.reelOpticInverted.length) this.reelOpticInverted[reel] = inverted;
+  }
+
+  private readonly reelOpticInverted = [false, false, false, false, false, false];
+
   reelStripOffsets: number[] = [0, 0, 0, 0, 0, 0];
 
   readonly lampStore = new LampSetClear(0x108);
@@ -842,7 +848,7 @@ export class Sc2 implements Bus, Machine {
     this.noteIo(a, false);
     if (a === 0x2000) {
       let v = 0;
-      for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic()) v |= 1 << i;
+      for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic() !== this.reelOpticInverted[i]) v |= 1 << i;
       v &= this.reelFit.mask;
       if (this.upd.active()) v |= 0x80;
       if (this.alphaBusyCycles > 0 || this.dm01?.sent) v |= 0x40;

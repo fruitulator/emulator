@@ -1,4 +1,5 @@
 import type { AudioSource } from '../machine/machine';
+import { V20_SYNTH_VOLUME } from './blipleak';
 
 export const YM2413_CLOCK = 3_579_545;
 export const YM2413_RATE = Math.round(YM2413_CLOCK / 72);
@@ -822,6 +823,7 @@ export class Ym2413 implements AudioSource {
     if (frames <= 0) return;
     this.cycleRemainder -= frames * cpuClock;
     const step = YM2413_RATE / this.rate;
+    const outScale = this.v20Mix ? V20_SYNTH_VOLUME : 1;
     while (frames-- > 0) {
       let v: number;
       if (step === 1) {
@@ -835,7 +837,7 @@ export class Ym2413 implements AudioSource {
         }
         v = this.prevSample + (this.nextSample - this.prevSample) * this.resamplePhase;
       }
-      const s = (v / 4096) * this.gain;
+      const s = (v / 4096) * outScale * this.gain;
       this.ring[this.ringWrite] = s;
       this.ring[this.ringWrite + 1] = s;
       this.ringWrite = (this.ringWrite + 2) % this.ring.length;

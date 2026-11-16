@@ -40,7 +40,7 @@ import { COIN_NOTES, COIN_NOTE_BLANK, type DeclaredCoin } from './layoutcoins';
 import { BfmColourLed } from '../hw/bfmcolourled';
 import { locateSc4CoinDebounce, locateSc4CoinTables, sc4CoinsUnpriced, sc4CoinTable, sc4ProgramCoin, sc4TokenLine, SC4_COIN_LINES, type Sc4CoinTables, type Sc4Mem, type Sc4ProgramCoin } from './sc4coins';
 
-export const MASTER_CLOCK = 16_000_000;
+export const MASTER_CLOCK = 16_670_000;
 
 const ROM_SIZE = 0x200000;
 const ROM_MASK = ROM_SIZE - 1;
@@ -215,7 +215,7 @@ export class Sc4 implements Bus16, Machine {
       const b = this.rng.next();
       if (b === null) return;
       this.rngByte = b;
-      this.rngDue = Math.round((this.duart.characterTicks(0) * MASTER_CLOCK) / X1_HZ);
+      this.rngDue = this.duartCharCycles(0);
       return;
     }
     this.rngDue -= cycles;
@@ -227,7 +227,16 @@ export class Sc4 implements Bus16, Machine {
   private ccReply: { at: number; b: number }[] = [];
 
   private static readonly CC_REPLY_DELAY = V20_CCTALK_REPLY_DELAY;
-  private static readonly CC_BYTE_GAP = 16_000;
+  static readonly DUART_RATIO = Math.floor((MASTER_CLOCK * 64) / X1_HZ);
+  private duartAcc = 0;
+
+  private duartCharCycles(ch: 0 | 1): number {
+    const baud = this.duart.txBaud(ch) || 50;
+    const mr1 = this.duart.getMr(ch, 0);
+    const mr2 = this.duart.getMr(ch, 1);
+    const bits = (mr1 & 3) + 7 + ((~mr1 >> 4) & 1) + ((mr2 >> 3) & 1);
+    return Math.ceil((Math.floor(X1_HZ / baud) * bits * Sc4.DUART_RATIO) / 64);
+  }
   private static readonly CC_KEY_ACK_DELAY = switchKeyAckDelay(MASTER_CLOCK / 20);
   private static readonly CC_FRAME_GAP = MASTER_CLOCK / 20;
   private static replyDelay(header: number | undefined): number {
@@ -239,10 +248,11 @@ export class Sc4 implements Bus16, Machine {
     if (!msg) return;
     const rd = v.reply(msg.header, msg.data);
     if (rd === null) return;
+    const gap = this.duartCharCycles(1);
     let at = this.totalCycles + Sc4.replyDelay(msg.header);
     for (const x of v.encodeFrame(1, rd)) {
+      at += gap;
       this.ccReply.push({ at, b: x & 0xff });
-      at += Sc4.CC_BYTE_GAP;
     }
   }
 
@@ -311,10 +321,11 @@ export class Sc4 implements Bus16, Machine {
     const b = [src ?? 1, rd.length, dest, replyHeader(rd), ...rd];
     let s = 0;
     for (const x of b) s = (s + x) & 0xff;
+    const gap = this.duartCharCycles(1);
     let at = this.totalCycles + Sc4.replyDelay(header);
     for (const x of [...b, (0x100 - s) & 0xff]) {
+      at += gap;
       this.ccReply.push({ at, b: x & 0xff });
-      at += Sc4.CC_BYTE_GAP;
     }
   }
   readonly sec = new Sec();
@@ -541,12 +552,12 @@ export class Sc4 implements Bus16, Machine {
   }
   readonly ymz = new Ymz280b();
   readonly vfd = Object.assign(new Bda(7, true, true), {
-    scrollPeriod: Math.round((1_800_000 * MASTER_CLOCK) / 16_670_000),
-    flashBase: Math.round((100_000 * MASTER_CLOCK) / 16_670_000),
+    scrollPeriod: 1_800_000,
+    flashBase: 100_000,
     onByte: (b: number) => this.bd1.writeChar(b),
   });
   readonly bd1 = Object.assign(new Bd1(), {
-    flashBase: Math.round((100_000 * MASTER_CLOCK) / 16_670_000),
+    flashBase: 100_000,
   });
   segmentedAlpha = false;
   readonly vfd2 = new Bda(7, true, true);
@@ -820,7 +831,7 @@ export class Sc4 implements Bus16, Machine {
   private meterLatch = 0;
   get meterLevels(): number { return this.meterLatch & 0xff; }
 
-  readonly dataPak = new DataPak(16_670_000);
+  readonly dataPak = new DataPak(MASTER_CLOCK);
   private dataPakType = 0;
 
   private dataPakOnUart = true;
@@ -942,7 +953,7 @@ export class Sc4 implements Bus16, Machine {
             device: this.dm01 } as BoardPart]
         : []),
 
-      { id: 'cpu', label: 'CPU', part: 'MC68307 EC000 - 16 MHz', device: this.cpu, cpu: true },
+      { id: 'cpu', label: 'CPU', part: 'MC68307 EC000 - 16.67 MHz', device: this.cpu, cpu: true },
       { id: 'sim', label: 'SIM', part: 'ports - timers - I2C', device: this.sim },
       { id: 'duart', label: 'DUART', part: 'MC68681', device: this.duart,
         io: [[DUART_BASE, DUART_BASE + 0x20]] },
@@ -1956,8 +1967,13 @@ export class Sc4 implements Bus16, Machine {
     for (const h of this.ccHoppers.values()) if (h.timing) h.tick(cycles);
     this.serviceMeters(cycles);
     this.ymz.tick(cycles, MASTER_CLOCK);
-    if (!this.duart.idle()) this.duart.tick(cycles);
-    if (!this.duart2.idle()) this.duart2.tick(cycles);
+    this.duartAcc += cycles * 64;
+    if (this.duartAcc >= Sc4.DUART_RATIO) {
+      const ticks = Math.floor(this.duartAcc / Sc4.DUART_RATIO);
+      this.duartAcc -= ticks * Sc4.DUART_RATIO;
+      if (!this.duart.idle()) this.duart.tick(ticks);
+      if (!this.duart2.idle()) this.duart2.tick(ticks);
+    }
     return cycles;
   }
 

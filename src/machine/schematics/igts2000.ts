@@ -26,7 +26,7 @@ export const IGTS2000_SCHEMATIC: Schematic = plot({
         { id: 'quart2' },
         { id: 'vfdcpu' },
         { id: 'vfd', span: 1.2 },
-        { id: 'ay' },
+        { id: 'sound' },
       ],
     },
     {
@@ -65,7 +65,7 @@ export const IGTS2000_SCHEMATIC: Schematic = plot({
     { from: 'quart2', to: 'bus-data', kind: 'data' },
     { from: 'quart2', to: 'vfdcpu', kind: 'data' },
     { from: 'vfdcpu', to: 'vfd', kind: 'data' },
-    { from: 'ay', to: 'bus-data', kind: 'control' },
+    { from: 'sound', to: 'bus-data', kind: 'control' },
     { from: 'rom', to: 'bus-data', kind: 'data' },
     { from: 'rom', to: 'bus-addr', kind: 'address' },
     { from: 'ram', to: 'bus-data', kind: 'data' },

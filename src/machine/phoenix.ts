@@ -101,9 +101,9 @@ export class Phoenix implements Machine {
   readonly cpu: Z180;
   readonly phoenix2: boolean;
   readonly ppi = [new Ppi(), new Ppi(), new Ppi(), new Ppi(), new Ppi(), new Ppi()];
-  readonly ay = new Ay8910(AY_CLOCK, 'ay8910');
-  readonly ym = Object.assign(new Ym2413(AY_RATE), { v20Mix: true });
-  private readonly mixer = new Mixer([this.ay, this.ym]);
+  readonly ay: Ay8910 | null;
+  readonly ym: Ym2413 | null;
+  private readonly mixer: Mixer | null;
   readonly dataPak = new DataPak(CLOCK);
 
   readonly rom = new Uint8Array(ROM_SIZE);
@@ -118,7 +118,7 @@ export class Phoenix implements Machine {
   private readonly reelBank = new V20Reels(REEL_COUNT, v20OpticWindowPhoenix);
   get reels() { return this.reelBank.reels; }
   get display(): MachineDisplay | null { return null; }
-  readonly oki = new Okim6295(OKI_RATE);
+  readonly oki = Object.assign(new Okim6295(OKI_RATE), { v20Level: true });
   get audioSource(): AudioSource | null { return this.phoenix2 ? this.oki : this.mixer; }
 
   protected readonly matrix = new Uint8Array(8);
@@ -158,6 +158,15 @@ export class Phoenix implements Machine {
 
   constructor(roms: readonly Uint8Array[], nvram?: Uint8Array, phoenix2 = false) {
     this.phoenix2 = phoenix2;
+    if (phoenix2) {
+      this.ay = this.ym = this.mixer = null;
+    } else {
+      const ay = new Ay8910(AY_CLOCK, 'ay8910');
+      const ym = Object.assign(new Ym2413(AY_RATE), { v20Mix: true });
+      this.ay = ay;
+      this.ym = ym;
+      this.mixer = new Mixer([ay, ym]);
+    }
     let off = 0;
     for (const r of roms) {
       if (off >= ROM_SIZE) break;
@@ -287,8 +296,8 @@ export class Phoenix implements Machine {
   reset(): void {
     this.cpu.reset();
     for (const p of this.ppi) p.reset();
-    this.ay.reset();
-    this.ym.reset();
+    this.ay?.reset();
+    this.ym?.reset();
     this.dataPak.reset();
     this.reelBank.reset();
     this.lamps.fill(0);
@@ -369,11 +378,12 @@ export class Phoenix implements Machine {
   }
 
   private ayRead(): number {
-    const r = this.ay.selectedAddress;
-    const mixer = this.ay.regs[7];
+    const ay = this.ay!;
+    const r = ay.selectedAddress;
+    const mixer = ay.regs[7];
     if (r === 14 && !(mixer & 0x40)) return ~this.dip1 & 0xff;
     if (r === 15 && !(mixer & 0x80)) return ~this.dip2 & 0xff;
-    return this.ay.read();
+    return ay.read();
   }
 
   private portOut(port: number, v: number): void {
@@ -386,7 +396,7 @@ export class Phoenix implements Machine {
       case 0x4c: return this.ppiOut(3, reg, v);
       case 0x50: return this.ppiOut(4, reg, v);
       case 0x54:
-        if (this.phoenix2) return;
+        if (!this.ay) return;
         if (reg & 1) this.ay.write(v);
         else this.ay.selectAddress(v);
         return;
@@ -394,7 +404,7 @@ export class Phoenix implements Machine {
         if (this.phoenix2) return;
         if (reg === 1) { this.int0 = false; this.cpu.setIrqLine(0, false); }
         else if (reg === 2) { this.int1 = false; this.cpu.setIrqLine(1, false); }
-        else if (reg === 3) this.ym.writeAddress(v);
+        else if (reg === 3) this.ym!.writeAddress(v);
         return;
       case 0x5c:
         if (!this.phoenix2) return this.ppiOut(5, reg, v);
@@ -405,7 +415,7 @@ export class Phoenix implements Machine {
         }
         return;
       case 0xd8:
-        if (p === 0xdb && !this.phoenix2) this.ym.writeData(v);
+        if (p === 0xdb && this.ym) this.ym.writeData(v);
         return;
       default:
         return;
@@ -545,8 +555,8 @@ export class Phoenix implements Machine {
         if (!this.int1) { this.int1 = true; this.cpu.setIrqLine(1, true); }
         this.int1Acc -= INT1_PERIOD;
       }
-      this.ay.tick(c, CLOCK);
-      this.ym.tick(c, CLOCK);
+      this.ay!.tick(c, CLOCK);
+      this.ym!.tick(c, CLOCK);
     }
     if (this.coinTimer > 0) {
       this.coinTimer -= c;
@@ -590,7 +600,7 @@ export class Phoenix implements Machine {
       { id: 'reels', label: 'REELS', part: '8 channels, PPI 4/8', device: this.reelBank.state },
       p2
         ? { id: 'sound', label: 'SOUND', part: 'OKI MSM6295 - OUT ($5C), B = $10; bank PPI 1 C4-5', device: this.oki }
-        : { id: 'sound', label: 'SOUND', part: 'AY-3-8910 + YM2413', device: this.ay },
+        : { id: 'sound', label: 'SOUND', part: 'AY-3-8910 + YM2413', device: this.ay! },
     ];
     return list;
   }

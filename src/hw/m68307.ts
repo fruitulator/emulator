@@ -75,6 +75,7 @@ export class M68307Sim {
     { count: 0, event: false, prescale: 0 },
     { count: 0, event: false, prescale: 0 },
   ];
+  private div16 = 0;
 
   portAIn = 0xffff;
   portBIn = 0xffff;
@@ -187,6 +188,7 @@ export class M68307Sim {
       t.event = false;
       t.prescale = 0;
     }
+    this.div16 = 0;
   }
 
   private r16(off: number): number {
@@ -406,11 +408,16 @@ export class M68307Sim {
 
   tick(cycles: number): void {
     let changed = false;
+    this.div16 += cycles;
+    const slow = this.div16 >>> 4;
+    this.div16 &= 15;
     for (let i = 0; i < 2; i++) {
       if (!this.timerEnabled(i)) continue;
+      const iclk = (this.r16(TIMER_BASE[i] + TMR) >> 1) & 3;
+      if (iclk !== 1 && iclk !== 2) continue;
       const t = this.timers[i];
       const scale = this.timerPrescale(i);
-      t.prescale += cycles;
+      t.prescale += iclk === 1 ? cycles : slow;
       const ticks = Math.floor(t.prescale / scale);
       if (ticks === 0) continue;
       t.prescale -= ticks * scale;

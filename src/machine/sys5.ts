@@ -176,6 +176,12 @@ export class Sys5 implements Bus16, Machine {
     return this.reelFit;
   }
 
+  setReelOpticInverted(reel: number, inverted: boolean): void {
+    if (reel >= 0 && reel < this.reelOpticInverted.length) this.reelOpticInverted[reel] = inverted;
+  }
+
+  private readonly reelOpticInverted = [false, false, false, false, false, false];
+
   reelStripOffsets: number[] = [0, 0, 0, 0, 0, 0];
 
   private static readonly REEL_DRIVE = [0x0a, 0x09, 0x06, 0x05];
@@ -915,7 +921,7 @@ export class Sys5 implements Bus16, Machine {
       if (off === 0x12) {
         let optos = 0;
         const n = Math.min(this.numReels, 8);
-        for (let i = 0; i < n; i++) if (this.reels[i]?.optic()) optos |= 1 << i;
+        for (let i = 0; i < n; i++) if (this.reels[i] && this.reels[i].optic() !== this.reelOpticInverted[i]) optos |= 1 << i;
         optos &= this.reelFit.mask;
         return (this.ioLatch[0x12] << 8) | ((optos << (8 - n)) & 0xff);
       }

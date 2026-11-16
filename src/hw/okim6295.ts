@@ -1,5 +1,6 @@
 
 import type { AudioSource } from '../machine/machine';
+import { OKI_ROM_SCALE } from './msm6376';
 
 const STEP_SIZE = [
   16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88,
@@ -55,6 +56,7 @@ export class Okim6295 implements AudioSource {
   private readonly voices = [new Voice(), new Voice(), new Voice(), new Voice()];
   private command = -1;
   gain = 0.5;
+  v20Level = false;
 
   constructor(rate: number) {
     this.rate = rate;
@@ -156,10 +158,10 @@ export class Okim6295 implements AudioSource {
       for (const v of this.voices) {
         if (!v.playing) continue;
         const nibble = (this.byte(v.base + (v.sample >> 1)) >> (((v.sample & 1) << 2) ^ 4)) & 15;
-        s += v.clock(nibble) * v.volume;
+        s += v.clock(nibble) * (this.v20Level ? 1 : v.volume);
         if (++v.sample >= v.count) v.playing = false;
       }
-      s = (s / 2048) * this.gain;
+      s = this.v20Level ? s * OKI_ROM_SCALE : (s / 2048) * this.gain;
       this.ring[this.ringWrite] = s;
       this.ring[this.ringWrite + 1] = s;
       this.ringWrite = (this.ringWrite + 2) % this.ring.length;

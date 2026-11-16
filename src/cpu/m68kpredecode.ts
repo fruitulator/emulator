@@ -677,7 +677,8 @@ export class Predecode {
       a: Predecode.packA(XM_DN, 0, dst.x, reg, sizeBits, imm, isSub ? 1 : 0),
       b: 0, c: dst.payload,
       head: hd(mode, reg),
-      c68: eaCost68(mode, reg, SIZE_BYTES[sizeBits]) + 4,
+      c68: eaCost68(mode, reg, SIZE_BYTES[sizeBits])
+        + (mode === 0 ? (sizeBits === 2 ? 8 : 4) : rmwBase68(SIZE_BYTES[sizeBits], mode)),
     };
   }
 

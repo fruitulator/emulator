@@ -3,10 +3,12 @@ import type { AudioSource } from '../machine/machine';
 export class Mixer implements AudioSource {
   readonly rate: number;
   private readonly sources: readonly AudioSource[];
+  private readonly weights: readonly number[];
   private readonly scratch: Float32Array;
 
-  constructor(sources: readonly AudioSource[]) {
+  constructor(sources: readonly AudioSource[], weights: readonly number[] = []) {
     if (!sources.length) throw new Error('a mixer needs at least one source');
+    if (weights.length > sources.length) throw new Error('more mixer weights than sources');
     const rate = sources[0].rate;
     for (const s of sources) {
       if (s.rate !== rate) {
@@ -15,6 +17,7 @@ export class Mixer implements AudioSource {
     }
     this.rate = rate;
     this.sources = sources;
+    this.weights = sources.map((_, i) => weights[i] ?? 1);
     this.scratch = new Float32Array(4096 * 2);
   }
 
@@ -29,13 +32,16 @@ export class Mixer implements AudioSource {
     out.fill(0, 0, frames * 2);
     if (have <= 0) return 0;
 
-    for (const s of this.sources) {
+    for (let k = 0; k < this.sources.length; k++) {
+      const s = this.sources[k];
+      const w = this.weights[k];
       let done = 0;
       while (done < have) {
         const chunk = Math.min(have - done, this.scratch.length >> 1);
         const got = s.readAudio(this.scratch, chunk);
         if (got <= 0) break;
-        for (let i = 0; i < got * 2; i++) out[done * 2 + i] += this.scratch[i];
+        if (w === 1) for (let i = 0; i < got * 2; i++) out[done * 2 + i] += this.scratch[i];
+        else for (let i = 0; i < got * 2; i++) out[done * 2 + i] += this.scratch[i] * w;
         done += got;
       }
     }

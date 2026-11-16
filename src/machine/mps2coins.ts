@@ -168,19 +168,37 @@ export function readJpmMeters(rom: Uint8Array, base: number): Map<number, number
 function imageByteOf(rom: Uint8Array, img: number, port: number): number | null {
   for (let a = 0; a + 4 <= rom.length; a += 2) {
     if (word(rom, a) !== 0x0201 || word(rom, a + 2) !== img) continue;
-    let off = 0;
-    for (let p = a + 4, n = 0; n < 24 && p < rom.length; n++) {
-      const w = word(rom, p);
-      if (w === 0xd811 && word(rom, p + 2) === port) return off;
-      if (w === 0xd831 && word(rom, p + 2) === port) return off;
-      if (w === 0xd831) off++;
-      else if (w === 0x0581) off++;
-      else if (w === 0x05c1) off += 2;
-      else if ((w & 0xfff0) === 0x0200 && (w & 15) === 1) break;
-      p += insnLen(rom, p);
-    }
+    const off = imageOffsetAt(rom, a, port);
+    if (off !== null) return off;
   }
   return null;
+}
+
+function imageOffsetAt(rom: Uint8Array, a: number, port: number): number | null {
+  let off = 0;
+  for (let p = a + 4, n = 0; n < 24 && p < rom.length; n++) {
+    const w = word(rom, p);
+    if (w === 0xd811 && word(rom, p + 2) === port) return off;
+    if (w === 0xd831 && word(rom, p + 2) === port) return off;
+    if (w === 0xd831) off++;
+    else if (w === 0x0581) off++;
+    else if (w === 0x05c1) off += 2;
+    else if ((w & 0xfff0) === 0x0200 && (w & 15) === 1) break;
+    p += insnLen(rom, p);
+  }
+  return null;
+}
+
+function meterPortByte(rom: Uint8Array): number | null {
+  const found = new Set<number>();
+  for (let a = 0; a + 4 <= rom.length; a += 2) {
+    if (word(rom, a) !== 0x0201) continue;
+    const img = word(rom, a + 2);
+    if (img < 0x8000) continue;
+    const off = imageOffsetAt(rom, a, METER_PORT);
+    if (off !== null) found.add(img + off);
+  }
+  return found.size === 1 ? [...found][0]! : null;
 }
 
 function scriptTargetBase(rom: Uint8Array): number | null {
@@ -280,18 +298,354 @@ export function readJpmRecords(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable |
   return null;
 }
 
-export function readPatternRecords(rom: Uint8Array): Refusal | null {
+export function readPatternRecords(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable | Refusal | null {
   for (let a = 0; a + 12 <= rom.length; a += 2) {
     if ((word(rom, a) & 0xfff0) !== 0x0200) continue;
     if (word(rom, a + 4) !== (0x0220 | (word(rom, a) & 15)) || word(rom, a + 6) !== 0x0008) continue;
     if ((word(rom, a + 10) & 0xff00) !== 0x1300 || word(rom, a + 12) !== 0x2db0) continue;
-    const pence: number[] = [];
-    for (let r = word(rom, a + 2) + 8; r + 8 <= rom.length && word(rom, r) > 0 && pence.length < 16; r += 8) pence.push(word(rom, r + 2));
-    return {
-      refused: `pence coin records at code ${hex(a)} (${pence.map((p) => `${p}p`).join(', ')}): which line each is lives in a pulse pattern that is not read`,
-    };
+    const records: ValueRecord[] = [];
+    for (let r = word(rom, a + 2) + 8; r + 8 <= rom.length && word(rom, r) > 0 && records.length < 16; r += 8) {
+      records.push({ at: r, pattern: word(rom, r), value: word(rom, r + 2), total: word(rom, r + 4), counter: word(rom, r + 6) });
+    }
+    const found = `value records at code ${hex(a)} (${records.map((x) => x.value).join(', ')})`;
+    const got = readPatternLines(rom, io, a, records);
+    if (typeof got === 'string') return { refused: `${found}: ${got}` };
+    return got;
   }
   return null;
+}
+
+interface ValueRecord { at: number; pattern: number; value: number; total: number; counter: number }
+
+type MidOp =
+  | { kind: 'set'; arrs: number[] }
+  | { kind: 'test'; arr: number; eqWhenSet: boolean };
+
+function readMidOps(rom: Uint8Array): { ops: Map<number, MidOp>; term: number } | string {
+  const h = word(rom, 0x000a);
+  let table = -1;
+  for (let p = h; p < h + 0x20 && p + 16 <= rom.length; p += 2) {
+    if (word(rom, p) === 0x024f && word(rom, p + 2) === 0x000f && word(rom, p + 4) === 0xc2ad && word(rom, p + 6) === 0x0014
+      && word(rom, p + 8) === 0xc22e && word(rom, p + 10) === 0xfffe && word(rom, p + 12) === 0xc028 && word(rom, p + 16) === 0x0450) {
+      table = word(rom, p + 14);
+      break;
+    }
+  }
+  if (table < 0) return `the MID handler at ${hex(h)} is a dialect not read`;
+  let term = -1;
+  let masks = -1;
+  const ops = new Map<number, MidOp>();
+  for (let k = 0; k < 0x20; k += 2) {
+    const r = word(rom, table + k);
+    if (r < 0 || r + 16 > rom.length || word(rom, r) !== 0x06a0) continue;
+    const idx = word(rom, r + 2);
+    if (word(rom, idx) !== 0x980a || (word(rom, idx + 4) & 0xff00) !== 0x1300 || word(rom, idx + 6) !== 0x097a
+      || word(rom, idx + 8) !== 0xc04a || word(rom, idx + 10) !== 0xc08a || word(rom, idx + 12) !== 0x0242
+      || word(rom, idx + 14) !== 0x001e || word(rom, idx + 16) !== 0x0941 || word(rom, idx + 18) !== 0x045b) continue;
+    const t = rom[word(rom, idx + 2)]!;
+    if (term >= 0 && t !== term) return 'the MID ops disagree on the pattern terminator';
+    term = t;
+    const p = r + 4;
+    const w = word(rom, p);
+    if (w === 0xe862) {
+      const arrs: number[] = [];
+      let q = p;
+      for (; word(rom, q) === 0xe862; q += 6) {
+        if (masks >= 0 && word(rom, q + 2) !== masks) return 'the MID ops use two mask tables';
+        masks = word(rom, q + 2);
+        arrs.push(word(rom, q + 4));
+      }
+      if (word(rom, q) === 0x0380) ops.set(k, { kind: 'set', arrs });
+    } else if (w === 0xc0e1) {
+      const c = word(rom, p + 4);
+      if ((c !== 0x24e2 && c !== 0x20e2) || word(rom, p + 8) !== 0x1602 || word(rom, p + 10) !== 0x026f
+        || word(rom, p + 12) !== 0x2000 || word(rom, p + 14) !== 0x0380) continue;
+      if (masks >= 0 && word(rom, p + 6) !== masks) return 'the MID ops use two mask tables';
+      masks = word(rom, p + 6);
+      ops.set(k, { kind: 'test', arr: word(rom, p + 2), eqWhenSet: c === 0x20e2 });
+    }
+  }
+  if (term < 0 || masks < 0) return `the MID ops at ${hex(table)} are not the flag tests read here`;
+  for (let b = 0; b < 16; b++) if (word(rom, masks + 2 * b) !== 1 << b) return `the MID ops' mask table at ${hex(masks)} is not one bit per flag`;
+  return { ops, term };
+}
+
+function readXop6Ops(rom: Uint8Array): Map<number, { mid: number; neg: boolean }> | string {
+  const h = word(rom, 0x005a);
+  if (word(rom, h) !== 0xd07b || word(rom, h + 2) !== 0x0981 || word(rom, h + 4) !== 0xc061 || word(rom, h + 8) !== 0x0451) {
+    return `XOP 6 at ${hex(h)} is not the op table read here`;
+  }
+  const table = word(rom, h + 6);
+  const out = new Map<number, { mid: number; neg: boolean }>();
+  for (let b = 0; b < 0x40; b += 2) {
+    const e = word(rom, table + b);
+    if (e < 0 || e + 4 > rom.length || word(rom, e) !== 0xd29b) break;
+    const mid = word(rom, e + 2);
+    if (mid >= 0x20 || mid & 1) break;
+    let p = e + 4;
+    if ((word(rom, p) & 0xff00) === 0x1000) p = p + 2 + 2 * (((word(rom, p) & 0xff) << 24) >> 24);
+    if (word(rom, p) !== 0x02cf) continue;
+    if (word(rom, p + 2) === 0x0380) out.set(b, { mid, neg: false });
+    else if (word(rom, p + 2) === 0xc020 && word(rom, word(rom, p + 4)) === 0x2000 && word(rom, p + 6) === 0x2bc0 && word(rom, p + 8) === 0x0380) {
+      out.set(b, { mid, neg: true });
+    }
+  }
+  return out.size ? out : `XOP 6's op table at ${hex(table)} holds no op read here`;
+}
+
+const flagAt = (arr: number, n: number): { at: number; bit: number } => ({ at: (arr + (n >> 3)) & ~1, bit: n & 15 });
+
+function storedFromC005(rom: Uint8Array, at: number): boolean {
+  for (let a = 0; a + 4 <= rom.length; a += 2) {
+    if ((word(rom, a) & 0xfc3f) !== 0xd020 || word(rom, a + 2) !== 0xc005) continue;
+    for (let p = a + 4; p < a + 0x40 && p + 4 <= rom.length; p += 2) if ((word(rom, p) & 0xfff0) === 0xc800 && word(rom, p + 2) === at) return true;
+  }
+  return false;
+}
+
+function readCoinScan(rom: Uint8Array, io: Mps2CoinIo, recordsAt: number, mids: Map<number, MidOp>): { flags: Map<number, number>; set: number; table: number } | string {
+  const from = Math.max(0, recordsAt - 0x100);
+  let t = -1; let set = -1;
+  for (let p = from; p < recordsAt; p += 2) {
+    if (word(rom, p) === 0xd2a4 && mids.get(word(rom, p + 4))?.kind === 'set') { t = word(rom, p + 2); set = word(rom, p + 4); }
+  }
+  if (t < 0) return 'no coin scan that sets a flag per line before them';
+  const flags = new Map<number, number>();
+  for (let p = from; p < recordsAt; p += 2) {
+    if (word(rom, p) !== 0xd0e0 || word(rom, p + 4) !== 0x0983 || word(rom, p + 6) !== 0x0543 || word(rom, p + 8) !== 0x0243
+      || word(rom, p + 10) !== 0x001f || word(rom, p + 12) !== 0x04c2 || word(rom, p + 14) !== 0x0913 || (word(rom, p + 16) & 0xff00) !== 0x1800) continue;
+    const scan = word(rom, p + 2);
+    if (scan & 1 || !storedFromC005(rom, scan)) return `the coin scan at ${hex(p)} reads ${hex(scan)}, which is not traced to $C005`;
+    let halves = false;
+    for (let q = p + 16; q < recordsAt; q += 2) if (word(rom, q) === 0xc102 && word(rom, q + 2) === 0x0914 && word(rom, q + 4) === 0xd2a4) halves = true;
+    if (!halves) return `the coin scan at ${hex(p)} indexes its flags another way`;
+    for (const line of LINES) flags.set(line, rom[t + line - 19]!);
+    return { flags, set, table: t };
+  }
+  for (let p = from; p < recordsAt; p += 2) {
+    if (word(rom, p) !== 0x04c2 || word(rom, p + 2) !== 0x04c4) continue;
+    let lists: number[] = [];
+    let q = p + 4;
+    if (word(rom, q) === 0xd2a4) { lists.push(word(rom, q + 2)); q += 4; }
+    else if (word(rom, q) === 0x0205 && word(rom, q + 4) === 0xd2b5) { lists.push(word(rom, q + 2)); q += 6; }
+    else if (word(rom, q) === 0x0205 && (word(rom, q + 4) & 0xfc3f) === 0xc020 && (word(rom, q + 8) & 0xfc3f) === 0x2420
+      && ((word(rom, q + 4) >> 6) & 15) === (word(rom, q + 8) >> 6 & 15)
+      && (word(rom, q + 12) === 0x1602 || word(rom, q + 12) === 0x1302) && word(rom, q + 14) === 0x0205 && word(rom, q + 18) === 0xd2b5) {
+      const x = word(rom, q + 6); const mask = word(rom, word(rom, q + 10));
+      const a = word(rom, q + 2); const b = word(rom, q + 16);
+      const known = x + 1 < rom.length && x < 0xe000 ? { value: word(rom, x), known: 0xffff } : dilWord(rom, x, io);
+      const aWhenSet = word(rom, q + 12) === 0x1602;
+      lists = (known.known & mask) === mask ? [((known.value & mask) !== 0) === aWhenSet ? a : b] : [a, b];
+      q += 20;
+    } else continue;
+    const test = mids.get(word(rom, q));
+    if (test?.kind !== 'test') return `the coin scan at ${hex(p)} tests its inputs with a MID op not read`;
+    const term = readMidOps(rom);
+    if (typeof term === 'string') return term;
+    const per = lists.map((list) => {
+      const m = new Map<number, number>();
+      for (let i = 0; i < 8; i++) {
+        const n = rom[list + i]!;
+        if (n === term.term) break;
+        const { at, bit } = flagAt(test.arr, n);
+        if (bit < 8 || bit > 12 || !storedFromC005(rom, at)) return `the coin scan at ${hex(p)} lists input flag ${hex(n)}, which is not a coin line`;
+        m.set(19 + bit - 8, rom[t + i]!);
+      }
+      return m;
+    });
+    for (const m of per) if (typeof m === 'string') return m;
+    const maps = per as Map<number, number>[];
+    for (const [line, f] of maps[0]!) if (maps.every((m) => m.get(line) === f)) flags.set(line, f);
+    const coinArrs = (mids.get(set) as Extract<MidOp, { kind: 'set' }>).arrs;
+    const scanWord = flagAt(test.arr, 0x18).at;
+    const tableFlags: number[] = [];
+    for (let i = 0; i < 16 && rom[t + i] !== term.term; i++) tableFlags.push(rom[t + i]!);
+    const listed = new Set(maps.flatMap((m) => [...m.values()]));
+    for (const line of LINES) {
+      if (flags.has(line)) continue;
+      const bit = 1 << (8 + line - 19);
+      let tests = false;
+      const hits = new Set<number>();
+      for (let r = p; r < p + 0x200 && r + 6 <= rom.length; r += 2) {
+        if (word(rom, r) === 0xc2a0 && word(rom, r + 2) === scanWord && word(rom, r + 4) === 0x26a0 && word(rom, word(rom, r + 6)) === bit) tests = true;
+        if (word(rom, r) !== 0xe820) continue;
+        const m = word(rom, word(rom, r + 2)); const w = word(rom, r + 4);
+        if (m <= 0 || m & (m - 1)) continue;
+        for (const arr of coinArrs) {
+          if (w < arr || w >= arr + 0x20 || (w - arr) & 1) continue;
+          const n = ((w - arr) >> 1) * 16 + 31 - Math.clz32(m);
+          if (tableFlags.includes(n) && !listed.has(n)) hits.add(n);
+        }
+      }
+      if (tests && hits.size === 1) flags.set(line, [...hits][0]!);
+    }
+    return flags.size ? { flags, set, table: t } : `the coin scan at ${hex(p)} lists no coin line`;
+  }
+  return 'no coin scan of a shape read here before them';
+}
+
+function readCoinScripts(rom: Uint8Array): { scripts: Map<number, { code: number | null; adds: { amount: number; target: number }[] }>; credit: number; total: number } | string {
+  let credit = -1; let total = -1;
+  for (let a = 0; a + 12 <= rom.length; a += 2) {
+    if (word(rom, a) !== 0xc0b1 || word(rom, a + 2) !== 0xc112 || (word(rom, a + 4) & 0xff00) !== 0x1300 || word(rom, a + 6) !== 0x0612
+      || word(rom, a + 8) !== 0xc0b1 || word(rom, a + 10) !== 0xa042 || word(rom, a + 12) !== 0x0581) continue;
+    for (let p = a + 14; p < a + 0x40; p += 2) {
+      if (word(rom, p) === 0xa503 && word(rom, p + 2) === 0x0284 && (word(rom, p + 6) & 0xff00) === 0x1600 && word(rom, p + 8) === 0x6803) {
+        credit = word(rom, p + 4); total = word(rom, p + 10);
+        break;
+      }
+    }
+    break;
+  }
+  if (credit < 0) return 'the script walker that moves the value to the credit was not found';
+  for (let a = 0; a + 12 <= rom.length; a += 2) {
+    if (word(rom, a) !== 0x0202 || word(rom, a + 4) !== 0xc072 || (word(rom, a + 6) & 0xff00) !== 0x1300
+      || word(rom, a + 8) !== 0xc0d1 || word(rom, a + 10) !== 0xc0d3 || (word(rom, a + 12) & 0xff00) !== 0x1300) continue;
+    const scripts = new Map<number, { code: number | null; adds: { amount: number; target: number }[] }>();
+    for (let i = word(rom, a + 2), guard = 0; guard < 64; i += 2, guard++) {
+      const s = word(rom, i);
+      if (s <= 0) break;
+      const n = word(rom, s + 2);
+      if (n < 0 || n > 16) return `the coin script at ${hex(s)} is not the shape read here`;
+      const m0 = (s + 5 + n) & ~1;
+      const m = word(rom, m0);
+      if (m < 0 || m > 16) return `the coin script at ${hex(s)} is not the shape read here`;
+      const adds: { amount: number; target: number }[] = [];
+      for (let k = 0; k < m; k++) adds.push({ amount: word(rom, m0 + 2 + 4 * k), target: word(rom, m0 + 4 + 4 * k) });
+      const counter = word(rom, s);
+      if (!scripts.has(counter)) scripts.set(counter, { code: n ? rom[s + 4]! : null, adds });
+    }
+    return scripts.size ? { scripts, credit, total } : 'the coin scripts list is empty';
+  }
+  return 'the coin scripts list was not found';
+}
+
+function readPatternMeters(rom: Uint8Array, mids: Map<number, MidOp>): Map<number, number> | null {
+  const port = meterPortByte(rom);
+  if (port === null) return null;
+  for (let a = 0; a + 22 <= rom.length; a += 2) {
+    if (word(rom, a) !== 0x0202 || word(rom, a + 4) !== 0xc0f2 || (word(rom, a + 6) & 0xff00) !== 0x1300
+      || word(rom, a + 8) !== 0xc132) continue;
+    const b = word(rom, a + 10) === 0xc145 && (word(rom, a + 12) & 0xff00) === 0x1600 ? a + 14 : a + 10;
+    if (word(rom, b) !== 0xc013 || (word(rom, b + 2) & 0xff00) !== 0x1300 || word(rom, b + 4) !== 0x0613
+      || word(rom, b + 6) !== 0xd284) continue;
+    const op = mids.get(word(rom, b + 8));
+    if (op?.kind !== 'set' || op.arrs.length !== 1) return null;
+    const arr = op.arrs[0]!;
+    const out = new Map<number, number>();
+    for (let t = word(rom, a + 2), guard = 0; t + 4 <= rom.length && guard < 32; t += 4, guard++) {
+      const ctr = word(rom, t);
+      if (ctr === 0) return out;
+      const n = rom[t + 2]!;
+      const { at, bit } = flagAt(arr, n);
+      const byte = at + (bit < 8 ? 1 : 0);
+      if (byte === port) out.set(ctr, bit & 7);
+    }
+    return null;
+  }
+  return null;
+}
+
+function readPatternLines(rom: Uint8Array, io: Mps2CoinIo, recordsAt: number, records: ValueRecord[]): CoinLineTable | string {
+  const xops = readXop6Ops(rom);
+  if (typeof xops === 'string') return xops;
+  const midOps = readMidOps(rom);
+  if (typeof midOps === 'string') return midOps;
+  const { ops: mids, term } = midOps;
+  const scan = readCoinScan(rom, io, recordsAt, mids);
+  if (typeof scan === 'string') return scan;
+  const coinArrs = (mids.get(scan.set) as Extract<MidOp, { kind: 'set' }>).arrs;
+  let clears = false;
+  for (let p = recordsAt; p < recordsAt + 0x80 && !clears; p += 2) {
+    clears = word(rom, p) === 0x0201 && word(rom, p + 2) === scan.table && word(rom, p + 4) === 0xd2b1 && (word(rom, p + 8) & 0xff00) === 0x1700;
+  }
+  if (!clears) return `the coin flags at ${hex(scan.table)} are not cleared after a coin as read here`;
+  const coinFlags = new Set<number>();
+  for (let i = 0; i < 16 && rom[scan.table + i] !== term; i++) coinFlags.add(rom[scan.table + i]!);
+  const scr = readCoinScripts(rom);
+  if (typeof scr === 'string') return scr;
+  const needs = (rec: ValueRecord, flag: number): Map<string, boolean> | false | string => {
+    const want = new Map<string, boolean>();
+    for (let p = rec.pattern, guard = 0; guard < 32; p += 2, guard++) {
+      const x = xops.get(rom[p]!);
+      const n = rom[p + 1]!;
+      if (!x) return `record ${hex(rec.at)}'s pattern uses XOP 6 op ${hex(rom[p]!)}, not read`;
+      if (n === term) return want;
+      const op = mids.get(x.mid);
+      if (op?.kind !== 'test') return `record ${hex(rec.at)}'s pattern uses MID op ${hex(x.mid)}, not read`;
+      const passOn = op.eqWhenSet !== x.neg;
+      const { at, bit } = flagAt(op.arr, n);
+      let set: boolean | null = null;
+      if (coinArrs.includes(op.arr) && coinFlags.has(n)) set = n === flag;
+      else {
+        const dil = dilWord(rom, at, io);
+        if ((dil.known >> bit) & 1) set = ((dil.value >> bit) & 1) === 1;
+      }
+      if (set !== null) { if (set !== passOn) return false; continue; }
+      const key = `${at}.${bit}`;
+      if (want.has(key) && want.get(key) !== passOn) return false;
+      want.set(key, passOn);
+    }
+    return `record ${hex(rec.at)}'s pattern has no end`;
+  };
+  const lines: CoinLine[] = [];
+  for (const line of LINES) {
+    const flag = scan.flags.get(line);
+    if (flag === undefined) continue;
+    const conds: { rec: ValueRecord; want: Map<string, boolean> }[] = [];
+    for (const rec of records) {
+      const r = needs(rec, flag);
+      if (typeof r === 'string') return r;
+      if (r !== false) conds.push({ rec, want: r });
+    }
+    const keys = [...new Set(conds.flatMap((c) => [...c.want.keys()]))];
+    if (keys.length > 12) return `line ${line}'s records rest on ${keys.length} flags not read`;
+    const reached = new Set<ValueRecord>();
+    for (let v = 0; v < 1 << keys.length; v++) {
+      const hit = conds.find((c) => [...c.want].every(([k, w]) => (((v >> keys.indexOf(k)) & 1) === 1) === w));
+      if (hit) reached.add(hit.rec);
+    }
+    const reach = records.filter((rec) => reached.has(rec));
+    const credited = reach.filter((rec) => rec.total === scr.total);
+    if (!credited.length) { lines.push({ line, credits: 0, change: [] }); continue; }
+    const values = new Set(credited.map((rec) => rec.value));
+    if (values.size > 1) return `line ${line} can be taken by records of ${[...values].join(' or ')} on flags not read`;
+    let token: boolean | null = null;
+    for (const rec of credited) {
+      const s = scr.scripts.get(rec.counter);
+      if (!s) return `record ${hex(rec.at)}'s counter ${hex(rec.counter)} has no script`;
+      const moved = s.adds.filter((x) => x.target === scr.credit).reduce((sum, x) => sum + x.amount, 0);
+      if (moved !== rec.value) return `record ${hex(rec.at)} credits ${rec.value} and its script moves ${moved}`;
+      if (s.adds.some((x) => { const c = scr.scripts.get(x.target)?.code; return c !== undefined && c !== null && c >= 0x40 && c <= 0x47; })) {
+        return `line ${line} at these settings credits ${rec.value} and pays change, which is not read`;
+      }
+      const kind = s.code === null ? null : dataPakCoinInKind(s.code);
+      if (kind === null) return `record ${hex(rec.at)}'s script reports status ${s.code === null ? 'none' : hex(s.code)}, not a coin in`;
+      const tok = kind === 'token';
+      if (token !== null && token !== tok) return `line ${line}'s records disagree on whether it is a token`;
+      token = tok;
+    }
+    lines.push({ line, credits: [...values][0]!, change: [], ...(token ? { token: true } : {}) });
+  }
+  if (lines.every((l) => l.credits === 0)) return 'no line reaches a record that credits';
+  const meters = readPatternMeters(rom, mids);
+  const coinMeterBits = new Set<number>();
+  if (meters) {
+    for (const s of scr.scripts.values()) {
+      if (s.code === null || dataPakCoinInKind(s.code) === null) continue;
+      if (!s.adds.some((x) => x.target === scr.credit && x.amount > 0)) continue;
+      for (const x of s.adds) {
+        const bit = x.amount > 0 && x.target !== scr.credit ? meters.get(x.target) : undefined;
+        if (bit !== undefined) coinMeterBits.add(bit);
+      }
+    }
+  }
+  return {
+    lines,
+    ...(coinMeterBits.size ? { coinMeterBits: [...coinMeterBits].sort((x, y) => x - y) } : {}),
+    pricePerCredit: null,
+    source: `MPS2 value records ${hex(records[0]!.at)} matched by XOP 6, credit ${hex(scr.credit)}, code ${hex(recordsAt)}`,
+  };
 }
 
 export function readCoinHandlers(rom: Uint8Array, io: Mps2CoinIo): CoinLineTable | Refusal | null {
@@ -579,7 +933,7 @@ export function readMps2CoinTable(rom: Uint8Array, io: Mps2CoinIo): CoinLineTabl
   if (words) return words;
   const jpm = readJpmRecords(rom, io);
   if (jpm) return jpm;
-  const pat = readPatternRecords(rom);
+  const pat = readPatternRecords(rom, io);
   if (pat) return pat;
   const handlers = readCoinHandlers(rom, io);
   if (handlers) return handlers;

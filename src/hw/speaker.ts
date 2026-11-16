@@ -1,9 +1,9 @@
 import type { AudioSource } from '../machine/machine';
 import { AY_RATE } from './ay8910';
-import { blipHighPassPole } from './blipleak';
+import { V20_SYNTH_VOLUME, blipHighPassPole } from './blipleak';
 
 const STEP = [0x4000, 0x8000];
-const FULL_SCALE = 1 / 0x8000;
+const FULL_SCALE = V20_SYNTH_VOLUME / 0x8000;
 
 export class OneBitSpeaker implements AudioSource {
   rate: number;

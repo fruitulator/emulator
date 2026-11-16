@@ -341,6 +341,14 @@ export class AceSp implements Bus, Machine {
 
   reelFit: ReelFit = { mask: 0x0f, channels: 4, beyond: [] };
 
+  setReelOpticInverted(reel: number, inverted: boolean): void {
+    if (reel < 0 || reel > 3) return;
+    if (inverted) this.reelOpticInverted |= 1 << reel;
+    else this.reelOpticInverted &= ~(1 << reel);
+  }
+
+  private reelOpticInverted = 0;
+
   setFittedReels(channels: readonly number[]): ReelFit {
     this.reelFit = fitReelBank(this.reelUnits, channels);
     return this.reelFit;
@@ -1126,7 +1134,7 @@ export class AceSp implements Bus, Machine {
   }
 
   private portB(): number {
-    let v = this.reelpcb ? this.reelpcb.opticsNibble() : 0x0f;
+    let v = this.reelpcb ? this.reelpcb.opticsNibble() ^ this.reelOpticInverted : 0x0f;
     if (!(this.chainB7 & 0x80)) v |= 0x80;
     if (!(this.chainB5 & 0x8000)) v |= 0x20;
     if (!(this.chainB4 & 0x8000)) v |= 0x10;

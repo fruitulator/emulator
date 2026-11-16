@@ -142,6 +142,7 @@ export class Mps2 implements Machine {
     this.triacHasMoney = triacIn.some((x) => x) || triacOut.some((x) => x);
     const t = this.readCoinTable();
     if ('lines' in t) for (const bit of t.coinMeterBits ?? []) this.meterOutMult[bit + 1] = 0;
+    this.coinMeterLines = 'lines' in t ? (t.coinMeterBits ?? []).map((bit) => bit + 1) : [];
     const counted = readCountedMeters(this.rom);
     if (counted) {
       const { coinBit, payBit } = counted;
@@ -172,7 +173,7 @@ export class Mps2 implements Machine {
   readonly meterTotals = { in: 0, out: 0 };
 
   private bookMeterLine(line: number): void {
-    if ((this.meterInPence[line] ?? 0) > 0) {
+    if (this.answersCoin(line)) {
       this.findPending(line);
       if ((this.pendingAt[line] ?? -1) < 0) this.meterTakesCoin();
     } else if (this.dropping && !this.meterChecksCoins) this.meterTakesCoin();
@@ -340,6 +341,12 @@ export class Mps2 implements Machine {
 
   private get meterChecksCoins(): boolean {
     return this.meterInPence.some((p) => p > 0);
+  }
+
+  private coinMeterLines: number[] = [];
+
+  private answersCoin(line: number): boolean {
+    return (this.meterInPence[line] ?? 0) > 0 || (this.meterChecksCoins && this.coinMeterLines.includes(line));
   }
 
   private meterTakesCoin(): void {
@@ -608,7 +615,7 @@ export class Mps2 implements Machine {
   private watchdog = 0;
   private nmiRaised = 0;
   readonly alarm = new OneBitSpeaker(CLOCK, 48_000, {
-    bassFreq: BASE_BOARD_BASS_FREQ, steps: [0x3fff, 0], fullScale: 1 / (4 * 0xfff),
+    bassFreq: BASE_BOARD_BASS_FREQ, steps: [0x3fff, 0],
   });
   private rotary = 0;
   private reelBonus = false;

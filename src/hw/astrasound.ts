@@ -1,4 +1,5 @@
 import type { AudioSource } from '../machine/machine';
+import { V20_SYNTH_VOLUME } from './blipleak';
 
 export const ASTRA_STEP_SIZE: readonly number[] = [
   16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88,
@@ -102,7 +103,7 @@ export class AstraSound implements AudioSource {
     this.frameFrac += (cycles / cpuHz) * this.rate;
     const frames = Math.floor(this.frameFrac);
     this.frameFrac -= frames;
-    const s = this.held / 32768;
+    const s = (this.held / 32768) * V20_SYNTH_VOLUME;
     for (let i = 0; i < frames; i++) {
       this.ring[this.ringWrite] = s;
       this.ring[this.ringWrite + 1] = s;

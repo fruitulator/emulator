@@ -94,6 +94,22 @@ const kept = opcodes.filter((o) => o.enabled);
 
 const MANUAL_OVERRIDES = [
   { name: 'divxu.w', from: 'if(m_TMP2 & 0x80)', to: 'if(m_TMP2 & 0x8000)' },
+  { name: 'divxu.w', from: 'internal(11);', to: 'internal(19);' },
+  { name: 'daa.b', from: 'r8_w(m_IR[0], do_add8(m_TMP1, m_TMP2));', to: [
+    'int c = m_CCR & F_C;',
+    'r8_w(m_IR[0], do_add8(m_TMP1, m_TMP2));',
+    'm_CCR &= ~F_C;',
+    'if(c || (m_TMP2 & 0x60))',
+    '\tm_CCR |= F_C;',
+  ] },
+  { name: 'das.b', from: 'r8_w(m_IR[0], do_add8(m_TMP1, m_TMP2));', to: [
+    'int c = m_CCR & F_C;',
+    'r8_w(m_IR[0], do_add8(m_TMP1, m_TMP2));',
+    'm_CCR = (m_CCR & ~F_C) | c;',
+  ] },
+  { name: 'trapa', from: 'write16(m_TMP1, m_NPC);', to: 'write16(m_TMP1, m_PC);' },
+  { name: 'trapa', from: 'write16(m_TMP1, (m_CCR << 8) | ((m_NPC >> 16) & 0xff));',
+    to: 'write16(m_TMP1, (m_CCR << 8) | ((m_PC >> 16) & 0xff));' },
 ];
 for (const { name, from, to } of MANUAL_OVERRIDES) {
   const hits = kept.filter((o) => o.name === name);
@@ -101,7 +117,8 @@ for (const { name, from, to } of MANUAL_OVERRIDES) {
   for (const o of hits) {
     const i = o.body.findIndex((l) => l.trim() === from);
     if (i < 0) fail(`override no longer matches ${name}`, from);
-    o.body[i] = o.body[i].replace(from, to);
+    const indent = o.body[i].match(/^\s*/)[0];
+    o.body.splice(i, 1, ...[].concat(to).map((l) => indent + l));
   }
 }
 

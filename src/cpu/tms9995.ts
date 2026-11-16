@@ -471,7 +471,7 @@ export class Tms9995 {
         switch (cond) {
           case 0x0: take = true; break;
           case 0x1: take = (this.st & (ST_AGT | ST_EQ)) === 0; break;
-          case 0x2: take = (this.st & ST_LH) === 0; break;
+          case 0x2: take = (this.st & ST_LH) === 0 || (this.st & ST_EQ) !== 0; break;
           case 0x3: take = (this.st & ST_EQ) !== 0; break;
           case 0x4: take = (this.st & (ST_LH | ST_EQ)) !== 0; break;
           case 0x5: take = (this.st & ST_AGT) !== 0; break;
@@ -480,7 +480,7 @@ export class Tms9995 {
           case 0x8: take = (this.st & ST_C) !== 0; break;
           case 0x9: take = (this.st & ST_OV) === 0; break;
           case 0xa: take = (this.st & (ST_LH | ST_EQ)) === 0; break;
-          case 0xb: take = (this.st & ST_LH) !== 0; break;
+          case 0xb: take = (this.st & ST_LH) !== 0 && (this.st & ST_EQ) === 0; break;
           default: take = (this.st & ST_OP) !== 0; break;
         }
         if (take) this.pc = (this.pc + disp * 2) & 0xfffe;

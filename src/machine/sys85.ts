@@ -77,6 +77,12 @@ export class Sys85 implements Bus, Machine {
     return this.reelFit;
   }
 
+  setReelOpticInverted(reel: number, inverted: boolean): void {
+    if (reel >= 0 && reel < this.reelOpticInverted.length) this.reelOpticInverted[reel] = inverted;
+  }
+
+  private readonly reelOpticInverted = [false, false, false, false, false, false];
+
   reelStripOffsets: number[] = [0, 0, 0, 0, 0, 0];
 
   readonly lampHistory = new LampHistory(128);
@@ -723,7 +729,7 @@ export class Sys85 implements Bus, Machine {
   private muxInputByte(strobe: number): number {
     if (strobe === 5) {
       let optics = 0;
-      for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic()) optics |= 1 << i;
+      for (let i = 0; i < this.reels.length; i++) if (this.reels[i].optic() !== this.reelOpticInverted[i]) optics |= 1 << i;
       return optics & this.reelFit.mask;
     }
     return ~this.inputRegs[strobe & 7] & 0xff;

@@ -70,8 +70,8 @@ export class V20Reels {
       r.present = true;
       if (g.halfSteps > 0) r.steps = g.halfSteps;
       else this.noteStandIn(g.number);
-      r.inverted = g.invertedOpto;
-      [r.winStart, r.winEnd] = this.window(g.optoTab);
+      r.inverted = !g.flip && g.invertedOpto;
+      [r.winStart, r.winEnd] = this.window(g.flip ? 0 : g.optoTab);
       if (!(g.stops > 0)) this.noteStandIn(g.number);
       this.reels[g.number] = new Reel({
         stepsPerRevolution: r.steps,

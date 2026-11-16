@@ -2,8 +2,9 @@ import { countOutClick, outClicksOf } from './payoutcheck';
 import { I960 } from '../cpu/i960';
 import { Mcs51 } from '../cpu/mcs51';
 import { Quart } from '../hw/quart';
-import { Ay8910 } from '../hw/ay8910';
-import { Ymz280b } from '../hw/ymz280b';
+import { Ym2413 } from '../hw/ym2413';
+import { Ymz280b, YMZ_SAMPLE_RATE } from '../hw/ymz280b';
+import { Mixer } from '../hw/mixer';
 import { SteppedVolume, setBoardLevel } from '../hw/steppedvolume';
 import { SwitchedLamps } from '../hw/switchedlamps';
 import { MeterConfirm } from '../hw/meterconfirm';
@@ -23,7 +24,7 @@ import { StrayCounter } from './strayaccess';
 
 export const IGTS2000_CLOCK = 8_000_000;
 const VFD_HZ = 2_750_000;
-const AY_CLOCK = 3_579_545;
+const YM_RATE = YMZ_SAMPLE_RATE;
 const METER_TICK_CALLS = 10000;
 const HOPPER_TICK = 8000;
 const COIN_STEP = 8000;
@@ -66,9 +67,10 @@ export class IgtS2000 implements Machine {
 
   readonly quart1: Quart;
   readonly quart2: Quart;
-  readonly ay = new Ay8910(AY_CLOCK, 'ay8910');
+  readonly ym = Object.assign(new Ym2413(YM_RATE), { v20Mix: true });
   readonly ymz = new Ymz280b();
-  get audioSource(): AudioSource { return this.ay; }
+  private readonly audioMix = new Mixer([this.ym, this.ymz]);
+  get audioSource(): AudioSource { return this.audioMix; }
 
   readonly lampStore = new SwitchedLamps(LAMP_COUNT, 0);
   get lamps(): Uint8Array { return this.lampStore.shown; }
@@ -284,7 +286,7 @@ export class IgtS2000 implements Machine {
     this.hopperAcc = 0;
     this.meters.reset();
     this.hopper.reset();
-    this.ay.reset();
+    this.ym.reset();
     this.ymz.reset();
     this.quart1.reset();
     this.quart2.reset();
@@ -339,7 +341,7 @@ export class IgtS2000 implements Machine {
     this.hopperAcc += c;
     this.quart1.tick(c);
     this.quart2.tick(c);
-    this.ay.tick(c, IGTS2000_CLOCK);
+    this.ym.tick(c, IGTS2000_CLOCK);
     this.ymz.tick(c, IGTS2000_CLOCK);
     if (this.matrix[14] & 1) {
       if ((this.latch[0x6a] & 4) && this.coinStep === 0) this.coinTimer = 1;
@@ -521,8 +523,8 @@ export class IgtS2000 implements Machine {
       case 2: this.ioBlockWrite(a & 0xffff, v); return;
       case 4: this.quart2.write((a & 0xff) >> 1, v); return;
       case 5:
-        if (a & 2) this.ay.write(v);
-        else this.ay.selectAddress(v);
+        if (a & 2) this.ym.writeData(v);
+        else this.ym.writeAddress(v);
         return;
       case 7: this.volumeWrite(v); return;
       default: this.strays.hit(a); return;
@@ -535,7 +537,7 @@ export class IgtS2000 implements Machine {
     if ((changed & 7) === 0) return;
     if ((v & 4) === 0) {
       const level = (changed & 1) && (v & 1) === 0 ? this.volume.step((v & 2) !== 0) : this.volume.set(this.volume.counted());
-      setBoardLevel(level, [this.ay, this.ymz]);
+      setBoardLevel(level, [this.ym, this.ymz]);
     }
     this.volumePrev = v;
   }
@@ -652,7 +654,7 @@ export class IgtS2000 implements Machine {
       { id: 'rtc', label: 'CLOCK', part: 'BCD clock at $00200000', device: this.ram },
       { id: 'quart1', label: 'UART 1', part: 'quad UART - inputs', device: this.quart1 },
       { id: 'quart2', label: 'UART 2', part: 'quad UART - display link', device: this.quart2 },
-      { id: 'ay', label: 'SOUND', part: 'AY-3-8910 and YMZ280B', device: this.ay },
+      { id: 'sound', label: 'SOUND', part: 'YM2413 and YMZ280B', device: this.ym },
       { id: 'lamps', label: 'LAMPS', part: 'switched and levelled', device: this.lamps },
       { id: 'sevenseg', label: '7-SEG', part: '56 digits', device: this.digits },
       { id: 'meters', label: 'METERS', part: '6 lines', device: this.meterCounts },

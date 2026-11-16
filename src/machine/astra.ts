@@ -655,7 +655,7 @@ export class Astra implements Bus16, Machine {
     this.sim.tick(cycles);
     if (this.sim.dmaHeld !== 0 && ((this.cpu.sr >> 8) & 7) <= this.sim.dmaWakeMask()) this.sim.dmaRetry();
     let level = this.sim.request();
-    if (level < SOUND_IRQ_LEVEL && this.ymz.irq()) level = SOUND_IRQ_LEVEL;
+    if (level < SOUND_IRQ_LEVEL && this.ymz.irqLine) level = SOUND_IRQ_LEVEL;
     if (level !== this.irqLevel) {
       this.irqLevel = level;
       this.cpu.setIRQ(level);
@@ -796,7 +796,7 @@ export class Astra implements Bus16, Machine {
   private interruptAck(level: number): number {
     const onChip = this.sim.interruptAck(level);
     if (onChip !== null) return onChip;
-    if (level === SOUND_IRQ_LEVEL && this.ymz.irq()) return SOUND_IRQ_VECTOR;
+    if (level === SOUND_IRQ_LEVEL && this.ymz.irqLine) return SOUND_IRQ_VECTOR;
     if (this.sim.autovectored(level)) return 24 + level;
     return SPURIOUS_VECTOR;
   }

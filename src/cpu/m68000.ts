@@ -434,6 +434,7 @@ export class M68000 {
 
   private readMem(addr: number, size: Size, fc?: number): number {
     this.checkAlign(addr, size, false);
+    this.aeBus += size === Size.Long ? 8 : 4;
     const a = this.dataAddr(addr);
     switch (size) {
       case Size.Byte:
@@ -448,6 +449,7 @@ export class M68000 {
 
   private writeMem(addr: number, size: Size, v: number, fc?: number): void {
     this.checkAlign(addr, size, true);
+    this.aeBus += size === Size.Long ? 8 : 4;
     const a = this.dataAddr(addr);
     switch (size) {
       case Size.Byte:
@@ -553,6 +555,7 @@ export class M68000 {
         return addr;
       }
       case 4: {
+        this.aeBus += 2;
         const addr = (this.a[reg] - M68000.stride(reg, size)) >>> 0;
         this.a[reg] = addr;
         return addr;
@@ -560,6 +563,7 @@ export class M68000 {
       case 5:
         return (this.a[reg] + ((this.fetch() << 16) >> 16)) >>> 0;
       case 6:
+        this.aeBus += 2;
         return this.briefIndex(this.a[reg]);
       case 7:
         switch (reg) {
@@ -572,6 +576,7 @@ export class M68000 {
             return (base + ((this.fetch() << 16) >> 16)) >>> 0;
           }
           case 3: {
+            this.aeBus += 2;
             const base = this.pc;
             return this.briefIndex(base);
           }
@@ -652,6 +657,7 @@ export class M68000 {
   private savedOp = 0;
   private savedPc = 0;
   private instrStart = 0;
+  private aeBus = 0;
 
   get instructionPc(): number {
     return this.savedPc;
@@ -677,6 +683,7 @@ export class M68000 {
       return;
     }
     const faultPc = e.isProgram ? (e.addr - 4) >>> 0 : (this.pc - 2) >>> 0;
+    const pre = this.preFaultClocks(e);
     const oldSr = this.sr;
     if (!this.supervisor) this.setSR(this.sr | SR_S);
     this.sr &= ~SR_T & 0xffff;
@@ -693,7 +700,29 @@ export class M68000 {
 
     this.pc = this.readMem(VEC_ADDRESS_ERROR * 4, Size.Long) & 0xffffff;
     this.fillPrefetch();
-    this.cycles = this.instrStart + 50;
+    this.cycles = this.instrStart + 50 + pre;
+  }
+
+  private preFaultClocks(e: AddressError): number {
+    const op = this.savedOp;
+    const words = ((this.pc - this.savedPc) | 0) >> 1;
+    if (e.isProgram) {
+      let idle = 0;
+      if ((op & 0xf000) === 0x6000 || (op & 0xf0f8) === 0x50c8) idle = 2;
+      else if ((op & 0xff80) === 0x4e80) {
+        const m = (op >> 3) & 7, r = op & 7;
+        if (m === 5 || (m === 7 && (r === 0 || r === 2))) idle = 2;
+        else if (m === 6 || (m === 7 && r === 3)) idle = 4;
+      }
+      return 4 * Math.max(0, words - 2) + this.aeBus + idle;
+    }
+    let adj = 0;
+    if (e.isWrite && (op & 0xc000) === 0 && (op & 0x3000) !== 0) {
+      const dm = (op >> 6) & 7;
+      if (dm === 4) adj = 2;
+      else if (dm === 7 && ((op >> 9) & 7) === 1 && ((op >> 3) & 7) >= 2 && (op & 0x3f) !== 0x3c) adj = -4;
+    }
+    return 4 * Math.max(0, words - 1) + this.aeBus + adj;
   }
 
   private irqLevel = 0;
@@ -820,6 +849,7 @@ export class M68000 {
 
   private stepInterpret(start: number): number {
     this.savedPc = this.pc;
+    this.aeBus = 0;
     const op = this.fetch();
     this.savedOp = op;
     if (this.isCpu32) {
@@ -1830,7 +1860,7 @@ export class M68000 {
             this.logic(d, Size.Byte);
             return d | 0x80;
           });
-          this.cycles += 4;
+          this.cycles += mode === 0 ? 4 : 10;
           return;
         }
         const size = M68000.sizeOf(sizeBits);
@@ -1878,8 +1908,8 @@ export class M68000 {
     }
     if ((op & 0xffc0) === 0x4800) {
       if (this.badEa(op, mode, reg, EA_DATA_ALT)) return;
-      this.rmwEA(mode, reg, Size.Byte, (d) => this.bcdSub(0, d));
-      this.cycles += 6;
+      this.rmwEA(mode, reg, Size.Byte, (d) => this.bcdSub(d, 0));
+      this.cycles += mode === 0 ? 6 : 8;
       return;
     }
     if ((op & 0xffc0) === 0x4c00 && this.variant !== '68000') {
@@ -2325,7 +2355,7 @@ export class M68000 {
         ? this.subFlags(imm, d, d - imm, size)
         : this.addFlags(imm, d, d + imm, size),
     );
-    this.cycles += 4;
+    this.cycles += mode === 0 ? (size === Size.Long ? 8 : 4) : M68000.rmwBase(size, mode);
   }
 
   private branch(op: number): void {
@@ -2552,7 +2582,7 @@ export class M68000 {
       const s = this.readMem(this.effectiveAddress(3, reg, size, false), size);
       const d = this.readMem(this.effectiveAddress(3, dreg, size, false), size);
       this.cmpFlags(s, d, size);
-      this.cycles += size === Size.Long ? 20 : 12;
+      this.cycles += 4;
       return;
     }
 
@@ -2632,44 +2662,31 @@ export class M68000 {
     this.cycles += M68000.aluBase(toMemory, size, mode, reg);
   }
 
+  private bcdFlags(r: number, overflow: boolean): void {
+    this.setFlags(SR_C | SR_X, (r & 0x300) !== 0);
+    this.setFlags(SR_N, (r & 0x80) !== 0);
+    this.setFlags(SR_V, overflow);
+    if ((r & 0xff) !== 0) this.setFlags(SR_Z, false);
+  }
+
   private bcdAdd(s: number, d: number): number {
     const x = this.sr & SR_X ? 1 : 0;
-    let lo = (d & 0x0f) + (s & 0x0f) + x;
-    let hi = (d >> 4) + (s >> 4);
-    if (lo > 9) {
-      lo -= 10;
-      hi += 1;
-    }
-    let carry = false;
-    if (hi > 9) {
-      hi -= 10;
-      carry = true;
-    }
-    const res = ((hi << 4) | lo) & 0xff;
-    this.setFlags(SR_C | SR_X, carry);
-    this.setFlags(SR_N, (res & 0x80) !== 0);
-    if (res !== 0) this.setFlags(SR_Z, false);
-    return res;
+    const lcor = (d & 0x0f) + (s & 0x0f) + x > 9;
+    const r1 = d + s + x;
+    let r = r1 + (lcor ? 6 : 0);
+    if (r > 0x9f) r += 0x60;
+    this.bcdFlags(r, (r & 0x80) !== 0 && (r1 & 0x80) === 0);
+    return r & 0xff;
   }
 
   private bcdSub(s: number, d: number): number {
     const x = this.sr & SR_X ? 1 : 0;
-    let lo = (d & 0x0f) - (s & 0x0f) - x;
-    let hi = (d >> 4) - (s >> 4);
-    if (lo < 0) {
-      lo += 10;
-      hi -= 1;
-    }
-    let borrow = false;
-    if (hi < 0) {
-      hi += 10;
-      borrow = true;
-    }
-    const res = ((hi << 4) | lo) & 0xff;
-    this.setFlags(SR_C | SR_X, borrow);
-    this.setFlags(SR_N, (res & 0x80) !== 0);
-    if (res !== 0) this.setFlags(SR_Z, false);
-    return res;
+    const lcor = (((d & 0x0f) - (s & 0x0f) - x) & 0x10) !== 0;
+    const r1 = (d - s - x) & 0xffff;
+    let r = (r1 - (lcor ? 6 : 0)) & 0xffff;
+    if (r1 & 0x100) r = (r - 0x60) & 0xffff;
+    this.bcdFlags(r, (r & 0x80) === 0 && (r1 & 0x80) !== 0);
+    return r & 0xff;
   }
 
   private bcdOp(op: number, isSub: boolean): void {

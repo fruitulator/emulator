@@ -33,6 +33,9 @@ interface Voice {
   position: number;
   signal: number;
   step: number;
+  loopSignal: number;
+  loopStep: number;
+  loopCount: number;
   outputPos: number;
   prev: number;
   curr: number;
@@ -45,7 +48,7 @@ function newVoice(): Voice {
   return {
     fnum: 0, mode: 0, looping: false, keyon: false, playing: false,
     level: 0, pan: 8, start: 0, stop: 0, loopStart: 0, loopEnd: 0,
-    position: 0, signal: 0, step: 0x7f, outputPos: FRAC_ONE, prev: 0, curr: 0,
+    position: 0, signal: 0, step: 0x7f, loopSignal: 0, loopStep: 0x7f, loopCount: 0, outputPos: FRAC_ONE, prev: 0, curr: 0,
     outputStep: 1, outLeft: 0, outRight: 0,
   };
 }
@@ -111,10 +114,6 @@ export class Ymz280b {
     for (let i = 0; i < this.voices.length; i++) this.voices[i] = newVoice();
   }
 
-  irq(): boolean {
-    return this.irqEnable && this.status !== 0;
-  }
-
   private romByte(addr: number): number {
     if (this.rom.length === 0) return 0;
     return this.rom[addr % this.rom.length] ?? 0xff;
@@ -161,13 +160,7 @@ export class Ymz280b {
           else v.mode = (data & 0x60) >> 5;
           const on = (data & 0x80) !== 0;
           if (!v.keyon && on && this.keyOnEnable) {
-            v.playing = true;
-            v.position = v.start;
-            v.signal = 0;
-            v.step = 0x7f;
-            v.outputPos = FRAC_ONE;
-            v.prev = 0;
-            v.curr = 0;
+            this.startVoice(v);
           } else if (v.keyon && !on) {
             v.playing = false;
           }
@@ -220,7 +213,9 @@ export class Ymz280b {
         this.extMemEnable = (data & CTRL_EXT_MEM_ENABLE) !== 0;
         this.irqEnable = (data & CTRL_IRQ_ENABLE) !== 0;
         if (this.keyOnEnable && !(data & CTRL_KEYON_ENABLE)) {
-          for (const v of this.voices) { v.playing = false; v.keyon = false; }
+          for (const v of this.voices) v.playing = false;
+        } else if (!this.keyOnEnable && (data & CTRL_KEYON_ENABLE)) {
+          for (const v of this.voices) if (v.keyon) this.startVoice(v);
         }
         this.keyOnEnable = (data & CTRL_KEYON_ENABLE) !== 0;
         this.hooks.irqChanged?.();
@@ -228,21 +223,47 @@ export class Ymz280b {
     }
   }
 
+  private startVoice(v: Voice): void {
+    v.playing = true;
+    v.position = v.start;
+    v.signal = v.loopSignal = 0;
+    v.step = v.loopStep = 0x7f;
+    v.loopCount = 0;
+    v.outputPos = FRAC_ONE;
+    v.prev = 0;
+    v.curr = 0;
+  }
+
   private updateStep(v: Voice): void {
     v.outputStep = (v.mode === 1 ? v.fnum & 0xff : v.fnum & 0x1ff) + 1;
   }
 
   private updateVolumes(v: Voice): void {
-    if (v.pan === 8) {
-      v.outLeft = v.level;
-      v.outRight = v.level;
-    } else if (v.pan < 8) {
-      v.outLeft = v.level;
-      v.outRight = v.pan === 0 ? 0 : (v.level * (v.pan - 1)) / 7;
-    } else {
-      v.outLeft = (v.level * (15 - v.pan)) / 7;
-      v.outRight = v.level;
+    const level = v.level & 0xff;
+    let l = level, r = level;
+    switch (this.stereoMode) {
+      case 0:
+        if (v.pan > 8) l = Math.trunc((level * (15 - v.pan) * 0x24) / 0xff) & 0xff;
+        else if (v.pan < 8) r = Math.trunc((level * (v.pan - 1) * 0x24) / 0xff) & 0xff;
+        break;
+      case 1:
+        if (v.pan > 8) l = r = 0;
+        break;
+      case 2:
+        if (v.pan < 8) l = r = 0;
+        break;
     }
+    v.outLeft = l;
+    v.outRight = r;
+  }
+
+  stereoMode = 0;
+
+  setStereoMode(mode: number): void {
+    if (mode === this.stereoMode) return;
+    this.flush();
+    this.stereoMode = mode;
+    for (const v of this.voices) this.updateVolumes(v);
   }
 
   private finishVoice(v: Voice, index: number): void {
@@ -256,7 +277,7 @@ export class Ymz280b {
     if (v.mode === 1) {
       const byte = this.romByte(v.position >> 1);
       const nib = (byte >> (((~v.position & 1) << 2))) & 0x0f;
-      v.signal += (v.step * DIFF_LOOKUP[nib]) / 8;
+      v.signal += ((v.step * DIFF_LOOKUP[nib]) / 8) | 0;
       if (v.signal > 32767) v.signal = 32767;
       else if (v.signal < -32768) v.signal = -32768;
       v.step = (v.step * INDEX_SCALE[nib & 7]) >> 8;
@@ -271,8 +292,17 @@ export class Ymz280b {
       v.signal = (((this.romByte(p) << 8) | this.romByte(p + 1)) << 16) >> 16;
       v.position += 4;
     }
+    if (v.mode === 1 && v.position === v.loopStart && v.loopCount === 0) {
+      v.loopSignal = v.signal;
+      v.loopStep = v.step;
+    }
     if (v.looping && v.loopEnd > v.loopStart && v.position >= v.loopEnd) {
       v.position = v.loopStart;
+      if (v.mode === 1) {
+        v.signal = v.loopSignal;
+        v.step = v.loopStep;
+      }
+      v.loopCount++;
     } else if (v.position >= v.stop) {
       this.finishVoice(v, index);
       return null;
@@ -297,7 +327,7 @@ export class Ymz280b {
         }
         if (!v.playing) break;
         const interp = (v.prev * (FRAC_ONE - v.outputPos) + v.curr * v.outputPos) / FRAC_ONE;
-        const s = interp / 32768 / 2;
+        const s = interp / 32768;
         out[i * 2] += s * lvol;
         out[i * 2 + 1] += s * rvol;
         v.outputPos += v.outputStep;

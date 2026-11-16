@@ -1,11 +1,10 @@
+import { V20_SYNTH_VOLUME } from './blipleak';
+
 const SN_RATE = 48_000;
 
-const VOL_TABLE = ((): number[] => {
-  const t: number[] = [];
-  for (let i = 0; i < 15; i++) t.push(Math.pow(10, (-2 * i) / 20));
-  t.push(0);
-  return t;
-})();
+const V20_VOLUME = [4095, 3252, 2583, 2052, 1630, 1294, 1028, 817, 649, 515, 409, 325, 258, 205, 163, 0];
+
+export const SN_OUTPUT_SCALE = V20_SYNTH_VOLUME / 0x8000;
 
 export class Sn76489 {
   readonly rate = SN_RATE;
@@ -19,7 +18,7 @@ export class Sn76489 {
   private noiseCtrl = 0;
   private noiseShift = 1 << 14;
   private noiseCount = 0;
-  private noiseOut = 0;
+  private noiseOut = 1;
 
   constructor(private readonly clock = 1_500_000) {}
 
@@ -31,6 +30,8 @@ export class Sn76489 {
     this.latched = 0;
     this.noiseCtrl = 0;
     this.noiseShift = 1 << 14;
+    this.noiseOut = 1;
+    this.noiseCount = 0;
     this.pendingCycles = 0;
   }
 
@@ -45,7 +46,7 @@ export class Sn76489 {
         this.vol[chan] = data & 0x0f;
       } else if (reg === 6) {
         this.noiseCtrl = data & 0x0f;
-        this.noiseShift = 1 << 14;
+        this.presetNoise();
       } else {
         this.tonePeriod[chan] = (this.tonePeriod[chan] & 0x3f0) | (data & 0x0f);
       }
@@ -54,13 +55,25 @@ export class Sn76489 {
       const chan = reg >> 1;
       if (reg === 6) {
         this.noiseCtrl = data & 0x0f;
-        this.noiseShift = 1 << 14;
+        this.presetNoise();
       } else if ((reg & 1) === 0) {
         this.tonePeriod[chan] = (this.tonePeriod[chan] & 0x0f) | ((data & 0x3f) << 4);
       } else {
         this.vol[chan] = data & 0x0f;
       }
     }
+  }
+
+  private presetNoise(): void {
+    this.noiseShift = 1 << 14;
+    this.noiseOut = (this.noiseShift & 1) ? -1 : 1;
+  }
+
+  private shiftNoise(): void {
+    const white = (this.noiseCtrl & 4) !== 0;
+    const fb = (this.noiseShift ^ (white ? this.noiseShift >> 1 : 0)) & 1;
+    this.noiseShift = (this.noiseShift >> 1) | (fb << 14);
+    this.noiseOut = (this.noiseShift & 1) ? -1 : 1;
   }
 
   private static readonly RING_FRAMES = 1 << 14;
@@ -93,9 +106,9 @@ export class Sn76489 {
       this.stepRemainder -= steps;
       while (steps-- > 0) this.advanceStep();
       let s = 0;
-      for (let c = 0; c < 3; c++) s += this.toneOut[c] * VOL_TABLE[this.vol[c]];
-      s += this.noiseOut * VOL_TABLE[this.vol[3]];
-      s = (s / 4) * this.gain;
+      for (let c = 0; c < 3; c++) s += this.toneOut[c] * V20_VOLUME[this.vol[c]];
+      s += this.noiseOut * V20_VOLUME[this.vol[3]];
+      s = s * SN_OUTPUT_SCALE * this.gain;
       this.ring[this.ringWrite] = s;
       this.ring[this.ringWrite + 1] = s;
       this.ringWrite = (this.ringWrite + 2) % this.ring.length;
@@ -107,18 +120,14 @@ export class Sn76489 {
       if (--this.toneCount[c] <= 0) {
         this.toneCount[c] = this.tonePeriod[c] || 1;
         this.toneOut[c] = this.tonePeriod[c] <= 1 ? 1 : -this.toneOut[c];
+        if (c === 2 && (this.noiseCtrl & 3) === 3 && this.toneOut[2] < 0) this.shiftNoise();
       }
     }
     const rate = this.noiseCtrl & 3;
-    const period = rate === 3 ? (this.tonePeriod[2] || 1) : 16 << rate;
+    if (rate === 3) return;
     if (--this.noiseCount <= 0) {
-      this.noiseCount = period;
-      const white = (this.noiseCtrl & 4) !== 0;
-      const bit = white
-        ? ((this.noiseShift ^ (this.noiseShift >> 3)) & 1)
-        : (this.noiseShift & 1);
-      this.noiseShift = (this.noiseShift >> 1) | (bit << 14);
-      this.noiseOut = (this.noiseShift & 1) ? 1 : -1;
+      this.noiseCount = 32 << rate;
+      this.shiftNoise();
     }
   }
 

@@ -14,6 +14,8 @@ export const MSM6376_CLOCK = 128_000;
 
 export const MSM6376_RATE = MSM6376_CLOCK / 8;
 
+export const OKI_ROM_SCALE = 15 / 32768;
+
 export interface Phrase {
   start: number;
   end: number;
@@ -328,7 +330,7 @@ export class Msm6376 implements AudioSource {
           if (p) v.start(p);
         }
       }
-      s = (s / 2048) * this.gain * 0.667;
+      s = s * OKI_ROM_SCALE * this.gain;
       this.ring[this.ringWrite] = s;
       this.ring[this.ringWrite + 1] = s;
       this.ringWrite = (this.ringWrite + 2) % this.ring.length;
