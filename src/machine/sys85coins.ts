@@ -16,23 +16,34 @@ const COIN_TEST = [0xa6, 0x0c, 0xb5];
 
 export interface Sys85CoinTables extends Sc1CoinTables {
   lock: Sc1CoinLock;
+  tablePtr: number | null;
+}
+
+export function resolveSys85CoinTable(t: Sys85CoinTables, rom: Uint8Array, ram: (a: number) => number): Sys85CoinTables | Refusal {
+  if (t.tablePtr === null) return t;
+  const table = (ram(t.tablePtr) << 8) | ram(t.tablePtr + 1);
+  if (table < ROM_BASE || table + t.groups * REC * 4 > rom.length) return { refused: 'the program has not chosen its coin table yet' };
+  return { ...t, table };
 }
 
 export function locateSys85CoinTables(rom: Uint8Array): Sys85CoinTables | Refusal {
   const found = new Set<string>();
   for (let p = 0; p + 12 <= rom.length; p++) {
-    if (rom[p] !== 0xc6 || rom[p + 2] !== 0x34 || rom[p + 3] !== 0x04 || rom[p + 4] !== 0x8e
+    if (rom[p] !== 0xc6 || rom[p + 2] !== 0x34 || rom[p + 3] !== 0x04 || (rom[p + 4] !== 0x8e && rom[p + 4] !== 0xbe)
       || rom[p + 10] !== 0xa5 || rom[p + 11] !== 0x0c) continue;
+    if (rom[p + 4] === 0xbe && word(rom, p + 5) >= 0x2000) continue;
     let sel: number;
     if (rom[p + 7] === 0xbd) sel = word(rom, p + 8);
     else if (rom[p + 7] === 0x17) sel = (p + 10 + ((word(rom, p + 8) << 16) >> 16)) & 0xffff;
     else continue;
     if (!at(rom, sel, SELECTOR)) continue;
-    found.add(`${word(rom, p + 5)},${rom[p + 1]!}`);
+    found.add(`${word(rom, p + 5)},${rom[p + 1]!},${rom[p + 4] === 0xbe ? 1 : 0}`);
   }
   if (found.size !== 1) return { refused: found.size ? 'the program names two coin tables' : 'no coin records found in the program' };
-  const [table, groups] = [...found][0]!.split(',').map(Number) as [number, number];
-  if (table < ROM_BASE || table + groups * REC * 4 > rom.length) return { refused: 'the coin records are not in program ROM' };
+  const [named, groups, viaRam] = [...found][0]!.split(',').map(Number) as [number, number, number];
+  const tablePtr = viaRam ? named : null;
+  const table = viaRam ? -1 : named;
+  if (!viaRam && (table < ROM_BASE || table + groups * REC * 4 > rom.length)) return { refused: 'the coin records are not in program ROM' };
   if (groups < 1 || groups > 8) return { refused: 'the coin record count is out of range' };
   if (findAll(rom, CREDIT_ADD).length !== 1) return { refused: 'the program\'s credit routine was not found' };
 
@@ -55,5 +66,5 @@ export function locateSys85CoinTables(rom: Uint8Array): Sys85CoinTables | Refusa
 
   const sequences = readCoinSequences(rom, ROM_BASE);
   if ('refused' in sequences) return sequences;
-  return { table, groups, coinByte, switches, switchFlag: null, sequences, lock: { lockByte, lastByte, sequenceForce: null } };
+  return { table, groups, coinByte, switches, switchFlag: null, sequences, lock: { lockByte, lastByte, sequenceForce: null }, tablePtr };
 }

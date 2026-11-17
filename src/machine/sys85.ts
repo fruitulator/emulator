@@ -2,7 +2,7 @@ import { ROM_UNPLACED } from './pairplacer';
 import { TokenPayouts } from './coinbook';
 import { countOutClick, outClicksOf } from './payoutcheck';
 import type { Bus } from '../cpu/bus';
-import type { CabinetSwitch, CashLedger, Machine, CoinWiringStatus } from './machine';
+import type { CabinetSwitch, CashLedger, CoinChute, Machine, CoinWiringStatus } from './machine';
 import { newCashLedger, dilPlace, dilSwitchLabel } from './machine';
 import type { BoardPart } from './parts';
 import type { LayoutSwitch } from './layoutswitches';
@@ -23,8 +23,8 @@ import { StrayCounter } from './strayaccess';
 import { detectCoins, linesOf, type CoinLineTable, type CoinWiring, type Refusal, type SlotCoin, type StepState } from './coinwiring';
 import type { DeclaredCoin } from './layoutcoins';
 import { COIN_RAW, coinMatrixSteps } from './coinraw';
-import { CoinLockJudge, sc1CoinSwitches, sc1CoinTable, sc1LockedLines, sc1PlainCoinMask, type Sc1CoinSwitch, type Sc1Mem } from './sc1coins';
-import { locateSys85CoinTables, type Sys85CoinTables } from './sys85coins';
+import { CoinLockJudge, sc1CoinSwitches, sc1CoinTable, sc1LineCoins, sc1LockedLines, sc1PlainCoinMask, type Sc1CoinSwitch, type Sc1Mem } from './sc1coins';
+import { locateSys85CoinTables, resolveSys85CoinTable, type Sys85CoinTables } from './sys85coins';
 
 export const MASTER_CLOCK = 4_000_000;
 export const CPU_CLOCK = MASTER_CLOCK / 4;
@@ -406,6 +406,21 @@ export class Sys85 implements Bus, Machine {
 
   insertCoin(line: number): void {
     if (this.coinCycles > 0) return;
+    if (Number.isInteger(line) && line >= 0x100 && line < 0x140) {
+      if (!this.wiring) {
+        const t = this.coinTables();
+        const coins = 'refused' in t ? null : sc1LineCoins(t, this.rom, this.programMem);
+        const own = Array.isArray(coins)
+          ? coins.find((c) => c.sw.length === 1 && c.sw[0]!.strobe === ((line >> 3) & 7) && c.sw[0]!.bit === (line & 7))
+          : undefined;
+        if (own) { this.insertCoin(own.line); return; }
+      }
+      this.coinNext = [];
+      this.pulseCoinSwitch({ strobe: (line >> 3) & 7, bit: line & 7 });
+      if (this.wiring) this.bookWiredCoin(this.cashLedger, line, null);
+      else this.bookProgramCoin(this.cashLedger, line, null);
+      return;
+    }
     if (!Number.isInteger(line) || line < 0 || line >= Sys85.COIN_LINES) { this.coinsRefused++; return; }
     const taken = this.programCoinOn(line);
     const [sw, ...next] = sc1CoinSwitches(this.coinTables(), this.rom, this.programMem, line,
@@ -470,7 +485,8 @@ export class Sys85 implements Bus, Machine {
   private coinTablesCache: { rom: Uint8Array; t: Sys85CoinTables | Refusal } | null = null;
   private coinTables(): Sys85CoinTables | Refusal {
     if (this.coinTablesCache?.rom !== this.rom) this.coinTablesCache = { rom: this.rom, t: locateSys85CoinTables(this.rom) };
-    return this.coinTablesCache.t;
+    const t = this.coinTablesCache.t;
+    return 'refused' in t ? t : resolveSys85CoinTable(t, this.rom, (a) => (a < RAM_SIZE ? this.ram[a]! : 0));
   }
 
   private readonly programMem: Sc1Mem = (a) => (a < RAM_SIZE ? this.ram[a]! : a >= 0x4000 && a < this.rom.length ? this.rom[a]! : 0);
@@ -479,6 +495,17 @@ export class Sys85 implements Bus, Machine {
     const t = this.coinTables();
     if ('refused' in t) return t;
     return sc1CoinTable(t, this.rom, this.programMem, 'System 85');
+  }
+
+  get coinChutes(): readonly CoinChute[] | undefined {
+    const t = this.readCoinTable();
+    if ('refused' in t) return undefined;
+    const coins = detectCoins(t);
+    if (!(coins instanceof Map)) return undefined;
+    const label = (p: number): string => (p >= 100 ? `£${p % 100 ? (p / 100).toFixed(2) : p / 100}` : `${p}p`);
+    return [...coins].sort((a, b) => a[0] - b[0]).map(([bit, c]): CoinChute => (typeof c === 'number'
+      ? { label: label(c), bit, pence: c }
+      : { label: 'Token', bit, pence: typeof c === 'object' && c !== null ? c.token : null, token: true }));
   }
 
   private programCoinOn(line: number, locks = true): SlotCoin | 'refused' | null {
@@ -571,9 +598,10 @@ export class Sys85 implements Bus, Machine {
       } else if (c.note === 0x47 && c.button !== null && c.button >= 0 && c.button < 128) {
         const row = (c.button >> 3) & 15;
         if (row === 0 && (c.button & 7) < Sys85.COIN_LINES) line = c.button & 7;
+        else if (row !== 0) line = 0x100 | c.button;
       }
       if (line === null) line = c.token ? Sys85.TOKEN_LINE : Sys85.DEFAULT_LINE;
-      if (line < 0 || line >= Sys85.COIN_LINES) continue;
+      if (line < 0 || (line >= Sys85.COIN_LINES && line < 0x100)) continue;
       if (c.pence === null) slots.add(line);
     }
     this.coinSlots = [...slots].sort((a, b) => a - b);

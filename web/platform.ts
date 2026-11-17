@@ -352,7 +352,7 @@ const sys85: PlatformView = {
   matrix: { strobes: 8, bits: 8 },
   coinBit: 3,
   tokenBit: 4,
-  coinRegister: { maskRow: 0, lineOfBit: { 0: [0, 1, 2, 3, 4, -1, -1, -1] }, tokenNote: 0x41, tokenLine: 4 },
+  coinRegister: { maskRow: 0, lineOfBit: { 0: [0, 1, 2, 3, 4, -1, -1, -1] }, tokenNote: 0x41, tokenLine: 4, directIds: true },
 };
 
 const mps2: PlatformView = {
@@ -884,6 +884,7 @@ export function acceptorResolve(
     } else if (a.note === 0x47 && btn >= 0 && btn < 128) {
       const hit = at((btn >> 3) & 15, btn & 7);
       if (hit) return hit;
+      if (reg.directIds && ((btn >> 3) & 15) !== reg.maskRow) return { line: 0x100 | btn, fromCabinet: true };
     }
   }
   if (view.acceptorNoteChute && chutes && a.note !== undefined) {
